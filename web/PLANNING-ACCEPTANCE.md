@@ -8,8 +8,9 @@
 - All project/content mutations use rendered UI controls. No mocked model, injected Web Crypto, store import or direct domain mutation API.
 - Raw private evidence remains in ignored `.native-test-data/browser-planning/`; no author prose, credentials or screenshots are published here.
 - Provider failures or unknown outcomes are not automatically retried.
+- Immutable gateway image: `sha256:8730c6b5ddd51578a7a633cd6bd6d7905eb68ad2d9bbf554977b56d1ccfd5e02`.
 
-## Verified in the bounded live run
+## Verified across bounded live runs
 
 | Check | Observed result |
 | --- | --- |
@@ -34,11 +35,21 @@ The driver now branches on the merge receipt: required rechecks must commit; a
 not-required cycle does not cause a fabricated request or a false completed claim.
 A required-recheck live branch was not exercised by this particular project.
 
-## Remaining acceptance
+## Finalization and lifecycle follow-up: passed
 
-Finalization-only follow-up is running against the existing merged chapter, once,
-without replaying planning, drafting, review or revision. Finalized postprocessing,
-refresh durability and idle pagehide-to-new-tab ownership handoff are not yet claimed.
+- Separate finalization-only run reopened the **same merged chapter** and asserted the authoritative not-required cycle before clicking confirmation exactly once.
+- All four declared postprocessing steps succeeded: manuscript file, knowledge-base import, chapter notes and character-state update.
+- Finalization took about 35 seconds; exactly two finalization-generation dispatches completed with `finishReason=stop`.
+- Refresh and UI reopen retained chapter-one final status (one of two chapters finalized), with no model dispatch.
+- Real navigation to `about:blank` triggered idle pagehide; after the 1.5-second grace, a new tab with a distinct client identity opened the same project without ownership conflict or model dispatch.
+- The follow-up reported one driver-only opaque-origin `sessionStorage` error from its client-ID init script on `about:blank`; no application or provider failure was observed. The test init script now ignores storage access on opaque origins.
+
+This is **not one uninterrupted green script**: the original bounded run retained
+its driver timeout, then a zero-dispatch read-only inspection and an explicitly
+approved finalization-only follow-up completed the remaining checks. Planning,
+drafting, review and revision were not replayed. Recorded successful generation
+dispatches total 13: six architecture, one blueprint directory, two drafting,
+one review, one revision and two finalization. No paid recheck was required or sent.
 
 ## Related checks
 

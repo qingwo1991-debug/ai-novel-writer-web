@@ -15,7 +15,10 @@ const report = { name, baseURL, mode, output, startedAt: new Date().toISOString(
 const browser = await chromium.connectOverCDP(process.env.NOVEL_TEST_CDP ?? 'ws://172.18.0.22:3000?timeout=600000')
 const context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 }, acceptDownloads: true, extraHTTPHeaders: { 'X-Novel-User': 'admin' } })
 let page = await context.newPage()
-if (resumeClient) await page.addInitScript(id => { if (!sessionStorage.getItem('ai-novel-writer-browser-client-id')) sessionStorage.setItem('ai-novel-writer-browser-client-id', id) }, resumeClient)
+if (resumeClient) await page.addInitScript(id => {
+  try { if (!sessionStorage.getItem('ai-novel-writer-browser-client-id')) sessionStorage.setItem('ai-novel-writer-browser-client-id', id) }
+  catch { /* about:blank and other opaque origins may deny storage access. */ }
+}, resumeClient)
 page.setDefaultTimeout(15000)
 let failed = false
 const checkpoint = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2))

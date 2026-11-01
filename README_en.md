@@ -1,3 +1,13 @@
+# AI Novel Writer — Native Browser Web Derivative
+
+> This is an independent modified version of [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer), retaining upstream attribution and GPL-3.0. The native Web runtime reuses the writing UI/domain and runs a Node gateway with project-isolated workers — **no Electron or VNC at runtime**.
+>
+> See the [GitHub Actions/GHCR guide](docker/README.github.md), [native deployment and rollback guide](docker/README.web.md), [migration notes](web/MIGRATION-NOTES.md) and [bounded feature acceptance matrix](web/FEATURE-MATRIX.md). Operational guides are currently in Chinese. Author data and model credentials stay on the server; keep the browser tab open during workflows. This is a shared-author workspace, not a multi-tenant service.
+>
+> Use `Dockerfile.web` for the native image. The original desktop descriptions and download links below are preserved for upstream provenance, **not** native deployment instructions or a claim of complete acceptance.
+
+---
+
 <div align="center">
 
 **English** | [中文](README.md)
