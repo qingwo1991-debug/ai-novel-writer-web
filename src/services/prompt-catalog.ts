@@ -353,10 +353,10 @@ export class PromptCatalog {
   }
 }
 
-/** Electron adapter for the PromptCatalog persistence seam. */
+/** Desktop/Web backend adapter for the PromptCatalog persistence seam. */
 export const ipcPromptPersistence: PromptPersistence = {
   async loadGlobal() {
-    if (!ipc.isElectron) return { templates: [], diagnostics: [] }
+    if (!(ipc.hasBackend || ipc.isElectron)) return { templates: [], diagnostics: [] }
     return await ipc.invoke('prompt:load-global') as unknown as PromptLoadReceipt
   },
 

@@ -16,6 +16,7 @@ export async function createReviewRevisionRecoveryWorkflow(projectSession: Proje
   if (!['review-chapter', 'refine-draft', 'refine-from-review'].includes(frozen.operation)
     || handle.projectId !== session.projectId || recovery.handle.runId !== handle.runId)
     throw new Error('GENERATION_REVIEW_RECOVERY_SCOPE_INVALID')
+  if (recovery.inFlight) throw new Error('GENERATION_DISPATCH_IN_FLIGHT')
   if (!recovery.saved && recovery.sourceStatus !== 'current') throw new Error('GENERATION_REVIEW_SOURCE_CHANGED')
   if (!recovery.saved && !recovery.canResume) throw new Error('GENERATION_REVIEW_RECOVERY_COPY_ONLY')
   const params = { draftPath: formatResourceUri({ kind: 'draft', id: source.id }), draftContent: source.content,

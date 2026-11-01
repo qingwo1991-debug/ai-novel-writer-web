@@ -107,6 +107,54 @@ it.each(['completed', 'running'])('显式重试按 receipt 的历史 artifact �
  })
  await runFinalizationGeneration({ ...setup(invoke), slot: characterSlot, retryOf })
 })
+it.each(['NETWORK_ERROR', 'GENERATION_PROVIDER_FAILED', 'ROOT_BUDGET_EXHAUSTED', 'GENERATION_STORAGE_FAILED'])(
+ '首次请求的 %s 原样保留；自动持久化重试只读历史，不重发、不提交半成品', async failureCode => {
+  let attempts = 0
+  const partial = { ...candidate, status: 'unknown', compositionEligible: false, text: '', revision: 0 }
+  const failed = { ...stored, latestAttempt: { attemptId: 'failed-attempt', inFlight: false, finishReason: null, failureCode },
+   view: { ...view, status: 'running', artifacts: [partial] } }
+  const invoke = vi.fn(async (channel: string) => {
+   if (channel === 'finalization-generation:read') return attempts ? failed : null
+   if (channel === 'finalization-generation:begin') return attempts ? failed : { ...stored, attemptCount: 0, view: { ...view, artifacts: [] } }
+   if (channel === 'finalization-generation:execute') {
+    attempts++
+    return { run: failed.view, outcome: { status: 'incomplete', finishReason: null, receipt: { failureCode } } }
+   }
+   throw new Error(channel)
+  })
+  const options = setup(invoke)
+  for (let retry = 0; retry < 3; retry++) await expect(runFinalizationGeneration(options)).rejects.toThrow(failureCode)
+  expect(attempts).toBe(1)
+  expect(invoke.mock.calls.filter(([channel]) => channel === 'finalization-generation:execute')).toHaveLength(1)
+  expect(invoke.mock.calls.filter(([channel]) => channel === 'finalization-generation:commit')).toHaveLength(0)
+ })
+it('连接失败后的作者显式恢复仍按主进程原尝试标识请求并只提交新完整证据', async () => {
+ const failed = { ...stored, latestAttempt: { attemptId: 'failed-attempt', inFlight: false, finishReason: null, failureCode: 'NETWORK_ERROR' },
+  view: { ...view, artifacts: [{ ...candidate, status: 'unknown', compositionEligible: false }] } }
+ const invoke = vi.fn(async (channel: string, request: unknown) => {
+  if (channel === 'finalization-generation:read' || channel === 'finalization-generation:begin') return failed
+  if (channel === 'finalization-generation:execute') {
+   expect(request).toEqual({ handle, recoverFrom: 'failed-attempt' })
+   return { run: view, outcome: { status: 'completed', finishReason: 'stop', receipt: { visibleArtifact: {
+    artifactId: candidate.artifactId, revision: candidate.revision, textHash: candidate.textHash,
+   } } } }
+  }
+  expect(channel).toBe('finalization-generation:commit')
+  expect(request).toEqual({ handle, artifact: { artifactId: candidate.artifactId, revision: candidate.revision, textHash: candidate.textHash } })
+  return effect
+ })
+ await expect(runFinalizationGeneration({ ...setup(invoke), recoverFrom: 'failed-attempt' })).resolves.toEqual(effect)
+ expect(invoke.mock.calls.map(([channel]) => channel)).toEqual(['finalization-generation:read', 'finalization-generation:begin', 'finalization-generation:execute', 'finalization-generation:commit'])
+})
+it('未登记的服务商错误文字不作为错误码透传，也不能提交失败候选', async () => {
+ const invoke = vi.fn(async (channel: string) => {
+  if (channel === 'finalization-generation:read') return null
+  if (channel === 'finalization-generation:begin') return { ...stored, attemptCount: 0, view: { ...view, artifacts: [] } }
+  if (channel === 'finalization-generation:execute') return { run: view, outcome: { status: 'incomplete', finishReason: null, receipt: { failureCode: 'untrusted provider response' } } }
+  throw new Error(channel)
+ })
+ await expect(runFinalizationGeneration(setup(invoke))).rejects.toThrow('FINALIZATION_GENERATION_INCOMPLETE')
+})
 it('已发请求且模型正常结束但结果不可用：报结果不可用，不说没有发出请求', async () => {
  const empty = { ...candidate, artifactId: '空候选', text: '', compositionEligible: false }
  const invoke = vi.fn(async (channel: string) => {

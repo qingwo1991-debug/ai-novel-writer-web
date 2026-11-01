@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书童 · 服务器写作桌面</title><link rel="stylesheet" href="/portal.css"><script defer src="/portal.js"></script></head>
+<body>
+<header><strong>书童 · 服务器写作桌面</strong><button data-panel="clipboard">中文剪贴板</button><button data-panel="transfer">导入 / 下载</button><a href="/vnc.html?autoconnect=true&resize=scale" target="_blank" rel="noopener">独立桌面</a><span class="warning">无密码 · 仅限可信局域网</span></header>
+<section id="clipboard" hidden><label for="text">在这里用本机输入法输入中文，再发送到服务器剪贴板。</label><textarea id="text" rows="3" placeholder="输入或粘贴中文内容……"></textarea><button id="copy">发送到服务器剪贴板</button><span>发送后点击桌面内的目标输入框，按 Ctrl+V。</span></section>
+<section id="transfer" hidden><p>新建作品请选择 <code>/data/workspaces</code>。上传文件保存到 <code>/data/imports</code>，再在应用的导入对话框选择该文件。导出时请选择 <code>/data/exports</code>，然后在下方下载。</p><input id="upload-file" type="file"><button id="upload">上传到服务器（最大 64 MB）</button><button id="refresh">刷新文件列表</button><div class="columns"><div><h3>已上传文件</h3><ul id="imports"></ul></div><div><h3>可下载导出</h3><ul id="exports"></ul></div></div></section>
+<p id="status" role="status" hidden></p>
+<iframe id="desktop" title="书童完整桌面" src="/vnc.html?autoconnect=true&resize=scale&reconnect=true&reconnect_delay=2000" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+</body></html>

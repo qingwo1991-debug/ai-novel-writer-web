@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { operations } from '../platform'
 
 import { isProjectSessionContext } from '../../src/shared/project-session-context'
 import type { DeleteFinalizedChapterRequest } from '../../src/shared/chapter-deletion'
@@ -16,7 +16,7 @@ export function registerChapterLifecycleController(
   service: ChapterDeletionService = chapterDeletionService,
 ): void {
   const register = (channel: string, handler: ChapterLifecycleHandler) => {
-    ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+    operations.handle(channel, async (event, ...args: unknown[]) => {
       const candidate = args.at(-1)
       const context = isProjectSessionContext(candidate) ? candidate : undefined
       if (context) args.pop()

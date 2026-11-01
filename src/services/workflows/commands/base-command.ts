@@ -1,4 +1,5 @@
 import type { WorkflowContext, StepCallbacks } from '../../../stores/workflow-store'
+import { sha256Hex } from '../../../utils/sha256'
 import { globalEventBus, EventPayloadMap } from '../../../shared/event-bus'
 import type { LLMFinishReason, ProjectSessionContext } from '../../../shared/ipc-channels'
 import type { BasePromptBuilder } from '../../prompts/prompt-builder'
@@ -358,8 +359,7 @@ export abstract class BaseWorkflowCommand<TResult = string> {
       const next = composedText ? composeVisibleContinuation(composedText, completion.content) : completion.content.trim()
       // A repeated response remains an independent artifact and is not acknowledged as continuation progress.
       if (composedText && (next.match(/[\p{L}\p{N}]/gu)?.length ?? 0) <= (composedText.match(/[\p{L}\p{N}]/gu)?.length ?? 0)) return
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(next))
-      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+      const hash = await sha256Hex(next)
       const receipt = await ipc.invokeWithProjectSession(options.context.projectSession, 'generation:compose-visible', handle, [...artifactIds, artifact.artifactId], hash)
       if (receipt.text !== next || receipt.textHash !== hash) throw new Error('GENERATION_COMPOSITION_RECEIPT_MISMATCH')
       artifactIds.push(artifact.artifactId); composedText = receipt.text

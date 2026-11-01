@@ -21,6 +21,7 @@ import {
   sameProjectSessionContext,
 } from './shared/project-session-context'
 import { getAutoNextChapterPrefill, type NextChapterBlueprint } from './services/auto-next-chapter'
+import './styles/browser.css'
 
 /** 主应用：纸墨外壳（流程脊、内容区标签与按需侧页），以及全局对话框与快捷键。 */
 export default function App() {
@@ -34,6 +35,17 @@ export default function App() {
   const initLLM = useLLMStore((s) => s.init)
   const loadRecentProjects = useProjectStore((s) => s.loadRecentProjects)
   const exitGuard = useWindowCloseGuard()
+
+  useEffect(() => {
+    const root = document.documentElement
+    const previousRuntime = root.dataset.runtime
+    // Legacy desktop test doubles expose only isElectron.
+    root.dataset.runtime = ipc.runtime ?? (ipc.isElectron ? 'electron' : 'unavailable')
+    return () => {
+      if (previousRuntime === undefined) delete root.dataset.runtime
+      else root.dataset.runtime = previousRuntime
+    }
+  }, [])
 
   // 初始化：主题 + LLM 模型 + 最近项目 + 缩放级别
   useEffect(() => {
@@ -135,6 +147,9 @@ export default function App() {
   // 全局快捷键: Cmd+N 新建项目，Cmd+O 打开项目，Cmd+= / Cmd+- / Cmd+0 缩放
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // IME candidate selection (including Safari's legacy 229 events) must
+      // never create/open a book or consume a browser zoom shortcut.
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
       const mod = e.metaKey || e.ctrlKey
       if (!mod) return
       if (e.key === 'n' || e.key === 'N') {
@@ -143,13 +158,13 @@ export default function App() {
       } else if (e.key === 'o' || e.key === 'O') {
         e.preventDefault()
         openProjectFolder()
-      } else if (e.key === '=' || e.key === '+') {
+      } else if (ipc.isElectron && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
         useThemeStore.getState().zoomIn()
-      } else if (e.key === '-') {
+      } else if (ipc.isElectron && e.key === '-') {
         e.preventDefault()
         useThemeStore.getState().zoomOut()
-      } else if (e.key === '0') {
+      } else if (ipc.isElectron && e.key === '0') {
         e.preventDefault()
         useThemeStore.getState().zoomReset()
       }
@@ -177,7 +192,7 @@ export default function App() {
       <StageRoot theme={resolvedTheme} exitGuard={exitGuard}>
         <StageShell theme={resolvedTheme} />
       </StageRoot>
-      <UpdateNotifier />
+      {ipc.isElectron && <UpdateNotifier />}
       {globalDialogs}
     </>
   )

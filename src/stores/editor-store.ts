@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { randomUUID } from '../utils/id'
 
 import type { DraftStatus } from '../shared/draft-status'
 import { sameProjectPathKey } from '../shared/project-session-context'
@@ -123,7 +124,7 @@ export function openPlanningRecoveryDraft(context: GenerationRecoveryContext, pr
     originalContent: draft,
     dirty: draft.length > 0,
     planningRecovery: context,
-    planningSaveOperationId: crypto.randomUUID(),
+    planningSaveOperationId: randomUUID(),
     planningSaveEnd: String(context.plotOutlineRecovery?.completeChapters.at(-1)
       ?? context.plotOutline?.range.from ?? context.blueprintRecovery?.editRange?.from ?? ''),
   })

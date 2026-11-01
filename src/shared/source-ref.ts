@@ -1,4 +1,5 @@
 import type { FinalizedSourceIdentity } from './finalized-continuity'
+import { sha256Hex } from '../utils/sha256'
 
 /** S01 seam only: repositories remain the sole source of author data. */
 export interface ProjectEpoch { projectId: string; epoch: string }
@@ -19,8 +20,7 @@ export const sameProjectEpoch = (a: ProjectEpoch, b: ProjectEpoch): boolean =>
   Boolean(a.projectId && a.epoch) && a.projectId === b.projectId && a.epoch === b.epoch
 
 export async function hashAuthorText(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text)
-  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('')
+  return sha256Hex(text)
 }
 export async function validateSourceRef(ref: SourceRef, current: ProjectEpoch, text: string): Promise<boolean> {
   const span = ref.span

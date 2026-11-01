@@ -158,7 +158,9 @@ export interface ReviewRevisionRecovery {
   context: ReviewRevisionContext
   modelId: string
   sourceStatus: 'current' | 'conflict'
-  /** False when a terminal candidate failed deterministic save validation and is copy-only. */
+  /** True while a server-owned reservation/dispatch is still active, including after tab reload. */
+  inFlight?: boolean
+  /** False while active or when a terminal candidate failed deterministic save validation. */
   canResume: boolean
   contextId?: string
   saved?: ReviewRevisionCommitReceipt

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { randomUUID } from '../utils/id'
 import {
   runAgentLoop,
   type ConfigImpactBlueprintProposal,
@@ -128,7 +129,7 @@ interface AgentState {
 // ===== 工具函数 =====
 
 /** 生成唯一 ID */
-const genId = () => crypto.randomUUID()
+const genId = () => randomUUID()
 
 /** 从消息内容生成会话标题 */
 const generateTitle = (content: string): string => {

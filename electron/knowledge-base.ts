@@ -43,6 +43,10 @@ import {
 } from './vector-store'
 import { getCurrentProjectPath, getProjectDb } from './database'
 import { ImportRunRepository } from './repositories/import-run-repository'
+import { FinalizationRepository } from './repositories/finalization-repository'
+import { SummaryRepository } from './repositories/summary-repository'
+import { readPortableRuntimeFreeze } from './services/portable-runtime-freeze'
+import type { FinalizedSourceIdentity } from '../src/shared/finalized-continuity'
 import { assertRequiredExpectedProjectPath } from './utils/project-context'
 import { getProjectDataRoot } from './services/project-data-locator'
 import { withKnowledgeSourceGate } from './services/knowledge-source-gate'
@@ -272,20 +276,21 @@ async function importTextInternal(
   projectPath: string,
   protocol: 'openai' | 'gemini',
   model: EmbeddingModel,
-  options?: { mode: 'fts-only' },
+  options?: { mode?: 'fts-only'; documentId?: string; chapterMeta?: { chapterNumber: number; chapterTitle: string }; assertAuthority?: () => void },
 ): Promise<{ success: boolean; docId?: string; chunkCount?: number; error?: string; errorCode?: typeof LEGACY_VECTOR_MIGRATION_BLOCKED }> {
   try {
     if (!text.trim()) return { success: false, error: 'KNOWLEDGE_BASE_TEXT_EMPTY' }
 
     await ensureMigration(projectPath)
 
-    const docId = randomUUID()
+    options?.assertAuthority?.()
+    const docId = options?.documentId ?? randomUUID()
 
     // 分块
     const embeddingOptions = normalizeEmbeddingOptions(model.embeddingOptions)
     const chunks = chunkText(text, embeddingOptions.chunkSize, embeddingOptions.chunkOverlap)
     // 解析章节元数据（从文件名提取）
-    const chapterMeta = parseChapterMetaFromFileName(fileName)
+    const chapterMeta = options?.chapterMeta ?? parseChapterMetaFromFileName(fileName)
 
     // 可选：生成向量
     let vectors: number[][] | undefined
@@ -295,13 +300,14 @@ async function importTextInternal(
       && await canWriteIncrementalVectors(projectPath)
     ) {
       try {
-        vectors = await generateEmbeddings(chunks, protocol, model, model.embeddingOptions?.batchSize)
+        vectors = await generateEmbeddings(chunks, protocol, model, model.embeddingOptions?.batchSize, options?.assertAuthority)
       } catch (e) {
         if (e instanceof EmbeddingResponseValidationError) throw e
         console.warn('[AI Novel KB] importText Embedding 失败，降级 FTS-only:', e)
       }
     }
 
+    options?.assertAuthority?.()
     writeKnowledgeCopy(getProjectDataRoot(projectPath), docId, {
       content: text, indexedHash: createHash('sha256').update(text).digest('hex'), edited: false, indexDirty: false,
     })
@@ -320,6 +326,90 @@ async function importTextInternal(
       return { success: false, error: result.error }
     }
     return { success: true, docId, chunkCount: chunks.length }
+  } catch (error) {
+    return { success: false, ...knowledgeFailureDetails(error) }
+  }
+}
+
+/**
+ * Finalization is an immutable import receipt, not an arbitrary renderer retry.
+ * The deterministic document identity survives an import/link/mark-ok lost ACK;
+ * complete canonical and vector evidence is checked before any embedding call.
+ */
+export async function importFinalizedText(
+  text: string,
+  fileName: string,
+  source: FinalizedSourceIdentity,
+  projectPath: string,
+  protocol: 'openai' | 'gemini',
+  model: EmbeddingModel,
+): Promise<{ success: boolean; docId?: string; chunkCount?: number; idempotent?: boolean; error?: string; errorCode?: typeof LEGACY_VECTOR_MIGRATION_BLOCKED }> {
+  try {
+    assertRequiredExpectedProjectPath(getCurrentProjectPath(), projectPath)
+    const database = getProjectDb()
+    if (!database) throw new Error('PROJECT_NOT_OPEN')
+    const assertAuthority = () => {
+      assertRequiredExpectedProjectPath(getCurrentProjectPath(), projectPath)
+      if (getProjectDb() !== database || !source || !Number.isSafeInteger(source.draftId)
+        || typeof text !== 'string' || typeof fileName !== 'string' || !fileName.trim()) {
+        throw new Error('FINALIZATION_KNOWLEDGE_SOURCE_CHANGED')
+      }
+      const saved = SummaryRepository.readFinalizedSource(source.draftId)
+      if (saved.status !== 'valid' || saved.snapshot.content !== text
+        || saved.snapshot.source.finalizationId !== source.finalizationId
+        || saved.snapshot.source.chapterNumber !== source.chapterNumber
+        || saved.snapshot.source.contentHash !== source.contentHash
+        || copyHash(text) !== source.contentHash || !FinalizationRepository.isAuthoritative(source.draftId)) {
+        throw new Error('FINALIZATION_KNOWLEDGE_SOURCE_CHANGED')
+      }
+      readPortableRuntimeFreeze(projectPath).assertMutable('finalization_outbox', source.finalizationId)
+      return saved.snapshot
+    }
+    assertAuthority()
+    await ensureMigration(projectPath)
+    return await withKnowledgeSourceGate(getProjectDataRoot(projectPath), async () => {
+      const snapshot = assertAuthority()
+      const identity = JSON.stringify(['finalization-knowledge:v1', source.finalizationId,
+        source.draftId, source.chapterNumber, source.contentHash])
+      const docId = `finalization-${copyHash(identity)}`
+      const options = normalizeEmbeddingOptions(model.embeddingOptions)
+      const chunks = chunkText(snapshot.content, options.chunkSize, options.chunkOverlap)
+      const integrity = await getDocumentIntegrity(projectPath, docId)
+      assertAuthority()
+      if (integrity) {
+        const copy = readKnowledgeCopy(getProjectDataRoot(projectPath), docId)
+        if (!integrity.complete || integrity.corpusKind !== 'project-knowledge'
+          || integrity.chunkCount !== chunks.length || integrity.chunkSetHash !== hashCanonicalChunkSet(chunks)
+          || integrity.embeddingGenerations.some(generation => !generation.complete)
+          || !copy || copy.content !== text || copy.indexDirty || copy.indexedHash !== source.contentHash) {
+          // Never report a damaged/edited/incomplete import as a successful receipt,
+          // and never destroy author edits or silently repeat paid work to repair it.
+          return { success: false, error: 'FINALIZATION_KNOWLEDGE_REPAIR_REQUIRED' }
+        }
+        FinalizationRepository.linkKnowledgeDocument(source.draftId, docId)
+        return { success: true, docId, chunkCount: integrity.chunkCount, idempotent: true }
+      }
+      if (FinalizationRepository.getByDraftId(source.draftId)?.knowledgeDocumentId === docId
+        || readKnowledgeCopy(getProjectDataRoot(projectPath), docId)) {
+        // A linked receipt (or a copy prepared by a prior attempt) with no index is
+        // missing commit evidence, not permission to silently buy embeddings again.
+        return { success: false, error: 'FINALIZATION_KNOWLEDGE_REPAIR_REQUIRED' }
+      }
+      const result = await importTextInternal(snapshot.content, fileName, projectPath, protocol, model, {
+        documentId: docId, chapterMeta: { chapterNumber: source.chapterNumber, chapterTitle: snapshot.chapterTitle }, assertAuthority,
+      })
+      if (!result.success) return result
+      assertAuthority()
+      const committed = await getDocumentIntegrity(projectPath, docId)
+      assertAuthority()
+      if (!committed?.complete || committed.chunkCount !== chunks.length
+        || committed.chunkSetHash !== hashCanonicalChunkSet(chunks)
+        || committed.embeddingGenerations.some(generation => !generation.complete)) {
+        return { success: false, error: 'FINALIZATION_KNOWLEDGE_REPAIR_REQUIRED' }
+      }
+      FinalizationRepository.linkKnowledgeDocument(source.draftId, docId)
+      return { ...result, idempotent: false }
+    })
   } catch (error) {
     return { success: false, ...knowledgeFailureDetails(error) }
   }

@@ -17,6 +17,7 @@ import {
   characterRosterEntriesFromCards,
 } from '../services/character-roster-client'
 import { randomUUID } from '../utils/id'
+import { sha256Hex } from '../utils/sha256'
 import { useEditorStore } from './editor-store'
 import { useProjectStore } from './project-store'
 import { useLocaleStore } from './locale-store'
@@ -712,8 +713,7 @@ export const useCharacterStore = create<CharacterState>()((set, get) => ({
         schemaVersion: 1 as const, intent: 'manual_edit' as const,
         entries: characterRosterEntriesFromCards(savedCharacters),
       }
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ projectSession, payload })))
-      const operationId = `manual-character-save-${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')}`
+      const operationId = `manual-character-save-${await sha256Hex(JSON.stringify({ projectSession, payload }))}`
       if (!isCharacterProjectSessionCurrent(projectSession)) return
       const result = await ipc.invokeWithProjectSession(projectSession, 'db:character-roster-commit', { ...payload, operationId }, projectKey)
       if (!result.success || !result.receipt) {

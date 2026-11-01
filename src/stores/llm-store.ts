@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { randomUUID } from '../utils/id'
 import { ipc } from '../services/ipc-client'
 import { requireIpcSuccess } from '../services/ipc-result'
 import { alertError } from '../components/ui/AlertDialog'
@@ -87,7 +88,7 @@ export const useLLMStore = create<LLMState>()((set, get) => ({
     if (initializationFlight) return initializationFlight
 
     const flight = (async () => {
-      if (!ipc.isElectron) {
+      if (!(ipc.hasBackend || ipc.isElectron)) {
         set({ loaded: true })
         return
       }
@@ -112,7 +113,7 @@ export const useLLMStore = create<LLMState>()((set, get) => ({
   },
 
   loadModels: async () => {
-    if (!ipc.isElectron) return
+    if (!(ipc.hasBackend || ipc.isElectron)) return
     const models = await ipc.invoke('llm:list-models')
     set({ models })
   },
@@ -219,7 +220,7 @@ export const useLLMStore = create<LLMState>()((set, get) => ({
       return ''
     }
 
-    const requestId = crypto.randomUUID()
+    const requestId = randomUUID()
     const projectSession = options?.projectSession
       ?? projectSessionContextFromProject(useProjectStore.getState().currentProject)
       ?? undefined

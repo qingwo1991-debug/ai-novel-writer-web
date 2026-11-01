@@ -1,3 +1,17 @@
+# AI Novel Writer — 原生浏览器 Web 重构
+
+> 本仓库是基于 [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer) 的独立修改版，保留上游 GPL-3.0 许可证与归属。原生版复用完整写作业务与 React/CodeMirror 界面，以纯 Node 网关和项目 worker 运行，**不使用 Electron、VNC 或浏览器远程桌面**。
+>
+> - **云端构建 / GHCR 镜像**：[GitHub Actions 指南](docker/README.github.md)
+> - **服务器部署、认证、备份与回滚**：[原生 Web 运维指南](docker/README.web.md)
+> - **实现与验收边界**：[迁移说明](web/MIGRATION-NOTES.md)、[逐项功能矩阵](web/FEATURE-MATRIX.md)、[浏览器验收证据](web/BROWSER-ACCEPTANCE.md)
+> - 作品、数据库和模型凭据保存在服务器数据卷中，不进入 Git 或镜像。工作流运行时需保持页面打开；当前为共享作者书库，不是多租户服务。
+> - 原生入口使用 `Dockerfile.web`，旧 `Dockerfile` / 桌面安装包及下方上游说明不代表原生 Web 安装步骤。上游桌面工作流保存在 `.github/upstream-workflows/` 供参考，不自动执行。
+>
+> 以下保留上游产品介绍、截图及桌面使用说明；它们不是本修改版的全功能验收声明。
+
+---
+
 <div align="center">
 
 [English](README_en.md) | **中文**

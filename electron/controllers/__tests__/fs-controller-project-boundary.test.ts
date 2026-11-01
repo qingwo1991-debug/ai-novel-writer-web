@@ -14,8 +14,9 @@ const mocks = vi.hoisted(() => ({
   assertCurrentProjectContext: vi.fn(),
 }))
 
-vi.mock('electron', () => ({
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { isPackaged: false },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

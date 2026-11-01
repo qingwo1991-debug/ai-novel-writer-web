@@ -5,6 +5,9 @@ import type { FinalizedCharacterArtifact } from '../shared/finalized-character-g
 import type { MainGenerationRunHandle } from './generation/generation-runtime'
 import { isTerminalProviderFailure, throwIfTerminalProviderFailure } from './generation/generation-harness'
 
+/** Safe main-normalized categories only; never surface provider text as an error code. */
+const durableAttemptFailures = new Set(['NETWORK_ERROR', 'GENERATION_PROVIDER_FAILED', 'ROOT_BUDGET_EXHAUSTED', 'GENERATION_STORAGE_FAILED'])
+
 /** Reuses one durable main slot. Saved effects never rebuild prompts or execute. */
 export async function runFinalizationGeneration(options: {
   session: ProjectSessionContext
@@ -53,6 +56,10 @@ export async function runFinalizationGeneration(options: {
     const requested = options.retryOf
     const retryOf = requested && candidates.some(item => item.artifactId === requested.artifactId) ? requested : undefined
     const recoverFrom = options.recoverFrom
+    // Automatic persistence retries must preserve the recorded request failure,
+    // not replace it with a misleading missing-artifact error or resend the call.
+    // Only an explicit author recovery reference admits a new request below.
+    if (!retryOf && !recoverFrom && latestFailure && durableAttemptFailures.has(latestFailure)) throw new Error(latestFailure)
     let executed = false
     if (retryOf || recoverFrom || !candidate || options.slot.stepKey === 'character_cards' && candidate.status === 'completed' && candidate.compositionEligible === true) {
       if (!candidate && recovery.attemptCount > 0 && !recoverFrom) throw new Error('FINALIZATION_GENERATION_OUTCOME_UNKNOWN')
@@ -63,6 +70,8 @@ export async function runFinalizationGeneration(options: {
       recovery.view = receipt.run
       if (options.cancelled()) { await cancel(); throw new Error('GENERATION_WORKFLOW_CANCELLED') }
       throwIfTerminalProviderFailure(receipt.outcome.receipt)
+      const failure = receipt.outcome.receipt.failureCode
+      if (failure && durableAttemptFailures.has(failure)) throw new Error(failure)
       if (receipt.outcome.status !== 'completed' || receipt.outcome.finishReason !== 'stop') throw new Error('FINALIZATION_GENERATION_INCOMPLETE')
       candidates = receipt.run.candidates ?? receipt.run.artifacts
       const reference = receipt.outcome.receipt.visibleArtifact

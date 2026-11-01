@@ -11,6 +11,17 @@ describe('定稿后处理步骤错误', () => {
     expect(finalizationStepErrorCode('network error: socket hang up')).toBeUndefined()
   })
 
+  it.each(['NETWORK_ERROR', 'GENERATION_PROVIDER_FAILED'])('%s 保留真实失败类别，说明正文保留且不会自动重发', code => {
+    expect(finalizationStepErrorCode(`Error invoking remote method 'project-session:invoke': Error: ${code}`)).toBe(code)
+    const zhText = describeFinalizationStepError(code, zh), enText = describeFinalizationStepError(code, en)
+    expect(zhText).toContain('定稿正文已保留')
+    expect(zhText).toContain('不会自动重复请求')
+    expect(enText).toContain('request will not be repeated automatically')
+    expect(zhText).not.toContain('本次没有发出新的模型请求')
+    expect(enText).not.toContain('no new model request was sent')
+    expect(planFinalizationRetry({ chapter_notes: { ok: false, error: code } }).card).toEqual(['chapter_notes'])
+  })
+
   it('断流说明提示重试，额度用完说明不提示重试', () => {
     expect(describeFinalizationStepError('FINALIZATION_GENERATION_INCOMPLETE', zh)).toBe('模型这次没有返回完整结果（连接中断或输出被截断）。请点「重试」重新生成这一步。')
     expect(describeFinalizationStepError('ROOT_BUDGET_EXHAUSTED', zh)).toBe('这次后处理的模型调用额度已用完（请求超时或用量超出预留），再点「重试」也不会重新生成。')

@@ -313,7 +313,7 @@ describe('workflow mutation failure boundaries', () => {
       },
     })
     const invoke = vi.fn(async (channel: string) => {
-      if (channel === 'kb:import-text') return { success: true, chunkCount: 1, docId: 'synthetic-doc' }
+      if (channel === 'kb:import-finalized-text') return { success: true, chunkCount: 1, docId: 'synthetic-doc' }
       if (channel === 'db:finalization-link-knowledge-document' || channel === 'db:continuity-save-finalized') return { success: true }
       if (channel === 'db:blueprint-update-notes') return { success: true }
       if (channel === 'db:character-roster-read') return { status: 'empty', revision: 0, entries: [] }
@@ -332,7 +332,7 @@ describe('workflow mutation failure boundaries', () => {
     expect(steps.map(step => step.key)).toEqual(['kb_import', 'chapter_notes', 'character_cards'])
     expect(complete).toHaveBeenCalledTimes(2)
     expect(invoke.mock.calls.map(([channel]) => channel)).toEqual(expect.arrayContaining([
-      'kb:import-text',
+      'kb:import-finalized-text',
       'db:blueprint-update-notes',
       'db:continuity-save-finalized',
     ]))
@@ -583,6 +583,21 @@ describe('workflow mutation failure boundaries', () => {
       PROJECT_PATH,
       expect.objectContaining({ projectId: 'A', leaseId: 'lease-A' }),
     )
+  })
+
+  it('routes receipt-bound finalization through the durable backend import without a separate renderer link', async () => {
+    const source = finalizedSource(41, 1, '正文')
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'kb:import-finalized-text') return { success: true, docId: 'stable-document-41', chunkCount: 1 }
+      throw new Error(`unexpected IPC: ${channel}`)
+    })
+    stubVelaIpc(invoke)
+    const step = buildFinalizePostProcessSteps({ path: PROJECT_PATH }, 1, '第一章', '正文',
+      testPostProcessGeneration(), 41, [], 'zh-CN', source, 7).find(candidate => candidate.key === 'kb_import')
+    await expect(step!.executor(callbacks(), context())).resolves.toBeUndefined()
+    expect(invoke).toHaveBeenCalledWith('kb:import-finalized-text', '正文', '第1章 第一章.txt', source,
+      PROJECT_PATH, expect.objectContaining({ projectId: 'A', leaseId: 'lease-A' }))
+    expect(invoke.mock.calls.some(([channel]) => channel === 'db:finalization-link-knowledge-document')).toBe(false)
   })
 
   it('uses an English knowledge-document prefix without rewriting mixed UTF-8 chapter facts', async () => {

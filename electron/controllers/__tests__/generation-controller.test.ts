@@ -14,7 +14,7 @@ import { SummaryRepository } from '../../repositories/summary-repository'
 import type { ModelProfile, ProjectSessionContext, NovelConfig } from '../../../src/shared/ipc-channels'
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 const mocks = vi.hoisted(() => ({ handlers: new Map<string, Handler>(), globalRoot: '' }))
-vi.mock('electron', () => ({ ipcMain: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
+vi.mock('../../platform', () => ({ appHost: { isPackaged: false, getLocale: () => 'en-US' }, operations: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
 vi.mock('../../services/app-data-locator', () => ({ getGlobalDataRoot: () => mocks.globalRoot }))
 vi.mock('../kb-controller', () => ({ getEmbeddingConfig: () => null }))
 import { generationIpcErrorCode, registerGenerationController } from '../generation-controller'
@@ -41,7 +41,7 @@ import { readPortableRuntimeFreeze } from '../../services/portable-runtime-freez
 
 const model: ModelProfile = { id: 'fixture', name: '合成模型', provider: 'openai', protocol: 'openai', modelName: 'gpt-4.1',
   baseUrl: 'https://api.openai.com/v1', apiKey: 'synthetic-only', maxTokens: 1024, temperature: 0.7, purposes: ['generation'] }
-const sender = { isDestroyed: () => false, send: vi.fn() }
+const sender = { id: 1, isDestroyed: () => false, send: vi.fn(), once: vi.fn() }
 let root: string, session: ProjectSessionContext
 let openedProject: ReturnType<typeof projectAccess.createProject>
 const request: BeginGenerationRequest = { operation: 'draft', uiActionNonce: 'click', modelId: 'fixture',

@@ -15,6 +15,7 @@ import ToolCallBlock from './ToolCallBlock'
 import ConfirmCard from './ConfirmCard'
 import ArtifactCard from './ArtifactCard'
 import '../../../styles/agent-tools.css'
+import { copyText } from '../../../utils/clipboard'
 
 interface Props {
   message: AgentMessageType
@@ -26,7 +27,7 @@ export default function AgentMessage({ message }: Props) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copyMessage = async () => {
     try {
-      await navigator.clipboard.writeText(content)
+      await copyText(content)
       setCopyState('copied')
     } catch {
       setCopyState('failed')

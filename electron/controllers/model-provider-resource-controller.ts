@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron'
+import { operations, navigationHost } from '../platform'
 
 import {
   isModelProviderResourceId,
@@ -8,13 +8,13 @@ import {
 export interface ModelProviderResourceControllerOptions {
   /** Injectable boundary for deterministic handling without exposing shell to the renderer. */
   openExternal?: (url: string) => Promise<void>
-  ipc?: Pick<typeof ipcMain, 'handle'>
+  ipc?: Pick<typeof operations, 'handle'>
 }
 
 /** Opens only fixed, allowlisted model-provider destinations in the system browser. */
 export function registerModelProviderResourceController({
-  openExternal = url => shell.openExternal(url),
-  ipc = ipcMain,
+  openExternal = url => navigationHost.openExternal(url),
+  ipc = operations,
 }: ModelProviderResourceControllerOptions = {}) {
   ipc.handle('model-provider-resource:open', async (_event, resource: unknown) => {
     if (!isModelProviderResourceId(resource)) {

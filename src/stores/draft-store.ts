@@ -13,6 +13,7 @@ import {
   type DraftMeta,
 } from '../services/draft-index'
 import type { DraftStatus } from '../shared/draft-status'
+import type { PendingReviewRecheck } from '../shared/review-cycle'
 import type { AllInvokeChannels, ProjectSessionContext } from '../shared/ipc-channels'
 import {
   projectSessionContextFromProject,
@@ -26,6 +27,7 @@ import { useEditorStore } from './editor-store'
 import { useLocaleStore } from './locale-store'
 
 let loadAllDraftsRequestSequence = 0
+let reviewRechecksRequestSequence = 0
 
 function currentDraftProjectSession(
   expectedProjectPath?: string,
@@ -76,6 +78,10 @@ export type DraftsByChapter = Record<number, DraftMeta[]>
 interface DraftState {
   /** 各章草稿列表（内存缓存），key = chapterNumber */
   draftsByChapter: DraftsByChapter
+  /** Durable required rechecks; refresh only projects facts and never enqueues a model request. */
+  pendingReviewRechecks: PendingReviewRecheck[]
+  reviewRechecksError: string | null
+  refreshPendingReviewRechecks: (expectedProjectPath?: string, expectedProjectSession?: ProjectSessionContext) => Promise<void>
   /** 是否正在加载 */
   loading: boolean
   /** Project whose data is currently bound to draftsByChapter. */
@@ -129,6 +135,8 @@ interface DraftState {
 
 export const useDraftStore = create<DraftState>()((set, get) => ({
   draftsByChapter: {},
+  pendingReviewRechecks: [],
+  reviewRechecksError: null,
   loading: false,
   dataProjectKey: null,
   dataProjectSession: null,
@@ -137,8 +145,11 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
 
   beginProjectLoad: (projectPath) => {
     loadAllDraftsRequestSequence++
+    reviewRechecksRequestSequence++
     set({
       draftsByChapter: {},
+      pendingReviewRechecks: [],
+      reviewRechecksError: null,
       loading: true,
       dataProjectKey: null,
       dataProjectSession: null,
@@ -149,14 +160,32 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
 
   reset: () => {
     loadAllDraftsRequestSequence++
+    reviewRechecksRequestSequence++
     set({
       draftsByChapter: {},
+      pendingReviewRechecks: [],
+      reviewRechecksError: null,
       loading: false,
       dataProjectKey: null,
       dataProjectSession: null,
       loadingProjectKey: null,
       loadingProjectSession: null,
     })
+  },
+
+  refreshPendingReviewRechecks: async (expectedProjectPath, expectedProjectSession) => {
+    const projectSession = currentDraftProjectSession(expectedProjectPath, expectedProjectSession)
+    if (!projectSession) return
+    const requestId = ++reviewRechecksRequestSequence
+    const current = () => requestId === reviewRechecksRequestSequence && isDraftProjectSessionCurrent(projectSession)
+    try {
+      const pending = await ipc.invokeWithProjectSession(projectSession,
+        'db:review-cycle-list-pending-rechecks', projectSession.projectPath)
+      if (!Array.isArray(pending)) throw new Error('REVIEW_CYCLE_RECOVERY_READ_INVALID')
+      if (current()) set({ pendingReviewRechecks: pending, reviewRechecksError: null })
+    } catch (error) {
+      if (current()) set({ reviewRechecksError: error instanceof Error ? error.message : String(error) })
+    }
   },
 
   loadChapterDrafts: async (chapterNumber, expectedProjectPath, expectedProjectSession) => {
@@ -179,6 +208,8 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
       const metas = toDraftMetas(list)
 
       set(s => ({
+        pendingReviewRechecks: sameProjectSessionContext(s.dataProjectSession, projectSession) ? s.pendingReviewRechecks : [],
+        reviewRechecksError: sameProjectSessionContext(s.dataProjectSession, projectSession) ? s.reviewRechecksError : null,
         draftsByChapter: {
           ...(sameProjectSessionContext(s.dataProjectSession, projectSession) ? s.draftsByChapter : {}),
           [chapterNumber]: metas,
@@ -188,6 +219,10 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
       }))
     } catch {
       // 出错或不存在时跳过
+    } finally {
+      if (requestId === loadAllDraftsRequestSequence && isDraftProjectSessionCurrent(projectSession)) {
+        await get().refreshPendingReviewRechecks(projectPath, projectSession)
+      }
     }
   },
 
@@ -199,6 +234,8 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
     const requestId = ++loadAllDraftsRequestSequence
 
     set(s => ({
+      pendingReviewRechecks: sameProjectSessionContext(s.dataProjectSession, projectSession) ? s.pendingReviewRechecks : [],
+      reviewRechecksError: sameProjectSessionContext(s.dataProjectSession, projectSession) ? s.reviewRechecksError : null,
       draftsByChapter: sameProjectSessionContext(s.dataProjectSession, projectSession)
         ? s.draftsByChapter
         : {},
@@ -254,6 +291,7 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
         )
       ) {
         set({ loading: false, loadingProjectKey: null, loadingProjectSession: null })
+        await get().refreshPendingReviewRechecks(projectPath, projectSession)
       }
     }
   },
@@ -360,7 +398,8 @@ export const useDraftStore = create<DraftState>()((set, get) => ({
         return { success: true, receipt: committedReceipt, postCommitError: staleProjectError().error }
       }
 
-      if (merged.receipt?.reviewCycle?.disposition === 'required') {
+      // A replay acknowledges an already committed merge; it is not new consent for a billable recheck.
+      if (merged.receipt?.reviewCycle?.disposition === 'required' && !merged.receipt.idempotent) {
         const { createReviewOnlyWorkflow } = await import('../services/workflows/chapter-workflow')
         const { useWorkflowStore } = await import('./workflow-store')
         if (!isDraftProjectSessionCurrent(projectSession)) {

@@ -252,6 +252,11 @@ export class GenerationRunRepository {
     attemptCount(runId: string): number {
         return this.db().prepare('SELECT COUNT(*) FROM generation_attempts WHERE run_id=?').pluck().get(runId) as number;
     }
+    /** Live reservations survive a browser reload, but become unknown/cancelled on owner restart. */
+    hasInFlight(runId: string): boolean {
+        return Boolean(this.db().prepare(`SELECT 1 FROM generation_attempts WHERE run_id=?
+            AND json_extract(attempt_json,'$.status') IN ('reserved','dispatch-marked') LIMIT 1`).get(runId));
+    }
     hasNonCancelledAttempt(runId: string): boolean {
         const rows = this.db().prepare('SELECT attempt_json FROM generation_attempts WHERE run_id=?').all(runId) as { attempt_json: string }[];
         return rows.some(row => (JSON.parse(row.attempt_json) as PhysicalAttempt).status !== 'cancelled-before-dispatch');
@@ -329,6 +334,10 @@ export class GenerationRunRepository {
                 return prior;
             if (!nonce || !isContentHash(requestHash))
                 fail('GENERATION_INVOCATION_INVALID');
+            // Exact invocation replay above remains read-only. A fresh nonce must not
+            // overlap the request a refreshed renderer can no longer see locally.
+            if (this.hasInFlight(runId))
+                fail('GENERATION_DISPATCH_IN_FLIGHT');
             const run = this.get(runId), budget = this.budget(run.rootActionId);
             if (run.status !== 'running' || budget.blockedCode)
                 fail('GENERATION_DISPATCH_BLOCKED');

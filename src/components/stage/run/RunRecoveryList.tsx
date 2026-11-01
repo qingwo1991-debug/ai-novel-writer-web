@@ -4,7 +4,7 @@ import { useLocaleStore } from '../../../stores/locale-store'
 import GenerationBudgetDiagnostics from '../../panels/GenerationBudgetDiagnostics'
 import { useProjectStore } from '../../../stores/project-store'
 import type { WorkflowRun } from '../../../stores/workflow-store'
-import { canResumeDraft, isInFlight, type CandidateEntry, type DraftEntry, type RecoveryEntry } from '../../run/run-recovery'
+import { canResumeDraft, isInFlight, pendingRecoveryHandle, type CandidateEntry, type DraftEntry, type RecoveryEntry } from '../../run/run-recovery'
 import type { RunRecovery } from '../../run/use-run-recovery'
 import { Button } from '../../ui/Button'
 import { Check } from '../../ui/Check'
@@ -31,6 +31,12 @@ export function RunRecoveryList({ recovery, liveRuns }: { recovery: RunRecovery;
 function RecoveryCard({ entry, recovery, text }: { entry: RecoveryEntry; recovery: RunRecovery; text: Text }) {
   const locale = useLocaleStore(s => s.locale)
   const { busy } = recovery
+  if (pendingRecoveryHandle(entry)) return (
+    <RecoveryShell title={entry.title} text={text}
+      notes={[text('服务端仍在处理原请求；请等待，或暂停后恢复。刷新不会自动继续后续步骤，也不会重新调用模型。',
+        'The server is still processing the original request. Wait, or pause before recovering. Refresh does not restart the model request or continue later workflow steps.')]}
+      actions={<Button variant="secondary" size="sm" disabled={busy} onClick={() => recovery.pausePending(entry)}>{text('暂停原请求', 'Pause original request')}</Button>} />
+  )
   switch (entry.kind) {
     case 'candidate':
       return <CandidateCard entry={entry} recovery={recovery} text={text} />
@@ -54,6 +60,9 @@ function RecoveryCard({ entry, recovery, text }: { entry: RecoveryEntry; recover
           {entry.tails.map(item => <Excerpt key={item.id} text={item.text} copyLabel={entry.labels.copyTail} onCopy={() => recovery.copy(item.text)} />)}
         </RecoveryShell>
       )
+    case 'recheck':
+      return <RecoveryShell title={entry.title} text={text} notes={[entry.note]}
+        actions={<Button variant="secondary" size="sm" disabled={busy} onClick={() => recovery.startRecheck(entry)}>{entry.actionLabel}</Button>} />
     case 'review':
       return (
         <RecoveryShell title={entry.title} text={text} notes={[entry.usage, ...entry.notes]}

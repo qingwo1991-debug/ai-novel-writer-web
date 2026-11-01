@@ -8,6 +8,7 @@ import { useProjectStore } from '../../stores/project-store'
 import { useWorkflowStore } from '../../stores/workflow-store'
 import { LLMDataRequestGate } from '../panels/llm-data-request-gate'
 import { toast } from '../ui/Toast'
+import { copyText } from '../../utils/clipboard'
 
 const REFRESH_MS = 2000
 const HISTORY_LIMIT = 30
@@ -70,10 +71,6 @@ export function useModelCalls(): ModelCalls {
 /** 复制一条调用的安全诊断（不含正文与密钥），结果用提示告诉作者。 */
 export async function copySafeDiagnostic(call: LLMCallRecord, workflow: SafeDiagnosticWorkflow | undefined, locale: Locale): Promise<void> {
   const t = (zh: string, en: string) => locale === 'en-US' ? en : zh
-  if (!navigator.clipboard?.writeText) {
-    toast.error(t('当前环境不支持复制安全诊断', 'Safe diagnostic copying is unavailable in this environment.'))
-    return
-  }
   const diagnostic = formatSafeCallDiagnostic({
     locale,
     appVersion: __APP_VERSION__,
@@ -82,7 +79,7 @@ export async function copySafeDiagnostic(call: LLMCallRecord, workflow: SafeDiag
     workflow,
   })
   try {
-    await navigator.clipboard.writeText(diagnostic)
+    await copyText(diagnostic)
     toast.success(t('已复制安全诊断', 'Safe diagnostics copied.'))
   } catch {
     toast.error(t('复制安全诊断失败', 'Could not copy safe diagnostics.'))

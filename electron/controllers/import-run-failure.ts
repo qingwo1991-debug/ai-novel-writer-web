@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { appHost } from '../platform'
 import { knownAppErrorMessage } from '../../src/i18n/app-errors'
 import { resolveLocale, translate } from '../../src/i18n/core'
 import type { Locale } from '../../src/i18n/types'
@@ -53,9 +53,9 @@ export function importRunLocale(runId?: unknown, requestedLocale?: unknown): Loc
     }
   }
   try {
-    return getMainLocale(app.getLocale())
+    return getMainLocale(appHost.getLocale())
   } catch {
     // 全局设置还读不出来时按系统语言说明，不让查语言的失败盖住导入本身的报错。
-    return resolveLocale(app.getLocale())
+    return resolveLocale(appHost.getLocale())
   }
 }

@@ -16,7 +16,14 @@ let fixtureRoot = ''
 let velaHome = ''
 let mcpManager: Manager
 
-function createMcpProcess(options: { initializeError?: string; failToStart?: boolean; neverRespond?: boolean } = {}) {
+function createMcpProcess(options: {
+  initializeError?: string
+  failToStart?: boolean
+  neverRespond?: boolean
+  tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>
+  holdToolCalls?: boolean
+  toolError?: string
+} = {}) {
   const processEmitter = new EventEmitter()
   const stdout = new EventEmitter()
   const stderr = new EventEmitter()
@@ -28,16 +35,18 @@ function createMcpProcess(options: { initializeError?: string; failToStart?: boo
         queueMicrotask(() => processEmitter.emit('error', new Error('SECRET_CHILD_ERROR_MARKER')))
         return true
       }
-      if (options.neverRespond) return true
+      if (options.neverRespond || (options.holdToolCalls && request.method === 'tools/call')) return true
 
-      const payload = request.method === 'initialize' && options.initializeError
-        ? { error: { message: options.initializeError } }
+      const error = request.method === 'initialize' ? options.initializeError
+        : request.method === 'tools/call' ? options.toolError : undefined
+      const payload = error
+        ? { error: { message: error } }
         : {
             result: request.method === 'tools/list'
-              ? { tools: [] }
+              ? { tools: options.tools ?? [] }
               : request.method === 'resources/list'
                 ? { resources: [] }
-                : {},
+                : { content: [{ type: 'text', text: 'fixture tool result' }] },
           }
       queueMicrotask(() => {
         stdout.emit('data', Buffer.from(`${JSON.stringify({
@@ -69,6 +78,7 @@ function writeConfig(value: unknown): void {
 beforeEach(async () => {
   vi.resetModules()
   spawnMock.mockReset()
+  vi.stubEnv('AI_NOVEL_RUNTIME', 'desktop')
   velaHome = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'ai-novel-mcp-'))
   fixtureRoot = velaHome
     velaHome = await (await import('../../services/__tests__/global-data-fixture')).prepareGlobalDataFixture(fixtureRoot)
@@ -81,6 +91,8 @@ afterEach(async () => {
   delete process.env.AI_NOVEL_VELA_HOME
     delete process.env.AI_NOVEL_APP_DATA_HOME
   fs.rmSync(fixtureRoot, { recursive: true, force: true })
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 describe('MCP trusted configuration boundary', () => {

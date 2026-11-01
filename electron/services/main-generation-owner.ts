@@ -329,7 +329,7 @@ export function createMainGenerationOwner(deps: MainGenerationOwnerDependencies)
     })
     return { handle: handleOf(run), status: run.status as MainGenerationRunView['status'], operation: run.binding.sourceManifest.operation as string,
       ...(plotOutline ? { plotOutline } : {}),
-      budgetDiagnostics,
+      budgetDiagnostics, inFlight: repository.hasInFlight(run.runId),
       nonReplayable: run.binding.epoch !== deps.epoch || run.status !== 'running' || !!budget.blockedCode
         || repository.isPrivatePlanningHistory(run.runId) || !!repository.readPlanningContinuation(run.runId)
         || !!(plotOutline && repository.readPlotOutlineAuthorEdit(run.runId)),
@@ -635,7 +635,10 @@ export function createMainGenerationOwner(deps: MainGenerationOwnerDependencies)
     }
     const existing = repository.findInvocation(run.runId, request.invocationNonce, requestHash)
     if (existing && (task.purpose === DRAFT_SHORT_OUTLINE_PURPOSE || existing.attempt.status !== 'dispatch-marked' && existing.attempt.status !== 'reserved')) return outcomeOf(volatileReceipts.get(existing.attempt.attemptId) ?? existing, task)
+    // A live worker invocation outlives a browser renderer. Same-nonce calls
+    // joined above; only a genuinely new physical request is fenced here.
     repository.assertPlotOutlineRequest(run.runId, task.purpose, task)
+    if (repository.hasInFlight(run.runId)) throw new Error('GENERATION_DISPATCH_IN_FLIGHT')
     if (task.purpose === DRAFT_SHORT_OUTLINE_PURPOSE && runAttempts(run.runId).length) {
       if (!shortOutlineRetryAttemptId) throw new Error('GENERATION_DRAFT_SHORT_OUTLINE_ALREADY_ATTEMPTED')
       const original = assertShortOutlineRetryAvailable(run, shortOutlineRetryAttemptId)
@@ -926,7 +929,7 @@ export function createMainGenerationOwner(deps: MainGenerationOwnerDependencies)
     })
     const rows = deps.database.prepare('SELECT attempt_id,usage_receipt_json FROM generation_attempts WHERE run_id=? ORDER BY rowid').all(run.runId) as { attempt_id: string; usage_receipt_json: string }[]
     const last = composition ? deps.database.prepare('SELECT attempt_id FROM generation_artifacts WHERE artifact_id=?').pluck().get(composition.artifactIds.at(-1)) as string : undefined
-    return { modelId: modelReceipt(run.binding).modelId, handle: handleOf(run), operation: manifest.operation as string, chapterNumber: manifest.chapterNumber as number | undefined,
+    return { modelId: modelReceipt(run.binding).modelId, handle: handleOf(run), inFlight: repository.hasInFlight(run.runId), operation: manifest.operation as string, chapterNumber: manifest.chapterNumber as number | undefined,
       ...(plotOutline ? { plotOutline, plotOutlineRecovery: plotOutlineRecovery(run, plotOutline) } : {}),
       ...(continuation ? { planningContinuation: continuation } : {}),
       ...(blueprint && blueprint.kind !== 'available' ? { blueprintRecovery: {
@@ -1031,7 +1034,7 @@ export function createMainGenerationOwner(deps: MainGenerationOwnerDependencies)
           return
         }
         const recovery = readContext(handle)
-        if (recovery.composition || recovery.draftShortOutline?.completedOutput || recovery.draftShortOutline?.retry?.kind === 'available'
+        if (view.inFlight || recovery.composition || recovery.draftShortOutline?.completedOutput || recovery.draftShortOutline?.retry?.kind === 'available'
           || withoutDraftReconciliationArtifacts([...view.artifacts, ...(view.candidates ?? [])], recovery).some(hasText)
           || view.unsavedTails?.some(hasText)) list.drafts.push({ view, recovery })
       },
@@ -1049,7 +1052,8 @@ export function createMainGenerationOwner(deps: MainGenerationOwnerDependencies)
     for (const run of batchRoots) {
       try {
         const batch = draftEffects.readBatchHistory(run.handle.runId, deps.projectId, commits)
-        if (batch.nextChapterNumber !== null) list.batches.push(batch)
+        const inFlight = repository.budget(batch.rootHandle.rootActionId).attempts.some(attempt => ['reserved', 'dispatch-marked'].includes(attempt.status))
+        if (batch.nextChapterNumber !== null) list.batches.push({ ...batch, inFlight })
       } catch { list.partial = true }
     }
     return list

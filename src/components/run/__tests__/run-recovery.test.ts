@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRecoveryEntries, canResumeDraft, EMPTY_RECOVERY_SOURCES, isInFlight, outlineSourceChangedNote, type DraftEntry, type RecoverySources, type ReviewEntry } from '../run-recovery'
+import { buildRecoveryEntries, canResumeDraft, EMPTY_RECOVERY_SOURCES, isInFlight, pendingRecoveryHandle, outlineSourceChangedNote, type DraftEntry, type RecoverySources, type ReviewEntry } from '../run-recovery'
 
 const handle = { projectId: '灯塔', epoch: '会话', rootActionId: '预算', runId: '正文' }
 const artifact = (artifactId: string, compositionEligible: boolean) => ({
@@ -68,6 +68,29 @@ describe('单章写作中断', () => {
 })
 
 describe('还在写的生成', () => {
+  it('刷新后没有本地工作流时，权威待处理标记保留等待入口而非允许重新审稿', () => {
+    const entry = review({ canResume: false, inFlight: true }, { status: 'running', output: { inFlight: true } })
+    expect(isInFlight(entry, '会话', [])).toBe(false)
+    expect(pendingRecoveryHandle(entry)).toEqual(entry.view.handle)
+    expect(entry.canAct).toBe(false)
+    expect(entry.notes).toEqual([])
+    const settled = review({}, { status: 'running', output: { inFlight: false } })
+    expect(pendingRecoveryHandle(settled)).toBeUndefined()
+    expect(settled.canAct).toBe(true)
+  })
+
+  it('正文和批量的待处理请求不能继续，批量暂停沿用原根身份', () => {
+    const pendingDraft = { ...draft({}), view: { ...draft({}).view, inFlight: true } }
+    expect(canResumeDraft(pendingDraft, ['甲'])).toBe(false)
+    expect(pendingRecoveryHandle(pendingDraft)).toEqual(pendingDraft.view.handle)
+    const [batch] = buildRecoveryEntries({ ...EMPTY_RECOVERY_SOURCES, batches: [{
+      batchId: '批次', rootHandle: handle, completedChapters: [], nextChapterNumber: 3,
+      range: { startChapter: 3, endChapter: 5 }, sourceCurrent: true, inFlight: true,
+    } as never] }, 'en-US')
+    expect(batch).toMatchObject({ canContinue: false })
+    expect(pendingRecoveryHandle(batch)).toEqual(handle)
+  })
+
   it('这次打开里有运行正在写这一章时不算可恢复；运行已经结束（会话内失败）或上次打开时没写完的都算', () => {
     const running = (epoch: string) => buildRecoveryEntries({ ...EMPTY_RECOVERY_SOURCES, drafts: [{
       view: { ...view('正文', { status: 'running', artifacts: [artifact('甲', true)] }), handle: { ...handle, epoch } } as never,
@@ -248,6 +271,21 @@ describe('审稿候选的片段', () => {
 })
 
 describe('列表', () => {
+  it('合并后的所需复核只提供显式入口，并与同周期恢复结果或本地运行去重', () => {
+    const pending = { cycleId: 'cycle', mergedHash: 'merged', disposition: 'required' as const,
+      reviewId: 4, rootActionId: 'budget', sourceDraft: { id: 2, chapterNumber: 3, version: 2, status: 'revised' as const, content: '合并正文' } }
+    const sources = { ...EMPTY_RECOVERY_SOURCES, rechecks: [pending] }
+    const [entry] = buildRecoveryEntries(sources, 'en-US')
+    expect(entry).toMatchObject({ kind: 'recheck', actionLabel: 'Start required recheck', pending })
+    expect(isInFlight(entry, '会话', [])).toBe(false)
+    expect(isInFlight(entry, '会话', [{ type: 'chapter_creation', resourceKeys: ['chapter:3'] }])).toBe(true)
+    const recovered = { view: view('复核', { inFlight: true }), recovery: { handle, modelId: '模型', canResume: false,
+      sourceStatus: 'current', attemptedPurposes: ['review-chapter'],
+      context: { operation: 'review-chapter', source: { chapterNumber: 3 }, recheck: { cycleId: 'cycle', mergedHash: 'merged', findings: [] } } } } as unknown as RecoverySources['reviews'][number]
+    expect(buildRecoveryEntries({ ...sources, reviews: [recovered] }, 'en-US').map(item => item.kind)).toEqual(['review'])
+    expect(buildRecoveryEntries({ ...sources, reviews: [{ ...recovered, view: view('复核', { status: 'cancelled' }) as never }] }, 'en-US').map(item => item.kind)).toEqual(['review', 'recheck'])
+  })
+
   it('按恢复稿、选区建议、审修、批量、单章、旧恢复候选排列，英文界面用英文', () => {
     const sources: RecoverySources = {
       planning: [{ handle: { ...handle, runId: '大纲' }, plotOutlineRecovery: {} } as never],

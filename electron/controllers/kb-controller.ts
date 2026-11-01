@@ -1,6 +1,5 @@
-import { app, ipcMain } from 'electron'
+import { appHost, operations, type InvokeEvent } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
-import type { IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { readJsonFile, GLOBAL_CONFIG_PATH, DEFAULT_GLOBAL_CONFIG, MODELS_CONFIG_PATH } from '../utils/config-utils'
 import { GlobalConfig, ModelProfile } from '../../src/shared/ipc-channels'
@@ -33,7 +32,7 @@ import { explainImportRunFailure, importRunLocale } from './import-run-failure'
 import { FinalizationRepository } from '../repositories/finalization-repository'
 
 function text(zhCNText: string, enUSText: string): string {
-  return mainText(app.getLocale(), zhCNText, enUSText)
+  return mainText(appHost.getLocale(), zhCNText, enUSText)
 }
 
 function invalidExternalGrantText(): string {
@@ -198,7 +197,7 @@ function requireProjectPath(expectedProjectPath: string): string {
 }
 
 type KnowledgeBaseHandler<Args extends unknown[] = unknown[]> = (
-  event: IpcMainInvokeEvent,
+  event: InvokeEvent,
   ...args: Args
 ) => unknown
 
@@ -208,7 +207,7 @@ function registerKnowledgeBaseHandler<Args extends unknown[]>(
   channel: string,
   handler: KnowledgeBaseHandler<Args>,
 ): void {
-  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+  operations.handle(channel, async (event, ...args: unknown[]) => {
     if (!channel.startsWith('kb:')) return handler(event, ...(args as Args))
     const candidate = args.at(-1)
     const context = isProjectSessionContext(candidate) ? candidate : undefined
@@ -231,8 +230,8 @@ export function registerKBController(
   fileSystem: WindowsSafeFileSystem = windowsSafeFileSystem,
 ) {
   // 所有 kb:* 操作需携带同一冻结会话；选择文件/目录仍是外部授权能力。
-  const ipcMain = { handle: registerKnowledgeBaseHandler }
-  ipcMain.handle('kb:import-document', async (event, grantId: string, expectedProjectPath: string) => {
+  const operations = { handle: registerKnowledgeBaseHandler }
+  operations.handle('kb:import-document', async (event, grantId: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     let importedFile: { fileName: string; content: string }
     try {
@@ -260,7 +259,7 @@ export function registerKBController(
     ))
   })
 
-  ipcMain.handle('kb:import-folder', async (event, grantId: string, expectedProjectPath: string) => {
+  operations.handle('kb:import-folder', async (event, grantId: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     let importedFiles: Array<{ fileName: string; content: string }>
     try {
@@ -305,7 +304,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:import-text', async (_event, text: string, fileName: string, expectedProjectPath: string) => {
+  operations.handle('kb:import-text', async (_event, text: string, fileName: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
     const protocol = embConfig?.protocol ?? 'openai'
@@ -313,7 +312,15 @@ export function registerKBController(
     return knowledgeBaseLoader.run((kb) => kb.importText(text, fileName, projectPath, protocol, model))
   })
 
-  ipcMain.handle('kb:import-planning-text', async (_event, text: string, fileName: string, expectedProjectPath: string) => {
+  operations.handle('kb:import-finalized-text', async (_event, text: string, fileName: string,
+    source: import('../../src/shared/finalized-continuity').FinalizedSourceIdentity, expectedProjectPath: string) => {
+    const projectPath = requireProjectPath(expectedProjectPath)
+    const embConfig = getEmbeddingConfig()
+    return knowledgeBaseLoader.run(kb => kb.importFinalizedText(text, fileName, source, projectPath,
+      embConfig?.protocol ?? 'openai', embConfig?.model ?? UNCONFIGURED_EMBEDDING_MODEL))
+  })
+
+  operations.handle('kb:import-planning-text', async (_event, text: string, fileName: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
     const protocol = embConfig?.protocol ?? 'openai'
@@ -328,7 +335,7 @@ export function registerKBController(
     ))
   })
 
-  ipcMain.handle('kb:import-reference-text', async (
+  operations.handle('kb:import-reference-text', async (
     _event,
     chapterNumber: number,
     runId: string,
@@ -369,7 +376,7 @@ export function registerKBController(
     }
   })
 
-  ipcMain.handle('kb:search', async (_event, query: string, topK: number | undefined, expectedProjectPath: string) => {
+  operations.handle('kb:search', async (_event, query: string, topK: number | undefined, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
 
@@ -381,7 +388,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:search-writing-context', async (_event, query: string, topK: number | undefined, expectedProjectPath: string) => {
+  operations.handle('kb:search-writing-context', async (_event, query: string, topK: number | undefined, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
 
@@ -401,7 +408,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:search-with-scope', async (_event, query: string, fromChapter: number, toChapter: number, topK: number | undefined, expectedProjectPath: string) => {
+  operations.handle('kb:search-with-scope', async (_event, query: string, fromChapter: number, toChapter: number, topK: number | undefined, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
 
@@ -414,7 +421,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:list-documents', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:list-documents', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run(async (kb) => {
       const documents = await kb.listDocuments(projectPath)
@@ -426,23 +433,23 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:read-document-copy', async (_event, docId: string, expectedProjectPath: string) => {
+  operations.handle('kb:read-document-copy', async (_event, docId: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run((kb) => kb.readDocumentCopy(docId, projectPath))
   })
 
-  ipcMain.handle('kb:save-document-copy', async (_event, docId: string, content: string,
+  operations.handle('kb:save-document-copy', async (_event, docId: string, content: string,
     expectedContentHash: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run((kb) => kb.saveDocumentCopy(docId, content, expectedContentHash, projectPath))
   })
 
-  ipcMain.handle('kb:reindex-document-copy', async (_event, docId: string, expectedProjectPath: string) => {
+  operations.handle('kb:reindex-document-copy', async (_event, docId: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run((kb) => kb.reindexDocumentCopy(docId, projectPath))
   })
 
-  ipcMain.handle('kb:remove-document', async (_event, docId: string, expectedProjectPath: string) => {
+  operations.handle('kb:remove-document', async (_event, docId: string, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run(async (kb) => {
       try {
@@ -459,7 +466,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:clear-all', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:clear-all', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run(async (kb) => {
       const success = await kb.clearKnowledgeBase(projectPath)
@@ -467,17 +474,17 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:stats', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:stats', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run((kb) => kb.getKnowledgeStats(projectPath))
   })
 
-  ipcMain.handle('kb:get-vectorless-count', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:get-vectorless-count', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     return knowledgeBaseLoader.run((kb) => kb.getVectorlessCount(projectPath))
   })
 
-  ipcMain.handle('kb:get-vector-rebuild-status', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:get-vector-rebuild-status', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
     // Do not cause a provider request, or even offer the action, until the
@@ -506,14 +513,14 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('kb:backfill-vectors', async (_event, expectedProjectPath: string) => {
+  operations.handle('kb:backfill-vectors', async (_event, expectedProjectPath: string) => {
     const projectPath = requireProjectPath(expectedProjectPath)
     const embConfig = getEmbeddingConfig()
     if (!hasUsableEmbeddingConfig(embConfig)) return { success: false, processed: 0, failed: 0, errorCode: 'EMBEDDING_MODEL_NOT_CONFIGURED', error: text('未配置 Embedding 模型', 'No embedding model is configured') }
     return knowledgeBaseLoader.run((kb) => kb.backfillVectors(projectPath, embConfig.protocol, embConfig.model))
   })
 
-  ipcMain.handle('dialog:select-knowledge-files', async (event) => {
+  operations.handle('dialog:select-knowledge-files', async (event) => {
     const result = await showOpenDialogInLastDirectory('knowledge-files', {
       properties: ['openFile', 'multiSelections'],
       title: text('选择要导入的文档', 'Choose documents to import'),
@@ -533,7 +540,7 @@ export function registerKBController(
     })
   })
 
-  ipcMain.handle('dialog:select-knowledge-folder', async (event) => {
+  operations.handle('dialog:select-knowledge-folder', async (event) => {
     const result = await showOpenDialogInLastDirectory('knowledge-folder', {
       properties: ['openDirectory'],
       title: text('选择要批量导入的文件夹', 'Choose a folder to import'),

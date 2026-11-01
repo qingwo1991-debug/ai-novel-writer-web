@@ -1,6 +1,8 @@
 import React, { useRef, useState } from 'react'
 import { Brain, ChevronRight } from 'lucide-react'
 import { useLocaleStore } from '../../stores/locale-store'
+import { copyText } from '../../utils/clipboard'
+import { toast } from './Toast'
 
 interface MarkdownContentProps {
   content: string
@@ -209,7 +211,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const codeRef = useRef<HTMLElement>(null)
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(code).catch(() => {})
+    void copyText(code).catch(() => toast.error(text('无法复制代码', 'Could not copy code')))
   }
 
   return (

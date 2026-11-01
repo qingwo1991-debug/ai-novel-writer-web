@@ -3,6 +3,7 @@ import type { LLMFinishReason, ModelProfile, TokenUsage } from '../../src/shared
 import { VisibleStreamFilter } from './visible-stream'
 import { StreamTransportDiagnostics } from './transport-diagnostics'
 import { providerFailureCode } from './provider-context-length'
+import { endpointFetch } from '../platform/endpoint-fetch'
 
 function assertVisibleStreamPayload(value: unknown): void {
   const record = (input: unknown): input is Record<string, unknown> =>
@@ -115,7 +116,7 @@ export class GeminiProvider implements ILLMProvider {
         body.systemInstruction = { parts: [{ text: systemInstruction }] }
       }
 
-      const res = await fetch(url, {
+      const res = await endpointFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -194,7 +195,7 @@ export class GeminiProvider implements ILLMProvider {
         body.systemInstruction = { parts: [{ text: systemInstruction }] }
       }
 
-      const res = await transport.response(fetch(url, {
+      const res = await transport.response(endpointFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

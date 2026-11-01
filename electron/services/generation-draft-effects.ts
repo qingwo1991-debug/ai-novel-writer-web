@@ -128,7 +128,9 @@ export class GenerationDraftEffects {
       const postProcess = outbox ? this.db.prepare("SELECT id,all_critical_passed FROM post_process_runs WHERE trigger_source_type='chapter_finalize' AND trigger_source_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").get(`finalization:${outbox.finalization_id}`) as { id: string; all_critical_passed: number } | undefined : undefined
       const steps = postProcess ? this.db.prepare('SELECT step_key,critical,ok FROM post_process_steps WHERE run_id=?').all(postProcess.id) as { step_key: string; critical: number; ok: number }[] : []
       const postProcessComplete = postProcess?.all_critical_passed === 1 && ['kb_import', 'chapter_notes'].every(key => steps.some(step => step.step_key === key && step.critical === 1 && step.ok === 1))
-        && steps.filter(step => step.critical === 1).every(step => step.ok === 1)
+        // Automatic batches stop on any declared postprocess failure, including
+        // noncritical character state. Absent optional steps are not invented.
+        && steps.every(step => step.ok === 1)
       completedChapters.push({ chapterNumber: committed.chapterNumber, draftId: committed.id, version: committed.version,
         contentHash: committed.contentHash, sourceRunHandle: handleOf(this.runs.get(row.run_id)), postProcessComplete,
         ...(outbox?.publication_status === 'published' ? { finalizationId: outbox.finalization_id } : outbox ? { pendingFinalizationId: outbox.finalization_id } : {}) })

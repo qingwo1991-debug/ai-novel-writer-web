@@ -10,6 +10,7 @@
 
 import { normalizeEmbeddingOptions } from '../src/shared/embedding-options'
 import { EmbeddingResponseValidationError } from './services/embedding-response-error'
+import { endpointFetch } from './platform/endpoint-fetch'
 
 const RELEASE_SMOKE_BASE_URL_PREFIX = 'vela-release-smoke://'
 
@@ -251,7 +252,7 @@ export async function embedOpenAI(
   }
   const embeddingModel = model.modelName || 'text-embedding-3-small'
   const url = buildOpenAIEmbeddingUrl(model.baseUrl)
-  const res = await fetch(url, {
+  const res = await endpointFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -289,7 +290,7 @@ export async function embedGemini(
     taskType: 'RETRIEVAL_DOCUMENT',
   }))
 
-  const res = await fetch(url, {
+  const res = await endpointFetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

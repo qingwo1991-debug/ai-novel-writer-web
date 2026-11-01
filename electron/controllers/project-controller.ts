@@ -1,4 +1,4 @@
-import { app, ipcMain, dialog } from 'electron'
+import { appHost as app, operations as ipcMain, dialogHost as dialog, type InvokeEvent } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -330,6 +330,9 @@ function loadRecentProjects(): RecentProject[] {
 
 /** 最近项目导航元数据的唯一写入口。 */
 export function registerRecentProject(project: RecentProject): void {
+  // Web project workers never race the global metadata writer. The gateway
+  // indexes the canonical library directly and owns navigation metadata.
+  if (process.env.AI_NOVEL_WORKER_PROJECT) return
   const list = loadRecentProjects()
   const filtered = list.filter((p) => !sameRecentProjectPath(p.path, project.path))
   filtered.unshift(project)
@@ -338,6 +341,7 @@ export function registerRecentProject(project: RecentProject): void {
 }
 
 function removeRecentProject(projectPath: string) {
+  if (process.env.AI_NOVEL_WORKER_PROJECT) return
   const filtered = loadRecentProjects().filter((p) => !sameRecentProjectPath(p.path, projectPath))
   writeJsonFile(RECENT_PROJECTS_PATH, filtered)
 }
@@ -348,7 +352,7 @@ export interface ProjectControllerOptions {
 }
 
 export function registerProjectController(options: ProjectControllerOptions = {}) {
-  const issueDirectoryGrant = (event: Electron.IpcMainInvokeEvent, directoryPath: string,
+  const issueDirectoryGrant = (event: InvokeEvent, directoryPath: string,
     operation: 'project-create' | 'project-open' | 'legacy-import') => {
     const grant = externalFileGrants.issueDirectory({
       webContentsId: event.sender.id, directoryPath, operations: [operation], ttlMs: 10 * 60 * 1_000,
@@ -601,7 +605,7 @@ export function registerProjectController(options: ProjectControllerOptions = {}
         const smokePath = process.env.AI_NOVEL_SMOKE_OPEN_PROJECT?.trim()
         // Persisted recent entries are main-owned project references, not arbitrary path authority.
         const projectPath = typeof target === 'string'
-          ? recent?.path ?? (smokePath && target === smokePath ? smokePath : null)
+          ? recent?.path ?? (process.env.AI_NOVEL_WORKER_PROJECT === target ? target : null) ?? (smokePath && target === smokePath ? smokePath : null)
           : externalFileGrants.resolveDirectoryPath({
             grantId: target?.grantId, webContentsId: event.sender.id, operation: 'project-open',
           })

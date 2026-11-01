@@ -2,6 +2,7 @@ import path from 'node:path'
 
 import { tryReadJsonFile, writeJsonFile } from '../utils/config-utils'
 import { getGlobalDataRoot } from './app-data-locator'
+import { withCloudMetadataLock } from './cloud-metadata-lock'
 
 export const CLOUD_BACKUP_BINDINGS_FILE = 'cloud-backup-bindings.json'
 
@@ -142,6 +143,10 @@ export class CloudProjectBindingStore {
   }
 
   saveWritable(input: SaveWritableCloudProjectBindingInput): CloudProjectBinding {
+    return withCloudMetadataLock(this.filePath, () => this.saveWritableLocked(input))
+  }
+
+  private saveWritableLocked(input: SaveWritableCloudProjectBindingInput): CloudProjectBinding {
     const normalized = normalizeInput(input)
     if (input.expectedRevision !== null
       && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)) {
@@ -165,6 +170,10 @@ export class CloudProjectBindingStore {
   }
 
   saveOriginReadonly(input: SaveCloudProjectBindingInput): CloudProjectBinding {
+    return withCloudMetadataLock(this.filePath, () => this.saveOriginReadonlyLocked(input))
+  }
+
+  private saveOriginReadonlyLocked(input: SaveCloudProjectBindingInput): CloudProjectBinding {
     const normalized = normalizeInput(input)
     const document = this.read()
     const current = document.bindings.find(binding => binding.localProjectId === normalized.localProjectId)
@@ -185,25 +194,29 @@ export class CloudProjectBindingStore {
   }
 
   markAccountUnconfigured(localEndpointAccountId: string): number {
-    if (!validSafeId(localEndpointAccountId)) fail('CLOUD_BINDING_INPUT_INVALID')
-    const document = this.read()
-    let changed = 0
-    document.bindings = document.bindings.map(binding => {
-      if (binding.localEndpointAccountId !== localEndpointAccountId || binding.mode === 'unconfigured') return binding
-      changed += 1
-      return { ...binding, mode: 'unconfigured', revision: nextRevision(binding.revision) }
+    return withCloudMetadataLock(this.filePath, () => {
+      if (!validSafeId(localEndpointAccountId)) fail('CLOUD_BINDING_INPUT_INVALID')
+      const document = this.read()
+      let changed = 0
+      document.bindings = document.bindings.map(binding => {
+        if (binding.localEndpointAccountId !== localEndpointAccountId || binding.mode === 'unconfigured') return binding
+        changed += 1
+        return { ...binding, mode: 'unconfigured', revision: nextRevision(binding.revision) }
+      })
+      if (changed > 0) this.write(document)
+      return changed
     })
-    if (changed > 0) this.write(document)
-    return changed
   }
 
   removeDeletedProject(localProjectId: string): boolean {
-    if (!UUID.test(localProjectId)) fail('CLOUD_BINDING_INPUT_INVALID')
-    const document = this.read()
-    const bindings = document.bindings.filter(binding => binding.localProjectId !== localProjectId)
-    if (bindings.length === document.bindings.length) return false
-    this.write({ version: 1, bindings })
-    return true
+    return withCloudMetadataLock(this.filePath, () => {
+      if (!UUID.test(localProjectId)) fail('CLOUD_BINDING_INPUT_INVALID')
+      const document = this.read()
+      const bindings = document.bindings.filter(binding => binding.localProjectId !== localProjectId)
+      if (bindings.length === document.bindings.length) return false
+      this.write({ version: 1, bindings })
+      return true
+    })
   }
 
   private read(): CloudProjectBindingDocument {

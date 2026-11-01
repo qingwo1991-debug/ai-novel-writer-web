@@ -16,10 +16,10 @@ const mocks = vi.hoisted(() => ({
   knowledgeDocumentChapters: vi.fn(() => new Map<string, number>()),
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: vi.fn(() => 'zh-CN') },
-  dialog: { showOpenDialog: vi.fn() },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: vi.fn(() => 'zh-CN'), isPackaged: false },
+  dialogHost: { showOpenDialog: vi.fn() },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),
@@ -215,6 +215,7 @@ describe('knowledge-base controller project context guard', () => {
     ['kb:import-document', ['book.txt']],
     ['kb:import-folder', ['folder']],
     ['kb:import-text', ['text', 'book.txt']],
+    ['kb:import-finalized-text', ['text', 'book.txt', { draftId: 1, finalizationId: 'f1', chapterNumber: 1, contentHash: 'a'.repeat(64) }]],
     ['kb:import-planning-text', ['text', 'planning.md']],
     ['kb:search', ['query', 5]],
     ['kb:search-with-scope', ['query', 1, 3, 5]],

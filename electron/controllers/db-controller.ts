@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { operations, type InvokeEvent } from '../platform'
 import { isProjectSessionContext } from '../../src/shared/project-session-context'
 import { closeProjectDatabase, getCurrentProjectPath, getProjectDb } from '../database'
 import type { MainGenerationRunHandle } from '../../src/services/generation/generation-runtime'
@@ -140,7 +140,7 @@ function importChannelLocale(args: unknown[]): Locale {
 }
 
 function registerProjectDatabaseHandler(channel: string, handler: ProjectDatabaseHandler): void {
-  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+  operations.handle(channel, async (event, ...args: unknown[]) => {
     const candidate = args.at(-1)
     const context = isProjectSessionContext(candidate) ? candidate : undefined
     if (context) args.pop()
@@ -163,8 +163,8 @@ function registerProjectDatabaseHandler(channel: string, handler: ProjectDatabas
 
 export function registerDatabaseController() {
   // 所有 db:* 都通过同一会话门禁；下面现有 handler 保留业务参数与错误语义。
-  const ipcMain = { handle: registerProjectDatabaseHandler }
-  ipcMain.handle('db:close', async (_event, expectedProjectPath: string) => {
+  const operations = { handle: registerProjectDatabaseHandler }
+  operations.handle('db:close', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     closeProjectDatabase()
     projectAccess.invalidateCurrentSession()
@@ -174,12 +174,12 @@ export function registerDatabaseController() {
   // ============================================================
   // 1. project_core — 项目主台账
   // ============================================================
-  ipcMain.handle('db:project-core-get', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:project-core-get', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ProjectCoreRepository.get()
   })
 
-  ipcMain.handle('db:project-core-update', async (
+  operations.handle('db:project-core-update', async (
     _event,
     data: Partial<ProjectCoreData>,
     expectedProjectPath: string,
@@ -194,7 +194,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:project-core-commit-generated', async (
+  operations.handle('db:project-core-commit-generated', async (
     _event, request: { data: Partial<ProjectCoreData>; generationRunHandle: MainGenerationRunHandle }, expectedProjectPath: string,
   ) => {
     try {
@@ -209,7 +209,7 @@ export function registerDatabaseController() {
     } catch (error) { return { success: false, error: String(error) } }
   })
 
-  ipcMain.handle('db:project-core-synopsis-commit', async (
+  operations.handle('db:project-core-synopsis-commit', async (
     _event,
     request: ProjectCoreSynopsisCommitRequest,
     expectedProjectPath: string,
@@ -233,7 +233,7 @@ export function registerDatabaseController() {
     return { success: true }
   })
 
-  ipcMain.handle('db:import-global-facts-commit', async (
+  operations.handle('db:import-global-facts-commit', async (
     _event,
     request: ImportGlobalFactsRequest,
     expectedProjectPath: string,
@@ -242,7 +242,7 @@ export function registerDatabaseController() {
     return { success: true, receipt: ImportGlobalFactsRepository.commit(request) }
   })
 
-  ipcMain.handle('db:project-clear-generated-data', async (
+  operations.handle('db:project-clear-generated-data', async (
     _event,
     options: ProjectClearOptions,
     expectedProjectPath: string,
@@ -259,13 +259,13 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:import-run-prepare-inspection', async (
+  operations.handle('db:import-run-prepare-inspection', async (
     event,
     request: ImportRunPrepareFromInspectionRequest,
     expectedProjectPath: string,
   ) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
-    const webContentsId = (event as IpcMainInvokeEvent).sender.id
+    const webContentsId = (event as InvokeEvent).sender.id
     const inspected = importInspectionStore.peek(request.inspectionId, webContentsId, request.purpose)
     if (request.purpose === 'author-manuscript') {
       const preview = FinalizedDraftImportRepository.preview(inspected.chapters.map(chapter => ({
@@ -355,7 +355,7 @@ export function registerDatabaseController() {
     return { success: true, preparation: ImportRunRepository.finalizeParsing(parsingRun.id) }
   })
 
-  ipcMain.handle('db:import-run-finalize-parsing', async (
+  operations.handle('db:import-run-finalize-parsing', async (
     _event,
     runId: string,
     expectedProjectPath: string,
@@ -364,7 +364,7 @@ export function registerDatabaseController() {
     return { success: true, preparation: ImportRunRepository.finalizeParsing(runId) }
   })
 
-  ipcMain.handle('db:import-run-author-preview', async (
+  operations.handle('db:import-run-author-preview', async (
     event,
     inspectionId: string,
     expectedProjectPath: string,
@@ -372,7 +372,7 @@ export function registerDatabaseController() {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     const inspection = importInspectionStore.peek(
       inspectionId,
-      (event as IpcMainInvokeEvent).sender.id,
+      (event as InvokeEvent).sender.id,
       'author-manuscript',
     )
     return FinalizedDraftImportRepository.preview(inspection.chapters.map(chapter => ({
@@ -383,17 +383,17 @@ export function registerDatabaseController() {
     })))
   })
 
-  ipcMain.handle('db:import-run-get', async (_event, runId: string, expectedProjectPath: string) => {
+  operations.handle('db:import-run-get', async (_event, runId: string, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ImportRunRepository.get(runId)
   })
 
-  ipcMain.handle('db:import-run-list-resumable', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:import-run-list-resumable', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ImportRunRepository.listResumable()
   })
 
-  ipcMain.handle('db:import-run-list-chapters', async (
+  operations.handle('db:import-run-list-chapters', async (
     _event,
     runId: string,
     afterChapterNumber: number,
@@ -404,7 +404,7 @@ export function registerDatabaseController() {
     return ImportRunRepository.listChapterBatch(runId, { afterChapterNumber, limit })
   })
 
-  ipcMain.handle('db:import-run-effect-receipt-get', async (
+  operations.handle('db:import-run-effect-receipt-get', async (
     _event,
     runId: string,
     stage: ImportRunStage,
@@ -415,7 +415,7 @@ export function registerDatabaseController() {
     return ImportRunRepository.getEffectReceipt(runId, stage, batchId)
   })
 
-  ipcMain.handle('db:import-run-effect-receipt-prepare', async (
+  operations.handle('db:import-run-effect-receipt-prepare', async (
     _event,
     request: ImportRunPrepareEffectReceiptRequest,
     execution: ImportRunExecutionLease,
@@ -425,7 +425,7 @@ export function registerDatabaseController() {
     return { success: true, receipt: ImportRunRepository.prepareEffectReceipt(request, execution, Date.now(), assertImportGenerationSourcesCurrent) }
   })
 
-  ipcMain.handle('db:import-run-effect-receipt-commit', async (
+  operations.handle('db:import-run-effect-receipt-commit', async (
     _event,
     runId: string,
     stage: ImportRunStage,
@@ -437,7 +437,7 @@ export function registerDatabaseController() {
     return { success: true, result: ImportRunRepository.commitEffectReceipt(runId, stage, batchId, execution, Date.now(), (handle, slot) => assertImportGenerationSourcesCurrent(handle, slot, true)) }
   })
 
-  ipcMain.handle('db:import-run-start-resume', async (
+  operations.handle('db:import-run-start-resume', async (
     _event,
     runId: string,
     owner: string,
@@ -447,7 +447,7 @@ export function registerDatabaseController() {
     return { success: true, start: ImportRunRepository.startOrResume(runId, owner) }
   })
 
-  ipcMain.handle('db:import-run-renew-execution', async (
+  operations.handle('db:import-run-renew-execution', async (
     _event,
     runId: string,
     execution: ImportRunExecutionLease,
@@ -457,7 +457,7 @@ export function registerDatabaseController() {
     return { success: true, execution: ImportRunRepository.renewExecution(runId, execution) }
   })
 
-  ipcMain.handle('db:import-run-restart', async (
+  operations.handle('db:import-run-restart', async (
     _event,
     runId: string,
     nextRunId: string,
@@ -467,7 +467,7 @@ export function registerDatabaseController() {
     return { success: true, run: ImportRunRepository.restart(runId, nextRunId) }
   })
 
-  ipcMain.handle('db:import-run-request-cancel', async (
+  operations.handle('db:import-run-request-cancel', async (
     _event,
     runId: string,
     execution: ImportRunExecutionLease,
@@ -477,7 +477,7 @@ export function registerDatabaseController() {
     return { success: true, run: ImportRunRepository.requestCancel(runId, execution) }
   })
 
-  ipcMain.handle('db:import-run-cancel-at-boundary', async (
+  operations.handle('db:import-run-cancel-at-boundary', async (
     _event,
     runId: string,
     execution: ImportRunExecutionLease,
@@ -487,7 +487,7 @@ export function registerDatabaseController() {
     return { success: true, run: ImportRunRepository.cancelAtBoundary(runId, execution) }
   })
 
-  ipcMain.handle('db:import-run-complete-batch', async (
+  operations.handle('db:import-run-complete-batch', async (
     _event,
     runId: string,
     stage: ImportRunStage,
@@ -500,7 +500,7 @@ export function registerDatabaseController() {
     return { success: true, ...ImportRunRepository.completeBatch(runId, stage, batchId, execution) }
   })
 
-  ipcMain.handle('db:import-run-advance-stage', async (
+  operations.handle('db:import-run-advance-stage', async (
     _event,
     runId: string,
     completedStage: ImportRunStage,
@@ -512,7 +512,7 @@ export function registerDatabaseController() {
     return { success: true, run: ImportRunRepository.advanceStage(runId, completedStage, nextStage, execution) }
   })
 
-  ipcMain.handle('db:import-run-fail', async (
+  operations.handle('db:import-run-fail', async (
     _event,
     runId: string,
     stage: ImportRunStage,
@@ -527,7 +527,7 @@ export function registerDatabaseController() {
     return { success: true, run: ImportRunRepository.fail(runId, stage, reason, execution) }
   })
 
-  ipcMain.handle('db:import-run-complete', async (
+  operations.handle('db:import-run-complete', async (
     _event,
     runId: string,
     execution: ImportRunExecutionLease,
@@ -540,17 +540,17 @@ export function registerDatabaseController() {
   // ============================================================
   // 2. blueprints — 章节蓝图
   // ============================================================
-  ipcMain.handle('db:blueprint-get-all', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-get-all', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return BlueprintRepository.getAll()
   })
 
-  ipcMain.handle('db:blueprint-get', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-get', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return BlueprintRepository.getByChapter(chapterNumber)
   })
 
-  ipcMain.handle('db:blueprint-upsert', async (_event, data: BlueprintData, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-upsert', async (_event, data: BlueprintData, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       BlueprintRepository.upsert(data)
@@ -560,7 +560,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-upsert-many', async (_event, items: BlueprintData[], expectedProjectPath: string) => {
+  operations.handle('db:blueprint-upsert-many', async (_event, items: BlueprintData[], expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       BlueprintRepository.upsertMany(items)
@@ -570,7 +570,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-commit-range', async (
+  operations.handle('db:blueprint-commit-range', async (
     _event,
     request: BlueprintRangeCommitRequest,
     expectedProjectPath: string,
@@ -600,7 +600,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-character-sync-list-pending', async (
+  operations.handle('db:blueprint-character-sync-list-pending', async (
     _event,
     expectedProjectPath: string,
   ) => {
@@ -608,7 +608,7 @@ export function registerDatabaseController() {
     return BlueprintRepository.listPendingCharacterSyncOperations()
   })
 
-  ipcMain.handle('db:blueprint-character-sync-get', async (
+  operations.handle('db:blueprint-character-sync-get', async (
     _event,
     operationId: string,
     expectedProjectPath: string,
@@ -617,7 +617,7 @@ export function registerDatabaseController() {
     return BlueprintRepository.getCharacterSyncOperation(operationId)
   })
 
-  ipcMain.handle('db:blueprint-character-sync-complete', async (
+  operations.handle('db:blueprint-character-sync-complete', async (
     _event,
     operationId: string,
     expectedProjectPath: string,
@@ -633,7 +633,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-update-notes', async (_event, _chapterNumber: number, _notes: string, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-update-notes', async (_event, _chapterNumber: number, _notes: string, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       // Derived finalization notes are committed with their artifact and ACK in one main transaction.
@@ -643,7 +643,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-delete', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-delete', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       BlueprintRepository.delete(chapterNumber)
@@ -653,7 +653,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:blueprint-clear-all', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:blueprint-clear-all', async (_event, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       BlueprintRepository.clearAll()
@@ -666,12 +666,12 @@ export function registerDatabaseController() {
   // ============================================================
   // 3. characters — 角色卡
   // ============================================================
-  ipcMain.handle('db:character-get-all', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:character-get-all', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return CharacterRepository.getAll()
   })
 
-  ipcMain.handle('db:character-roster-read', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:character-roster-read', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     const roster = CharacterRosterRepository.read()
     const database = getProjectDb()
@@ -686,7 +686,7 @@ export function registerDatabaseController() {
     return { ...roster, currentDerivedFields }
   })
 
-  ipcMain.handle('db:character-roster-commit', async (
+  operations.handle('db:character-roster-commit', async (
     _event,
     request: CharacterRosterCommitRequest,
     expectedProjectPath: string,
@@ -713,7 +713,7 @@ export function registerDatabaseController() {
   // ============================================================
   // 4. drafts — 草稿
   // ============================================================
-  ipcMain.handle('db:draft-import-finalized-batch', async (
+  operations.handle('db:draft-import-finalized-batch', async (
     _event,
     request: FinalizedDraftImportRequest,
     expectedProjectPath: string,
@@ -727,7 +727,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:draft-create', async (_event, params: {
+  operations.handle('db:draft-create', async (_event, params: {
     chapterNumber: number
     version: number
     source: 'write' | 'rewrite'
@@ -744,57 +744,57 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:draft-list', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-list', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.listByChapter(chapterNumber)
   })
 
-  ipcMain.handle('db:draft-list-all', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:draft-list-all', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.listAll()
   })
 
-  ipcMain.handle('db:draft-get-meta', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-get-meta', async (_event, id: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getMeta(id)
   })
 
-  ipcMain.handle('db:draft-get-full', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-get-full', async (_event, id: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getFull(id)
   })
 
-  ipcMain.handle('db:draft-get-latest', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-get-latest', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getLatestByChapter(chapterNumber)
   })
 
-  ipcMain.handle('db:draft-get-finalized', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-get-finalized', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getFinalizedByChapter(chapterNumber)
   })
 
-  ipcMain.handle('db:draft-get-max-finalized-chapter', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:draft-get-max-finalized-chapter', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getMaxFinalizedChapter()
   })
 
-  ipcMain.handle('db:draft-authority-sequence', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:draft-authority-sequence', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return FinalizedDraftImportRepository.authoritySequence()
   })
 
-  ipcMain.handle('db:draft-export-snapshot', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:draft-export-snapshot', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return FinalizationRepository.listAuthoritativeForExport()
   })
 
-  ipcMain.handle('db:draft-export-authority-current', async (_event, receipt, expectedProjectPath: string) => {
+  operations.handle('db:draft-export-authority-current', async (_event, receipt, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return FinalizationRepository.matchesAuthoritativeExportReceipt(receipt)
   })
 
-  ipcMain.handle('db:continuity-save-finalized', async (_event, _request, expectedProjectPath: string) => {
+  operations.handle('db:continuity-save-finalized', async (_event, _request, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       throw new Error('GENERATION_FINALIZATION_ADMISSION_REQUIRED')
@@ -803,7 +803,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:continuity-save-character-state-candidates', async (_event, _request, expectedProjectPath: string) => {
+  operations.handle('db:continuity-save-character-state-candidates', async (_event, _request, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       throw new Error('GENERATION_FINALIZATION_ADMISSION_REQUIRED')
@@ -812,22 +812,22 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:continuity-list-before', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:continuity-list-before', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return SummaryRepository.listFinalizedContinuityBefore(chapterNumber)
   })
 
-  ipcMain.handle('db:continuity-read-source', async (_event, draftId: number, expectedProjectPath: string) => {
+  operations.handle('db:continuity-read-source', async (_event, draftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return SummaryRepository.readFinalizedSource(draftId)
   })
 
-  ipcMain.handle('db:consistency-exemption-list', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:consistency-exemption-list', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ConsistencyExemptionRepository.list()
   })
 
-  ipcMain.handle('db:consistency-exemption-save', async (_event, stableFactKey: string, reason: string, expectedProjectPath: string) => {
+  operations.handle('db:consistency-exemption-save', async (_event, stableFactKey: string, reason: string, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       ConsistencyExemptionRepository.save(stableFactKey, reason)
@@ -837,7 +837,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:consistency-exemption-revoke', async (_event, stableFactKey: string, expectedProjectPath: string) => {
+  operations.handle('db:consistency-exemption-revoke', async (_event, stableFactKey: string, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       ConsistencyExemptionRepository.revoke(stableFactKey)
@@ -847,43 +847,43 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:narrative-thread-list', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-list', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return NarrativeThreadRepository.list()
   })
 
-  ipcMain.handle('db:narrative-thread-list-relevant', async (_event, context, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-list-relevant', async (_event, context, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return NarrativeThreadRepository.listRelevantActive(context)
   })
 
-  ipcMain.handle('db:narrative-thread-plan-create', async (_event, input, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-plan-create', async (_event, input, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return { success: true, plan: NarrativeThreadRepository.createPlan(input) }
   })
 
-  ipcMain.handle('db:narrative-thread-plan-update', async (_event, id: number, input, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-plan-update', async (_event, id: number, input, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return { success: true, plan: NarrativeThreadRepository.updatePlan(id, input) }
   })
 
-  ipcMain.handle('db:narrative-thread-plan-delete', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-plan-delete', async (_event, id: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     NarrativeThreadRepository.deletePlan(id)
     return { success: true }
   })
 
-  ipcMain.handle('db:narrative-thread-event-confirm', async (_event, input, expectedProjectPath: string) => {
+  operations.handle('db:narrative-thread-event-confirm', async (_event, input, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return { success: true, event: NarrativeThreadRepository.confirmEvent(input) }
   })
 
-  ipcMain.handle('db:plot-tree-read', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:plot-tree-read', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return PlotTreeRepository.read()
   })
 
-  ipcMain.handle('db:plot-tree-save', async (
+  operations.handle('db:plot-tree-save', async (
     _event,
     _snapshot,
     _expectedSourceRevision: string,
@@ -897,18 +897,18 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:plot-tree-clear', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:plot-tree-clear', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     PlotTreeRepository.clear()
     return { success: true }
   })
 
-  ipcMain.handle('db:draft-next-version', async (_event, chapterNumber: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-next-version', async (_event, chapterNumber: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return DraftRepository.getNextVersion(chapterNumber)
   })
 
-  ipcMain.handle('db:draft-update-status', async (_event, id: number, status: string, wordCount: number | undefined, expectedProjectPath: string) => {
+  operations.handle('db:draft-update-status', async (_event, id: number, status: string, wordCount: number | undefined, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       DraftRepository.updateStatus(id, status, wordCount)
@@ -918,7 +918,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:draft-update-content', async (_event, id: number, content: string, wordCount: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-update-content', async (_event, id: number, content: string, wordCount: number, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       const draft = DraftRepository.getMeta(id)
@@ -930,7 +930,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:draft-delete', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-delete', async (_event, id: number, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       DraftRepository.delete(id)
@@ -948,7 +948,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:recovery-candidate-record', async (
+  operations.handle('db:recovery-candidate-record', async (
     _event,
     request: RecoveryCandidateRecordInput,
     expectedProjectPath: string,
@@ -964,12 +964,12 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:recovery-candidate-list', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:recovery-candidate-list', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return RecoveryCandidateRepository.listPending()
   })
 
-  ipcMain.handle('db:recovery-candidate-update', async (
+  operations.handle('db:recovery-candidate-update', async (
     _event,
     candidateId: string,
     visibleText: string,
@@ -984,7 +984,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:recovery-candidate-resolve', async (
+  operations.handle('db:recovery-candidate-resolve', async (
     _event,
     candidateId: string,
     status: 'continued' | 'discarded',
@@ -999,7 +999,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:finalization-link-knowledge-document', async (
+  operations.handle('db:finalization-link-knowledge-document', async (
     _event,
     draftId: number,
     documentId: string,
@@ -1019,7 +1019,7 @@ export function registerDatabaseController() {
   // ============================================================
   // 5. revisions — 修稿
   // ============================================================
-  ipcMain.handle('db:revision-create', async (_event, params: {
+  operations.handle('db:revision-create', async (_event, params: {
     baseDraftId: number
     revisionType: 'refine' | 'review-fix'
     userPrompt?: string
@@ -1041,7 +1041,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:revision-replace-pending', async (_event, params: {
+  operations.handle('db:revision-replace-pending', async (_event, params: {
     baseDraftId: number
     revisionType: 'refine' | 'review-fix'
     userPrompt?: string
@@ -1063,27 +1063,27 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:revision-list', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-list', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return RevisionRepository.listByDraft(baseDraftId)
   })
 
-  ipcMain.handle('db:revision-get-pending', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-get-pending', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return RevisionRepository.getPending(baseDraftId)
   })
 
-  ipcMain.handle('db:revision-get-full', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-get-full', async (_event, id: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return RevisionRepository.getFull(id)
   })
 
-  ipcMain.handle('db:revision-next-index', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-next-index', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return RevisionRepository.getNextIndex(baseDraftId)
   })
 
-  ipcMain.handle('db:revision-merge', async (_event, request: Parameters<typeof RevisionRepository.mergeIntoDraft>[0], expectedProjectPath: string) => {
+  operations.handle('db:revision-merge', async (_event, request: Parameters<typeof RevisionRepository.mergeIntoDraft>[0], expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       return { success: true, receipt: RevisionRepository.mergeIntoDraft(request) }
@@ -1092,7 +1092,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:revision-mark-merged', async (_event, id: number, mergedToDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-mark-merged', async (_event, id: number, mergedToDraftId: number, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       RevisionRepository.markMerged(id, mergedToDraftId)
@@ -1102,7 +1102,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:revision-mark-discarded', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:revision-mark-discarded', async (_event, id: number, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       RevisionRepository.markDiscarded(id)
@@ -1115,7 +1115,7 @@ export function registerDatabaseController() {
   // ============================================================
   // 6. reviews — 审稿
   // ============================================================
-  ipcMain.handle('db:review-create', async (_event, params: {
+  operations.handle('db:review-create', async (_event, params: {
     baseDraftId: number
     reviewIndex?: number
     content: string
@@ -1145,29 +1145,35 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:review-list', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:review-list', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ReviewRepository.listByDraft(baseDraftId)
   })
 
-  ipcMain.handle('db:review-get-latest', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:review-get-latest', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ReviewRepository.getLatestByDraft(baseDraftId)
   })
 
-  ipcMain.handle('db:review-get-full', async (_event, id: number, expectedProjectPath: string) => {
+  operations.handle('db:review-get-full', async (_event, id: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ReviewRepository.getFull(id)
   })
 
-  ipcMain.handle('db:review-cycle-get', async (_event, reviewId: number, expectedProjectPath: string) => {
+  operations.handle('db:review-cycle-get', async (_event, reviewId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     const db = getProjectDb()
     if (!db) return null
     return ReviewCycleRepository.getByReviewId(reviewId, db)
   })
 
-  ipcMain.handle('db:review-next-index', async (_event, baseDraftId: number, expectedProjectPath: string) => {
+  operations.handle('db:review-cycle-list-pending-rechecks', async (_event, expectedProjectPath: string) => {
+    assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
+    const db = getProjectDb()
+    return db ? ReviewCycleRepository.listPendingRechecks(db) : []
+  })
+
+  operations.handle('db:review-next-index', async (_event, baseDraftId: number, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return ReviewRepository.getNextIndex(baseDraftId)
   })
@@ -1175,7 +1181,7 @@ export function registerDatabaseController() {
   // ============================================================
   // 7. post_process — 后处理跑批
   // ============================================================
-  ipcMain.handle('db:post-process-create-run', async (
+  operations.handle('db:post-process-create-run', async (
     _event,
     params: {
       triggerSourceType: string
@@ -1195,17 +1201,17 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:post-process-get-latest-run', async (_event, sourceType: string, sourceId: string, expectedProjectPath: string) => {
+  operations.handle('db:post-process-get-latest-run', async (_event, sourceType: string, sourceId: string, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return PostProcessRepository.getLatestRun(sourceType, sourceId)
   })
 
-  ipcMain.handle('db:post-process-get-steps', async (_event, runId: string, expectedProjectPath: string) => {
+  operations.handle('db:post-process-get-steps', async (_event, runId: string, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return PostProcessRepository.getSteps(runId)
   })
 
-  ipcMain.handle('db:post-process-mark-step-ok', async (_event, runId: string, stepKey: string, expectedProjectPath: string) => {
+  operations.handle('db:post-process-mark-step-ok', async (_event, runId: string, stepKey: string, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       PostProcessRepository.markStepOk(runId, stepKey)
@@ -1215,7 +1221,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:post-process-mark-step-failed', async (_event, runId: string, stepKey: string, errorMsg: string, expectedProjectPath: string) => {
+  operations.handle('db:post-process-mark-step-failed', async (_event, runId: string, stepKey: string, errorMsg: string, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       PostProcessRepository.markStepFailed(runId, stepKey, errorMsg)
@@ -1225,7 +1231,7 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:post-process-is-all-passed', async (_event, sourceType: string, sourceId: string, expectedProjectPath: string) => {
+  operations.handle('db:post-process-is-all-passed', async (_event, sourceType: string, sourceId: string, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return PostProcessRepository.isAllCriticalPassed(sourceType, sourceId)
   })
@@ -1233,7 +1239,7 @@ export function registerDatabaseController() {
   // ============================================================
   // 沿用旧表
   // ============================================================
-  ipcMain.handle('db:log-llm-call', async (_event, call, expectedProjectPath: string) => {
+  operations.handle('db:log-llm-call', async (_event, call, expectedProjectPath: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
       LLMHistoryRepository.logCall(call)
@@ -1244,23 +1250,23 @@ export function registerDatabaseController() {
     }
   })
 
-  ipcMain.handle('db:get-llm-stats', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:get-llm-stats', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return LLMHistoryRepository.getStats()
   })
 
-  ipcMain.handle('db:get-llm-history', async (_event, limit: number | undefined, expectedProjectPath: string) => {
+  operations.handle('db:get-llm-history', async (_event, limit: number | undefined, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return LLMHistoryRepository.getHistory(limit ?? 50)
   })
 
-  ipcMain.handle('db:save-summary-snapshot', async (_event, chapterNumber: number, characterStates: string, expectedProjectPath: string) => {
+  operations.handle('db:save-summary-snapshot', async (_event, chapterNumber: number, characterStates: string, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     SummaryRepository.saveSnapshot(chapterNumber, characterStates)
     return { success: true }
   })
 
-  ipcMain.handle('db:get-latest-summary', async (_event, expectedProjectPath: string) => {
+  operations.handle('db:get-latest-summary', async (_event, expectedProjectPath: string) => {
     assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
     return SummaryRepository.getLatestSnapshot()
   })

@@ -137,6 +137,8 @@ export interface GenerationDraftCommitRequest {
 }
 export type ShortOutlineRetry = { kind: 'available'; failedAttemptId: string } | { kind: 'unavailable' }
 export interface GenerationRecoveryContext {
+  /** A server-owned reservation/dispatch is pending, regardless of local workflow state. */
+  inFlight?: boolean
   planningContinuation?: PlanningContinuation
   blueprintRecovery?: BlueprintRecovery
   plotOutlineRecovery?: import('./plot-outline-contract').PlotOutlineRecovery
@@ -244,6 +246,8 @@ export interface GenerationBatchProgress extends GenerationBatchIntent {
   authorInputs: GenerationAuthorInput[]
 }
 export interface GenerationBatchHistory extends GenerationBatchProgress {
+  /** A worker-owned generation under this batch root is still pending. */
+  inFlight?: boolean
   sourceCurrent: boolean
 }
 /** 运行侧页「可恢复」区的数据：主进程按运行的操作类型一次筛好，只读真正可能恢复的运行。 */

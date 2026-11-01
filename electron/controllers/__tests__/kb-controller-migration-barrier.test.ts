@@ -9,10 +9,10 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => mocks.locale },
-  dialog: { showOpenDialog: vi.fn() },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => mocks.locale, isPackaged: false },
+  dialogHost: { showOpenDialog: vi.fn() },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

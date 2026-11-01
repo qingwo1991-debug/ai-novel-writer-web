@@ -98,6 +98,8 @@ export interface MainGenerationReasoningEvent extends MainGenerationRunHandle {
   text: string
 }
 export interface MainGenerationRunView {
+  /** Authoritative live reservation/dispatch, not the renderer workflow or durable run status. */
+  inFlight?: boolean
   plotOutline?: import('../../shared/plot-outline-contract').PlotOutlineProgress
   budgetDiagnostics?: readonly import('./task-budget-planner').GenerationBudgetDiagnostic[]
   operation?: string

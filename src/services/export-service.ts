@@ -428,6 +428,10 @@ export async function exportNovel(
     }
 
     if (!isProjectSessionCurrent(projectSession)) return staleExportResult(uiLocale)
+    if (ipc.runtimeKind === 'web') {
+      const { getBrowserTransport } = await import('./browser-transport')
+      await getBrowserTransport().invoke('browser:prepare-download', options.grantId, outputPath)
+    }
     addLog('info', text(`导出完成: ${outputPath}`, `Export complete: ${outputPath}`), uiLocale)
     return { success: true, path: outputPath }
   } catch (error) {

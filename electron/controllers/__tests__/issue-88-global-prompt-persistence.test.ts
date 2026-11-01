@@ -9,9 +9,9 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, IpcHandler>(),
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => 'zh-CN' },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'zh-CN' },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

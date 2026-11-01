@@ -10,9 +10,10 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, IpcHandler>(),
 }))
 
-vi.mock('electron', () => ({
-  BrowserWindow: { fromWebContents: vi.fn() },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'en-US' },
+  eventsFor: (event: { sender: unknown }) => event.sender,
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

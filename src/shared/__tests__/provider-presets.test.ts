@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createProviderCatalog,
+  hasRequiredApiKey,
   isLocalModelEndpoint,
   resolveModelProfileBudgetCapabilities,
   resolveModelProfileCapabilities,
@@ -9,6 +10,15 @@ import {
 } from '../provider-presets'
 
 describe('provider catalog', () => {
+  it('recognizes server-owned credential metadata without requiring a plaintext key', () => {
+    const remote = { provider: 'custom', baseUrl: 'https://provider.invalid/v1', apiKey: '' }
+    expect(hasRequiredApiKey(remote)).toBe(false)
+    expect(hasRequiredApiKey({ ...remote, hasCredential: false })).toBe(false)
+    expect(hasRequiredApiKey({ ...remote, hasCredential: true })).toBe(true)
+    expect(hasRequiredApiKey({ ...remote, apiKey: ' new-key ' })).toBe(true)
+    expect(hasRequiredApiKey({ ...remote, baseUrl: 'http://localhost:11434/v1' })).toBe(true)
+  })
+
   it('admits only documented GLM 5.3 capacity and reasoning on the official endpoint', () => {
     const profile = { provider: 'bigmodel', protocol: 'openai',
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelName: 'glm-5.3' }

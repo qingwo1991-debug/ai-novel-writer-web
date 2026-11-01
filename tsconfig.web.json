@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "electron", "web/worker.ts"],
+  "exclude": ["src/stories"],
+  "references": []
+}

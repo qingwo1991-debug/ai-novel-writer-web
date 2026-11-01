@@ -256,7 +256,7 @@ class SkillRegistryImpl {
 
     // 加载项目 Skill（项目/.ai-novel/skills/）
     if (
-      ipc.isElectron
+      (ipc.hasBackend || ipc.isElectron)
       && projectSession
       && sameProjectSessionContext(
         projectSession,

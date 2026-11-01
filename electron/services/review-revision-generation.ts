@@ -282,7 +282,8 @@ export class ReviewRevisionGeneration {
     }
     const lastCompositionFinishReason = finish(last), latestArtifactFinishReason = finish(latestArtifact?.artifactId)
     const attemptedPurposes = this.attempts(run.runId).map(row => JSON.parse(row.usage_receipt_json).purpose ?? 'unknown')
-    let canResume = current
+    const inFlight = this.runs.hasInFlight(run.runId)
+    let canResume = current && !inFlight
     if (!saved && context.operation === 'review-chapter' && latestArtifactFinishReason === 'length'
       && attemptedPurposes.filter(purpose => purpose === 'review-chapter').length >= 2
       && !attemptedPurposes.includes('review-chapter-rebuild')) canResume = false
@@ -293,7 +294,7 @@ export class ReviewRevisionGeneration {
       } catch { canResume = false }
     }
     return { handle: handleOf(run), context: structuredClone(context), modelId: (run.binding.sourceManifest.modelReceipt as { modelId: string }).modelId,
-      sourceStatus: current ? 'current' : 'conflict', canResume, ...(saved ? { saved } : {}),
+      sourceStatus: current ? 'current' : 'conflict', inFlight, canResume, ...(saved ? { saved } : {}),
       ...(canResume && !saved ? { contextId: this.remember(context, this.parent(context)).contextId } : {}), ...(composition ? { composition } : {}),
       lastCompositionFinishReason, ...(latestArtifact ? { latestArtifact, latestArtifactFinishReason } : {}), attemptedPurposes }
   }

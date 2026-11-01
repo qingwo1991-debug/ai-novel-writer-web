@@ -32,6 +32,16 @@ export interface ReviewCycleProjection {
   findings: ReviewCycleFindingProjection[]
 }
 
+/** Read-only durable work still required after a committed revision merge. Reading never starts generation. */
+export interface PendingReviewRecheck {
+  cycleId: string
+  reviewId: number
+  rootActionId: string
+  mergedHash: string
+  disposition: 'required'
+  sourceDraft: { id: number; chapterNumber: number; version: number; status: 'revised'; content: string }
+}
+
 export interface ReviewCycleRecheckFinding {
   findingId: string
   targetId: string

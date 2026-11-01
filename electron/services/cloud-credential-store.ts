@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { tryReadJsonFile, writeJsonFile } from '../utils/config-utils'
 import { getGlobalDataRoot } from './app-data-locator'
+import { withCloudMetadataLock } from './cloud-metadata-lock'
 
 export const CLOUD_CREDENTIAL_SESSION_ONLY_WARNING = 'CLOUD_CREDENTIAL_SESSION_ONLY' as const
 
@@ -15,6 +16,8 @@ const MAX_SECRET_BYTES = 64 * 1_024
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 export interface SafeStorageLike {
+  /** Explicitly distinguishes server-held encryption keys from OS keychains. */
+  readonly persistence?: 'os-backed' | 'server-encrypted'
   isEncryptionAvailable(): boolean
   encryptString(plainText: string): Buffer
   decryptString(encrypted: Buffer): string
@@ -25,7 +28,7 @@ export interface CloudCredentialMetadata {
   accountId: string
   endpoint: string
   username: string
-  persistence: 'os-backed' | 'session-only'
+  persistence: 'os-backed' | 'server-encrypted' | 'session-only'
 }
 
 export interface CloudCredentialSaveInput {
@@ -51,6 +54,8 @@ interface StoredCredential {
   endpoint: string
   username: string
   encryptedSecretBase64: string
+  /** Absent in existing v1 files, which were written with the OS-backed adapter. */
+  persistence?: 'os-backed' | 'server-encrypted'
 }
 
 interface CredentialDocument {
@@ -130,8 +135,10 @@ function parseDocument(value: unknown): CredentialDocument {
     || value.version !== STORE_VERSION || !Array.isArray(value.accounts)
     || value.accounts.length > MAX_ACCOUNTS) fail('CLOUD_CREDENTIAL_STORE_INVALID')
   const seen = new Set<string>()
-  const accounts = value.accounts.map(item => {
-    if (!record(item) || !exactKeys(item, ['accountId', 'endpoint', 'username', 'encryptedSecretBase64'])
+  const accounts = value.accounts.map<StoredCredential>(item => {
+    if (!record(item) || !(exactKeys(item, ['accountId', 'endpoint', 'username', 'encryptedSecretBase64'])
+      || exactKeys(item, ['accountId', 'endpoint', 'username', 'encryptedSecretBase64', 'persistence']))
+      || (item.persistence !== undefined && item.persistence !== 'os-backed' && item.persistence !== 'server-encrypted')
       || typeof item.accountId !== 'string' || !UUID.test(item.accountId) || seen.has(item.accountId)
       || !validUsername(item.username) || typeof item.endpoint !== 'string'
       || typeof item.encryptedSecretBase64 !== 'string' || !validBase64(item.encryptedSecretBase64)) {
@@ -146,6 +153,7 @@ function parseDocument(value: unknown): CredentialDocument {
       endpoint,
       username: item.username,
       encryptedSecretBase64: item.encryptedSecretBase64,
+      ...(item.persistence === 'os-backed' || item.persistence === 'server-encrypted' ? { persistence: item.persistence } : {}),
     }
   })
   return { version: STORE_VERSION, accounts }
@@ -172,6 +180,10 @@ export class CloudCredentialStore {
   }
 
   save(input: CloudCredentialSaveInput): CloudCredentialSaveResult {
+    return withCloudMetadataLock(this.filePath, () => this.saveLocked(input))
+  }
+
+  private saveLocked(input: CloudCredentialSaveInput): CloudCredentialSaveResult {
     const endpoint = normalizeWebDavEndpoint(input.endpoint)
     if (!validUsername(input.username) || !validSecret(input.secret)) fail('CLOUD_CREDENTIAL_INPUT_INVALID')
     const accountId = input.accountId ?? this.idFactory()
@@ -189,7 +201,8 @@ export class CloudCredentialStore {
       return this.saveSession(document, accountId, endpoint, input.username, input.secret)
     }
 
-    const stored: StoredCredential = { accountId, endpoint, username: input.username, encryptedSecretBase64 }
+    const stored: StoredCredential = { accountId, endpoint, username: input.username, encryptedSecretBase64,
+      ...(this.safeStorage.persistence === 'server-encrypted' ? { persistence: 'server-encrypted' as const } : {}) }
     const accounts = document.accounts.filter(account => account.accountId !== accountId)
     if (accounts.length >= MAX_ACCOUNTS) fail('CLOUD_CREDENTIAL_INPUT_INVALID')
     accounts.push(stored)
@@ -208,7 +221,8 @@ export class CloudCredentialStore {
     const stored = this.loadDocument().accounts.find(account => account.accountId === accountId)
     if (!stored) return null
     const metadata = this.metadata(stored)
-    if (!this.persistentEncryptionAvailable()) {
+    if (!this.persistentEncryptionAvailable()
+      || metadata.persistence !== (this.safeStorage.persistence ?? 'os-backed')) {
       return { metadata, secret: null, warning: CLOUD_CREDENTIAL_SESSION_ONLY_WARNING }
     }
     try {
@@ -221,12 +235,16 @@ export class CloudCredentialStore {
   }
 
   clear(accountId: string): boolean {
-    const document = this.loadDocument()
-    const removedSession = this.session.delete(accountId)
-    const accounts = document.accounts.filter(account => account.accountId !== accountId)
-    if (accounts.length === document.accounts.length) return removedSession
-    writeJsonFile(this.filePath, { version: STORE_VERSION, accounts } satisfies CredentialDocument)
-    return true
+    return withCloudMetadataLock(this.filePath, () => {
+      const document = this.loadDocument()
+      const accounts = document.accounts.filter(account => account.accountId !== accountId)
+      // Keep current-session state unchanged if the persistent write fails.
+      if (accounts.length !== document.accounts.length) {
+        writeJsonFile(this.filePath, { version: STORE_VERSION, accounts } satisfies CredentialDocument)
+      }
+      const removedSession = this.session.delete(accountId)
+      return accounts.length !== document.accounts.length || removedSession
+    })
   }
 
   private loadDocument(): CredentialDocument {
@@ -236,18 +254,20 @@ export class CloudCredentialStore {
     return parseDocument(read.value)
   }
 
-  private metadata(account: Pick<StoredCredential, 'accountId' | 'endpoint' | 'username'>): CloudCredentialMetadata {
+  private metadata(account: Pick<StoredCredential, 'accountId' | 'endpoint' | 'username' | 'persistence'>): CloudCredentialMetadata {
     return {
       accountId: account.accountId,
       endpoint: account.endpoint,
       username: account.username,
-      persistence: 'os-backed',
+      persistence: account.persistence ?? 'os-backed',
     }
   }
 
   private persistentEncryptionAvailable(): boolean {
     try {
       if (!this.safeStorage.isEncryptionAvailable()) return false
+      // Server-key encryption is deliberate, authenticated and never reported as OS-backed.
+      if (this.safeStorage.persistence === 'server-encrypted') return true
       if (this.platform !== 'linux') return true
       const backend = this.safeStorage.getSelectedStorageBackend?.()
       return backend === 'gnome_libsecret' || backend === 'kwallet' || backend === 'kwallet5' || backend === 'kwallet6'

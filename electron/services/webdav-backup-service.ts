@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { normalizeWebDavEndpoint } from './cloud-credential-store'
+import { endpointFetch } from '../platform/endpoint-fetch'
 
 export type WebDavBackupErrorCode =
   | 'WEBDAV_INPUT_INVALID'
@@ -487,7 +488,7 @@ export class WebDavBackupService {
     const timeoutSignal = AbortSignal.timeout(timeoutMs)
     const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
     try {
-      return await this.fetchImpl(url, {
+      return await endpointFetch(url, {
         ...init,
         redirect: 'error',
         signal: requestSignal,
@@ -495,7 +496,7 @@ export class WebDavBackupService {
           Authorization: `Basic ${Buffer.from(`${account.username}:${account.secret}`, 'utf8').toString('base64')}`,
           ...init.headers,
         },
-      })
+      }, this.fetchImpl)
     } catch {
       if (signal?.aborted) fail('WEBDAV_CANCELLED')
       fail('WEBDAV_NETWORK')

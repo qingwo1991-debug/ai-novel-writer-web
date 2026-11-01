@@ -5,7 +5,7 @@
  * 让渲染进程能够通过 IPC 管理和调用 MCP 服务器。
  */
 
-import { ipcMain } from 'electron'
+import { operations } from '../platform'
 import { mcpManager } from './mcp-manager'
 
 /**
@@ -14,7 +14,7 @@ import { mcpManager } from './mcp-manager'
  */
 export function registerMCPHandlers(): void {
   // 加载配置文件
-  ipcMain.handle('mcp:load-config', async () => {
+  operations.handle('mcp:load-config', async () => {
     try {
       const result = await mcpManager.loadConfig()
       if (result.status === 'error') return { success: false, ...result }
@@ -30,7 +30,7 @@ export function registerMCPHandlers(): void {
   })
 
   // 连接服务器
-  ipcMain.handle('mcp:connect', async (_event, serverId: string) => {
+  operations.handle('mcp:connect', async (_event, serverId: string) => {
     try {
       await mcpManager.connect(serverId)
       return { success: true }
@@ -40,7 +40,7 @@ export function registerMCPHandlers(): void {
   })
 
   // 断开服务器
-  ipcMain.handle('mcp:disconnect', async (_event, serverId: string) => {
+  operations.handle('mcp:disconnect', async (_event, serverId: string) => {
     try {
       await mcpManager.disconnect(serverId)
       return { success: true }
@@ -50,7 +50,7 @@ export function registerMCPHandlers(): void {
   })
 
   // 断开所有
-  ipcMain.handle('mcp:disconnect-all', async () => {
+  operations.handle('mcp:disconnect-all', async () => {
     try {
       await mcpManager.disconnectAll()
       return { success: true }
@@ -60,27 +60,27 @@ export function registerMCPHandlers(): void {
   })
 
   // 获取所有可用 Tool
-  ipcMain.handle('mcp:list-tools', async () => {
+  operations.handle('mcp:list-tools', async () => {
     return mcpManager.getAllTools()
   })
 
   // 获取所有可用资源
-  ipcMain.handle('mcp:list-resources', async () => {
+  operations.handle('mcp:list-resources', async () => {
     return mcpManager.getAllResources()
   })
 
   // 调用 MCP Tool
-  ipcMain.handle('mcp:call-tool', async (_event, serverId: string, toolName: string, args: Record<string, unknown>) => {
+  operations.handle('mcp:call-tool', async (_event, serverId: string, toolName: string, args: Record<string, unknown>) => {
     return await mcpManager.callTool(serverId, toolName, args)
   })
 
   // 获取服务器状态
-  ipcMain.handle('mcp:get-servers-status', async () => {
+  operations.handle('mcp:get-servers-status', async () => {
     return mcpManager.getServersStatus()
   })
 
   // 获取默认配置文件路径
-  ipcMain.handle('mcp:get-config-path', async () => {
+  operations.handle('mcp:get-config-path', async () => {
     return mcpManager.getDefaultConfigPath()
   })
 

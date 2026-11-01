@@ -1,4 +1,5 @@
 import { chapterTimeContinuity } from '../../../shared/chapter-time-continuity'
+import { sha256Hex } from '../../../utils/sha256'
 import { appErrorMessage, displayedErrorMessage, englishWithReason } from '../../../i18n/app-errors'
 import { sanitizeDraftText, composeDraftVisibleContinuation, DRAFT_CONDENSE_PURPOSE, DRAFT_VISIBLE_TEXT_VERSION, isDraftVisibleTextVersion, type DraftVisibleTextVersion } from '../../../shared/draft-visible-text'
 import { DRAFT_RECONCILE_PURPOSE, draftReconciliationBlock } from '../../../shared/draft-reconciliation'
@@ -495,11 +496,6 @@ function recoveryChapterSource(chapter: ChapterInfo): RecoveryChapterSource {
     suspenseHook: chapter.suspenseHook ?? '',
     userGuidance: chapter.userGuidance ?? '',
   }
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 /** Join a visible continuation without allowing a repeated prompt tail to count as new prose. */

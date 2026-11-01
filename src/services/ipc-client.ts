@@ -13,14 +13,21 @@ import type {
 } from '../shared/ipc-channels'
 import type { ProjectSessionContext } from '../shared/ipc-channels'
 import { getActiveProjectSessionContext } from '../shared/project-session-context'
-import type { AiNovelAPI } from '../shared/desktop-api'
+import type { RendererAPI, RuntimeKind } from '../shared/desktop-api'
+import { getBrowserTransport } from './browser-transport'
 
-/** 获取唯一桌面接口；旧接口不是新运行时的写入后备通道。 */
-function getAPI(): AiNovelAPI {
+/** Web selection is explicit; a missing desktop preload never silently becomes a web backend. */
+export function getRuntimeKind(): RuntimeKind {
+  if (import.meta.env.MODE === 'web' || import.meta.env.VITE_RUNTIME === 'web') return 'web'
+  return typeof window !== 'undefined' && !!window.aiNovelAPI ? 'electron' : 'unavailable'
+}
+
+/** 获取当前运行时接口；浏览器不会伪造 aiNovelAPI，旧接口也不是写入后备通道。 */
+export function getAPI(): RendererAPI {
+  if (getRuntimeKind() === 'web') return getBrowserTransport()
   const api = typeof window === 'undefined' ? undefined : window.aiNovelAPI
   if (!api) {
-    // i18n-exempt: 只在 Electron 以外（单元测试、纯浏览器调试）出现，作者用的桌面应用总有 aiNovelAPI
-    // i18n-exempt: 只在 Electron 以外（单元测试、纯浏览器调试）出现，作者用的桌面应用总有 aiNovelAPI
+    // i18n-exempt: 仅缺少规范桌面预加载接口时触发；浏览器构建使用独立的后端传输。
     throw new Error('桌面接口 aiNovelAPI 未就绪，请重新启动应用')
   }
   return api
@@ -136,10 +143,23 @@ export const ipc = {
     getAPI().send(channel, ...args)
   },
 
-  /** 是否在 Electron 环境中 */
+  /** Desktop-only capabilities; a browser backend must never satisfy this check. */
   get isElectron(): boolean {
-    return typeof window !== 'undefined'
-      && !!window.aiNovelAPI
+    return getRuntimeKind() === 'electron'
+  },
+
+  /** Both supported runtimes provide the application backend. */
+  get hasBackend(): boolean {
+    return getRuntimeKind() !== 'unavailable'
+  },
+
+  get runtimeKind(): RuntimeKind {
+    return getRuntimeKind()
+  },
+
+  /** Short alias for runtime-aware renderer UI. */
+  get runtime(): RuntimeKind {
+    return getRuntimeKind()
   },
 
   /** 设置窗口缩放级别 */

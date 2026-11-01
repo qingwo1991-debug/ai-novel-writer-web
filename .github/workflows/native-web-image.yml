@@ -1,0 +1,216 @@
+name: Native Web image
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# No path filter: every source/config/fixture change is checked. Never use
+# pull_request_target for a workflow that executes the proposed source.
+permissions:
+  contents: read
+
+concurrency:
+  group: native-web-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  DOCKER_BUILD_SUMMARY: 'false'
+
+jobs:
+  unit:
+    name: Native security, lifecycle and transport units
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          check-latest: true
+      # These suites use Node built-ins and the checked-in TS loader only.
+      # No dependency install, browser, provider key, production volume or cache.
+      - name: Run isolated native unit tests
+        run: |
+          node --version
+          node --import ./web/browser/register-typescript.mjs --test \
+            web/security.test.mjs web/public-response.test.mjs \
+            web/client-departure.test.mjs web/browser/browser-transport.test.mjs
+
+  verify:
+    name: Unpublished image (PR or non-main dispatch)
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    needs: unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      # Deliberately no login, secrets, image upload or shared GHA cache on PRs.
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/amd64
+          pull: true
+          load: true
+          push: false
+          tags: native-web:ci
+          provenance: false
+          sbom: false
+      - name: Smoke final image with empty disposable data
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker rm -fv native-web-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name native-web-ci --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 \
+            --tmpfs /data:rw,nosuid,nodev,size=256m,mode=0700 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            -e NOVEL_ALLOWED_ORIGINS=http://localhost \
+            -e NOVEL_ALLOWED_ENDPOINTS= native-web:ci
+          for attempt in $(seq 1 45); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' native-web-ci)
+            if [ "$state" = healthy ]; then break; fi
+            if [ "$state" = unhealthy ] || [ "$(docker inspect --format '{{.State.Running}}' native-web-ci)" != true ]; then
+              docker logs native-web-ci; exit 1
+            fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' native-web-ci)" = healthy
+          docker exec native-web-ci node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            import {createRequire} from "node:module";
+            const require=createRequire(import.meta.url);
+            const response=await fetch("http://127.0.0.1:6081/healthz");
+            assert.equal(response.status,200);
+            const health=await response.json();
+            assert.equal(health.runtime,"node"); assert.equal(health.electron,false);
+            assert.equal((await fetch("http://127.0.0.1:6081/api/bootstrap")).status,401);
+            const inventory=JSON.parse(fs.readFileSync("runtime-dependencies.json","utf8"));
+            assert(!inventory.packages.some(p=>/(?:^|\/)(?:electron(?:-[^/]*)?|sharp)$/.test(p.name)));
+            assert.throws(()=>require.resolve("electron"));
+            const Database=require("better-sqlite3"); const db=new Database(":memory:");
+            assert.equal(db.prepare("SELECT 1 AS value").get().value,1); db.close();
+            await import("@lancedb/lancedb"); await import("apache-arrow"); await import("yauzl");'
+          docker exec native-web-ci sh -eu -c '
+            command -v python3; command -v flock
+            for binary in electron chromium chromium-browser Xvfb x11vnc websockify; do
+              if command -v "$binary" >/dev/null 2>&1; then exit 1; fi
+            done'
+
+  publish:
+    name: Build, smoke, then publish GHCR (main only)
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    # This is the ONLY job with package write access; no PAT or deploy key.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set lowercase immutable and rolling tags
+        id: image
+        shell: bash
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "revision=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build and load final image (not published yet)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/amd64
+          pull: true
+          load: true
+          push: false
+          tags: native-web:ci
+          # Only trusted main pushes may read/write the shared build cache.
+          cache-from: ${{ github.event_name == 'push' && 'type=gha,scope=native-web-amd64' || '' }}
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=min,scope=native-web-amd64' || '' }}
+          # Docker's local load exporter cannot retain registry attestations.
+          # OCI source/revision/license labels are retained; no attestation claim.
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.title=AI Novel Writer Native Web
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=GPL-3.0-only
+      - name: Smoke final image before granting registry login
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { docker rm -fv native-web-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name native-web-ci --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 256 \
+            --tmpfs /data:rw,nosuid,nodev,size=256m,mode=0700 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            -e NOVEL_ALLOWED_ORIGINS=http://localhost \
+            -e NOVEL_ALLOWED_ENDPOINTS= native-web:ci
+          for attempt in $(seq 1 45); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' native-web-ci)
+            if [ "$state" = healthy ]; then break; fi
+            if [ "$state" = unhealthy ] || [ "$(docker inspect --format '{{.State.Running}}' native-web-ci)" != true ]; then
+              docker logs native-web-ci; exit 1
+            fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' native-web-ci)" = healthy
+          docker exec native-web-ci node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import fs from "node:fs";
+            import {createRequire} from "node:module";
+            const require=createRequire(import.meta.url);
+            const response=await fetch("http://127.0.0.1:6081/healthz");
+            assert.equal(response.status,200);
+            const health=await response.json();
+            assert.equal(health.runtime,"node"); assert.equal(health.electron,false);
+            assert.equal((await fetch("http://127.0.0.1:6081/api/bootstrap")).status,401);
+            const inventory=JSON.parse(fs.readFileSync("runtime-dependencies.json","utf8"));
+            assert(!inventory.packages.some(p=>/(?:^|\/)(?:electron(?:-[^/]*)?|sharp)$/.test(p.name)));
+            assert.throws(()=>require.resolve("electron"));
+            const Database=require("better-sqlite3"); const db=new Database(":memory:");
+            assert.equal(db.prepare("SELECT 1 AS value").get().value,1); db.close();
+            await import("@lancedb/lancedb"); await import("apache-arrow"); await import("yauzl");'
+          docker exec native-web-ci sh -eu -c '
+            command -v python3; command -v flock
+            for binary in electron chromium chromium-browser Xvfb x11vnc websockify; do
+              if command -v "$binary" >/dev/null 2>&1; then exit 1; fi
+            done'
+      - name: Log in to GHCR after successful tests and smoke
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the exact smoke-tested image and record digest
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          REVISION: ${{ steps.image.outputs.revision }}
+        run: |
+          set -euo pipefail
+          docker tag native-web:ci "$IMAGE:sha-$REVISION"
+          docker tag native-web:ci "$IMAGE:latest"
+          docker push "$IMAGE:sha-$REVISION"
+          docker push "$IMAGE:latest"
+          digest=$(docker image inspect "$IMAGE:sha-$REVISION" --format '{{index .RepoDigests 0}}')
+          test -n "$digest"
+          printf '### Native Web image\n\n- Platform: `linux/amd64`\n- Revision: `%s`\n- Immutable pull: `%s`\n- Rolling tag: `%s:latest`\n\nNo deployment was performed.\n' \
+            "$REVISION" "$digest" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

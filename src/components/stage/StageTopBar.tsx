@@ -26,6 +26,7 @@ interface StageTopBarProps {
 
 function WindowControls() {
   const text = useLocaleStore(s => s.text)
+  if (!ipc.isElectron) return null
   return (
     <div className="stage-window-controls">
       <button type="button" aria-label={text('最小化', 'Minimize')} onClick={() => void ipc.invoke('window:minimize')}>
@@ -83,7 +84,7 @@ export default function StageTopBar({ crumbs, library, focus, focusTitle, workMe
         </nav>
       )}
       <div className="stage-topbar-center">
-        <button type="button" className="stage-search" onClick={() => useStageStore.setState({ palette: 'commands' })}>
+        <button type="button" className="stage-search" aria-label={text('搜索作品、章节与命令', 'Search books, chapters and commands')} onClick={() => useStageStore.setState({ palette: 'commands' })}>
           <Search size={14} aria-hidden="true" />
           <span className="stage-search-hint">{library
             ? text('搜索作品，或打开文件夹', 'Search books, or open a folder')

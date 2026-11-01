@@ -1,5 +1,3 @@
-import { nativeImage } from 'electron'
-
 export const AVATAR_MAX_EDGE = 256
 export const AVATAR_JPEG_QUALITY = 82
 export type AvatarImageExtension = 'png' | 'jpg' | 'jpeg' | 'webp'
@@ -24,21 +22,19 @@ export function avatarMime(extension: AvatarImageExtension): 'image/png' | 'imag
   return 'image/jpeg'
 }
 
+export type AvatarCompressor = (bytes: Buffer, extension: AvatarImageExtension) => CompressedAvatar
+let compressor: AvatarCompressor | undefined
+
+/** Optional optimization. Native hosts may inject an image codec; Node preserves original bytes. */
+export function configureAvatarCompressor(adapter: AvatarCompressor | undefined): void { compressor = adapter }
+
 export function compressAvatarImage(bytes: Buffer, extension: AvatarImageExtension): CompressedAvatar {
   const unchanged = (): CompressedAvatar => ({ bytes, extension })
+  if (!compressor) return unchanged()
   try {
-    const image = nativeImage.createFromBuffer(bytes)
-    if (!image || image.isEmpty()) return unchanged()
-    const { width, height } = image.getSize()
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return unchanged()
-    const resized = Math.max(width, height) > AVATAR_MAX_EDGE
-      ? width >= height ? image.resize({ width: AVATAR_MAX_EDGE, quality: 'good' }) : image.resize({ height: AVATAR_MAX_EDGE, quality: 'good' })
-      : image
-    const encoded = extension === 'png' ? resized.toPNG() : resized.toJPEG(AVATAR_JPEG_QUALITY)
-    return encoded.byteLength > 0 && encoded.byteLength < bytes.byteLength
-      ? { bytes: encoded, extension: extension === 'png' ? 'png' : 'jpg' }
-      : unchanged()
-  } catch {
-    return unchanged()
-  }
+    const candidate = compressor(bytes, extension)
+    return Buffer.isBuffer(candidate.bytes) && candidate.bytes.byteLength > 0
+      && candidate.bytes.byteLength < bytes.byteLength && detectAvatarExtension(candidate.bytes) === candidate.extension
+      ? candidate : unchanged()
+  } catch { return unchanged() }
 }

@@ -1,4 +1,4 @@
-import { app, ipcMain, BrowserWindow } from 'electron'
+import { appHost, operations, eventsFor, type ClientSink } from '../platform'
 import {
   readJsonFile,
   tryReadJsonFile,
@@ -27,8 +27,24 @@ import { ModelDiscoveryService } from '../services/model-discovery-service'
 
 interface ActiveStream {
   controller: AbortController
+  owner: ClientSink
   recordCancelled: () => void
 }
+
+const clientStreamLifetimes = new WeakSet<ClientSink>()
+function watchClientStreams(client: ClientSink): void {
+  if (clientStreamLifetimes.has(client)) return
+  clientStreamLifetimes.add(client)
+  client.once('destroyed', () => {
+    for (const [key, stream] of activeStreams) {
+      if (stream.owner !== client) continue
+      stream.recordCancelled()
+      stream.controller.abort()
+      activeStreams.delete(key)
+    }
+  })
+}
+function streamKey(client: ClientSink, requestId: string): string { return `${client.id}:${requestId}` }
 
 const activeStreams = new Map<string, ActiveStream>()
 const CONNECTION_TEST_MAX_TOKENS = 1024
@@ -72,6 +88,9 @@ function getModelConfig(modelId: string): ModelProfile | null {
 }
 
 function applyProxyConfig() {
+  // The browser deployment's network/proxy policy is administrator-owned.
+  // Saved desktop preferences must never delete or replace server process env.
+  if (process.env.AI_NOVEL_RUNTIME === 'web') return
   try {
     const config = readJsonFile<GlobalConfig>(GLOBAL_CONFIG_PATH, DEFAULT_GLOBAL_CONFIG)
     if (config.proxy?.enabled && config.proxy.host) {
@@ -132,36 +151,36 @@ function connectionTestFailure(failure: unknown): string {
   const detail = failure as { code?: unknown; status?: unknown; suggestedBaseUrl?: unknown } | null
   if (detail?.code === 'EMBEDDING_REQUEST_FAILED') {
     return mainText(
-      app.getLocale(),
+      appHost.getLocale(),
       `检索模型请求失败（HTTP ${String(detail.status)}）。请检查 Base URL、网关与 API Key。`,
       `Retrieval model request failed (HTTP ${String(detail.status)}). Check the Base URL, gateway, and API key.`,
     )
   }
   if (detail?.code === 'EMBEDDING_OLLAMA_NATIVE_URL') {
     return mainText(
-      app.getLocale(),
+      appHost.getLocale(),
       `这是 Ollama 原生的 /api 地址，本应用使用 OpenAI 兼容接口。请把 Base URL 改为 ${String(detail.suggestedBaseUrl)}。`,
       `This is Ollama’s native /api address, but the app uses the OpenAI-compatible API. Change the Base URL to ${String(detail.suggestedBaseUrl)}.`,
     )
   }
-  return knownAppErrorMessage(getMainLocale(app.getLocale()), failure) ?? String(failure)
+  return knownAppErrorMessage(getMainLocale(appHost.getLocale()), failure) ?? String(failure)
 }
 
 function providerConnectionFailure(response: Extract<LLMResponse, { success: false }>): string | undefined {
   if (response.error === 'LLM_REQUEST_FAILED' && response.httpFailure) {
     const { status, body } = response.httpFailure
     const advice = mainText(
-      app.getLocale(),
+      appHost.getLocale(),
       `模型请求失败（HTTP ${status}）。请检查 Base URL、API Key 与模型名。`,
       `Model request failed (HTTP ${status}). Check the Base URL, API key, and model name.`,
     )
     return body.trim()
-      ? `${advice}${mainText(app.getLocale(), `服务返回：${body.trim()}`, ` The service returned: ${body.trim()}`)}`
+      ? `${advice}${mainText(appHost.getLocale(), `服务返回：${body.trim()}`, ` The service returned: ${body.trim()}`)}`
       : advice
   }
   if (response.error === 'LLM_RESPONSE_INCOMPLETE') {
     return mainText(
-      app.getLocale(),
+      appHost.getLocale(),
       `模型没有正常完成回复（结束原因：${response.finishReason}）。`,
       `The model did not finish its reply (finish reason: ${response.finishReason}).`,
     )
@@ -180,7 +199,7 @@ export function registerLLMController() {
     }
   }
 
-  ipcMain.handle('llm:begin-execution-lease', async (_event, modelId: string) => {
+  operations.handle('llm:begin-execution-lease', async (_event, modelId: string) => {
     try {
       return { success: true, lease: modelExecutionLeases.begin(modelId) }
     } catch (error) {
@@ -191,7 +210,7 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:close-execution-lease', async (_event, leaseId: string) => {
+  operations.handle('llm:close-execution-lease', async (_event, leaseId: string) => {
     const now = Date.now()
     pruneClosedExecutionLeaseTombstones(now)
     if (modelExecutionLeases.close(leaseId)) {
@@ -205,7 +224,7 @@ export function registerLLMController() {
     return { success: false, error: 'MODEL_EXECUTION_LEASE_INVALID' }
   })
 
-  ipcMain.handle('llm:generate', async (_event, request: LLMRequest) => {
+  operations.handle('llm:generate', async (_event, request: LLMRequest) => {
     const startedAt = Date.now()
     let model: ModelProfile | null = null
     try {
@@ -234,7 +253,7 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:generate-stream', async (event, requestId: string, request: LLMRequest) => {
+  operations.handle('llm:generate-stream', async (event, requestId: string, request: LLMRequest) => {
     applyProxyConfig()
     let model: ModelProfile | null
     try {
@@ -252,7 +271,15 @@ export function registerLLMController() {
       conversationId: request.modelExecutionLeaseId,
     }
 
+    const client = eventsFor(event)
+    if (client.isDestroyed()) return { requestId, started: false, error: 'CLIENT_DISCONNECTED' }
+    const key = streamKey(client, requestId)
+    if (activeStreams.has(key)) return { requestId, started: false, error: 'LLM_STREAM_ALREADY_ACTIVE' }
+    watchClientStreams(client)
     const abortController = new AbortController()
+    const send = (channel: string, payload: unknown) => {
+      if (!client.isDestroyed() && !abortController.signal.aborted) client.send(channel, payload)
+    }
     const startedAt = Date.now()
     let recorded = false
     const recordOnce = (outcome: { success: boolean; usage?: TokenUsage; error?: string }) => {
@@ -260,64 +287,70 @@ export function registerLLMController() {
       recorded = true
       recordProviderOutcome(request, model, startedAt, outcome)
     }
-    activeStreams.set(requestId, {
+    activeStreams.set(key, {
       controller: abortController,
+      owner: client,
       recordCancelled: () => recordOnce({ success: false, error: 'cancelled' }),
     })
-    const win = BrowserWindow.fromWebContents(event.sender)
 
     const provider = LLMFactory.getProvider(model)
     
     // We do not await this globally since it's streaming independently
-    provider.generateStream(model, request.messages, {
+    Promise.resolve(provider.generateStream(model, request.messages, {
       ...generationParameters,
       signal: abortController.signal,
-      onChunk: (chunk: string) => win?.webContents.send('llm:stream-chunk', { requestId, chunk }),
+      onChunk: (chunk: string) => send('llm:stream-chunk', { requestId, chunk }),
       onDone: (fullText: string, usage?: TokenUsage, finishReason?: LLMFinishReason) => {
         const terminalReason: LLMFinishReason = finishReason ?? 'unknown'
         const success = terminalReason === 'stop'
         recordOnce({ success, usage, error: success ? undefined : `finish:${terminalReason}` })
-        win?.webContents.send('llm:stream-done', {
+        send('llm:stream-done', {
           requestId,
           fullText,
           usage,
           finishReason: terminalReason,
         })
-        activeStreams.delete(requestId)
+        activeStreams.delete(key)
       },
       onError: (error: string, content?: string, usage?: TokenUsage) => {
         recordOnce({ success: false, usage, error })
         if (content !== undefined) {
-          win?.webContents.send('llm:stream-done', {
+          send('llm:stream-done', {
             requestId,
             fullText: content,
             usage,
             finishReason: 'error',
           })
         } else {
-          win?.webContents.send('llm:stream-error', { requestId, error })
+          send('llm:stream-error', { requestId, error })
         }
-        activeStreams.delete(requestId)
+        activeStreams.delete(key)
       },
+    })).catch(error => {
+      recordOnce({ success: false, error: String(error) })
+      send('llm:stream-error', { requestId, error: String(error) })
+    }).finally(() => {
+      if (activeStreams.get(key)?.controller === abortController) activeStreams.delete(key)
     })
 
     return { requestId, started: true }
   })
 
-  ipcMain.handle('llm:cancel', async (_event, requestId: string) => {
-    const stream = activeStreams.get(requestId)
+  operations.handle('llm:cancel', async (event, requestId: string) => {
+    const key = streamKey(eventsFor(event), requestId)
+    const stream = activeStreams.get(key)
     if (stream) {
       stream.recordCancelled()
       stream.controller.abort()
-      activeStreams.delete(requestId)
+      activeStreams.delete(key)
       return { success: true }
     }
     return { success: false }
   })
 
-  ipcMain.handle('llm:list-models', async () => loadModelConfigs())
+  operations.handle('llm:list-models', async () => loadModelConfigs())
 
-  ipcMain.handle('llm:discover-models', async (_event, request: ModelDiscoveryRequest) => {
+  operations.handle('llm:discover-models', async (_event, request: ModelDiscoveryRequest) => {
     try {
       applyProxyConfig()
       return await modelDiscovery.discoverModels(request)
@@ -326,7 +359,7 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:save-model', async (_event, model: ModelProfile) => {
+  operations.handle('llm:save-model', async (_event, model: ModelProfile) => {
     try {
       if (model.reasoningMapping !== undefined && (!isReasoningMapping(model.reasoningMapping)
         || !reasoningAdapterFitsProtocol(model.protocol, model.reasoningMapping.adapter))) {
@@ -343,7 +376,7 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:delete-model', async (_event, modelId: string) => {
+  operations.handle('llm:delete-model', async (_event, modelId: string) => {
     let originalConfig: GlobalConfig | undefined
     let configChanged = false
     try {
@@ -398,12 +431,12 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:get-stage-models', async () => {
+  operations.handle('llm:get-stage-models', async () => {
     const config = readJsonFile<GlobalConfig>(GLOBAL_CONFIG_PATH, DEFAULT_GLOBAL_CONFIG)
     return parseStageModelIds(config.stageModelIds)
   })
 
-  ipcMain.handle('llm:set-stage-model', async (_event, request: unknown) => {
+  operations.handle('llm:set-stage-model', async (_event, request: unknown) => {
     try {
       const { stage, modelId } = (request && typeof request === 'object' ? request : {}) as Record<string, unknown>
       if (!isModelStage(stage) || (modelId !== null && typeof modelId !== 'string')) throw new Error('LLM_STAGE_MODEL_REQUEST_INVALID')
@@ -418,7 +451,7 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:set-default-model', async (_event, modelId: string | null) => {
+  operations.handle('llm:set-default-model', async (_event, modelId: string | null) => {
     try {
       const config = loadGlobalConfigForUpdate()
       config.defaultModelId = modelId
@@ -429,12 +462,12 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:get-default-model', async () => {
+  operations.handle('llm:get-default-model', async () => {
     const config = readJsonFile<GlobalConfig>(GLOBAL_CONFIG_PATH, DEFAULT_GLOBAL_CONFIG)
     return config.defaultModelId
   })
 
-  ipcMain.handle('llm:set-default-embedding-model', async (_event, modelId: string | null) => {
+  operations.handle('llm:set-default-embedding-model', async (_event, modelId: string | null) => {
     try {
       const config = loadGlobalConfigForUpdate()
       config.defaultEmbeddingModelId = modelId
@@ -445,12 +478,12 @@ export function registerLLMController() {
     }
   })
 
-  ipcMain.handle('llm:get-default-embedding-model', async () => {
+  operations.handle('llm:get-default-embedding-model', async () => {
     const config = readJsonFile<GlobalConfig>(GLOBAL_CONFIG_PATH, DEFAULT_GLOBAL_CONFIG)
     return config.defaultEmbeddingModelId ?? null
   })
 
-  ipcMain.handle('llm:test-connection', async (
+  operations.handle('llm:test-connection', async (
     _event,
     model: ModelProfile,
     creativeStrategy: LLMRequest['creativeStrategy'] = 'auto',
@@ -459,7 +492,7 @@ export function registerLLMController() {
     const timeoutMs = connectionTestTimeoutMs(model)
     const deadline = new AbortController()
     const timer = setTimeout(() => deadline.abort(), timeoutMs)
-    const timedOut = () => ({ success: false, error: mainT(app.getLocale(), 'error.connectionTestTimeout', { seconds: timeoutMs / 1000 }) })
+    const timedOut = () => ({ success: false, error: mainT(appHost.getLocale(), 'error.connectionTestTimeout', { seconds: timeoutMs / 1000 }) })
     try {
       applyProxyConfig()
 

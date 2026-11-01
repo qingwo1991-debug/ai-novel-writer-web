@@ -14,9 +14,10 @@ const mocks = vi.hoisted(() => ({
   discoverModels: vi.fn<(request: ModelDiscoveryRequest) => Promise<ModelDiscoveryResult>>(),
 }))
 
-vi.mock('electron', () => ({
-  BrowserWindow: { fromWebContents: vi.fn(() => null) },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'en-US' },
+  eventsFor: (event: { sender: unknown }) => event.sender,
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

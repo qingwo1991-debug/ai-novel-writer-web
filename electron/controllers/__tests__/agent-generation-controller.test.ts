@@ -14,7 +14,7 @@ import type { MainGenerationRunView } from '../../../src/services/generation/gen
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 const mocks = vi.hoisted(() => ({ handlers: new Map<string, Handler>(), globalRoot: '' }))
-vi.mock('electron', () => ({ ipcMain: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
+vi.mock('../../platform', () => ({ appHost: { isPackaged: false, getLocale: () => 'en-US' }, operations: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
 vi.mock('../../services/app-data-locator', () => ({ getGlobalDataRoot: () => mocks.globalRoot }))
 vi.mock('../kb-controller', () => ({ getEmbeddingConfig: () => null }))
 import { registerGenerationController } from '../generation-controller'
@@ -26,7 +26,7 @@ import { createProjectDatabase, initProjectDatabase, closeProjectDatabase, getPr
 const base = path.join(os.tmpdir(), 'an-agent-ipc-')
 const model: ModelProfile = { id: 'synthetic-ipc', name: 'Synthetic IPC', provider: 'openai', protocol: 'openai', modelName: 'gpt-4.1',
   baseUrl: 'https://api.openai.com/v1', apiKey: 'synthetic-only', maxTokens: 2048, temperature: 0.7, purposes: ['generation'] }
-const sender = { isDestroyed: () => false, send: vi.fn() }
+const sender = { id: 1, isDestroyed: () => false, send: vi.fn(), once: vi.fn() }
 let root: string, session: ProjectSessionContext
 const input: AgentGenerationInput = { mode: 'planning', uiLocale: 'en-US', historyMessages: [], userMessage: 'Synthetic Agent task',
   tools: ['read_project_state', 'start_workflow', 'propose_novel_config', 'propose_chapter_blueprint'].map(name => ({ name,

@@ -304,6 +304,7 @@ function ProjectBackupPanelSession({
       {binding?.mode === 'origin-readonly' && <p className="text-sm text-[var(--color-warning-text)]">{text('此项目携带来源只读绑定，或本机缺少对应凭据。重新选择账号、云书和父世代并确认绑定后才能上传。', 'This project has an origin-readonly binding or its credential is unavailable. Select an account, cloud book, and parents, then confirm the binding before uploading.')}</p>}
       {binding?.mode === 'writable' && <p className="text-xs text-[var(--color-text-muted)]">{text(`可写绑定：${binding.localEndpointAccountId} / ${binding.cloudBookId}`, `Writable binding: ${binding.localEndpointAccountId} / ${binding.cloudBookId}`)}</p>}
       {sessionOnlyCredential && <p role="status" className="text-sm text-[var(--color-warning-text)]">{text('凭据仅当前会话保存，重启后需重新输入。', 'The credential is saved for this session only and must be entered again after restart.')}</p>}
+      {account?.persistence === 'server-encrypted' && <p role="status" className="text-xs text-[var(--color-text-muted)]">{text('凭据使用服务器持有的密钥加密保存，并非操作系统钥匙串保护；可读取服务器密钥的管理员能够解密。', 'The credential is encrypted with a server-held key, not an OS keychain. An administrator who can read the server key can decrypt it.')}</p>}
       {bindingRefreshFailed && <p role="alert" className="text-sm text-[var(--color-error-text)]">{text('本机凭据已清除，但绑定状态刷新失败。请关闭并重新打开设置后再连接。', 'The local credential was cleared, but the binding state could not be refreshed. Close and reopen settings before connecting.')}</p>}
 
       <div className="grid gap-3 sm:grid-cols-2">

@@ -486,9 +486,13 @@ export function isLocalModelEndpoint({ provider, baseUrl }: { provider: string, 
   return provider === 'ollama' || LOCAL_HOSTNAMES.has(parseHttpEndpoint(baseUrl)?.hostname ?? '')
 }
 
-/** 设置页保存、拉取列表和知识库嵌入共用的 Key 规则：填了 Key，或者是不需要 Key 的 Ollama 与本机地址。 */
-export function hasRequiredApiKey(model: { provider: string, baseUrl: string, apiKey: string }): boolean {
-  return Boolean(model.apiKey.trim()) || isLocalModelEndpoint(model)
+/**
+ * Public Web profiles carry only credential-presence metadata. This is a UI
+ * readiness hint, not authority to reuse a secret: the backend must validate
+ * the saved profile's provider, protocol and endpoint before restoring it.
+ */
+export function hasRequiredApiKey(model: { provider: string, baseUrl: string, apiKey: string, hasCredential?: boolean }): boolean {
+  return Boolean(model.apiKey.trim()) || model.hasCredential === true || isLocalModelEndpoint(model)
 }
 
 function normalizedOfficialBaseUrl(value: unknown): string | null {

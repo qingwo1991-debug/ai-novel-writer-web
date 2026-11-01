@@ -2094,8 +2094,11 @@ describe('main generation owner with actual SQLite and provider adapter', () => 
       return { usage: null, finishReason: 'stop' }
     })
     const f = fixture(dispatch, true), view = f.owner.begin(f.begin)
+    // Independent child runs may share/exhaust a root, but a single run must
+    // never overlap distinct nonces after a renderer reload.
+    const sibling = f.owner.begin({ ...f.begin, uiActionNonce: 'sibling', parentRootActionId: view.handle.rootActionId })
     const one = f.owner.execute({ handle: view.handle, invocationNonce: 'one', task })
-    const two = f.owner.execute({ handle: view.handle, invocationNonce: 'two', task })
+    const two = f.owner.execute({ handle: sibling.handle, invocationNonce: 'two', task })
     const repeat = f.owner.execute({ handle: view.handle, invocationNonce: 'one', task })
     expect(f.owner.read(view.handle).ledger?.tokenLiability).toBe(2_097_152)
     release.forEach(resolve => resolve())
@@ -2943,6 +2946,39 @@ describe('main draft persistence and batch lineage', () => {
     expect(f.owner.readBatch(batch.batchId).nextChapterNumber).toBe(1)
     PostProcessRepository.markStepOk(post, 'chapter_notes')
     expect(f.owner.confirmBatchFinalization({ batchId: batch.batchId, chapterNumber: 1, finalizationId: 'finalization-one' }).nextChapterNumber).toBeNull()
+  })
+
+  it.each([1, 2])('keeps a declared noncritical character step pending before advancing a batch ending at %s', async endChapter => {
+    const f = drafting()
+    const batch = f.owner.beginBatch({ mode: 'auto_finalize', range: { startChapter: 1, endChapter }, targetUnits: 20,
+      uiActionNonce: 'batch-with-characters', modelId: f.model.id, authorInputs, promptKeys: f.begin.promptKeys, skillStages: [] })
+    const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
+    const saved = f.owner.commitDraft(generated.request)
+    const finalizedSource = { finalizationId: 'finalization-characters', draftId: saved.id, chapterNumber: 1, contentHash: saved.contentHash }
+    FinalizationRepository.commit({ ...finalizedSource, chapterTitle: '第一章', content: saved.content,
+      contentRevision: 1, targetFileName: '第一章.txt' })
+    FinalizationRepository.markPublished(finalizedSource.finalizationId)
+    const post = PostProcessRepository.createRun({ triggerSourceType: 'chapter_finalize', triggerSourceId: '1', sourceLabel: '第一章',
+      finalizedSource, steps: [{ key: 'kb_import', label: '知识库', critical: true },
+        { key: 'chapter_notes', label: '章节笔记', critical: true }, { key: 'character_cards', label: '角色状态', critical: false }] })
+    PostProcessRepository.markStepOk(post, 'kb_import')
+    PostProcessRepository.markStepOk(post, 'chapter_notes')
+    expect(PostProcessRepository.getLatestRun('chapter_finalize', '1')?.allCriticalPassed).toBe(true)
+    for (const failed of [false, true]) {
+      if (failed) PostProcessRepository.markStepFailed(post, 'character_cards', 'synthetic character state failure')
+      expect(f.owner.readBatch(batch.batchId)).toMatchObject({ nextChapterNumber: 1,
+        completedChapters: [{ finalizationId: finalizedSource.finalizationId, postProcessComplete: false }] })
+      expect(f.owner.listRecovery().batches.map(item => item.batchId)).toContain(batch.batchId)
+      expect(() => f.owner.confirmBatchFinalization({ batchId: batch.batchId, chapterNumber: 1, finalizationId: finalizedSource.finalizationId }))
+        .toThrow('GENERATION_BATCH_FINALIZATION_REQUIRED')
+    }
+    const reopened = f.reopen()
+    expect(reopened.readBatch(batch.batchId).nextChapterNumber).toBe(1)
+    expect(reopened.listRecovery().batches.map(item => item.batchId)).toContain(batch.batchId)
+    PostProcessRepository.markStepOk(post, 'character_cards')
+    expect(reopened.confirmBatchFinalization({ batchId: batch.batchId, chapterNumber: 1, finalizationId: finalizedSource.finalizationId }))
+      .toMatchObject({ nextChapterNumber: endChapter === 1 ? null : 2, completedChapters: [{ postProcessComplete: true }] })
+    expect(reopened.listRecovery().batches.some(item => item.batchId === batch.batchId)).toBe(endChapter !== 1)
   })
 
   describe('运行侧页的可恢复列表由主进程一次算好（#536）', () => {

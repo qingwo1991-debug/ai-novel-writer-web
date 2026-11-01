@@ -15,10 +15,10 @@ const mocks = vi.hoisted(() => ({
   locale: 'en-US',
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => mocks.locale },
-  BrowserWindow: { fromWebContents: vi.fn(() => ({ webContents: { send: mocks.send } })) },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => mocks.locale },
+  eventsFor: (event: { sender: unknown }) => event.sender,
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),
@@ -121,6 +121,22 @@ beforeEach(() => {
 })
 
 describe('llm connection test', () => {
+  it('preserves administrator proxy environment in native web despite disabled saved desktop proxy', async () => {
+    const names = ['AI_NOVEL_RUNTIME', 'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'] as const
+    const before = Object.fromEntries(names.map(name => [name, process.env[name]]))
+    try {
+      process.env.AI_NOVEL_RUNTIME = 'web'
+      for (const name of names.slice(1)) process.env[name] = 'http://server-admin-proxy.invalid:7890'
+      await connectionHandler()({}, deepSeekModel)
+      for (const name of names.slice(1)) expect(process.env[name]).toBe('http://server-admin-proxy.invalid:7890')
+    } finally {
+      for (const name of names) {
+        if (before[name] === undefined) delete process.env[name]
+        else process.env[name] = before[name]
+      }
+    }
+  })
+
   it('uses the configured profile temperature for a generic connection probe', async () => {
     const genericModel: ModelProfile = {
       ...deepSeekModel,
@@ -190,7 +206,7 @@ describe('llm generation parameter policy controller integration', () => {
       creativeStrategy: 'fluent-drafting',
       reasoningStage: 'drafting',
     })
-    await handler('llm:generate-stream')({ sender: {} }, 'xai-stream', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'xai-stream', {
       modelId: xaiReasoningModel.id,
       messages: [{ role: 'user', content: 'write' }],
       purpose: 'chapter-draft',
@@ -208,7 +224,7 @@ describe('llm generation parameter policy controller integration', () => {
     expect(mocks.generate.mock.calls.at(-1)?.[2]).toMatchObject({
       reasoning: { adapter: 'openai-reasoning-effort', reasoningEffort: 'medium' },
     })
-    await handler('llm:cancel')({}, 'xai-stream')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'xai-stream')
   })
 
   it('uses the verified DeepSeek V4 policy for normal, streaming, and connection-test requests', async () => {
@@ -220,7 +236,7 @@ describe('llm generation parameter policy controller integration', () => {
       creativeStrategy: 'fluent-drafting',
       reasoningStage: 'drafting',
     })
-    await handler('llm:generate-stream')({ sender: {} }, 'deepseek-v4-stream', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'deepseek-v4-stream', {
       modelId: legacyDeepSeekV4Model.id,
       messages: [{ role: 'user', content: 'write automatically' }],
       creativeStrategy: 'auto',
@@ -245,7 +261,7 @@ describe('llm generation parameter policy controller integration', () => {
         reasoningEffort: 'low',
       },
     })
-    await handler('llm:cancel')({}, 'deepseek-v4-stream')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'deepseek-v4-stream')
   })
 
   it('uses the profile temperature for regular generation and each initial/continuation stream request', async () => {
@@ -270,7 +286,7 @@ describe('llm generation parameter policy controller integration', () => {
     )
 
     mocks.generateStream.mockClear()
-    await handler('llm:generate-stream')({ sender: {} }, 'generic-stream', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'generic-stream', {
       modelId: genericModel.id,
       messages: [{ role: 'user', content: 'write' }],
       maxTokens: 512,
@@ -287,7 +303,7 @@ describe('llm generation parameter policy controller integration', () => {
       }),
     )
 
-    await handler('llm:generate-stream')({ sender: {} }, 'generic-continuation', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'generic-continuation', {
       modelId: genericModel.id,
       messages: [{ role: 'user', content: 'continue' }],
       maxTokens: 512,
@@ -302,8 +318,8 @@ describe('llm generation parameter policy controller integration', () => {
       })
     }
 
-    await handler('llm:cancel')({}, 'generic-stream')
-    await handler('llm:cancel')({}, 'generic-continuation')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'generic-stream')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'generic-continuation')
   })
 
   it('uses the same fixed-Kimi policy for regular, connection, and each initial/continuation stream request', async () => {
@@ -322,7 +338,7 @@ describe('llm generation parameter policy controller integration', () => {
     expect(mocks.generate.mock.calls.at(-1)?.[2]).not.toHaveProperty('thinking')
 
     mocks.generateStream.mockClear()
-    await handler('llm:generate-stream')({ sender: {} }, 'kimi-stream', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'kimi-stream', {
       modelId: fixedTemperatureKimiModel.id,
       messages: [{ role: 'user', content: 'write' }],
       maxTokens: 512,
@@ -334,7 +350,7 @@ describe('llm generation parameter policy controller integration', () => {
     )
     expect(mocks.generateStream.mock.calls[0]?.[2]).not.toHaveProperty('thinking')
 
-    await handler('llm:generate-stream')({ sender: {} }, 'kimi-continuation', {
+    await handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'kimi-continuation', {
       modelId: fixedTemperatureKimiModel.id,
       messages: [{ role: 'user', content: 'continue' }],
       maxTokens: 512,
@@ -344,8 +360,8 @@ describe('llm generation parameter policy controller integration', () => {
       expect(options).toMatchObject({ temperature: undefined, maxTokens: 512 })
       expect(options).not.toHaveProperty('thinking')
     }
-    await handler('llm:cancel')({}, 'kimi-stream')
-    await handler('llm:cancel')({}, 'kimi-continuation')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'kimi-stream')
+    await handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'kimi-continuation')
 
     mocks.generate.mockClear()
     await connectionHandler()({}, fixedTemperatureKimiModel)
@@ -366,13 +382,13 @@ describe('llm generation parameter policy controller integration', () => {
     const requestId = 'invalid-kimi-stream'
     mocks.models = [invalidKimiModel]
 
-    await expect(handler('llm:generate-stream')({ sender: {} }, requestId, {
+    await expect(handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, requestId, {
       modelId: invalidKimiModel.id,
       messages: [{ role: 'user', content: 'write' }],
     })).rejects.toThrow('GENERATION_KIMI_TEMPERATURE_INVALID')
 
     expect(mocks.generateStream).not.toHaveBeenCalled()
-    await expect(handler('llm:cancel')({}, requestId)).resolves.toEqual({ success: false })
+    await expect(handler('llm:cancel')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, requestId)).resolves.toEqual({ success: false })
   })
 })
 
@@ -451,7 +467,7 @@ describe('llm model execution lease controller integration', () => {
     }
     mocks.models = [newDefaultModel]
 
-    await expect(handler('llm:generate-stream')({ sender: {} }, 'leased-stream', {
+    await expect(handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'leased-stream', {
       modelId: newDefaultModel.id,
       modelExecutionLeaseId: beginResult.lease?.leaseId,
       messages: [{ role: 'user', content: 'continue' }],
@@ -502,7 +518,7 @@ describe('llm model execution lease controller integration', () => {
     mocks.models = [deepSeekModel]
     mocks.generateStream.mockClear()
 
-    await expect(handler('llm:generate-stream')({ sender: {} }, 'unknown-lease-stream', {
+    await expect(handler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'unknown-lease-stream', {
       modelId: deepSeekModel.id,
       modelExecutionLeaseId: 'unknown-model-execution-lease',
       messages: [{ role: 'user', content: 'write' }],
@@ -598,7 +614,7 @@ describe('llm project statistics', () => {
       options.onDone('legacy partial text')
     })
 
-    await expect(handler({ sender: {} }, 'legacy-stream', {
+    await expect(handler({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'legacy-stream', {
       modelId: deepSeekModel.id,
       messages: [{ role: 'user', content: 'write' }],
       purpose: 'draft',
@@ -634,7 +650,7 @@ describe('llm project statistics', () => {
       })
     })
 
-    await expect(handler({ sender: {} }, 'damaged-stream', {
+    await expect(handler({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'damaged-stream', {
       modelId: deepSeekModel.id,
       messages: [{ role: 'user', content: 'write' }],
       purpose: 'draft',
@@ -675,7 +691,7 @@ describe('llm conversation scoping for gateway session affinity', () => {
     }
 
     await conversationHandler('llm:generate')({}, request)
-    await conversationHandler('llm:generate-stream')({ sender: {} }, 'lease-stream-1', request)
+    await conversationHandler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'lease-stream-1', request)
 
     expect(mocks.generate.mock.calls[0]?.[2]).toMatchObject({ conversationId: beginResult.lease.leaseId })
     expect(mocks.generateStream.mock.calls[0]?.[2]).toMatchObject({ conversationId: beginResult.lease.leaseId })
@@ -689,7 +705,7 @@ describe('llm conversation scoping for gateway session affinity', () => {
     }
 
     await conversationHandler('llm:generate')({}, request)
-    await conversationHandler('llm:generate-stream')({ sender: {} }, 'unleased-stream-1', request)
+    await conversationHandler('llm:generate-stream')({ sender: { id: 1, isDestroyed: () => false, once: vi.fn(), send: mocks.send } }, 'unleased-stream-1', request)
 
     const generateOptions = mocks.generate.mock.calls[0]?.[2] as { conversationId?: string }
     const streamOptions = mocks.generateStream.mock.calls[0]?.[2] as { conversationId?: string }

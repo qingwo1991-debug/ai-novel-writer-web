@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3'
 import { canonicalM03FindingSetHash, verifyM03ReviewCycle, type M03FindingDescriptor } from '../migrations/m03-review-cycle'
 import { parseHumanConfirmedReviewSnapshot, type HumanConfirmedReviewSnapshot } from '../../src/shared/human-confirmed-review'
 import { classifyFindingEvidenceChange, unshownMustShowRecheckFindings, type ReviewCycleRecheckContext,
-  type ReviewCycleRecheckFinding, type ReviewCycleProjection } from '../../src/shared/review-cycle'
+  type ReviewCycleRecheckFinding, type ReviewCycleProjection, type PendingReviewRecheck } from '../../src/shared/review-cycle'
 
 const HASH = /^[a-f0-9]{64}$/u
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -501,6 +501,30 @@ function recheckContext(cycle: RecheckCycleRow, db: Database.Database): ReviewCy
 }
 
 export class ReviewCycleRepository {
+  /** Reconstruct pending work from committed facts, including a lost renderer enqueue/ACK. */
+  static listPendingRechecks(db: Database.Database): PendingReviewRecheck[] {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_cycles'").get()) return []
+    const rows = db.prepare(`SELECT rc.cycle_id,rc.review_id,rc.merged_hash,
+        d.id,d.chapter_number,d.version,d.status,c.body
+      FROM review_cycles rc JOIN revisions v ON v.id=rc.revision_id
+      JOIN drafts d ON d.id=v.merged_to_draft_id JOIN contents c ON c.id=d.content_id
+      WHERE rc.revision_status='merge-committed' AND rc.recheck_count=0 AND d.status='revised'
+      ORDER BY d.chapter_number,d.id,rc.cycle_id`).all() as Array<{
+        cycle_id: string; review_id: number; merged_hash: string | null; id: number;
+        chapter_number: number; version: number; status: string; body: string
+      }>
+    const result: PendingReviewRecheck[] = []
+    for (const row of rows) {
+      if (!row.merged_hash || !isCurrentMergedCycle(row.cycle_id, row.merged_hash, db)) continue
+      const plan = this.planRecheck(row.cycle_id, db)
+      if (plan.disposition !== 'required') continue
+      result.push({ cycleId: row.cycle_id, reviewId: row.review_id, rootActionId: plan.rootActionId,
+        mergedHash: row.merged_hash, disposition: 'required', sourceDraft: { id: row.id,
+          chapterNumber: row.chapter_number, version: row.version, status: 'revised', content: row.body } })
+    }
+    return result
+  }
+
   static getByReviewId(reviewId: number, db: Database.Database): ReviewCycleProjection | null {
     if (!integer(reviewId, 1)) invalid()
     const cycle = db.prepare(`SELECT cycle_id,review_id,revision_status,merged_hash,recheck_count

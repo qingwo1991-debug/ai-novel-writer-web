@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
-import * as electron from 'electron'
+import { appHost } from '../platform'
 
 /**
  * Windows exposes these as the volume serial number and 64-bit file index of
@@ -53,7 +53,7 @@ export interface SecureFileSystem {
 
 /**
  * Historical compatibility name. New production code should use
- * `SecureFileSystem`, which is implemented by both Windows and Darwin helpers.
+ * `SecureFileSystem`, implemented by Windows, Darwin and Linux helpers.
  */
 export type WindowsSafeFileSystem = SecureFileSystem
 
@@ -257,12 +257,11 @@ function validateCapability(capability: SecureFileCapability): SecureFileCapabil
   }
 }
 
-type SecureFileSystemPlatform = Extract<NodeJS.Platform, 'win32' | 'darwin'>
+type SecureFileSystemPlatform = Extract<NodeJS.Platform, 'win32' | 'darwin' | 'linux'>
 
 function helperFileName(platform: SecureFileSystemPlatform): string {
-  return platform === 'win32'
-    ? 'windows-safe-file-system.ps1'
-    : 'darwin-safe-file-system'
+  if (platform === 'win32') return 'windows-safe-file-system.ps1'
+  return platform === 'linux' ? 'linux-safe-file-system.py' : 'darwin-safe-file-system'
 }
 
 function defaultHelperPath(options: {
@@ -283,16 +282,6 @@ function defaultHelperPath(options: {
   throw secureError('SECURE_FS_HELPER_UNAVAILABLE')
 }
 
-function electronAppIsPackaged(): boolean {
-  // Vitest/Node do not expose Electron's main-process `app` export. The
-  // production Electron namespace does, and app.isPackaged is authoritative.
-  try {
-    return electron.app.isPackaged === true
-  } catch {
-    return false
-  }
-}
-
 function parseResponse(raw: string): HelperResponse {
   if (raw.length === 0 || raw.length > MAX_HELPER_RESPONSE_BYTES) {
     throw secureError('SECURE_FS_HELPER_INVALID_RESPONSE')
@@ -310,10 +299,10 @@ function parseResponse(raw: string): HelperResponse {
 }
 
 function spawnPlatformHelper(platform: SecureFileSystemPlatform, helperPath: string) {
-  const command = platform === 'win32' ? 'powershell.exe' : helperPath
+  const command = platform === 'win32' ? 'powershell.exe' : platform === 'linux' ? 'python3' : helperPath
   const args = platform === 'win32'
     ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath]
-    : []
+    : platform === 'linux' ? [helperPath] : []
   return spawn(command, args, {
     windowsHide: platform === 'win32',
     shell: false,
@@ -519,14 +508,12 @@ export function createSecureFileSystem(
   const platform = options.platform ?? process.platform
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const helperPath = options.helperPath
-  const isPackaged = options.isPackaged ?? false
-  const resourcesPath = options.resourcesPath ?? (
-    typeof process.resourcesPath === 'string' ? process.resourcesPath : undefined
-  )
+  const isPackaged = options.isPackaged ?? appHost.isPackaged
+  const resourcesPath = options.resourcesPath ?? appHost.resourcesPath
   const cwd = options.cwd ?? process.cwd()
   const usingTestInvoke = options.invoke !== undefined
   const securePlatform = (): SecureFileSystemPlatform => {
-    if (platform === 'win32' || platform === 'darwin') return platform
+    if (platform === 'win32' || platform === 'darwin' || platform === 'linux') return platform
     throw secureError('SECURE_FS_UNSUPPORTED_PLATFORM')
   }
   const resolveHelperPath = (): string => {
@@ -657,6 +644,4 @@ export function createSecureFileSystem(
 export const createWindowsSafeFileSystem = createSecureFileSystem
 
 /** The only production implementation. There is intentionally no Node fs fallback. */
-export const windowsSafeFileSystem = createSecureFileSystem({
-  isPackaged: electronAppIsPackaged(),
-})
+export const windowsSafeFileSystem = createSecureFileSystem()

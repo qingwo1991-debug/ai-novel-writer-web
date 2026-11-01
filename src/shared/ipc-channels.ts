@@ -29,7 +29,7 @@ import type { ModelCapabilities } from './provider-presets'
 import type { ModelProviderResourceId } from './model-provider-resources'
 import type { WritingLanguage } from './writing-language'
 import type { DraftStatus } from './draft-status'
-import type { ReviewCycleProjection } from './review-cycle'
+import type { PendingReviewRecheck, ReviewCycleProjection } from './review-cycle'
 import type {
   RecoveryCandidate,
   RecoveryCandidateRecordInput,
@@ -534,7 +534,10 @@ export type ModelDiscoveryResult =
 export type ModelDiscoveryRequest = Pick<
   ModelProfile,
   'provider' | 'protocol' | 'baseUrl' | 'apiKey' | 'purposes'
->
+> & {
+  /** Server may restore a saved credential only for the same provider/protocol/endpoint. */
+  savedModelId?: string
+}
 
 export interface LLMChannels {
   'llm:begin-execution-lease': {
@@ -827,6 +830,8 @@ export interface ModelProfile {
   protocol: 'openai' | 'gemini'
   modelName: string
   apiKey: string
+  /** Public Web profiles redact apiKey; credential contents remain on the server. */
+  hasCredential?: boolean
   baseUrl: string
   temperature: number
   /** 新配置使用的端点能力；旧配置缺失时继续使用 maxTokens。 */
@@ -1165,6 +1170,7 @@ export interface DatabaseChannels {
   'db:review-get-latest': { args: [baseDraftId: number, expectedProjectPath: string]; return: ReviewFull | null }
   'db:review-get-full': { args: [id: number, expectedProjectPath: string]; return: ReviewFull | null }
   'db:review-cycle-get': { args: [reviewId: number, expectedProjectPath: string]; return: ReviewCycleProjection | null }
+  'db:review-cycle-list-pending-rechecks': { args: [expectedProjectPath: string]; return: PendingReviewRecheck[] }
   'db:review-next-index': { args: [baseDraftId: number, expectedProjectPath: string]; return: number }
 
   // 7. post_process
@@ -1199,6 +1205,10 @@ export interface KnowledgeBaseChannels {
   'kb:import-document': { args: [grantId: string, expectedProjectPath: string]; return: { success: boolean; docId?: string; chunkCount?: number; error?: string; errorCode?: AppErrorCode } }
   'kb:import-folder': { args: [grantId: string, expectedProjectPath: string]; return: { success: boolean; importedCount: number; failedFiles: string[]; error?: string; errorCode?: AppErrorCode } }
   'kb:import-text': { args: [text: string, fileName: string, expectedProjectPath: string]; return: { success: boolean; docId?: string; chunkCount?: number; error?: string; errorCode?: AppErrorCode } }
+  'kb:import-finalized-text': {
+    args: [text: string, fileName: string, source: import('./finalized-continuity').FinalizedSourceIdentity, expectedProjectPath: string]
+    return: { success: boolean; docId?: string; chunkCount?: number; idempotent?: boolean; error?: string; errorCode?: AppErrorCode }
+  }
   'kb:import-planning-text': { args: [text: string, fileName: string, expectedProjectPath: string]; return: { success: boolean; docId?: string; chunkCount?: number; error?: string; errorCode?: AppErrorCode } }
   'kb:import-reference-text': {
     args: [

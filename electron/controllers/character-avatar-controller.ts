@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { appHost, operations } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
 import type { ProjectSessionContext } from '../../src/shared/ipc-channels'
 import { isProjectSessionContext } from '../../src/shared/project-session-context'
@@ -23,7 +23,7 @@ export interface CharacterAvatarControllerDependencies {
   resolveService(event: AvatarEvent, context: ProjectSessionContext): CharacterAssetService | null
 }
 
-function text(zh: string, en: string): string { return mainText(app.getLocale(), zh, en) }
+function text(zh: string, en: string): string { return mainText(appHost.getLocale(), zh, en) }
 
 function failure(code: CharacterAvatarErrorCode): CharacterAvatarError {
   const messages: Record<CharacterAvatarErrorCode, [string, string]> = {
@@ -78,7 +78,7 @@ export function registerCharacterAvatarController(deps: CharacterAvatarControlle
     for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key)
   }
 
-  ipcMain.handle('character-avatar:choose', (event: AvatarEvent, characterId: string, context: ProjectSessionContext): Promise<CharacterAvatarChooseResponse> => serialize(async () => {
+  operations.handle('character-avatar:choose', (event: AvatarEvent, characterId: string, context: ProjectSessionContext): Promise<CharacterAvatarChooseResponse> => serialize(async () => {
     if (!validSender(event)) return { success: false, error: failure('INVALID_SENDER') }
     const service = serviceFor(deps, event, context)
     if (!service) return { success: false, error: failure('PROJECT_NOT_OPEN') }
@@ -94,7 +94,7 @@ export function registerCharacterAvatarController(deps: CharacterAvatarControlle
     catch (error) { return { success: false, error: failure(errorCode(error)) } }
   }))
 
-  ipcMain.handle('character-avatar:commit', (event: AvatarEvent, characterId: string, base64: string, context: ProjectSessionContext): Promise<CharacterAvatarCommitResponse> => serialize(async () => {
+  operations.handle('character-avatar:commit', (event: AvatarEvent, characterId: string, base64: string, context: ProjectSessionContext): Promise<CharacterAvatarCommitResponse> => serialize(async () => {
     if (!validSender(event)) return { success: false, error: failure('INVALID_SENDER') }
     const service = serviceFor(deps, event, context)
     if (!service) return { success: false, error: failure('PROJECT_NOT_OPEN') }
@@ -106,7 +106,7 @@ export function registerCharacterAvatarController(deps: CharacterAvatarControlle
     } catch (error) { return { success: false, error: failure(errorCode(error)) } }
   }))
 
-  ipcMain.handle('character-avatar:read-batch', async (event: AvatarEvent, characterIds: string[], context: ProjectSessionContext): Promise<CharacterAvatarBatchReadResponse> => {
+  operations.handle('character-avatar:read-batch', async (event: AvatarEvent, characterIds: string[], context: ProjectSessionContext): Promise<CharacterAvatarBatchReadResponse> => {
     if (!validSender(event)) return { success: false, error: failure('INVALID_SENDER') }
     const service = serviceFor(deps, event, context)
     if (!service) return { success: false, error: failure('PROJECT_NOT_OPEN') }
@@ -132,7 +132,7 @@ export function registerCharacterAvatarController(deps: CharacterAvatarControlle
     } catch (error) { return { success: false, error: failure(errorCode(error)) } }
   })
 
-  ipcMain.handle('character-avatar:remove', (event: AvatarEvent, characterId: string, context: ProjectSessionContext): Promise<CharacterAvatarRemoveResponse> => serialize(async () => {
+  operations.handle('character-avatar:remove', (event: AvatarEvent, characterId: string, context: ProjectSessionContext): Promise<CharacterAvatarRemoveResponse> => serialize(async () => {
     if (!validSender(event)) return { success: false, error: failure('INVALID_SENDER') }
     const service = serviceFor(deps, event, context)
     if (!service) return { success: false, error: failure('PROJECT_NOT_OPEN') }

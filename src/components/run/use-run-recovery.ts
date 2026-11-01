@@ -7,16 +7,20 @@ import { projectSessionContextFromProject, sameProjectSessionContext } from '../
 import { openPlanningRecoveryDraft, useEditorStore } from '../../stores/editor-store'
 import { useLocaleStore } from '../../stores/locale-store'
 import { useProjectStore } from '../../stores/project-store'
+import { useDraftStore } from '../../stores/draft-store'
+import { createReviewOnlyWorkflow } from '../../services/workflows/chapter-workflow'
+import { formatResourceUri } from '../../shared/project-paths'
 import { useWorkflowStore, type WorkflowDefinition } from '../../stores/workflow-store'
 import {
-  buildRecoveryEntries, EMPTY_RECOVERY_SOURCES, planningTitle,
-  type BatchEntry, type CandidateEntry, type DraftEntry, type EditorEntry, type PlanningEntry, type RecoveryEntry, type RecoverySources, type ReviewEntry,
+  buildRecoveryEntries, EMPTY_RECOVERY_SOURCES, pendingRecoveryHandle, planningTitle,
+  type BatchEntry, type CandidateEntry, type DraftEntry, type EditorEntry, type PlanningEntry, type RecheckEntry, type RecoveryEntry, type RecoverySources, type ReviewEntry,
 } from './run-recovery'
 import { displayedErrorMessage } from '../../i18n/app-errors'
 import { hideRecovery, readHiddenRecovery } from './hidden-recovery'
 import { projectRuns } from './run-output'
 import type { GenerationRecoveryList } from '../../shared/generation-owner-contract'
 import { throwIfTerminalProviderFailure } from '../../services/generation/generation-harness'
+import { copyText } from '../../utils/clipboard'
 
 /** 这部作品有工作流正在发生成请求；暂停与等确认的不算。 */
 function workflowWriting(projectPath: string | undefined, runs = useWorkflowStore.getState().activeRuns): boolean {
@@ -50,8 +54,11 @@ export interface RunRecovery {
   openPlanning: (entry: PlanningEntry) => void
   continueEditor: (entry: EditorEntry) => void
   resumeReview: (entry: ReviewEntry) => void
+  startRecheck: (entry: RecheckEntry) => void
   resumeBatch: (entry: BatchEntry) => void
   resumeDraft: (entry: DraftEntry) => void
+  /** Pause the original root; do not cancel/discard its recoverable candidates. */
+  pausePending: (entry: RecoveryEntry) => void
   /** 这张候选卡在这部作品里不再显示；生成记录不动。 */
   hideDraft: (entry: DraftEntry) => void
 }
@@ -63,6 +70,8 @@ export interface RunRecovery {
 export function useRunRecovery(): RunRecovery {
   const locale = useLocaleStore(s => s.locale)
   const project = useProjectStore(s => s.currentProject)
+  const pendingRechecks = useDraftStore(s => s.pendingReviewRechecks)
+  const rechecksError = useDraftStore(s => s.reviewRechecksError)
   const session = useMemo(() => projectSessionContextFromProject(project), [project])
   /** 最近结束的那次运行：历史最多留 50 条，满了以后条数不再变，只能看最前面那条。 */
   const lastEnded = useWorkflowStore(s => s.history[0] ? `${s.history[0].id}:${s.history[0].completedAt ?? ''}` : '')
@@ -121,6 +130,7 @@ export function useRunRecovery(): RunRecovery {
     if (!session) return
     let active = true
     missedWhileWriting.current = false
+    void useDraftStore.getState().refreshPendingReviewRechecks(session.projectPath, session)
     void ipc.invokeWithProjectSession(session, 'generation:list-recovery').then(list => {
       if (!active) return
       setGeneration({ session, value: list })
@@ -138,9 +148,27 @@ export function useRunRecovery(): RunRecovery {
   const entries = useMemo(() => {
     if (!session) return []
     const ofSession = <T,>(loaded: Loaded<T>, empty: T) => sameProjectSessionContext(loaded.session, session) ? loaded.value : empty
-    return buildRecoveryEntries({ ...ofSession(generationList, { ...EMPTY_RECOVERY_SOURCES, partial: false }), candidates: ofSession(candidateList, []) }, locale)
+    return buildRecoveryEntries({ ...ofSession(generationList, { ...EMPTY_RECOVERY_SOURCES, partial: false }), candidates: ofSession(candidateList, []), rechecks: pendingRechecks }, locale)
       .filter(entry => entry.kind !== 'draft' || (!hiddenEarlier.has(entry.hideKey) && !hiddenNow.has(entry.hideKey)))
-  }, [session, generationList, candidateList, locale, hiddenEarlier, hiddenNow])
+  }, [session, generationList, candidateList, pendingRechecks, locale, hiddenEarlier, hiddenNow])
+
+  // A refreshed tab has no renderer executor to deliver its completion callback.
+  // While a server request is pending, read status periodically even if its final
+  // SSE event was missed. No write or workflow restart is performed here.
+  useEffect(() => {
+    if (writing || !entries.some(entry => pendingRecoveryHandle(entry))) return
+    const timer = window.setTimeout(() => setRefreshTick(value => value + 1), 2500)
+    return () => window.clearTimeout(timer)
+  }, [entries, writing, refreshTick])
+
+  useEffect(() => {
+    if (!session) return
+    const refresh = () => { if (!workflowWriting(session.projectPath)) setRefreshTick(value => value + 1) }
+    const visible = () => { if (document.visibilityState === 'visible') refresh() }
+    window.addEventListener('online', refresh)
+    document.addEventListener('visibilitychange', visible)
+    return () => { window.removeEventListener('online', refresh); document.removeEventListener('visibilitychange', visible) }
+  }, [session])
 
   const stillCurrent = useCallback(() => session !== null && sameProjectSessionContext(session, currentSession()), [session])
 
@@ -177,7 +205,7 @@ export function useRunRecovery(): RunRecovery {
   return {
     entries,
     candidateError,
-    generationError: (sameProjectSessionContext(actionError.session, session) && actionError.message) || loadError
+    generationError: (sameProjectSessionContext(actionError.session, session) && actionError.message) || loadError || rechecksError
       || (sameProjectSessionContext(generationList.session, session) && generationList.value.partial ? (locale === 'en-US' ? 'Some tasks could not be loaded; the other candidates remain available.' : '部分任务暂时无法读取，其他候选仍可恢复。') : ''),
     busy,
     picked: entry => selection[entry.key] ?? [],
@@ -186,11 +214,11 @@ export function useRunRecovery(): RunRecovery {
       return { ...previous, [entry.key]: checked ? [...current, artifactId] : current.filter(id => id !== artifactId) }
     }),
     copy: text => {
-      if (stillCurrent()) navigator.clipboard.writeText(text).catch(showGenerationFailure)
+      if (stillCurrent()) copyText(text).catch(showGenerationFailure)
     },
     copyCandidate: entry => {
       if (!stillCurrent()) return
-      navigator.clipboard.writeText(entry.text).then(() => setCandidateError(''),
+      copyText(entry.text).then(() => setCandidateError(''),
         error => setCandidateError(displayedErrorMessage(useLocaleStore.getState().locale, error)))
     },
     continueCandidate: entry => {
@@ -236,6 +264,25 @@ export function useRunRecovery(): RunRecovery {
       if (!stillCurrent()) return
       setRefreshTick(value => value + 1)
       throwIfTerminalProviderFailure(receipt.outcome.receipt)
+    }),
+    pausePending: entry => void act(async current => {
+      const handle = pendingRecoveryHandle(entry)
+      if (!handle) return
+      await ipc.invokeWithProjectSession(current, 'generation:pause', handle)
+      if (stillCurrent()) setRefreshTick(value => value + 1)
+    }),
+    startRecheck: entry => startRecovery(async current => {
+      await useDraftStore.getState().refreshPendingReviewRechecks(current.projectPath, current)
+      if (!stillCurrent()) throw new Error('SOURCE_DRAFT_CHANGED')
+      const pending = useDraftStore.getState().pendingReviewRechecks.find(item =>
+        item.cycleId === entry.pending.cycleId && item.mergedHash === entry.pending.mergedHash)
+      if (!pending) throw new Error('SOURCE_DRAFT_CHANGED')
+      const source = pending.sourceDraft
+      return createReviewOnlyWorkflow({ projectPath: current.projectPath, chapterNumber: source.chapterNumber,
+        chapterTitle: useLocaleStore.getState().text(`第${source.chapterNumber}章`, `Chapter ${source.chapterNumber}`),
+        draftPath: formatResourceUri({ kind: 'draft', id: source.id }), draftContent: source.content,
+        sourceDraft: { id: source.id, chapterNumber: source.chapterNumber, version: source.version, status: source.status, contentRevision: 0 },
+        reviewCycleId: pending.cycleId, expectedMergedHash: pending.mergedHash }, current)
     }),
     resumeReview: entry => startRecovery(current => createReviewRevisionRecoveryWorkflow(current, entry.view.handle)),
     resumeBatch: entry => startRecovery(current => createBatchRecoveryWorkflow(current, entry.batchId)),

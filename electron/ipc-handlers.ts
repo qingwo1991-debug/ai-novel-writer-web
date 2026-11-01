@@ -11,7 +11,6 @@ import { registerGenerationController } from './controllers/generation-controlle
 import { registerDatabaseController } from './controllers/db-controller'
 import { registerKBController } from './controllers/kb-controller'
 import { registerImportController } from './controllers/import-controller'
-import { registerWindowController } from './controllers/window-controller'
 import { registerOfficialHomepageController } from './controllers/official-homepage-controller'
 import { registerModelProviderResourceController } from './controllers/model-provider-resource-controller'
 import { registerFinalizationController } from './controllers/finalization-controller'
@@ -32,7 +31,8 @@ export function registerIPCHandlers() {
   assertGlobalDataReady()
 
   // 挂载控制器路由
-  registerWindowController()
+  // Desktop window controls are registered only by the Electron entry point.
+  // Node/Web composition must never import the desktop runtime.
   registerOfficialHomepageController()
   registerModelProviderResourceController()
   registerConfigController()

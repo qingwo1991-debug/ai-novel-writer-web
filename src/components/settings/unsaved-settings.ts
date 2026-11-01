@@ -8,6 +8,12 @@ import { toast } from '../ui/Toast'
 
 /** 设置页里还没保存的输入：各页用 useUnsavedSettings 登记，离开设置页或换页前由 leaveSettings 统一确认。 */
 const unsaved = new Set<symbol>()
+
+/** 同步读供浏览器 beforeunload 使用；退出时不能等待异步确认或保存。 */
+export function hasUnsavedSettings(): boolean {
+  return unsaved.size > 0
+}
+
 export function useUnsavedSettings(dirty: boolean): void {
   useEffect(() => {
     if (!dirty) return

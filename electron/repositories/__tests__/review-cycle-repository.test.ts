@@ -252,6 +252,48 @@ function mergedFindingCycle(db: import('better-sqlite3').Database, key: string, 
   return { ...item, mergedContent, mergedHash }
 }
 
+describe('durable pending review recheck projection', () => {
+  it('recovers required work after commit without creating attempts or mutating the cycle', () => {
+    const db = fixture()
+    try {
+      const item = mergedFindingCycle(db, 'lost-enqueue', '开场时门闩牢固，主角立即停步。')
+      const before = db.prepare('SELECT * FROM review_cycles').all()
+      const attempts = db.prepare('SELECT COUNT(*) FROM generation_attempts').pluck().get()
+      const pending = ReviewCycleRepository.listPendingRechecks(db)
+      expect(pending).toEqual([{ cycleId: item.cycle.cycleId, reviewId: item.seeded.reviewId,
+        rootActionId: item.seeded.call.rootActionId, disposition: 'required', mergedHash: item.mergedHash,
+        sourceDraft: { id: item.seeded.draftId, chapterNumber: 1, version: 1, status: 'revised', content: item.mergedContent } }])
+      expect(ReviewCycleRepository.listPendingRechecks(db)).toEqual(pending)
+      expect(db.prepare('SELECT * FROM review_cycles').all()).toEqual(before)
+      expect(db.prepare('SELECT COUNT(*) FROM generation_attempts').pluck().get()).toBe(attempts)
+      db.prepare('UPDATE contents SET body=? WHERE id=(SELECT content_id FROM drafts WHERE id=?)')
+        .run('作者在复核前又修改了正文。', item.seeded.draftId)
+      expect(ReviewCycleRepository.listPendingRechecks(db)).toEqual([])
+    } finally { db.close() }
+  })
+  it('omits unchanged evidence and removes successfully committed rechecks', () => {
+    const db = fixture()
+    try {
+      const unchanged = mergedFindingCycle(db, 'unchanged-recovery', '开场时门闩松动，主角立即停步。')
+      expect(ReviewCycleRepository.listPendingRechecks(db)).toEqual([])
+      expect(ReviewCycleRepository.planRecheck(unchanged.cycle.cycleId, db).disposition).toBe('not-required')
+    } finally { db.close() }
+  })
+  it('removes successfully committed rechecks', () => {
+    const db = fixture()
+    try {
+      const changed = mergedFindingCycle(db, 'completed-recovery', '开场时门闩牢固，主角立即停步。')
+      const context = ReviewCycleRepository.planRecheck(changed.cycle.cycleId, db).context!
+      const attempt = seedRecheckAttempt(db, changed, context, { key: 'completed-recovery', mappings: context.findings.map((finding, index) => ({
+        findingId: finding.findingId, targetId: finding.targetId, reviewItemIndex: index, resolved: false,
+      })) })
+      expect(ReviewCycleRepository.listPendingRechecks(db)).toHaveLength(1)
+      db.transaction(() => ReviewCycleRepository.commitRecheck(changed.cycle.cycleId, attempt.attemptId, db))()
+      expect(ReviewCycleRepository.listPendingRechecks(db)).toEqual([])
+    } finally { db.close() }
+  })
+})
+
 function seedRecheckAttempt(db: import('better-sqlite3').Database, item: ReturnType<typeof mergedFindingCycle>,
   context: ReviewCycleRecheckContext, input: { key: string; rootActionId?: string; mappings: Array<{
     findingId: string; targetId: string; reviewItemIndex: number; resolved: boolean; evidenceHash?: string

@@ -35,6 +35,7 @@ import { outlineSourceChangedBlocked, planningTitle } from '../run/run-recovery'
 import { outlineProgress, type OutlineProgress } from '../../shared/plot-outline-checkpoint'
 import type { PlotOutlineRangeSource } from '../../shared/plot-outline-contract'
 import { displayedErrorMessage } from '../../i18n/app-errors'
+import { copyText } from '../../utils/clipboard'
 
 /** 架构四节的文档、图标与说明；名字取 ARCH_STEP_NAMES。 */
 export const ARCH_FILES: Array<{
@@ -396,7 +397,7 @@ export function useArchitectureOverview(projectKey: string) {
       || !candidate
     ) return
     try {
-      await navigator.clipboard.writeText(candidate)
+      await copyText(candidate)
       const { toast } = await import('../ui/Toast')
       toast.success(text('未完成候选已复制', 'Incomplete candidate copied.'))
     } catch (error) {

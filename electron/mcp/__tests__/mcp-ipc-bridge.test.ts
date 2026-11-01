@@ -15,8 +15,8 @@ const mocks = vi.hoisted(() => ({
   getDefaultConfigPath: vi.fn(() => 'C:/isolated/.vela/mcp_config.json'),
 }))
 
-vi.mock('electron', () => ({
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

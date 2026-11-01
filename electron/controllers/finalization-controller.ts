@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { operations } from '../platform'
 
 import { getCurrentProjectPath } from '../database'
 import { projectAccess } from '../services/project-access'
@@ -40,7 +40,7 @@ function snapshotMatchesContext(
  * 重新验证。
  */
 export function registerFinalizationController(): void {
-  ipcMain.handle('finalization:commit', async (
+  operations.handle('finalization:commit', async (
     _event,
     candidate: unknown,
     context: unknown,
@@ -66,7 +66,7 @@ export function registerFinalizationController(): void {
     }
   })
 
-  ipcMain.handle('finalization:retry', async (
+  operations.handle('finalization:retry', async (
     _event,
     finalizationId: unknown,
     context: unknown,

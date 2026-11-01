@@ -7,6 +7,12 @@ type StepRetry = 'prompt' | 'described' | 'never' | { after: string }
 
 /** 定稿后处理步骤的错误码。步骤记录里存错误码本身，界面展示时再按当前界面语言换成作者可读说明。 */
 const FINALIZATION_STEP_ERRORS: { code: RegExp; zh: string; en: string; retry: StepRetry }[] = [
+  { code: /^NETWORK_ERROR$/, retry: 'described',
+    zh: '后处理的模型请求连接失败或超时，没有收到可提交的完整结果。定稿正文已保留，系统不会自动重复请求。请检查服务器到模型端点的网络和代理连接，再由你点「重试」重新生成这一步。',
+    en: 'The post-processing model request failed to connect or timed out, so no complete result is available to save. The finalized manuscript is kept, and the request will not be repeated automatically. Check the server’s network and proxy connection to the model endpoint, then select Retry to generate this step again.' },
+  { code: /^GENERATION_PROVIDER_FAILED$/, retry: 'described',
+    zh: '模型服务商未成功完成这次后处理请求，没有可提交的完整结果。定稿正文已保留，系统不会自动重复请求。请检查模型服务状态与设置，再由你点「重试」重新生成这一步。',
+    en: 'The model provider did not successfully finish this post-processing request, so no complete result is available to save. The finalized manuscript is kept, and the request will not be repeated automatically. Check the model service and settings, then select Retry to generate this step again.' },
   { code: /^FINALIZATION_GENERATION_INCOMPLETE$/, retry: 'prompt',
     zh: '模型这次没有返回完整结果（连接中断或输出被截断）。', en: 'The model did not return a complete result (the connection dropped or the output was cut off).' },
   { code: /^FINALIZATION_GENERATION_(ARTIFACT_REQUIRED|OUTCOME_UNKNOWN)$/, retry: 'prompt',

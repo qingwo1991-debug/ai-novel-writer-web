@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from 'react'
 import { flushSync } from 'react-dom'
+import { randomUUID } from '../../utils/id'
 import CodeMirror, { ReactCodeMirrorRef, EditorView, ViewUpdate } from '@uiw/react-codemirror'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -433,7 +434,7 @@ export default function CodeMirrorEditor({
       aiCandidateRef.current = null
       setActiveAIAction(uiText(...actionLabel(request.action))); setActiveNote(request.action === 'instruct' ? request.instruction : null)
       setNoteDraft(null); setAiResult(''); setAiError(null); setCanResumeAI(false)
-      const recovery = await client.open({ input, modelId: routeModelId('editor-inline') ?? '', uiActionNonce: crypto.randomUUID() })
+      const recovery = await client.open({ input, modelId: routeModelId('editor-inline') ?? '', uiActionNonce: randomUUID() })
       if (requestSequence !== aiRequestSequenceRef.current) return
       onGenerationHandle?.(recovery.view.handle)
       const receipt = await client.execute()

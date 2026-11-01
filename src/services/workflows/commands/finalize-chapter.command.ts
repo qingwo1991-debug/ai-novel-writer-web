@@ -126,13 +126,11 @@ export function buildFinalizePostProcessSteps(
             `Chapter ${chapterNumber} ${chapterTitle}.txt`,
           )
         : `chapter_${chapterNumber}.txt`
-      const result = await ipc.invokeWithProjectSession(
-        projectSession,
-        'kb:import-text',
-        draftContent,
-        contentFileName,
-        _project.path,
-      ) as { success: boolean; error?: string; chunkCount?: number; docId?: string }
+      const result = finalizedSource
+        ? await ipc.invokeWithProjectSession(projectSession, 'kb:import-finalized-text',
+          draftContent, contentFileName, finalizedSource, _project.path)
+        : await ipc.invokeWithProjectSession(projectSession, 'kb:import-text',
+          draftContent, contentFileName, _project.path)
       requireIpcSuccess(result, text('导入知识库', 'Import into knowledge base'))
       if (finalizedDraftId !== undefined) {
         if (!result.docId) throw new Error(workflowUiText(
@@ -140,17 +138,21 @@ export function buildFinalizePostProcessSteps(
           '知识库导入成功但缺少文档身份收据',
           'The knowledge-base import succeeded but returned no document identity receipt.',
         ))
-        const linked = await ipc.invokeWithProjectSession(
-          projectSession,
-          'db:finalization-link-knowledge-document',
-          finalizedDraftId,
-          result.docId,
-          _project.path,
-        )
-        requireIpcSuccess(linked, text(
-          '登记定稿知识文档身份',
-          'Link finalized knowledge document identity',
-        ))
+        // Source-bound imports link in the authoritative backend before returning.
+        // Preserve the historical link path only for legacy callers without a receipt.
+        if (!finalizedSource) {
+          const linked = await ipc.invokeWithProjectSession(
+            projectSession,
+            'db:finalization-link-knowledge-document',
+            finalizedDraftId,
+            result.docId,
+            _project.path,
+          )
+          requireIpcSuccess(linked, text(
+            '登记定稿知识文档身份',
+            'Link finalized knowledge document identity',
+          ))
+        }
       }
       callbacks.log(workflowUiText(
         context,

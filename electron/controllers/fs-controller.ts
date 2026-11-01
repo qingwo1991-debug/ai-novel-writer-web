@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { operations as ipcMain } from '../platform'
 import path from 'node:path'
 import { FileNode, type FileWriteCommitState, type ProjectSessionContext } from '../../src/shared/ipc-channels'
 import { isProjectSessionContext } from '../../src/shared/project-session-context'

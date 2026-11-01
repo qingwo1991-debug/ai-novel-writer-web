@@ -1,4 +1,5 @@
 import { useWorkflowStore, type StepCallbacks, type WorkflowContext } from '../../stores/workflow-store'
+import { randomUUID } from '../../utils/id'
 import { routeModelId } from '../model-routing'
 import type { BeginGenerationRequest } from '../../shared/generation-owner-contract'
 import type { GenerationOperation } from '../../shared/model-stage-routing'
@@ -98,6 +99,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         context.data.importGenerationContext = importRecovery.frozenContext
       } else if (resumeHandle) {
         const stored = await transport.read(resumeHandle)
+        if (stored.inFlight) throw new Error('GENERATION_DISPATCH_IN_FLIGHT')
         if (context.mainGenerationRootHandle && context.mainGenerationRootHandle.rootActionId !== resumeHandle.rootActionId)
           throw new Error('GENERATION_WORKFLOW_ROOT_CHANGED')
         if (!importStage) begunModelId = modelId = context.generationModelId?.trim()
@@ -176,7 +178,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
       if (context.cancelled || options?.signal?.aborted) { await cancel(); throw new Error('GENERATION_WORKFLOW_CANCELLED') }
       if (cancelFailure) throw cancelFailure
       if (options?.onChunk) throw new Error('MAIN_SNAPSHOT_CALLBACK_REQUIRED')
-      const invocationNonce = options?.invocationNonce ?? crypto.randomUUID()
+      const invocationNonce = options?.invocationNonce ?? randomUUID()
       const abort = () => { void cancel() }
       options?.signal?.addEventListener('abort', abort, { once: true })
       busy = true

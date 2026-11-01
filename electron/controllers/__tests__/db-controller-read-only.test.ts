@@ -7,8 +7,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 const handlers = new Map<string, IpcHandler>()
 
-vi.mock('electron', () => ({
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { isPackaged: false, getLocale: () => 'en-US' },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => handlers.set(channel, handler)),
   },
 }))

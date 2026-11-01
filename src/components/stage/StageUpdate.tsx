@@ -152,6 +152,7 @@ export function UpdateSettings() {
   const guard = useUpdateInstallGuard(model.requestInstall)
   const [homepageError, setHomepageError] = useState<string | null>(null)
   const { presentation } = model
+  const serverManaged = ipc.runtimeKind === 'web'
 
   const openHomepage = async () => {
     setHomepageError(null)
@@ -167,8 +168,10 @@ export function UpdateSettings() {
     <div className="stage-update-settings">
       <div className="stage-set-row">
         <div>
-          <p className="stage-set-row-title">{text('检查更新', 'Check for updates')}</p>
-          <p className="stage-set-row-desc">{presentation.kind === 'disabled'
+          <p className="stage-set-row-title">{serverManaged ? text('服务器管理更新', 'Server-managed updates') : text('检查更新', 'Check for updates')}</p>
+          <p className="stage-set-row-desc">{serverManaged
+            ? text('当前为原生 Web 版。版本升级由服务器管理员更新容器完成；请先保存作品，再按管理员提示刷新页面。浏览器不会安装桌面程序或重启服务。', 'This is Native Web. Administrators update the server container; save your work before reloading when instructed. The browser does not install desktop software or restart the service.')
+            : presentation.kind === 'disabled'
             ? text('更新检查只在已安装的 Windows 或 macOS 应用中可用。', 'Update checks are available in the installed Windows or macOS app only.')
             : text('从 GitHub Release 检查新的正式版。', 'Check GitHub Releases for new stable versions.')}</p>
         </div>
@@ -176,10 +179,10 @@ export function UpdateSettings() {
           <Button variant="text" size="sm" onClick={() => void openHomepage()}>
             <ExternalLink size={13} aria-hidden="true" />{text('官方主页', 'Official website')}
           </Button>
-          <Button variant="secondary" size="sm" disabled={!presentation.canCheck} onClick={() => void model.checkForUpdates()}>
+          {!serverManaged && <Button variant="secondary" size="sm" disabled={!presentation.canCheck} onClick={() => void model.checkForUpdates()}>
             <RefreshCw size={13} className={presentation.kind === 'checking' ? 'stage-update-spin' : undefined} aria-hidden="true" />
             {presentation.kind === 'checking' ? text('正在检查', 'Checking') : text('检查更新', 'Check for updates')}
-          </Button>
+          </Button>}
         </div>
       </div>
       {homepageError && <p className="stage-set-error" role="alert">{homepageError}</p>}

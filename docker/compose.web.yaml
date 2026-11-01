@@ -1,0 +1,63 @@
+name: ai-novel-writer-native
+
+services:
+  ai-novel-writer-web:
+    # Set NOVEL_IMAGE to a reviewed GHCR digest for pull-only deployments.
+    image: "${NOVEL_IMAGE:-ai-novel-writer-web:1.4.0}"
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+      args:
+        BUILDER_IMAGE: ai-novel-writer:1.4.0
+    container_name: ai-novel-writer-web
+    init: true
+    # Existing volume is root:root. Opt into 1000:1000 only AFTER an offline
+    # ownership/access review of every existing file, encrypted key and folder.
+    # Startup never recursively chowns author data or rewrites key permissions.
+    user: "${NOVEL_UID:-0}:${NOVEL_GID:-0}"
+    ports:
+      # Trusted nginx must overwrite identity headers AFTER Basic authentication.
+      # The gateway header is not independent authentication. Never publish LAN.
+      - "127.0.0.1:6081:6081"
+    volumes:
+      - /root/AI/ai-novel-writer-data:/data
+    environment:
+      NODE_ENV: production
+      AI_NOVEL_RUNTIME: web
+      NOVEL_DATA_ROOT: /data
+      HOST: 0.0.0.0
+      PORT: "6081"
+      NOVEL_ALLOWED_ORIGINS: "${NOVEL_ALLOWED_ORIGINS:-http://192.168.1.15:8093,https://192.168.1.15:8445}"
+      NOVEL_ALLOWED_ENDPOINTS: "${NOVEL_ALLOWED_ENDPOINTS:-http://192.168.1.15:8317}"
+      NOVEL_ADMIN_USERS: "${NOVEL_ADMIN_USERS:-admin}"
+      # Deployment-controlled HTTP(S) proxy; no browser command/env authority.
+      # Native Node22 fetch requires NODE_USE_ENV_PROXY (supported by local22.23.4).
+      NODE_USE_ENV_PROXY: "1"
+      HTTP_PROXY: http://192.168.1.15:7890
+      HTTPS_PROXY: http://192.168.1.15:7890
+      http_proxy: http://192.168.1.15:7890
+      https_proxy: http://192.168.1.15:7890
+      NO_PROXY: localhost,127.0.0.1,::1,192.168.1.15
+      no_proxy: localhost,127.0.0.1,::1,192.168.1.15
+    # Do NOT run concurrently with the old desktop/VNC service on this volume.
+    # flock coordinates native gateways only; old desktop code does not join it.
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - 'const r=await fetch("http://127.0.0.1:6081/healthz",{signal:AbortSignal.timeout(4000)});if(!r.ok)process.exit(1);const x=await r.json();if(x.runtime!=="node"||x.electron!==false)process.exit(1)'
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

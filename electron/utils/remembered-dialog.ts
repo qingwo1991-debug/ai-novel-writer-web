@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { dialog, type OpenDialogOptions, type OpenDialogReturnValue, type SaveDialogOptions, type SaveDialogReturnValue } from 'electron'
+import { dialogHost as dialog, type OpenDialogOptions, type OpenDialogReturnValue, type SaveDialogOptions, type SaveDialogReturnValue } from '../platform'
 import type { DialogDirectoryKind, GlobalConfig } from '../../src/shared/ipc-channels'
 import { GLOBAL_CONFIG_PATH, tryReadJsonFile, updateGlobalConfig } from './config-utils'
 
@@ -20,6 +20,9 @@ function lastDirectory(kind: DialogDirectoryKind): string | undefined {
 }
 
 function tryRememberDirectory(kind: DialogDirectoryKind, directory: string): void {
+  // Browser upload/export staging locations are short-lived and must not be
+  // persisted as a user's native directory preference, nor written by workers.
+  if (process.env.AI_NOVEL_RUNTIME === 'web') return
   try {
     updateGlobalConfig(config => ({
       ...config,
@@ -35,7 +38,8 @@ export async function showOpenDialogInLastDirectory(
   options: OpenDialogOptions,
 ): Promise<OpenDialogReturnValue> {
   const directory = lastDirectory(kind)
-  const result = await dialog.showOpenDialog(directory ? { ...options, defaultPath: directory } : options)
+  const webOptions = process.env.AI_NOVEL_RUNTIME === 'web' ? { ...options, directoryKind: kind } : options
+  const result = await dialog.showOpenDialog(directory ? { ...webOptions, defaultPath: directory } : webOptions)
   const selected = result.canceled ? undefined : result.filePaths[0]
   if (selected) {
     tryRememberDirectory(kind, options.properties?.includes('openDirectory') ? selected : path.dirname(selected))
@@ -48,9 +52,10 @@ export async function showSaveDialogInLastDirectory(
   options: SaveDialogOptions,
 ): Promise<SaveDialogReturnValue> {
   const directory = lastDirectory(kind)
+  const webOptions = process.env.AI_NOVEL_RUNTIME === 'web' ? { ...options, directoryKind: kind } : options
   const result = await dialog.showSaveDialog(directory
-    ? { ...options, defaultPath: path.join(directory, options.defaultPath ?? '') }
-    : options)
+    ? { ...webOptions, defaultPath: path.join(directory, options.defaultPath ?? '') }
+    : webOptions)
   if (!result.canceled && result.filePath) tryRememberDirectory(kind, path.dirname(result.filePath))
   return result
 }

@@ -219,6 +219,7 @@ function installRealRepositoryIpc(): void {
           case 'db:draft-get-latest':
             return null
           case 'kb:import-text':
+          case 'kb:import-finalized-text':
             return { success: true, chunkCount: 1, docId: 'doc-1' }
           case 'db:finalization-link-knowledge-document':
             return { success: true }
@@ -944,6 +945,30 @@ it('一次显式修复固定失败目标，withRetry 不得把第四份坏结果
  expect(db.prepare('SELECT COUNT(*) FROM generation_roots').pluck().get()).toBe(1)
  expect(db.prepare('SELECT COUNT(*) FROM generation_runs').pluck().get()).toBe(1)
 })
+it('author-import chapter notes preserve a real connect-timeout failure through automatic retries without redispatch', async () => {
+ insertFinalizedDraft(7, 2)
+ let notesCalls = 0
+ useLLMStore.setState({ defaultModelId: 'test-model', generateStream: vi.fn(async () => {
+  notesCalls++
+  // This renderer-model double has no transport diagnostics callback; emit the
+  // same safe category that real UND_ERR_CONNECT_TIMEOUT diagnostics normalize to.
+  throw new Error('NETWORK_ERROR')
+ }) })
+ const initial = await command('The brass key changes hands.').execute({ step: {}, context: workflowContext, callbacks: callbacks() })
+ expect(initial.steps).toMatchObject({ kb_import: { ok: true }, chapter_notes: { ok: false, error: 'NETWORK_ERROR' } })
+ expect(notesCalls).toBe(1)
+ expect(observedChapterNotesPrompt).toBe('')
+ const source = SummaryRepository.readFinalizedSource(7)
+ if (source.status !== 'valid') throw new Error('fixture source missing')
+ const slot = { source: source.snapshot.source, stepKey: 'chapter_notes' as const }
+ expect(owner().readFinalizationGeneration({ slot })?.latestAttempt).toMatchObject({ failureCode: 'NETWORK_ERROR', finishReason: null, inFlight: false })
+ expect(getProjectDb()!.prepare('SELECT COUNT(*) FROM generation_attempts').pluck().get()).toBe(1)
+ expect(SummaryRepository.listFinalizedContinuityBefore(3)).toEqual([])
+ const replay = await command('The brass key changes hands.', { onlyFailed: true }).execute({ step: {}, context: workflowContext, callbacks: callbacks() })
+ expect(replay.steps.chapter_notes).toMatchObject({ ok: false, error: 'NETWORK_ERROR' })
+ expect(notesCalls).toBe(1)
+ expect(getProjectDb()!.prepare('SELECT COUNT(*) FROM generation_attempts').pluck().get()).toBe(1)
+})
 it('#420 角色状态断流后，用户重试每次只发一次新请求，失败记下错误码，成功后只写一次', async () => {
  insertFinalizedDraft(7, 2)
  let characterCalls = 0
@@ -962,10 +987,10 @@ it('#420 角色状态断流后，用户重试每次只发一次新请求，失�
  const initial = await run(false)
  expect(initial.steps).toMatchObject({ chapter_notes: { ok: true }, character_cards: { ok: false } })
  expect(characterCalls).toBe(1)
- expect(initial.steps.character_cards.error).toBe('FINALIZATION_GENERATION_ARTIFACT_REQUIRED')
+ expect(initial.steps.character_cards.error).toBe('GENERATION_PROVIDER_FAILED')
  const failedAgain = await run(true)
  expect(failedAgain.steps.character_cards.ok).toBe(false)
- expect(failedAgain.steps.character_cards.error).toBe('FINALIZATION_GENERATION_INCOMPLETE')
+ expect(failedAgain.steps.character_cards.error).toBe('GENERATION_PROVIDER_FAILED')
  expect(characterCalls).toBe(2)
  const repaired = await run(true)
  expect(repaired.steps.character_cards.ok).toBe(true)

@@ -4,6 +4,8 @@ import type {
   ModelDiscoveryResult,
 } from '../../src/shared/ipc-channels'
 
+import { endpointFetch } from '../platform/endpoint-fetch'
+
 interface ModelDiscoveryServiceDependencies {
   fetchImpl?: typeof fetch
   timeoutMs?: number
@@ -187,7 +189,7 @@ export class ModelDiscoveryService {
         if (urlContainsCredential(requestUrl, model.apiKey)) {
           return { success: false, errorCode: 'invalid_response' }
         }
-        const response = await (this.dependencies.fetchImpl ?? fetch)(
+        const response = await endpointFetch(
           requestUrl,
           {
             method: 'GET',
@@ -198,6 +200,7 @@ export class ModelDiscoveryService {
               'x-goog-api-key': model.apiKey,
             },
           },
+          this.dependencies.fetchImpl,
         )
         if (!response.ok) return classifyHttpFailure(response.status)
 
@@ -220,7 +223,7 @@ export class ModelDiscoveryService {
       if (urlContainsCredential(requestUrl, model.apiKey)) {
         return { success: false, errorCode: 'invalid_response' }
       }
-      const response = await (this.dependencies.fetchImpl ?? fetch)(
+      const response = await endpointFetch(
         requestUrl,
         {
           method: 'GET',
@@ -231,6 +234,7 @@ export class ModelDiscoveryService {
             Authorization: `Bearer ${model.apiKey}`,
           },
         },
+        this.dependencies.fetchImpl,
       )
       if (!response.ok) return classifyHttpFailure(response.status)
 

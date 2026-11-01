@@ -24,6 +24,7 @@ import type { FileWriteCommitState } from '../../shared/ipc-channels'
 import { parseAgentResponseProtocol, cleanAgentProtocolVisibleText } from '../../shared/agent-response-protocol'
 import type { AgentGenerationRound, AgentToolAction } from '../../shared/agent-generation'
 import { providerContextFailureText } from '../generation/prompt-budget-failure'
+import { randomUUID } from '../../utils/id'
 
 // ===== 常量 =====
 
@@ -203,7 +204,7 @@ export async function runAgentLoop(
       if (abortSignal?.aborted) break
       const tc = roundToolCalls[toolIndex]
       const toolCallInfo: ToolCallInfo = {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         toolName: tc.name,
         arguments: tc.arguments,
         status: 'pending',

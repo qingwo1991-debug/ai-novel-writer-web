@@ -75,9 +75,9 @@ const mocks = vi.hoisted(() => ({
   recoveryResolve: vi.fn(),
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => 'zh-CN' },
-  ipcMain: {
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'zh-CN' },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       mocks.handlers.set(channel, handler)
     }),

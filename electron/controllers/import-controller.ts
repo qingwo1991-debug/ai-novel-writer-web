@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { appHost, operations } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -85,7 +85,7 @@ function defaultFileIdentity(filePath: string): ImportSourceFileIdentity {
 }
 
 function text(zhCNText: string, enUSText: string): string {
-  return mainText(app.getLocale(), zhCNText, enUSText)
+  return mainText(appHost.getLocale(), zhCNText, enUSText)
 }
 
 function importText(locale: ImportRunLocale | undefined, zhCNText: string, enUSText: string): string {
@@ -321,7 +321,7 @@ export function registerImportController(
   }
   // Selection, bounded reading, and inspection are one main-process operation.
   // The renderer receives only the final inspection token and safe display facts.
-  ipcMain.handle('dialog:select-novel-files', async (
+  operations.handle('dialog:select-novel-files', async (
     event,
     request?: ImportPurpose | ImportNovelFileSelectionRequest,
     projectSession?: ProjectSessionContext,

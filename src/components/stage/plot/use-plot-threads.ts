@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { randomUUID } from '../../../utils/id'
 import { assertGraphResult, canExecuteGraph, createGraphGeneration } from '../../../services/graph-generation'
 import type { MainGenerationRunHandle, MainGenerationRunSummary } from '../../../services/generation/generation-runtime'
 import { ipc } from '../../../services/ipc-client'
@@ -42,6 +43,7 @@ import { toast } from '../../ui/Toast'
 import { pluralEn } from '../../../shared/plural-en'
 import { knownAppErrorMessage } from '../../../i18n/app-errors'
 import { providerContextFailureText } from '../../../services/generation/prompt-budget-failure'
+import { copyText } from '../../../utils/clipboard'
 
 const EMPTY_PLAN: NarrativeThreadPlanInput = {
   title: '', type: '', targetStartChapter: 1, targetEndChapter: 1, authorIntent: '',
@@ -302,7 +304,7 @@ export function usePlotThreads(projectKey: string, {
     graphClient.current?.detach()
     const client = createGraphGeneration(session)
     graphClient.current = client
-    const opened = await client.open({ input, modelId, uiActionNonce: crypto.randomUUID() })
+    const opened = await client.open({ input, modelId, uiActionNonce: randomUUID() })
     if (!isProjectSessionCurrent(session) || graphClient.current !== client) throw new Error('GRAPH_GENERATION_DETACHED')
     showGraphRecovery(opened)
     void loadGraphRuns()
@@ -809,9 +811,13 @@ export function usePlotThreads(projectKey: string, {
   /** 复制原运行的结果：有结构化结果时复制 JSON，否则复制原运行的候选或产物文字。 */
   const copyOriginalResult = async () => {
     if (!graphRecovery) return
-    await navigator.clipboard.writeText(graphRecovery.result
-      ? JSON.stringify(graphRecovery.result, null, 2)
-      : (graphRecovery.view.candidates ?? graphRecovery.view.artifacts).map(item => item.text).join('\n'))
+    try {
+      await copyText(graphRecovery.result
+        ? JSON.stringify(graphRecovery.result, null, 2)
+        : (graphRecovery.view.candidates ?? graphRecovery.view.artifacts).map(item => item.text).join('\n'))
+    } catch {
+      setGraphError(text('无法复制原运行结果。', 'Could not copy the original run result.'))
+    }
   }
 
   const cancelOriginalRun = () => {

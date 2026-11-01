@@ -8,6 +8,7 @@ import { sameProjectPathKey } from '../../shared/project-session-context'
 import { ipc } from '../../services/ipc-client'
 import { useLocaleStore } from '../../stores/locale-store'
 import { displayedErrorMessage } from '../../i18n/app-errors'
+import { hasUnsavedSettings } from '../settings/unsaved-settings'
 
 export interface ExitRequest {
   requestId: string
@@ -24,26 +25,49 @@ export function useWindowCloseGuard() {
   const [exitBusy, setExitBusy] = useState(false)
   const [exitError, setExitError] = useState<string | null>(null)
 
-  useEffect(() => ipc.on('window:close-requested', ({ requestId }) => {
-    const projectPath = useProjectStore.getState().currentProject?.path
-    const hasActiveWorkflow = !!projectPath && useWorkflowStore.getState().activeRuns.some(
-      run => sameProjectPathKey(run.projectPath, projectPath),
-    )
-    if (hasActiveWorkflow) {
+  useEffect(() => {
+    if (ipc.isElectron) return
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      const editor = useEditorStore.getState()
+      const projectPath = useProjectStore.getState().currentProject?.path
+      const hasActiveWorkflow = !!projectPath && useWorkflowStore.getState().activeRuns.some(
+        run => sameProjectPathKey(run.projectPath, projectPath),
+      )
+      if (countUnsavedEditorItems(editor.tabs, editor.draftLedgers) === 0
+        && !hasUnsavedSettings() && !hasActiveWorkflow) return
+      // Browsers own this synchronous, generic prompt and may suppress it (for
+      // example without prior interaction). Never start an async save here or
+      // claim that a close acknowledgement guarantees saved data.
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [])
+
+  useEffect(() => {
+    if (!ipc.isElectron) return
+    return ipc.on('window:close-requested', ({ requestId }) => {
+      const projectPath = useProjectStore.getState().currentProject?.path
+      const hasActiveWorkflow = !!projectPath && useWorkflowStore.getState().activeRuns.some(
+        run => sameProjectPathKey(run.projectPath, projectPath),
+      )
+      if (hasActiveWorkflow) {
+        setExitError(null)
+        setExitRequest({ requestId, workflowBlocked: true })
+        return
+      }
+      const editor = useEditorStore.getState()
+      if (countUnsavedEditorItems(editor.tabs, editor.draftLedgers) === 0) {
+        void ipc.invoke('window:resolve-close', requestId, 'proceed').then(result => {
+          if (!result.success) console.error('[WindowCloseGuard] 退出请求已失效')
+        }).catch(error => console.error('[WindowCloseGuard] 退出请求失败:', error))
+        return
+      }
       setExitError(null)
-      setExitRequest({ requestId, workflowBlocked: true })
-      return
-    }
-    const editor = useEditorStore.getState()
-    if (countUnsavedEditorItems(editor.tabs, editor.draftLedgers) === 0) {
-      void ipc.invoke('window:resolve-close', requestId, 'proceed').then(result => {
-        if (!result.success) console.error('[WindowCloseGuard] 退出请求已失效')
-      }).catch(error => console.error('[WindowCloseGuard] 退出请求失败:', error))
-      return
-    }
-    setExitError(null)
-    setExitRequest({ requestId })
-  }), [])
+      setExitRequest({ requestId })
+    })
+  }, [])
 
   const cancelExit = async () => {
     const request = exitRequest

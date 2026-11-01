@@ -19,7 +19,7 @@ export interface CloudBackupAccountView {
   accountId: string
   endpoint: string
   username: string
-  persistence: 'os-backed' | 'session-only'
+  persistence: 'os-backed' | 'server-encrypted' | 'session-only'
 }
 
 export interface CloudBackupGenerationView {

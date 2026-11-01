@@ -1,0 +1,70 @@
+# Default builds are self-contained on GitHub-hosted Linux/amd64 runners.
+# Optional local reuse: --build-arg BUILDER_IMAGE=ai-novel-writer:1.4.0
+# That image must provide Node 22 and the locked dependencies in /app/node_modules.
+ARG BUILDER_IMAGE=toolchain
+FROM node:22-bookworm-slim AS toolchain
+WORKDIR /app
+ENV NODE_ENV=development \
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+# The upstream root postinstall explicitly invokes electron/install.js. Skip ALL
+# lifecycle scripts, including that root script; no Electron/browser download.
+# esbuild and better-sqlite3 13 ship native binaries in their registry packages;
+# retain optional dependencies (including the target LanceDB/esbuild packages).
+RUN node -e 'if(JSON.parse(require("node:fs").readFileSync("package.json")).packageManager!=="pnpm@11.11.0")throw new Error("Update the pinned native build toolchain")' \
+ && npm install --global pnpm@11.11.0 --ignore-scripts --no-audit --no-fund \
+ && pnpm install --ignore-scripts --frozen-lockfile
+
+FROM ${BUILDER_IMAGE} AS build
+WORKDIR /build
+ENV NODE_ENV=development
+# Exclude author data even if a caller accidentally changes .dockerignore.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tsconfig*.json vite.web.config.ts index.html ./
+COPY src ./src
+COPY public ./public
+COPY electron ./electron
+# tsconfig.web includes existing source tests, whose imports reference these
+# fixtures/contracts. Builder-only; never copied into the final image.
+COPY test ./test
+COPY docs/research/novel-quality-modernization ./docs/research/novel-quality-modernization
+COPY web ./web
+# Source node_modules is an image-local symlink; no package-manager bootstrap.
+RUN ln -s /app/node_modules /build/node_modules \
+ && node /app/node_modules/typescript/bin/tsc --noEmit --project tsconfig.web.json \
+ && node /app/node_modules/vite/bin/vite.js build --mode web --config vite.web.config.ts \
+ && node web/build.mjs \
+ && node web/runtime-dependencies.mjs --copy /runtime
+
+FROM node:22-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    AI_NOVEL_RUNTIME=web \
+    NOVEL_DATA_ROOT=/data \
+    HOST=0.0.0.0 \
+    PORT=6081 \
+    LANG=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NODE_USE_ENV_PROXY=1
+# Python is required for the existing capability-safe Linux filesystem helper.
+# flock owns the lifetime volume lease; CA certificates support HTTPS providers.
+# No Electron/Chromium, GUI libraries, Xvfb, VNC, compiler or package installs.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 ca-certificates util-linux \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /runtime/ /app/
+COPY --from=build /build/dist-web/ /app/dist-web/
+COPY --from=build /build/dist-server/ /app/dist-server/
+COPY --from=build /build/web/operations.json /app/web/operations.json
+COPY --from=build /build/electron/security/linux-safe-file-system.py /app/electron/security/linux-safe-file-system.py
+COPY --chmod=0755 docker/web-entrypoint.sh /usr/local/bin/novel-web-entrypoint
+# Requiring the native modules catches mismatched Node ABI/architecture before
+# producing an image; no application/data volume is started by this check.
+RUN node --input-type=module -e 'import {createRequire} from "node:module";const require=createRequire(import.meta.url);const Database=require("better-sqlite3");const db=new Database(":memory:");db.close();await import("@lancedb/lancedb");await import("apache-arrow");await import("yauzl");if(!process.allowedNodeEnvironmentFlags.has("--use-env-proxy"))throw new Error("Node environment proxy support required")'
+EXPOSE 6081
+VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+ CMD node --input-type=module -e 'const response=await fetch("http://127.0.0.1:6081/healthz",{signal:AbortSignal.timeout(4000)});if(!response.ok)process.exit(1);const result=await response.json();if(result.runtime!=="node"||result.electron!==false)process.exit(1)'
+# Existing author data is root-owned. Compose supports an explicit UID/GID only
+# after an administrator prepares ownership; never recursively chown in startup.
+ENTRYPOINT ["/usr/local/bin/novel-web-entrypoint"]

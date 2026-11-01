@@ -147,7 +147,7 @@ describe('FinalizeChapterCommand blueprint character fallback', () => {
         case 'db:post-process-mark-step-ok':
           completedSteps.add(String(args[1]))
           return { success: true }
-        case 'kb:import-text':
+        case 'kb:import-finalized-text':
           return { success: true, docId: 'knowledge-3', chunkCount: 1 }
         case 'db:finalization-link-knowledge-document':
           return { success: true }

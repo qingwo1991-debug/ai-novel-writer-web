@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
-import { ipcMain, safeStorage } from 'electron'
+import { operations, secretStorage } from '../platform'
 
 import type {
   CloudBackupAccountView,
@@ -239,10 +239,10 @@ function productionDependencies(): CloudBackupControllerDependencies {
   return {
     ipc: {
       handle(channel, handler) {
-        ipcMain.handle(channel, (event, argument) => handler(event, argument))
+        operations.handle(channel, (event, argument) => handler(event, argument))
       },
     },
-    credentialStore: new CloudCredentialStore({ safeStorage }),
+    credentialStore: new CloudCredentialStore({ safeStorage: secretStorage }),
     bindingStore: new CloudProjectBindingStore(),
     webDav: new WebDavBackupService(),
     exportPortableProject,

@@ -1,4 +1,5 @@
 import { ipc } from './ipc-client'
+import { randomUUID } from '../utils/id'
 import type { ProjectSessionContext } from '../shared/ipc-channels'
 import type { GraphGenerationInput, GraphGenerationRecovery } from '../shared/graph-generation'
 import type { MainGenerationRunHandle } from './generation/generation-runtime'
@@ -91,7 +92,7 @@ export async function generateGraphResult(session: ProjectSessionContext, input:
   signal.addEventListener('abort', cancel, { once: true })
   try {
     if (signal.aborted) throw new Error('GRAPH_GENERATION_CANCELLED')
-    await client.open({ input, modelId, uiActionNonce: crypto.randomUUID() })
+    await client.open({ input, modelId, uiActionNonce: randomUUID() })
     const recovery = await client.execute()
     assertGraphResult(recovery)
     if (input.kind === 'plot') await client.confirm(0)

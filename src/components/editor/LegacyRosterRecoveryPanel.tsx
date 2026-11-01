@@ -9,6 +9,7 @@ import { captureProjectSession, isProjectSessionCurrent } from '../project-sessi
 import type { MainGenerationRunHandle } from '../../services/generation/generation-runtime'
 import type { LegacyRosterGenerationRecovery } from '../../shared/legacy-roster-generation'
 import { formatCharacterProposalPreview } from '../../services/workflows/character-proposal-preview'
+import { copyText } from '../../utils/clipboard'
 
 export function LegacyRosterRecoveryPanel({ onRecover, busy }: {
   onRecover(options: { recoveryHandle?: MainGenerationRunHandle; restart?: boolean }): Promise<void>
@@ -46,7 +47,7 @@ export function LegacyRosterRecoveryPanel({ onRecover, busy }: {
     <pre className="max-h-40 overflow-auto whitespace-pre-wrap">{candidateText || shown.context.source.rawLegacy}</pre>
     <p>{text('当前状态原文仅保留为候选；确认采用不会将其变成定稿状态。', 'Original current state remains a candidate; confirmation does not make it finalized state.')}</p>
     {error && <p role="alert">{error}</p>}
-    <Button size="sm" onClick={() => { void navigator.clipboard.writeText([shown.context.source.rawLegacy, candidateText].filter(Boolean).join('\n\n')) }}>{text('复制原文与候选', 'Copy source and candidates')}</Button>
+    <Button size="sm" onClick={() => { void copyText([shown.context.source.rawLegacy, candidateText].filter(Boolean).join('\n\n')).catch(() => setError(text('无法复制原文与候选', 'Could not copy source and candidates'))) }}>{text('复制原文与候选', 'Copy source and candidates')}</Button>
     <Button size="sm" disabled={busy || !canRecover} onClick={() => { void onRecover({ recoveryHandle: shown.view.handle }) }}>{text('恢复原运行并查看提议', 'Resume original run and review proposals')}</Button>
     <Button size="sm" disabled={busy} onClick={() => { void onRecover({ restart: true }) }}>{text('明确重新开始', 'Start a new run explicitly')}</Button>
     <Button size="sm" disabled={shown.view.status === 'cancelled'} onClick={() => {

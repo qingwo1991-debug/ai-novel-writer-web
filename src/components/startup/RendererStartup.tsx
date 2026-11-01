@@ -93,7 +93,7 @@ export default function RendererStartup({
           if (!useAppearanceStore.getState().resetAppearance()) return
           setLoadFailed(false); setAttempt(value => value + 1)
         }}>{text('重置外观偏好为默认（不影响其它配置）', 'Reset appearance preferences to defaults (other settings are kept)')}</Button>
-        {mainReady && <Button variant="secondary" onClick={() => { void ipc.invoke('window:close').catch(() => undefined) }}>{text('关闭应用', 'Close app')}</Button>}
+        {mainReady && ipc.isElectron && <Button variant="secondary" onClick={() => { void ipc.invoke('window:close').catch(() => undefined) }}>{text('关闭应用', 'Close app')}</Button>}
       </>}
     </main>
   )

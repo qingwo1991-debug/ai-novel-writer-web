@@ -217,6 +217,51 @@ describe('draft-store merged revision persistence', () => {
     )
   })
 
+  it('projects required rechecks on project reload without starting billable work', async () => {
+    const pending = [{ cycleId: 'cycle-1', reviewId: 21, rootActionId: 'root-1', mergedHash: 'a'.repeat(64),
+      disposition: 'required', sourceDraft: { id: 11, chapterNumber: 1, version: 1, status: 'revised', content: '已合并正文' } }]
+    invokeWithProjectSession.mockImplementation(async (_session: unknown, channel: string) => {
+      if (channel === 'db:draft-list-all') return []
+      if (channel === 'db:review-cycle-list-pending-rechecks') return pending
+      return []
+    })
+    useDraftStore.getState().reset()
+    await useDraftStore.getState().loadAllDrafts(projectPath, projectSession)
+    expect(useDraftStore.getState().pendingReviewRechecks).toEqual(pending)
+    expect(useDraftStore.getState().reviewRechecksError).toBeNull()
+    expect(startWorkflow).not.toHaveBeenCalled()
+    await useDraftStore.getState().loadChapterDrafts(1, projectPath, projectSession)
+    expect(useDraftStore.getState().pendingReviewRechecks).toEqual(pending)
+    expect(startWorkflow).not.toHaveBeenCalled()
+  })
+
+  it('does not publish a late recovery read after reset and surfaces failed reads', async () => {
+    let release!: (value: unknown[]) => void
+    invokeWithProjectSession.mockImplementation(() => new Promise(resolve => { release = resolve }))
+    const refresh = useDraftStore.getState().refreshPendingReviewRechecks(projectPath, projectSession)
+    useDraftStore.getState().reset()
+    release([{ cycleId: 'stale-cycle' }])
+    await refresh
+    expect(useDraftStore.getState().pendingReviewRechecks).toEqual([])
+    invokeWithProjectSession.mockRejectedValueOnce(new Error('durable recheck read failed'))
+    await useDraftStore.getState().refreshPendingReviewRechecks(projectPath, projectSession)
+    expect(useDraftStore.getState().reviewRechecksError).toBe('durable recheck read failed')
+    expect(startWorkflow).not.toHaveBeenCalled()
+  })
+
+  it('does not relaunch a recheck when a committed merge is replayed after a lost ACK', async () => {
+    invokeWithProjectSession.mockImplementation(async (_session: unknown, channel: string) => {
+      if (channel === 'db:revision-merge') return { success: true, receipt: { revisionId: 1, targetDraftId: 11,
+        status: 'revised', wordCount: 4, idempotent: true, chapterNumber: 1, version: 1,
+        reviewCycle: { cycleId: 'cycle-1', mergedHash: 'a'.repeat(64), disposition: 'required' } } }
+      return []
+    })
+    const result = await useDraftStore.getState().applyMergedRevision('ai-novel://draft/ch1', 1,
+      'ai-novel://draft/11', 'ai-novel://revision/1', '合并正文', '原稿', projectPath, projectSession)
+    expect(result).toMatchObject({ success: true, receipt: { idempotent: true } })
+    expect(startWorkflow).not.toHaveBeenCalled()
+  })
+
   it('starts exactly one targeted recheck only when the merge receipt requires it', async () => {
     startWorkflow.mockImplementation(async definition => {
       definition.onStarted()

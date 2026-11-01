@@ -16,10 +16,10 @@ const mocks = vi.hoisted(() => ({
   pickedPaths: [] as string[],
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => 'en-US' },
-  dialog: { showOpenDialog: vi.fn(async () => ({ canceled: mocks.pickedPaths.length === 0, filePaths: mocks.pickedPaths })) },
-  ipcMain: { handle: vi.fn((channel: string, handler: IpcHandler) => mocks.handlers.set(channel, handler)) },
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'en-US' },
+  dialogHost: { showOpenDialog: vi.fn(async () => ({ canceled: mocks.pickedPaths.length === 0, filePaths: mocks.pickedPaths })) },
+  operations: { handle: vi.fn((channel: string, handler: IpcHandler) => mocks.handlers.set(channel, handler)) },
 }))
 vi.mock('../../i18n', () => ({ mainText: (_locale: string, _zh: string, en: string) => en }))
 // 设置页经由 Skill 注册中心读取 skills:list-user；这里把渲染层的 IPC 直接接到主进程处理器上。

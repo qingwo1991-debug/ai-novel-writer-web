@@ -6,6 +6,7 @@ import { resolveModelProfileReasoningMapping } from '../../src/shared/provider-p
 import { version as appVersion } from '../../package.json'
 import { StreamTransportDiagnostics } from './transport-diagnostics'
 import { providerFailureCode } from './provider-context-length'
+import { endpointFetch } from '../platform/endpoint-fetch'
 
 const OPENCODE_GO_USER_AGENT = `ai-novel-writer/${appVersion}`
 
@@ -121,7 +122,7 @@ export class OpenAIProvider implements ILLMProvider {
       const url = resolveOpenAIChatCompletionsUrl(model.baseUrl, model.provider)
       const body = this.buildRequestBody(model, messages, opts, false)
 
-      const res = await fetch(url, {
+      const res = await endpointFetch(url, {
         method: 'POST',
         headers: this.buildRequestHeaders(model, opts.conversationId),
         body: JSON.stringify(body),
@@ -188,7 +189,7 @@ export class OpenAIProvider implements ILLMProvider {
       const url = resolveOpenAIChatCompletionsUrl(model.baseUrl, model.provider)
       const body = this.buildRequestBody(model, messages, opts, true)
 
-      const res = await transport.response(fetch(url, {
+      const res = await transport.response(endpointFetch(url, {
         method: 'POST',
         headers: this.buildRequestHeaders(model, opts.conversationId),
         body: JSON.stringify(body),

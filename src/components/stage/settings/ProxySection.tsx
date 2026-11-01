@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { ipc } from '../../../services/ipc-client'
 import { useLocaleStore } from '../../../stores/locale-store'
 import { useUnsavedSettings } from '../../settings/unsaved-settings'
 import { useProxySettings } from '../../settings/use-proxy-settings'
@@ -7,6 +8,18 @@ import { Check } from '../../ui/Check'
 
 /** 网络代理：开关、类型、主机与端口，保存后所有 AI 请求都走代理。 */
 export default function ProxySection() {
+  return ipc.runtimeKind === 'web' ? <ServerProxyNotice /> : <DesktopProxySection />
+}
+
+function ServerProxyNotice() {
+  const text = useLocaleStore(s => s.text)
+  return <div className="stage-set-rows"><div className="stage-set-row"><div>
+    <p className="stage-set-row-title">{text('服务器管理的网络代理', 'Server-managed network proxy')}</p>
+    <p className="stage-set-row-desc">{text('原生 Web 版使用服务器部署配置中的代理与目标地址允许列表。浏览器不能修改服务进程的网络环境；局域网模型可由管理员配置为直连。', 'Native Web uses the deployment proxy and endpoint allowlist. The browser cannot change the service network environment; administrators can bypass the proxy for approved LAN models.')}</p>
+  </div></div></div>
+}
+
+function DesktopProxySection() {
   const text = useLocaleStore(s => s.text)
   const { proxy, dirty, update, restorePortOnBlur, saving, saved, saveError, save } = useProxySettings()
   useUnsavedSettings(dirty)

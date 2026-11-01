@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { app, ipcMain } from 'electron'
+import { appHost, operations } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
 import type { AppPromptLoadReceipt, AppPromptTemplate } from '../../src/shared/ipc-channels'
 import type { WritingLanguage } from '../../src/shared/writing-language'
@@ -38,7 +38,7 @@ import {
 type SkillEvent = { sender: { id: number; isDestroyed: () => boolean } }
 
 function text(zhCNText: string, enUSText: string): string {
-  return mainText(app.getLocale(), zhCNText, enUSText)
+  return mainText(appHost.getLocale(), zhCNText, enUSText)
 }
 
 function isContainedPath(rootPath: string, candidatePath: string): boolean {
@@ -332,7 +332,7 @@ export function registerAppDataController(): void {
   const inspectedWritingSkills = new Map<string, Pick<RemoteWritingSkillInspection, 'contentSha256' | 'resolvedUrl'>>()
   // 每个渲染进程最多保留一个待安装的本机候选，新的选择会替换旧的。
   const localCandidates = new Map<number, { candidateId: string; source: WritingSkillSource; contentSha256: string }>()
-  ipcMain.handle('prompt:load-global', async (): Promise<AppPromptLoadReceipt> => {
+  operations.handle('prompt:load-global', async (): Promise<AppPromptLoadReceipt> => {
     const promptsDirectory = path.join(VELA_HOME, 'prompts')
     if (!fs.existsSync(promptsDirectory)) return { templates: [], diagnostics: [] }
 
@@ -379,7 +379,7 @@ export function registerAppDataController(): void {
     return { templates: prompts, diagnostics }
   })
 
-  ipcMain.handle('prompt:save-global', async (_event, template: AppPromptTemplate) => {
+  operations.handle('prompt:save-global', async (_event, template: AppPromptTemplate) => {
     try {
       if (!isPromptTemplate(template)) {
         throw new Error(text('提示词内容无效', 'The prompt content is invalid'))
@@ -396,7 +396,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('prompt:delete-global', async (_event, key: string, writingLanguage: WritingLanguage) => {
+  operations.handle('prompt:delete-global', async (_event, key: string, writingLanguage: WritingLanguage) => {
     try {
       const filePaths = [promptKeyPath(key, writingLanguage)]
       if (writingLanguage === 'zh-CN') filePaths.push(promptKeyPath(key))
@@ -409,7 +409,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('skills:list-user', async () => {
+  operations.handle('skills:list-user', async () => {
     const skillsDirectory = path.join(VELA_HOME, 'skills')
     if (!fs.existsSync(skillsDirectory)) return []
 
@@ -437,7 +437,7 @@ export function registerAppDataController(): void {
     return skills
   })
 
-  ipcMain.handle('skills:inspect-github', async (_event, sourceUrl: string) => {
+  operations.handle('skills:inspect-github', async (_event, sourceUrl: string) => {
     try {
       if (typeof sourceUrl !== 'string' || sourceUrl.length > 2_048) {
         throw new Error(text('GitHub 地址无效', 'The GitHub URL is invalid'))
@@ -454,7 +454,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('skills:install-github', async (_event, sourceUrl: string) => {
+  operations.handle('skills:install-github', async (_event, sourceUrl: string) => {
     try {
       if (typeof sourceUrl !== 'string' || sourceUrl.length > 2_048) {
         throw new Error(text('GitHub 地址无效', 'The GitHub URL is invalid'))
@@ -484,7 +484,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('skills:pick-local', async (event: SkillEvent, kind: LocalWritingSkillSourceKind) => {
+  operations.handle('skills:pick-local', async (event: SkillEvent, kind: LocalWritingSkillSourceKind) => {
     try {
       if (!validSender(event)) throw new Error(text('请求来源无效', 'The request sender is invalid'))
       if (kind !== 'file' && kind !== 'folder') throw new Error(text('导入方式无效', 'The import kind is invalid'))
@@ -516,7 +516,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('skills:install-local', async (event: SkillEvent, candidateId: string) => {
+  operations.handle('skills:install-local', async (event: SkillEvent, candidateId: string) => {
     try {
       if (!validSender(event)) throw new Error(text('请求来源无效', 'The request sender is invalid'))
       const pending = localCandidates.get(event.sender.id)
@@ -541,7 +541,7 @@ export function registerAppDataController(): void {
     }
   })
 
-  ipcMain.handle('skills:uninstall-user', async (_event, name: string) => {
+  operations.handle('skills:uninstall-user', async (_event, name: string) => {
     try {
       const directory = writingSkillDirectory(name)
       const skillsRoot = path.join(VELA_HOME, 'skills')

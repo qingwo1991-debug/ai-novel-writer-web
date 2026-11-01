@@ -78,6 +78,36 @@ function fixture(dispatch?: GenerationRunServiceDependencies['dispatch']) {
   return { get db() { return db }, owner, makeOwner, reopenStorage, prepare, selection, run, spy, deps }
 }
 describe('review and revision generation through the actual owner and SQLite', () => {
+  it('projects live review dispatch across renderer reload and fences a fresh nonce until completion', async () => {
+    let finish!: () => void
+    let first = true
+    const f = fixture(async (_request, options) => {
+      if (first) { first = false; await new Promise<void>(resolve => { finish = resolve }) }
+      options.onVisible({ kind: 'delta', text: report })
+      return { finishReason: 'stop', usage: null }
+    })
+    const prepared = f.prepare(), view = f.owner.begin(f.selection(prepared)), prompt = '检查冻结正文'
+    f.owner.bindMaterialDecision(view.handle, materialDecision(prompt))
+    const task = { purpose: 'review-chapter', output: 'structured-data' as const, messages: [{ role: 'user' as const, content: prompt }] }
+    const original = f.owner.execute({ handle: view.handle, invocationNonce: 'original-tab', task })
+    const joined = f.owner.execute({ handle: view.handle, invocationNonce: 'original-tab', task })
+    const busy = f.owner.readReviewRevisionRecovery(view.handle)
+    expect(f.owner.read(view.handle)).toMatchObject({ status: 'running', inFlight: true })
+    expect(busy).toMatchObject({ inFlight: true, canResume: false })
+    expect(busy.contextId).toBeUndefined()
+    expect(f.owner.listRecovery().reviews[0]).toMatchObject({ view: { inFlight: true }, recovery: { inFlight: true, canResume: false } })
+    await expect(f.owner.execute({ handle: view.handle, invocationNonce: 'refreshed-tab', task })).rejects.toThrow('GENERATION_DISPATCH_IN_FLIGHT')
+    expect(f.spy).toHaveBeenCalledTimes(1)
+    finish()
+    const [receipt, duplicate] = await Promise.all([original, joined])
+    expect(duplicate.outcome).toEqual(receipt.outcome)
+    expect(f.owner.read(view.handle)).toMatchObject({ status: 'running', inFlight: false })
+    expect(f.owner.readReviewRevisionRecovery(view.handle)).toMatchObject({ inFlight: false, canResume: true })
+    // Explicit recovery is permitted after the original physical call settles.
+    await f.owner.execute({ handle: view.handle, invocationNonce: 'explicit-retry', task })
+    expect(f.spy).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['review-chapter', 'refine-draft'] as const)('运行侧页的可恢复列表把中断的 %s 列为审修，不当作单章候选', async operation => {
     const f = fixture(operation === 'review-chapter' ? undefined : async (_request, options) => {
       options.onVisible({ kind: 'delta', text: revisedProse }); return { finishReason: 'stop', usage: null }

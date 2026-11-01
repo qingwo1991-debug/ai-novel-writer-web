@@ -4,6 +4,9 @@ node_modules
 # 构建输出
 dist
 dist-electron
+dist-web
+dist-server
+.native-test-data/
 release
 
 # 日志
@@ -68,3 +71,10 @@ tailwind.config.js.bak
 
 # 浏览器测试失败时生成的截图，不入库
 __screenshots__/
+
+# Host-only deployment backups and Python bytecode are never source artifacts.
+/docker/backups/
+__pycache__/
+*.py[cod]
+.env.*
+!.env.example

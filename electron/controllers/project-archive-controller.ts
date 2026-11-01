@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { app, ipcMain } from 'electron'
+import { appHost as app, operations as ipcMain } from '../platform'
 import { showOpenDialogInLastDirectory, showSaveDialogInLastDirectory } from '../utils/remembered-dialog'
 
 import type {

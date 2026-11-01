@@ -11,8 +11,9 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
-import { readFile } from 'fs/promises'
+import { mkdir, readFile } from 'fs/promises'
 import { join } from 'path'
+import { TextDecoder } from 'node:util'
 import { isDeepStrictEqual } from 'node:util'
 import { VELA_HOME } from '../utils/config-utils'
 import { assertGlobalDataReady } from '../services/app-data-locator'
@@ -24,6 +25,27 @@ import type {
   MCPServerSummary,
   MCPToolDescription,
 } from '../../src/shared/ipc-channels'
+
+// Native HTTP workers invoke only administrator-configured servers. These
+// transport limits are not an OS sandbox: children retain the worker identity.
+export const NATIVE_MCP_LIMITS = Object.freeze({
+  requestBytes: 1024 * 1024,
+  pendingRequests: 32,
+  stdoutBytes: 4 * 1024 * 1024,
+  queuedInputBytes: 4 * 1024 * 1024,
+  discoveredEntries: 512,
+})
+
+const NATIVE_INHERITED_ENV = [
+  'PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ',
+  'SystemRoot', 'WINDIR', 'PATHEXT', 'COMSPEC',
+] as const
+const NATIVE_ERROR_CODES = new Set([
+  'MCP_CONNECT_FAILED', 'MCP_SERVER_NOT_CONNECTED', 'MCP_REQUEST_FAILED',
+  'MCP_REQUEST_TIMEOUT', 'MCP_REQUEST_TOO_LARGE', 'MCP_REQUEST_INVALID',
+  'MCP_PENDING_LIMIT_EXCEEDED', 'MCP_INPUT_LIMIT_EXCEEDED',
+  'MCP_STDOUT_LIMIT_EXCEEDED', 'MCP_STDOUT_INVALID', 'MCP_STDIO_WRITE_FAILED',
+])
 
 // ===== 类型定义 =====
 
@@ -87,6 +109,9 @@ interface MCPServerRuntime {
   error?: string
   /** 消息缓冲区（用于解析 JSON-RPC） */
   buffer: string
+  /** Native HTTP safeguards must not change the desktop stdio contract. */
+  native: boolean
+  decoder: TextDecoder
   /** 请求 ID 计数器 */
   nextRequestId: number
   /** 待响应的请求回调 */
@@ -217,6 +242,8 @@ class MCPManagerImpl {
       tools: [],
       resources: [],
       buffer: '',
+      native: process.env.AI_NOVEL_RUNTIME === 'web',
+      decoder: new TextDecoder('utf-8', { fatal: true }),
       nextRequestId: 1,
       pendingRequests: new Map(),
     }
@@ -238,19 +265,32 @@ class MCPManagerImpl {
 
       // 发现资源
       await this.discoverResources(runtime)
+      // A response and malformed trailing frame can arrive in one stdout tick;
+      // never overwrite a fatal native transport error after the await resumes.
+      if (runtime.native && runtime.error) throw new Error(runtime.error)
 
       runtime.status = 'connected'
       this.notifyStatusChange(config.id, 'connected')
       this.notifyToolsChange()
     } catch {
-      runtime.process?.kill()
-      runtime.pendingRequests.forEach(p => p.reject(new Error('MCP_CONNECT_FAILED')))
-      runtime.pendingRequests.clear()
-      runtime.status = 'error'
-      runtime.error = 'MCP_CONNECT_FAILED'
-      this.notifyStatusChange(config.id, 'error', runtime.error)
-      throw new Error(runtime.error)
+      const code = runtime.native && runtime.error ? runtime.error : 'MCP_CONNECT_FAILED'
+      this.failRuntime(runtime, code)
+      throw new Error(code)
     }
+  }
+
+  private failRuntime(runtime: MCPServerRuntime, code: string): void {
+    if (runtime.status === 'error') return
+    runtime.status = 'error'
+    runtime.error = code
+    runtime.buffer = ''
+    runtime.tools = []
+    runtime.resources = []
+    runtime.pendingRequests.forEach(p => p.reject(new Error(code)))
+    runtime.pendingRequests.clear()
+    runtime.process?.kill()
+    this.notifyStatusChange(runtime.config.id, 'error', code)
+    this.notifyToolsChange()
   }
 
   /** stdio 模式连接 */
@@ -260,23 +300,65 @@ class MCPManagerImpl {
       throw new Error('MCP_STDIO_COMMAND_REQUIRED')
     }
 
+    let childEnv: Record<string, string | undefined> = { ...process.env, ...env }
+    let nativeCwd: string | undefined
+    if (runtime.native) {
+      nativeCwd = join(VELA_HOME, 'mcp-runtime')
+      await mkdir(nativeCwd, { recursive: true, mode: 0o700 })
+      const inherited: Record<string, string | undefined> = {}
+      for (const key of NATIVE_INHERITED_ENV) {
+        if (process.env[key] !== undefined) inherited[key] = process.env[key]
+      }
+      // Never implicitly expose the author's HOME, app secrets, injection flags,
+      // proxy credentials or worker bootstrap paths. Explicit administrator env
+      // remains compatible, including credentials intentionally given a server.
+      childEnv = { ...inherited, HOME: nativeCwd, ...env }
+    }
     const proc = spawn(command, args, {
-      env: { ...process.env, ...env },
+      // Vite augments ProcessEnv with renderer-only required keys. They are
+      // intentionally absent from native children, not inherited to satisfy TS.
+      env: childEnv as NodeJS.ProcessEnv,
+      ...(nativeCwd ? { cwd: nativeCwd } : {}),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
 
     runtime.process = proc
 
-    // 监听 stdout（JSON-RPC 消息）
+    // Native framing is byte-bounded before decoding/concatenation. A fatal
+    // streaming decoder also preserves UTF-8 code points split across chunks.
     proc.stdout?.on('data', (data: Buffer) => {
-      runtime.buffer += data.toString()
+      if (runtime.status === 'error' || runtime.status === 'disconnected') return
+      if (runtime.native) {
+        if (data.byteLength + Buffer.byteLength(runtime.buffer, 'utf8') > NATIVE_MCP_LIMITS.stdoutBytes) {
+          this.failRuntime(runtime, 'MCP_STDOUT_LIMIT_EXCEEDED')
+          return
+        }
+        try {
+          runtime.buffer += runtime.decoder.decode(data, { stream: true })
+        } catch {
+          this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+          return
+        }
+      } else {
+        runtime.buffer += data.toString()
+      }
       this.processBuffer(runtime)
     })
+    proc.stdout?.on('end', () => {
+      if (!runtime.native || runtime.status === 'error' || runtime.status === 'disconnected') return
+      try {
+        runtime.buffer += runtime.decoder.decode()
+        if (runtime.buffer.trim()) this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+      } catch {
+        this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+      }
+    })
 
-    // 监听 stderr（调试日志）
+    // Drain native server stderr without persisting credentials, prompts, or
+    // emitting unbounded attacker-controlled logs. Desktop diagnostics unchanged.
     proc.stderr?.on('data', (data: Buffer) => {
-      console.warn(`[MCP:${runtime.config.id}] stderr:`, data.toString())
+      if (!runtime.native) console.warn(`[MCP:${runtime.config.id}] stderr:`, data.toString())
     })
 
     // 监听进程退出
@@ -284,10 +366,23 @@ class MCPManagerImpl {
       console.log(`[MCP:${runtime.config.id}] 进程退出，code=${code}`)
       if (runtime.status === 'error') return
       runtime.status = 'disconnected'
+      runtime.buffer = ''
+      if (runtime.native) {
+        runtime.pendingRequests.forEach(p => p.reject(new Error('MCP_SERVER_NOT_CONNECTED')))
+        runtime.pendingRequests.clear()
+      }
       this.notifyStatusChange(runtime.config.id, 'disconnected')
+      this.notifyToolsChange()
     })
 
+    proc.stdin?.on?.('error', () => {
+      if (runtime.native) this.failRuntime(runtime, 'MCP_STDIO_WRITE_FAILED')
+    })
     proc.on('error', () => {
+      if (runtime.native) {
+        this.failRuntime(runtime, 'MCP_CONNECT_FAILED')
+        return
+      }
       if (runtime.status === 'connecting') {
         runtime.pendingRequests.forEach(p => p.reject(new Error('MCP_CONNECT_FAILED')))
         runtime.pendingRequests.clear()
@@ -310,10 +405,18 @@ class MCPManagerImpl {
       if (!trimmed) continue
 
       try {
-        const msg = JSON.parse(trimmed)
-        this.handleMessage(runtime, msg)
+        const msg: unknown = JSON.parse(trimmed)
+        if (runtime.native && (!msg || typeof msg !== 'object' || Array.isArray(msg)
+          || (msg as Record<string, unknown>).jsonrpc !== '2.0')) {
+          throw new Error('MCP_STDOUT_INVALID')
+        }
+        this.handleMessage(runtime, msg as Record<string, unknown>)
       } catch {
-        // 非 JSON 行，忽略
+        if (runtime.native) {
+          this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+          return
+        }
+        // Desktop servers historically tolerate non-JSON stdout diagnostics.
       }
     }
   }
@@ -327,7 +430,7 @@ class MCPManagerImpl {
         runtime.pendingRequests.delete(msg.id as number)
         if ('error' in msg) {
           const err = msg.error as { message?: string }
-          pending.reject(new Error(err?.message ?? 'MCP error'))
+          pending.reject(new Error(runtime.native ? 'MCP_REQUEST_FAILED' : err?.message ?? 'MCP error'))
         } else {
           pending.resolve(msg.result)
         }
@@ -336,29 +439,63 @@ class MCPManagerImpl {
     // 通知消息（无 id）— 暂时只记录日志
   }
 
+  private writeMessage(runtime: MCPServerRuntime, message: string): void {
+    const stdin = runtime.process?.stdin
+    if (runtime.native) {
+      if (!stdin || stdin.destroyed || runtime.status === 'error' || runtime.status === 'disconnected') {
+        throw new Error('MCP_SERVER_NOT_CONNECTED')
+      }
+      const bytes = Buffer.byteLength(message, 'utf8')
+      if (bytes > NATIVE_MCP_LIMITS.requestBytes) throw new Error('MCP_REQUEST_TOO_LARGE')
+      if ((stdin.writableLength ?? 0) + bytes > NATIVE_MCP_LIMITS.queuedInputBytes) {
+        throw new Error('MCP_INPUT_LIMIT_EXCEEDED')
+      }
+    }
+    try {
+      stdin?.write(message)
+    } catch (error) {
+      if (runtime.native) throw new Error('MCP_STDIO_WRITE_FAILED')
+      throw error
+    }
+  }
+
   /** 发送 JSON-RPC 请求 */
   private sendRequest(runtime: MCPServerRuntime, method: string, params?: unknown): Promise<unknown> {
+    if (runtime.native && runtime.pendingRequests.size >= NATIVE_MCP_LIMITS.pendingRequests) {
+      return Promise.reject(new Error('MCP_PENDING_LIMIT_EXCEEDED'))
+    }
+    const id = runtime.nextRequestId++
+    let message: string
+    try {
+      message = JSON.stringify({ jsonrpc: '2.0', id, method, params: params ?? {} }) + '\n'
+      if (runtime.native && Buffer.byteLength(message, 'utf8') > NATIVE_MCP_LIMITS.requestBytes) {
+        return Promise.reject(new Error('MCP_REQUEST_TOO_LARGE'))
+      }
+    } catch {
+      return Promise.reject(new Error('MCP_REQUEST_INVALID'))
+    }
     return new Promise((resolve, reject) => {
-      const id = runtime.nextRequestId++
-      runtime.pendingRequests.set(id, { resolve, reject })
-
-      const msg = JSON.stringify({
-        jsonrpc: '2.0',
-        id,
-        method,
-        params: params ?? {},
-      })
-
-      runtime.process?.stdin?.write(msg + '\n')
-
-      // 超时 10 秒
-      setTimeout(() => {
-        if (runtime.pendingRequests.has(id)) {
+      // Clear on every settlement, not only timeouts: fast responses must not
+      // accumulate live timers, and disconnect/fatal stdout settles immediately.
+      const timer = setTimeout(() => {
+        const pending = runtime.pendingRequests.get(id)
+        if (pending) {
           runtime.pendingRequests.delete(id)
           console.warn(`[MCP:${runtime.config.id}] request timed out`, { method })
-          reject(new Error('MCP_REQUEST_TIMEOUT'))
+          pending.reject(new Error('MCP_REQUEST_TIMEOUT'))
         }
       }, 10000)
+      runtime.pendingRequests.set(id, {
+        resolve: result => { clearTimeout(timer); resolve(result) },
+        reject: error => { clearTimeout(timer); reject(error) },
+      })
+      try {
+        this.writeMessage(runtime, message)
+      } catch (error) {
+        runtime.pendingRequests.delete(id)
+        clearTimeout(timer)
+        reject(error)
+      }
     })
   }
 
@@ -378,19 +515,26 @@ class MCPManagerImpl {
       jsonrpc: '2.0',
       method: 'notifications/initialized',
     })
-    runtime.process?.stdin?.write(msg + '\n')
+    this.writeMessage(runtime, msg + '\n')
   }
 
   /** 发现可用工具 */
   private async discoverTools(runtime: MCPServerRuntime): Promise<void> {
     try {
       const result = await this.sendRequest(runtime, 'tools/list') as { tools?: MCPToolDesc[] }
+      if (runtime.native && (result?.tools !== undefined && (!Array.isArray(result.tools)
+        || result.tools.length > NATIVE_MCP_LIMITS.discoveredEntries
+        || result.tools.some(t => !t || typeof t.name !== 'string' || !t.name.trim())))) {
+        this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+        throw new Error('MCP_STDOUT_INVALID')
+      }
       runtime.tools = (result?.tools ?? []).map(t => ({
         ...t,
         serverId: runtime.config.id,
       }))
-    } catch {
+    } catch (error) {
       runtime.tools = []
+      if (runtime.native && runtime.status === 'error') throw error
     }
   }
 
@@ -398,12 +542,18 @@ class MCPManagerImpl {
   private async discoverResources(runtime: MCPServerRuntime): Promise<void> {
     try {
       const result = await this.sendRequest(runtime, 'resources/list') as { resources?: MCPResourceDesc[] }
+      if (runtime.native && (result?.resources !== undefined && (!Array.isArray(result.resources)
+        || result.resources.length > NATIVE_MCP_LIMITS.discoveredEntries))) {
+        this.failRuntime(runtime, 'MCP_STDOUT_INVALID')
+        throw new Error('MCP_STDOUT_INVALID')
+      }
       runtime.resources = (result?.resources ?? []).map(r => ({
         ...r,
         serverId: runtime.config.id,
       }))
-    } catch {
+    } catch (error) {
       runtime.resources = []
+      if (runtime.native && runtime.status === 'error') throw error
     }
   }
 
@@ -420,6 +570,9 @@ class MCPManagerImpl {
       return { success: false, content: '', error: 'MCP_SERVER_NOT_CONNECTED' }
     }
 
+    if (runtime.native && !runtime.tools.some(tool => tool.name === toolName)) {
+      return { success: false, content: '', error: 'MCP_TOOL_NOT_DISCOVERED' }
+    }
     try {
       const result = await this.sendRequest(runtime, 'tools/call', {
         name: toolName,
@@ -433,7 +586,9 @@ class MCPManagerImpl {
 
       return { success: true, content: textParts }
     } catch (error) {
-      return { success: false, content: '', error: String(error) }
+      const code = error instanceof Error && NATIVE_ERROR_CODES.has(error.message)
+        ? error.message : 'MCP_REQUEST_FAILED'
+      return { success: false, content: '', error: runtime.native ? code : String(error) }
     }
   }
 

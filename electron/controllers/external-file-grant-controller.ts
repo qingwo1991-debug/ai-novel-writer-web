@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, ipcMain } from 'electron'
+import { appHost as app, operations as ipcMain } from '../platform'
 import { showOpenDialogInLastDirectory } from '../utils/remembered-dialog'
 import {
   ExternalFileGrantService,

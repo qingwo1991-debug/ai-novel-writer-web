@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { M01_GENERATION_SQL } from '../../migrations/m01-generation-runs';
 import { GenerationRunRepository, textHash, type OpenGenerationRunRequest } from '../../repositories/generation-run-repository';
-import { createGenerationRunService, settleProviderUsage, type ExecuteGenerationRequest, type GenerationProviderUsage } from '../generation-run-service';
+import { createGenerationRunService, settleProviderUsage, type ExecuteGenerationRequest, type GenerationDispatchResult, type GenerationProviderUsage } from '../generation-run-service';
 const Database = createRequire(import.meta.url)('better-sqlite3') as typeof import('better-sqlite3');
 const handles: import('better-sqlite3').Database[] = [];
 afterEach(() => { for (const db of handles.splice(0))
@@ -24,6 +24,11 @@ function fixture() {
     return { db, repository, open, policy, request, setNow: (value: number) => { now = value; } };
 }
 const usage: GenerationProviderUsage = { promptTokens: 50, completionTokens: 50, totalTokens: 100, reasoningTokens: 20, accounting: 'included-in-completion', totalIncludesReasoning: true, trusted: true };
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(finish => { resolve = finish; });
+    return { promise, resolve };
+}
 describe('single durable generation owner', () => {
     it('rejects an invalid reservation before dispatch independently of unknown model liability', async () => {
         const f = fixture(), run = f.repository.open(f.open), dispatch = vi.fn();
@@ -56,19 +61,121 @@ describe('single durable generation owner', () => {
             .toMatchObject({ trusted: true, actualTokens: 120, policy: { reasoning: 'unknown', canBoundTotalLiability: false } });
     });
     it('mints stable nonce root/run across service restarts without expanding budget', () => { const f = fixture(), a = f.repository.open(f.open); expect(f.repository.open({ ...f.open, epoch: 'new' })).toEqual(a); expect(() => f.repository.open({ ...f.open, budget: { ...f.open.budget, maxPhysicalRequests: 99 } })).toThrow('GENERATION_NONCE_CONFLICT'); });
-    it('checks reservation and marks durably before exactly one dispatch for duplicate invocation', async () => {
-        const f = fixture();
+    it('joins an in-flight exact nonce, rejects its conflicting hash, and dispatches only once', async () => {
+        vi.useFakeTimers();
+        const f = fixture(), completion = deferred<GenerationDispatchResult>();
         let runId = '';
-        const dispatch = vi.fn(async () => { expect(f.repository.budget(f.repository.get(runId).rootActionId).attempts[0].status).toBe('dispatch-marked'); return { usage, finishReason: 'stop' }; });
+        const dispatch = vi.fn(() => {
+            expect(f.repository.budget(f.repository.get(runId).rootActionId).attempts[0].status).toBe('dispatch-marked');
+            return completion.promise;
+        });
         const service = createGenerationRunService({ repository: f.repository, dispatch });
         runId = service.open(f.open).runId;
-        const [a, b] = await Promise.all([service.execute(f.request(runId)), service.execute(f.request(runId))]);
-        expect(a.attempt.attemptId).toBe(b.attempt.attemptId);
+        const first = service.execute(f.request(runId)), joined = service.execute(f.request(runId));
+        try {
+            await expect(service.execute({ ...f.request(runId), requestHash: textHash('changed'), providerRequest: { prompt: 'changed' } }))
+                .rejects.toThrow('GENERATION_INVOCATION_CONFLICT');
+            expect(dispatch).toHaveBeenCalledTimes(1);
+            expect(f.repository.attemptCount(runId)).toBe(1);
+            expect(f.repository.listCandidates()).toHaveLength(1);
+        }
+        finally {
+            completion.resolve({ usage, finishReason: 'stop' });
+            await Promise.all([first, joined]);
+        }
+        const [a, b] = await Promise.all([first, joined]);
+        expect(b).toBe(a);
+        expect(a.attempt).toMatchObject({ status: 'settled', actualTokens: 100 });
+        expect(await service.execute(f.request(runId))).toEqual(a);
         expect(dispatch).toHaveBeenCalledTimes(1);
-        expect(a.attempt.actualTokens).toBe(100);
-        await expect(service.execute({ ...f.request(runId), requestHash: textHash('changed'), providerRequest: { prompt: 'changed' } })).rejects.toThrow('GENERATION_INVOCATION_CONFLICT');
     });
-    it('atomically shares parent budget across child calls', () => { const f = fixture(), root = f.repository.open(f.open), child = f.repository.open({ ...f.open, uiActionNonce: 'child', parentRootActionId: root.rootActionId }); expect(child.rootActionId).toBe(root.rootActionId); f.repository.reserve(root.runId, 'a', textHash('a'), 200, 100); f.repository.reserve(child.runId, 'b', textHash('b'), 200, 100); expect(() => f.repository.reserve(child.runId, 'c', textHash('c'), 200, 100)).toThrow('ROOT_BUDGET_EXHAUSTED'); });
+    it('rejects a different nonce while dispatch is pending, including after service refresh, then allows it after settlement', async () => {
+        vi.useFakeTimers();
+        const f = fixture(), completion = deferred<GenerationDispatchResult>();
+        const dispatch = vi.fn(async (): Promise<GenerationDispatchResult> => ({ usage, finishReason: 'stop' }))
+            .mockImplementationOnce(() => completion.promise);
+        const service = createGenerationRunService({ repository: f.repository, dispatch }), run = service.open(f.open);
+        expect(f.repository.hasInFlight(run.runId)).toBe(false);
+        const first = service.execute(f.request(run.runId, 'first'));
+        const reopened = new GenerationRunRepository(() => f.db, () => 1000);
+        const refreshed = createGenerationRunService({ repository: reopened, dispatch });
+        try {
+            expect(reopened.hasInFlight(run.runId)).toBe(true);
+            await expect(service.execute(f.request(run.runId, 'second'))).rejects.toThrow('GENERATION_DISPATCH_IN_FLIGHT');
+            await expect(refreshed.execute(f.request(run.runId, 'second'))).rejects.toThrow('GENERATION_DISPATCH_IN_FLIGHT');
+            expect(dispatch).toHaveBeenCalledTimes(1);
+            expect(reopened.attemptCount(run.runId)).toBe(1);
+            expect(reopened.budget(run.rootActionId)).toMatchObject({ blockedCode: null, attempts: [{ status: 'dispatch-marked', reservedTokens: 200 }] });
+            expect(reopened.listCandidates()).toHaveLength(1);
+        }
+        finally {
+            completion.resolve({ usage, finishReason: 'stop' });
+            await first;
+        }
+        const settled = await first;
+        expect(reopened.hasInFlight(run.runId)).toBe(false);
+        const next = await refreshed.execute(f.request(run.runId, 'second'));
+        expect(next.attempt.status).toBe('settled');
+        expect(next.attempt.attemptId).not.toBe(settled.attempt.attemptId);
+        expect(next.attempt.reservationId).not.toBe(settled.attempt.reservationId);
+        expect(next.budget.attempts).toHaveLength(2);
+        expect(next.budget.blockedCode).toBeNull();
+        expect(dispatch).toHaveBeenCalledTimes(2);
+    });
+    it.each(['reserved', 'dispatch-marked'] as const)('keeps exact reservation replay ahead of the %s in-flight guard', async status => {
+        const f = fixture(), run = f.repository.open(f.open), request = f.request(run.runId);
+        const first = f.repository.reserve(run.runId, request.invocationNonce, request.requestHash, 200, 100);
+        if (status === 'dispatch-marked') f.repository.markDispatched(first.attempt.attemptId);
+        const dispatch = vi.fn(), service = createGenerationRunService({ repository: f.repository, dispatch });
+        expect(f.repository.hasInFlight(run.runId)).toBe(true);
+        expect(f.repository.reserve(run.runId, request.invocationNonce, request.requestHash, 200, 100).attempt)
+            .toMatchObject({ attemptId: first.attempt.attemptId, reservationId: first.attempt.reservationId, status });
+        expect(() => f.repository.reserve(run.runId, request.invocationNonce, textHash('changed'), 200, 100))
+            .toThrow('GENERATION_INVOCATION_CONFLICT');
+        await expect(service.execute(f.request(run.runId, 'different'))).rejects.toThrow('GENERATION_DISPATCH_IN_FLIGHT');
+        expect(f.repository.attemptCount(run.runId)).toBe(1);
+        expect(f.repository.listCandidates()).toHaveLength(1);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+    it('allows another run under the same root to dispatch while its sibling is in flight', async () => {
+        vi.useFakeTimers();
+        const f = fixture(), firstCompletion = deferred<GenerationDispatchResult>(), secondCompletion = deferred<GenerationDispatchResult>();
+        const dispatch = vi.fn(() => firstCompletion.promise)
+            .mockImplementationOnce(() => firstCompletion.promise)
+            .mockImplementationOnce(() => secondCompletion.promise);
+        const service = createGenerationRunService({ repository: f.repository, dispatch }), root = service.open(f.open);
+        const child = service.open({ ...f.open, uiActionNonce: 'child', parentRootActionId: root.rootActionId });
+        const first = service.execute(f.request(root.runId)), second = service.execute(f.request(child.runId));
+        try {
+            expect(dispatch).toHaveBeenCalledTimes(2);
+            expect(f.repository.hasInFlight(root.runId)).toBe(true);
+            expect(f.repository.hasInFlight(child.runId)).toBe(true);
+            expect(f.repository.attemptCount(root.runId)).toBe(1);
+            expect(f.repository.attemptCount(child.runId)).toBe(1);
+            expect(f.repository.budget(root.rootActionId).attempts.map(attempt => attempt.status)).toEqual(['dispatch-marked', 'dispatch-marked']);
+        }
+        finally {
+            firstCompletion.resolve({ usage, finishReason: 'stop' });
+            secondCompletion.resolve({ usage, finishReason: 'stop' });
+            await Promise.all([first, second]);
+        }
+        const [a, b] = await Promise.all([first, second]);
+        expect(a.attempt.attemptId).not.toBe(b.attempt.attemptId);
+        expect(a.attempt.status).toBe('settled');
+        expect(b.attempt.status).toBe('settled');
+        expect(f.repository.hasInFlight(root.runId)).toBe(false);
+        expect(f.repository.hasInFlight(child.runId)).toBe(false);
+    });
+    it('atomically shares parent budget across child calls', () => {
+        const f = fixture(), root = f.repository.open(f.open);
+        const child = f.repository.open({ ...f.open, uiActionNonce: 'child', parentRootActionId: root.rootActionId });
+        const sibling = f.repository.open({ ...f.open, uiActionNonce: 'sibling', parentRootActionId: root.rootActionId });
+        expect(child.rootActionId).toBe(root.rootActionId);
+        expect(sibling.rootActionId).toBe(root.rootActionId);
+        f.repository.reserve(root.runId, 'a', textHash('a'), 200, 100);
+        f.repository.reserve(child.runId, 'b', textHash('b'), 200, 100);
+        expect(() => f.repository.reserve(sibling.runId, 'c', textHash('c'), 200, 100)).toThrow('ROOT_BUDGET_EXHAUSTED');
+    });
     it('keeps unknown liability and does not replay the nonce after restart', async () => { const f = fixture(), run = f.repository.open(f.open), request = f.request(run.runId); const hash = request.requestHash; const a = f.repository.reserve(run.runId, 'call', hash, 200, 100); f.repository.markDispatched(a.attempt.attemptId); f.setNow(4000); f.repository.recoverInterrupted(); const dispatch = vi.fn(); const service = createGenerationRunService({ repository: f.repository, dispatch }); const result = await service.execute(request); expect(result.attempt.status).toBe('unknown'); expect(result.budget.activeElapsedMs).toBe(3000); expect(dispatch).not.toHaveBeenCalled(); });
     it('leaves portable historical roots and dispatch attempts byte-for-byte untouched on recovery', () => {
         const f = fixture(), run = f.repository.open(f.open), attempt = f.repository.reserve(run.runId, 'call', textHash('call'), 200, 100)
@@ -164,30 +271,63 @@ it('keeps split reasoning tags out of visible artifacts', async () => {
     expect(result.artifact?.text).not.toContain('hidden reasoning');
     expect(result.attempt.status).toBe('unknown');
 });
-it('reopens a real SQLite file and retains nonce, unknown liability, elapsed time and maximum saved prefix', () => {
+it('durably recovers interrupted dispatch as unknown and paused without redispatch until an explicit validated resume', async () => {
     const f = fixture(), base = path.resolve('.runtime/.cache/novel-quality-modernization/s05-ledger');
     fs.mkdirSync(base, { recursive: true });
     const root = fs.mkdtempSync(path.join(base, 'restart-')), file = path.join(root, 'ledger.db');
-    let db = new Database(file);
+    let db = new Database(file), now = 1000;
     try {
         db.exec(M01_GENERATION_SQL);
-        let repository = new GenerationRunRepository(() => db, () => 1000);
+        let repository = new GenerationRunRepository(() => db, () => now);
         const run = repository.open(f.open), request = f.request(run.runId), a = repository.reserve(run.runId, request.invocationNonce, request.requestHash, 200, 100);
         repository.markDispatched(a.attempt.attemptId);
         repository.snapshot(a.attempt.attemptId, 0, '保存原文');
         db.close();
         db = new Database(file);
-        repository = new GenerationRunRepository(() => db, () => 5000);
-        repository.recoverInterrupted();
-        expect(repository.open(f.open).runId).toBe(run.runId);
+        now = 5000;
+        repository = new GenerationRunRepository(() => db, () => now);
+        expect(repository.hasInFlight(run.runId)).toBe(true);
+        const dispatch = vi.fn(async (): Promise<GenerationDispatchResult> => ({ usage, finishReason: 'stop' }));
+        const service = createGenerationRunService({ repository, dispatch });
+        service.recoverInterrupted();
+        service.recoverInterrupted();
+        expect(repository.open(f.open)).toMatchObject({ runId: run.runId, status: 'paused' });
+        expect(repository.hasInFlight(run.runId)).toBe(false);
         const receipt = repository.findInvocation(run.runId, request.invocationNonce, request.requestHash)!;
-        expect(receipt.attempt.status).toBe('unknown');
-        expect(receipt.attempt.reservedTokens).toBe(200);
-        expect(receipt.budget.activeElapsedMs).toBe(4000);
+        expect(receipt.attempt).toMatchObject({ status: 'unknown', reservedTokens: 200, reservationId: a.attempt.reservationId });
+        expect(receipt.attempt.actualTokens).toBeUndefined();
+        expect(receipt.budget).toMatchObject({ root: { status: 'paused' }, activeElapsedMs: 4000, blockedCode: null });
         expect(receipt.artifact).toMatchObject({ revision: 1, text: '保存原文' });
+        now = 9000;
+        expect(repository.budget(run.rootActionId).activeElapsedMs).toBe(4000);
+        expect(await service.execute(request)).toEqual(receipt);
+        await expect(service.execute(f.request(run.runId, 'fresh'))).rejects.toThrow('GENERATION_DISPATCH_BLOCKED');
+        const nextBinding = { ...run.binding, epoch: 'resumed-epoch' };
+        await expect(service.resume(run.runId, nextBinding)).rejects.toThrow('GENERATION_RECOVERY_UNAUTHORIZED');
+        expect(repository.get(run.runId).status).toBe('paused');
+        expect(repository.attemptCount(run.runId)).toBe(1);
+        expect(dispatch).not.toHaveBeenCalled();
+        const validateRecovery = vi.fn(async () => true);
+        const resumedService = createGenerationRunService({ repository, dispatch, validateRecovery });
+        expect(validateRecovery).not.toHaveBeenCalled();
+        expect(await resumedService.resume(run.runId, nextBinding)).toMatchObject({ status: 'running', binding: nextBinding });
+        expect(validateRecovery).toHaveBeenCalledExactlyOnceWith(run.binding, nextBinding);
+        expect(repository.budget(run.rootActionId).root).toMatchObject({ status: 'active', epoch: 'resumed-epoch' });
+        expect(repository.attemptCount(run.runId)).toBe(1);
+        expect(dispatch).not.toHaveBeenCalled();
+        expect((await resumedService.execute(request)).attempt.status).toBe('unknown');
+        expect(dispatch).not.toHaveBeenCalled();
+        const fresh = await resumedService.execute(f.request(run.runId, 'fresh'));
+        expect(fresh.attempt).toMatchObject({ status: 'settled', actualTokens: 100 });
+        expect(fresh.attempt.attemptId).not.toBe(receipt.attempt.attemptId);
+        expect(fresh.artifact?.epoch).toBe('resumed-epoch');
+        expect(fresh.budget.attempts).toHaveLength(2);
+        expect(repository.receipt(receipt.attempt.attemptId).attempt.status).toBe('unknown');
+        expect(repository.receipt(receipt.attempt.attemptId).artifact).toEqual(receipt.artifact);
+        expect(dispatch).toHaveBeenCalledTimes(1);
     }
     finally {
-        db.close();
+        if (db.open) db.close();
         fs.rmSync(root, { recursive: true, force: true });
     }
 });

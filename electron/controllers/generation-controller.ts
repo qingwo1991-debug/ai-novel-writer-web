@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
+import { operations, type InvokeEvent, type ClientSink } from '../platform'
 import type Database from 'better-sqlite3'
 import type { GenerationOwnerChannels } from '../../src/shared/generation-owner-contract'
 import type { CharacterProposalChannels } from '../../src/shared/character-proposal'
@@ -35,7 +35,7 @@ import { getEmbeddingConfig } from './kb-controller'
 
 type Owner = ReturnType<typeof createMainGenerationOwner>
 type OwnerChannels = LegacyRosterGenerationChannels & GraphGenerationChannels & GenerationOwnerChannels & CharacterProposalChannels & FinalizedCharacterGenerationChannels & ReviewRevisionGenerationInvokeChannels & AgentGenerationChannels & ImportGenerationChannels & EditorInlineGenerationChannels & FinalizationGenerationChannels
-const owners = new Map<Database.Database, { owner: Owner; session: ProjectSessionContext; subscribers: Set<WebContents> }>()
+const owners = new Map<Database.Database, { owner: Owner; session: ProjectSessionContext; subscribers: Set<ClientSink> }>()
 const ownerSessions = new WeakMap<Owner, ProjectSessionContext>()
 /** Called synchronously inside the same SQLite transaction as the formal effect. */
 export function assertGenerationSourcesCurrent(handle: MainGenerationRunHandle, blueprintRange?: { startChapter: number; endChapter: number }): void {
@@ -110,7 +110,7 @@ export function registerGenerationController(options: {
     const entry = owners.get(database)
     if (entry) { entry.owner.suspendForProjectClose(); owners.delete(database) }
   })
-  const authorizedOwner = (session: ProjectSessionContext, event: IpcMainInvokeEvent) => {
+  const authorizedOwner = (session: ProjectSessionContext, event: InvokeEvent) => {
     projectAccess.assertCurrentProjectContext(session, getCurrentProjectPath())
     const database = getProjectDb()
     if (!database) throw new Error('GENERATION_DATABASE_NOT_READY')
@@ -122,7 +122,7 @@ export function registerGenerationController(options: {
     }
     if (!entry) {
       const captured = Object.freeze({ ...session })
-      const subscribers = new Set<WebContents>()
+      const subscribers = new Set<ClientSink>()
       const sourceDependencies = { db: database, projectStorageRoot: getProjectDataRoot(captured.projectPath),
         globalDataRoot: getGlobalDataRoot(), readBuiltinSkill: readBuiltinWritingSkill,
         readBuiltinPrompt: (key: string, language: 'zh-CN' | 'en-US') => {
@@ -153,7 +153,11 @@ export function registerGenerationController(options: {
       ownerSessions.set(owner, captured)
       owners.set(database, entry)
     }
-    entry.subscribers.add(event.sender)
+    if (!entry.subscribers.has(event.sender)) {
+      const subscribers = entry.subscribers
+      subscribers.add(event.sender)
+      event.sender.once('destroyed', () => subscribers.delete(event.sender))
+    }
     return entry.owner
   }
   const guardKnowledge = async <T>(owner: Owner, snapshot: GenerationKnowledgeSnapshot | undefined, operation: () => T | Promise<T>): Promise<T> => {
@@ -174,7 +178,7 @@ export function registerGenerationController(options: {
   }
   function register<C extends keyof OwnerChannels>(channel: C, arity: number,
     handler: (owner: Owner, ...args: OwnerChannels[C]['args']) => OwnerChannels[C]['return'] | Promise<OwnerChannels[C]['return']>) {
-    ipcMain.handle(channel, async (event, ...raw: unknown[]) => {
+    operations.handle(channel, async (event, ...raw: unknown[]) => {
       try {
         const session = raw.pop()
         if (!isProjectSessionContext(session) || raw.length !== arity && !(channel === 'generation:compose-visible' && raw.length === 3)) throw new Error('GENERATION_PROJECT_SESSION_REQUIRED')

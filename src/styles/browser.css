@@ -1,0 +1,260 @@
+/* Native browser presentation. Desktop keeps its frameless-window layout. */
+:root[data-runtime='web'] :is(.stage-root, .stage-shell, .stage-frame) {
+  min-width: 0;
+}
+
+:root[data-runtime='web'] .stage-root {
+  height: 100%;
+  height: 100dvh;
+}
+
+/* A browser tab has its own window chrome; no area inside the app is draggable. */
+:root[data-runtime='web'] .stage-root,
+:root[data-runtime='web'] .stage-root * {
+  -webkit-app-region: no-drag;
+}
+
+:root[data-runtime='web'] .stage-topbar {
+  box-sizing: border-box;
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-left: max(16px, env(safe-area-inset-left));
+}
+
+:root[data-runtime='web'] .stage-spine {
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:root[data-runtime='web'] .stage-set-body {
+  min-height: 0;
+}
+
+:root[data-runtime='web'] .stage-sheet-slot,
+:root[data-runtime='web'] .stage-sheet-slot[data-wide] {
+  max-width: 100%;
+}
+
+@media (max-width: 1100px) {
+  :root[data-runtime='web'] .stage-topbar {
+    height: auto;
+    min-height: 46px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding-block: 8px;
+  }
+
+  :root[data-runtime='web'] .stage-topbar > .pi-anchor {
+    max-width: min(320px, 45vw);
+  }
+
+  :root[data-runtime='web'] .stage-topbar-center {
+    order: 1;
+    flex: 1 0 100%;
+    justify-content: stretch;
+  }
+
+  :root[data-runtime='web'] .stage-search {
+    width: 100%;
+    min-height: 34px;
+  }
+
+  :root[data-runtime='web'] .stage-capsule {
+    max-width: min(260px, 40vw);
+  }
+
+  :root[data-runtime='web'] .stage-spine {
+    width: 228px;
+    padding-inline: 8px;
+  }
+
+  :root[data-runtime='web'] .stage-set-nav {
+    width: 190px;
+  }
+
+  :root[data-runtime='web'] :is(.stage-set-inner, .stage-setup-inner, .stage-lib) {
+    padding-inline: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  :root[data-runtime='web'] .stage-topbar {
+    gap: 8px;
+  }
+
+  :root[data-runtime='web'] .stage-topbar .stage-work-title {
+    max-width: 100%;
+  }
+
+  :root[data-runtime='web'] .stage-topbar > .pi-anchor {
+    max-width: calc(100% - 40px);
+  }
+
+  :root[data-runtime='web'] .stage-crumbs {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    min-height: 24px;
+  }
+
+  :root[data-runtime='web'] .stage-crumb {
+    flex: none;
+  }
+
+  :root[data-runtime='web'] .stage-capsule {
+    max-width: 100%;
+    min-width: 0;
+    flex: 1 1 140px;
+  }
+
+  :root[data-runtime='web'] .stage-topbar[data-focus='true'] {
+    flex-wrap: nowrap;
+  }
+
+  :root[data-runtime='web'] .stage-topbar[data-focus='true'] > .pi-btn {
+    flex: none;
+  }
+
+  /* Keep every flow, resource, chapter and settings action available. On small
+     screens the sidebar becomes a scrollable navigation ribbon, not hidden UI. */
+  :root[data-runtime='web'] .stage-frame {
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  :root[data-runtime='web'] .stage-spine {
+    width: 100%;
+    max-height: 30vh;
+    max-height: min(30dvh, 240px);
+    flex: 0 0 auto;
+    padding: 4px 10px 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  :root[data-runtime='web'] .stage-spine-label {
+    padding-block: 4px;
+  }
+
+  :root[data-runtime='web'] .stage-spine-label--resources {
+    margin-top: 4px;
+  }
+
+  :root[data-runtime='web'] :is(.stage-stages, .stage-resources, .stage-chapters) {
+    flex: none;
+    flex-direction: row;
+    min-height: min-content;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-padding-inline: 4px;
+    overscroll-behavior-inline: contain;
+    padding-block: 3px;
+  }
+
+  :root[data-runtime='web'] .stage-stages > li {
+    flex: 0 0 160px;
+  }
+
+  :root[data-runtime='web'] .stage-resources > li {
+    flex: 0 0 132px;
+  }
+
+  :root[data-runtime='web'] .stage-chapters {
+    margin: 4px 0 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  :root[data-runtime='web'] .stage-chapters > li {
+    flex: 0 0 200px;
+  }
+
+  :root[data-runtime='web'] .stage-row-meta {
+    grid-column: 2 / 4;
+    white-space: normal;
+  }
+
+  :root[data-runtime='web'] .stage-spine-foot {
+    margin-top: 2px;
+    padding-top: 0;
+  }
+
+  :root[data-runtime='web'] .stage-spine-foot .stage-row {
+    width: auto;
+    min-width: 132px;
+  }
+
+  :root[data-runtime='web'] .stage-panel {
+    margin: 6px;
+  }
+
+  :root[data-runtime='web'] .stage-settings {
+    flex-direction: column;
+  }
+
+  :root[data-runtime='web'] .stage-set-nav {
+    width: 100%;
+    max-height: 25vh;
+    max-height: min(25dvh, 200px);
+    flex: none;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 10px;
+  }
+
+  :root[data-runtime='web'] :is(.stage-set-back, .stage-set-nav-title) {
+    flex: none;
+    margin: 0;
+  }
+
+  :root[data-runtime='web'] .stage-set-group {
+    flex: none;
+    min-width: 140px;
+    margin-bottom: 0;
+  }
+
+  :root[data-runtime='web'] :is(.stage-set-inner, .stage-setup-inner, .stage-lib) {
+    padding: 24px 16px 40px;
+  }
+
+  :root[data-runtime='web'] .stage-set-row-ctl {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
+  :root[data-runtime='web'] .stage-set-row-ctl .stage-select {
+    max-width: 100%;
+  }
+
+  :root[data-runtime='web'] :is(.stage-set-form, .stage-model-form .grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :root[data-runtime='web'] :is(.stage-set-themes, .stage-model-form-actions, .stage-set-actions) {
+    flex-wrap: wrap;
+  }
+
+  :root[data-runtime='web'] .stage-palette {
+    top: 8dvh;
+    max-width: calc(100vw - 24px);
+    max-height: 80dvh;
+  }
+
+  :root[data-runtime='web'] .stage-palette-foot {
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+}
+
+@media (pointer: coarse) {
+  :root[data-runtime='web'] :is(.stage-row, .stage-chapter, .stage-search, .stage-set-link) {
+    min-height: 40px;
+  }
+
+  :root[data-runtime='web'] .stage-tab-close {
+    opacity: 1;
+    min-width: 28px;
+    min-height: 28px;
+  }
+}

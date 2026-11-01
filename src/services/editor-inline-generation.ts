@@ -1,4 +1,5 @@
 import { ipc } from './ipc-client'
+import { sha256Hex } from '../utils/sha256'
 import type { MainGenerationRunHandle } from './generation/generation-runtime'
 import type { ProjectSessionContext } from '../shared/ipc-channels'
 import type { EditorInlineInput, EditorInlineRecovery } from '../shared/editor-inline-generation'
@@ -22,8 +23,7 @@ export function createEditorInlineGeneration(sessionInput: ProjectSessionContext
     if (!['refine', 'expand', 'continue', 'dialogue', 'instruct'].includes(input.action) || input.kind !== 'author-draft' || !Number.isSafeInteger(input.from) || !Number.isSafeInteger(input.to)
       || input.from < 0 || input.to <= input.from || input.to > input.documentText.length
       || input.documentText.slice(input.from, input.to) !== input.selectedText) throw new Error('EDITOR_INLINE_CONTEXT_INVALID')
-    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input.documentText))
-    const hash = Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('')
+    const hash = await sha256Hex(input.documentText)
     if (hash !== input.documentHash) throw new Error('EDITOR_INLINE_CONTEXT_INVALID')
     return value
   }

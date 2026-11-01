@@ -8,7 +8,7 @@ import type { GenerationBatchHistory, GenerationRecoveryContext, GenerationRecov
 import { plotOutlineSourceInvalidText } from '../../shared/plot-outline-contract'
 import { pluralEn } from '../../shared/plural-en'
 import type { RecoveryCandidate } from '../../shared/recovery-candidate'
-import { buildReviewCycleRecheckReport, recheckCommitPolicy, type ReviewCycleRecheckContext } from '../../shared/review-cycle'
+import { buildReviewCycleRecheckReport, recheckCommitPolicy, type PendingReviewRecheck, type ReviewCycleRecheckContext } from '../../shared/review-cycle'
 import { parseReviewGenerationResult } from '../../shared/review-generation-report'
 import type { ReviewRevisionRecovery } from '../../shared/review-revision-generation'
 import { workflowResourceKey, type WorkflowRun } from '../../stores/workflow-store'
@@ -17,7 +17,7 @@ import { workflowResourceKey, type WorkflowRun } from '../../stores/workflow-sto
  * 运行中断后可以接着做的事。运行侧页从这里取标题、提示、可复制的文字与动作是否可用，
  * 自己只负责排版；数据由 use-run-recovery 读取，动作也由它执行。
  */
-export type RecoveryEntry = CandidateEntry | PlanningEntry | EditorEntry | ReviewEntry | BatchEntry | DraftEntry
+export type RecoveryEntry = CandidateEntry | PlanningEntry | EditorEntry | ReviewEntry | BatchEntry | DraftEntry | RecheckEntry
 
 export interface RecoveryText {
   id: string
@@ -87,6 +87,17 @@ export interface ReviewEntry extends Usage {
   view: MainGenerationRunView
 }
 
+/** A committed merge still requires its author-triggered semantic recheck. */
+export interface RecheckEntry {
+  kind: 'recheck'
+  key: string
+  chapterNumber: number
+  title: string
+  note: string
+  actionLabel: string
+  pending: PendingReviewRecheck
+}
+
 /** 批量创作中断，可从下一章继续。 */
 export interface BatchEntry {
   kind: 'batch'
@@ -97,6 +108,7 @@ export interface BatchEntry {
   actionLabel: string
   batchId: string
   range: { startChapter: number; endChapter: number }
+  pendingHandle?: MainGenerationRunView['handle']
 }
 
 /** 单章写作中断、没保存：勾选保留的片段续写，或沿已存细纲继续。 */
@@ -121,6 +133,7 @@ export interface DraftEntry extends Usage {
 
 /** 主进程算好的可恢复运行，加上旧恢复候选表。 */
 export interface RecoverySources extends Omit<GenerationRecoveryList, 'partial'> {
+  rechecks?: readonly PendingReviewRecheck[]
   candidates: readonly RecoveryCandidate[]
 }
 
@@ -315,12 +328,13 @@ function reviewEntry({ view, recovery }: RecoverySources['reviews'][number], loc
   const requestsReview = review && !recovery.saved && !canCommitRecoveredReview(recovery)
   const current = recovery.sourceStatus === 'current'
   const live = view.status !== 'cancelled'
+  const pending = view.inFlight === true || recovery.inFlight === true
   const notes = [
     recovery.sourceStatus === 'conflict' && !recovery.saved
       && t('来源已变化；候选仍可复制，不能直接保存。', 'Sources changed; copy the candidate to preserve it. Direct saving is unavailable.'),
-    current && !recovery.saved && !recovery.canResume && !review
+    !pending && current && !recovery.saved && !recovery.canResume && !review
       && t('候选未通过保存校验；可复制保留，请从原稿重新发起任务。', 'The candidate failed save validation. Copy it if needed, then start a new action from the source draft.'),
-    current && live && !recovery.saved && !recovery.canResume && review
+    !pending && current && live && !recovery.saved && !recovery.canResume && review
       && t('当前任务的审稿请求次数已用尽。原稿保留，可从原稿发起新的审稿任务。', 'This task has used all review attempts. The source draft is preserved. Start a new review task from the source draft.'),
     requestsReview && current && live && recovery.canResume
       && t('尚无完整审稿报告。重新审稿会重新调用模型；原稿保留。', 'No complete review report is available. Reviewing again sends a new model request; the source draft is preserved.'),
@@ -337,7 +351,7 @@ function reviewEntry({ view, recovery }: RecoverySources['reviews'][number], loc
     tails: texts(view.unsavedTails).map(shown),
     actionLabel: recovery.saved ? t('打开已保存结果', 'Open saved result')
       : requestsReview ? t('重新审稿', 'Review again') : t('恢复此审修任务', 'Recover this review or revision'),
-    canAct: Boolean(recovery.saved) || (recovery.canResume && current && live),
+    canAct: !pending && (Boolean(recovery.saved) || (recovery.canResume && current && live)),
     labels: { copy: t('复制', 'Copy'), copyTail: t('复制未保存文字', 'Copy unsaved text') },
     view,
   }
@@ -352,7 +366,8 @@ function batchEntry(batch: GenerationBatchHistory, locale: Locale): BatchEntry {
       `Batch drafts: ${batch.completedChapters.length} saved; next chapter ${batch.nextChapterNumber}`),
     staleNote: batch.sourceCurrent ? undefined : t('批次来源已变化，不能继续此批次。请从当前正文发起新任务。',
       'The batch source changed. This batch cannot continue. Start a new task from the current text.'),
-    canContinue: batch.sourceCurrent,
+    canContinue: batch.sourceCurrent && !batch.inFlight,
+    ...(batch.inFlight ? { pendingHandle: batch.rootHandle } : {}),
     actionLabel: t('继续此批次', 'Continue this batch'),
     batchId: batch.batchId,
     range: batch.range,
@@ -395,8 +410,18 @@ function draftEntry({ view, recovery }: RecoverySources['drafts'][number], local
   }
 }
 
+/** Backend-pending work remains visible after reload, with wait/pause instead of recovery. */
+export function pendingRecoveryHandle(entry: RecoveryEntry): MainGenerationRunView['handle'] | undefined {
+  if (entry.kind === 'batch') return entry.pendingHandle
+  if (entry.kind === 'planning') return entry.recovery.inFlight ? entry.recovery.handle : undefined
+  if (entry.kind === 'editor') return entry.recovery.view.inFlight ? entry.recovery.view.handle : undefined
+  if (entry.kind === 'draft' || entry.kind === 'review') return entry.view.inFlight ? entry.view.handle : undefined
+  return undefined
+}
+
 /**
  * 这次打开作品后还在进行的工作：它正显示在运行卡片里，不是中断留下的。
+ * 此判断只去重本地运行卡片，不能推断主进程是否仍有请求；刷新后由 pendingRecoveryHandle 禁用恢复。
  * 单章与审修要这次打开里有单章运行正占着这一章：会话内失败时持久状态不会改，仍记为 running，不能当作还在写。
  * 批量运行也占着各章，但它写的正文带批次号、不列为单章条目（use-run-recovery），也不跑审修，所以不算。
  * 选区生成不是工作流运行，看 epoch：上次打开时没写完的换过会话，仍算可恢复。
@@ -404,7 +429,9 @@ function draftEntry({ view, recovery }: RecoverySources['drafts'][number], local
  */
 export function isInFlight(entry: RecoveryEntry, leaseId: string | undefined, liveRuns: readonly Pick<WorkflowRun, 'type' | 'resourceKeys'>[]): boolean {
   if (entry.kind === 'batch') return liveRuns.some(run => run.type === 'batch_generate' && sameChapters(run.resourceKeys, entry.range))
-  if (entry.kind === 'editor') return entry.recovery.view.status === 'running' && entry.recovery.view.handle.epoch === leaseId
+  if (entry.kind === 'editor') return entry.recovery.view.inFlight === undefined
+    && entry.recovery.view.status === 'running' && entry.recovery.view.handle.epoch === leaseId
+  if (entry.kind === 'recheck') return liveRuns.some(run => run.resourceKeys?.includes(workflowResourceKey('chapter', entry.chapterNumber)))
   if ((entry.kind !== 'draft' && entry.kind !== 'review') || entry.chapterNumber === undefined) return false
   const chapter = workflowResourceKey('chapter', entry.chapterNumber)
   return entry.view.status === 'running' && entry.view.handle.epoch === leaseId
@@ -419,7 +446,7 @@ function sameChapters(keys: readonly string[] | undefined, range: BatchEntry['ra
 
 /** 单章候选的续写按钮是否可点：勾了片段，或有已存方案可沿用。 */
 export function canResumeDraft(entry: DraftEntry, picked: readonly string[]): boolean {
-  return !entry.changed && (picked.length > 0 || !entry.needsPick)
+  return !entry.view.inFlight && !entry.changed && (picked.length > 0 || !entry.needsPick)
 }
 
 /** 列出顺序与旧 AI 输出一致：恢复稿、选区建议、审修、批量、单章，最后是旧的恢复候选表。 */
@@ -428,6 +455,17 @@ export function buildRecoveryEntries(sources: RecoverySources, locale: Locale): 
     ...sources.planning.map(recovery => planningEntry(recovery, locale)),
     ...sources.editors.map(recovery => editorEntry(recovery, locale)),
     ...sources.reviews.map(item => reviewEntry(item, locale)),
+    ...(sources.rechecks ?? []).filter(pending => !sources.reviews.some(({ view, recovery }) =>
+      recovery.context.recheck?.cycleId === pending.cycleId && recovery.context.recheck.mergedHash === pending.mergedHash
+      && view.status !== 'cancelled' && (view.inFlight || recovery.canResume || recovery.saved)))
+      .map(pending => ({
+        kind: 'recheck' as const, key: `recheck:${pending.cycleId}:${pending.mergedHash}`,
+        chapterNumber: pending.sourceDraft.chapterNumber, pending,
+        title: lang(locale)(`第${pending.sourceDraft.chapterNumber}章 · 合并后复核`, `Chapter ${pending.sourceDraft.chapterNumber} · Post-merge recheck`),
+        note: lang(locale)('修订已合并，但尚未完成所需复核。点击后才会调用模型；不会在刷新后自动审稿。',
+          'The revision was merged, but its required recheck has not completed. Only clicking the action sends a model request; refresh does not review automatically.'),
+        actionLabel: lang(locale)('开始所需复核', 'Start required recheck'),
+      })),
     ...sources.batches.map(batch => batchEntry(batch, locale)),
     ...sources.drafts.map(item => draftEntry(item, locale)),
     ...sources.candidates.map(candidate => candidateEntry(candidate, locale)),

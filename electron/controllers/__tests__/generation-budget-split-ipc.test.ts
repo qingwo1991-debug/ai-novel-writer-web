@@ -21,7 +21,7 @@ import { getBuiltinPromptTemplate } from '../../../src/services/builtin-prompt-t
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 const mocks = vi.hoisted(() => ({ handlers: new Map<string, Handler>(), globalRoot: '' }))
-vi.mock('electron', () => ({ ipcMain: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
+vi.mock('../../platform', () => ({ appHost: { isPackaged: false, getLocale: () => 'en-US' }, operations: { handle: (channel: string, handler: Handler) => mocks.handlers.set(channel, handler) } }))
 vi.mock('../../services/app-data-locator', () => ({ getGlobalDataRoot: () => mocks.globalRoot }))
 vi.mock('../kb-controller', () => ({ getEmbeddingConfig: () => null }))
 
@@ -43,7 +43,7 @@ const catalog: ModelProfile = { ...known, id: 'catalog', modelName: 'gpt-4o', ma
 const models: Record<string, ModelProfile> = { known, tiny, unknown, catalog }
 const loadModel = (id: string): ModelProfile | null => models[id] ?? null
 
-const sender = { isDestroyed: () => false, send: vi.fn() }
+const sender = { id: 1, isDestroyed: () => false, send: vi.fn(), once: vi.fn() }
 let root = '', session: ProjectSessionContext
 const task: GenerationTask = { purpose: 'chapter-draft', output: 'visible-text',
   messages: [{ role: 'user', content: '保留作者事实，创作中文段落。' }] }

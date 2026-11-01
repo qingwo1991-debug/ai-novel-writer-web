@@ -4,10 +4,10 @@ import type { CharacterAssetService } from '../../services/character-asset-servi
 
 type Handler = (...args: unknown[]) => Promise<unknown> | unknown
 const mocks = vi.hoisted(() => ({ handlers: new Map<string, Handler>(), showOpenDialog: vi.fn() }))
-vi.mock('electron', () => ({
-  app: { getLocale: () => 'zh-CN' },
-  dialog: { showOpenDialog: mocks.showOpenDialog },
-  ipcMain: { handle: vi.fn((channel: string, handler: Handler) => mocks.handlers.set(channel, handler)) },
+vi.mock('../../platform', () => ({
+  appHost: { getLocale: () => 'zh-CN' },
+  dialogHost: { showOpenDialog: mocks.showOpenDialog },
+  operations: { handle: vi.fn((channel: string, handler: Handler) => mocks.handlers.set(channel, handler)) },
 }))
 vi.mock('../../i18n', () => ({ mainText: (_locale: string, zh: string) => zh }))
 

@@ -61,6 +61,21 @@ export function ModelForm({
   const [showKey, setShowKey] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const saveHintId = useId()
+  // A redacted credential belongs to the endpoint at which this form opened.
+  // Metadata is never a key and may not follow provider/endpoint edits. The
+  // server repeats this check before restoring any stored secret.
+  const credentialBinding = useRef(model.hasCredential === true ? {
+    id: model.id,
+    provider: model.provider,
+    protocol: model.protocol,
+    baseUrl: model.baseUrl.trim(),
+  } : null)
+  const binding = credentialBinding.current
+  const canUseSavedCredential = model.hasCredential === true && binding !== null
+    && binding.id === model.id && binding.provider === model.provider
+    && binding.protocol === model.protocol && binding.baseUrl === model.baseUrl.trim()
+  const credentialModel = model.hasCredential === undefined
+    ? model : { ...model, hasCredential: canUseSavedCredential }
 
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean, error?: string } | null>(null)
@@ -75,6 +90,7 @@ export function ModelForm({
     protocol: model.protocol,
     baseUrl: model.baseUrl,
     apiKey: model.apiKey,
+    hasCredential: canUseSavedCredential,
   })
 
   useLayoutEffect(() => {
@@ -84,8 +100,9 @@ export function ModelForm({
       protocol: model.protocol,
       baseUrl: model.baseUrl,
       apiKey: model.apiKey,
+      hasCredential: canUseSavedCredential,
     }
-  }, [model.apiKey, model.baseUrl, model.id, model.protocol, model.provider])
+  }, [model.apiKey, model.baseUrl, model.id, model.protocol, model.provider, canUseSavedCredential])
 
   const autoDiscoveryTimer = useRef<number | undefined>(undefined)
   useEffect(() => () => {
@@ -93,7 +110,7 @@ export function ModelForm({
     window.clearTimeout(autoDiscoveryTimer.current)
   }, [])
 
-  const canDiscover = (config: Pick<ModelProfile, 'provider' | 'baseUrl' | 'apiKey'>) =>
+  const canDiscover = (config: Pick<ModelProfile, 'provider' | 'baseUrl' | 'apiKey' | 'hasCredential'>) =>
     parseHttpEndpoint(config.baseUrl) !== null && hasRequiredApiKey(config)
 
   /** 端点配置一改，旧列表作废；停止输入后用新配置自动再取一次。 */
@@ -130,8 +147,10 @@ export function ModelForm({
       setEmbeddingModelName(val as string)
       return
     }
-    onChange(!isEmbedding && ['modelName', 'baseUrl', 'protocol', 'provider'].includes(key)
-      ? applyModelProfileSelection(model, { [key]: val }) : { ...model, [key]: val })
+    const changedEndpoint = (key === 'provider' || key === 'protocol' || key === 'baseUrl') && val !== model[key]
+    const next = !isEmbedding && ['modelName', 'baseUrl', 'protocol', 'provider'].includes(key)
+      ? applyModelProfileSelection(model, { [key]: val }) : { ...model, [key]: val }
+    onChange(changedEndpoint && model.hasCredential ? { ...next, hasCredential: false } : next)
   }
 
   const currentCapabilities: ModelCapabilities = {
@@ -186,6 +205,7 @@ export function ModelForm({
       protocol: (p?.protocol ?? 'openai') as 'openai' | 'gemini',
       baseUrl: p?.baseUrl ?? '',
       apiKey: '',
+      ...(model.hasCredential !== undefined ? { hasCredential: false } : {}),
       modelName: '',
     }
     onChange(isEmbedding ? { ...model, ...selection, capabilities: undefined, capabilitySources: undefined } : applyModelProfileSelection(model, selection))
@@ -199,10 +219,16 @@ export function ModelForm({
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
-    const result = await testConnection(model)
-    setTestResult(result)
-    setTesting(false)
-    setTimeout(() => setTestResult(null), 3000)
+    try {
+      // model.id identifies the stored credential; no secret is retrieved by
+      // the browser. A changed endpoint must supply its own key instead.
+      const result = await testConnection(credentialModel)
+      setTestResult(result)
+    } catch {
+      setTestResult({ success: false, error: text('连接测试请求失败，请重试。', 'The connection test request failed. Try again.') })
+    } finally {
+      setTesting(false)
+    }
   }
 
   const handleDiscoverModels = async () => {
@@ -211,6 +237,7 @@ export function ModelForm({
     discoveryRevision.current = requestRevision
     // 自动获取从定时器里调用，这次渲染的 model 可能已经落后于表单，请求参数只读 ref。
     const requestConfig = { ...currentDiscoveryConfig.current }
+    if (!canDiscover(requestConfig)) return
     const isCurrentRequest = () => {
       const current = currentDiscoveryConfig.current
       return discoveryRevision.current === requestRevision
@@ -219,6 +246,7 @@ export function ModelForm({
         && current.protocol === requestConfig.protocol
         && current.baseUrl === requestConfig.baseUrl
         && current.apiKey === requestConfig.apiKey
+        && current.hasCredential === requestConfig.hasCredential
     }
     setDiscovery(current => ({ status: 'loading', previous: shownModels(current) }))
     try {
@@ -227,6 +255,8 @@ export function ModelForm({
         protocol: requestConfig.protocol,
         baseUrl: requestConfig.baseUrl,
         apiKey: requestConfig.apiKey,
+        ...(requestConfig.hasCredential && !requestConfig.apiKey.trim()
+          ? { savedModelId: requestConfig.id } : {}),
         purposes: model.purposes,
       })
       if (!isCurrentRequest()) return
@@ -239,7 +269,7 @@ export function ModelForm({
   }
 
   const handleModelListOpen = () => {
-    if (discovery.status === 'idle' && canDiscover(model)) void handleDiscoverModels()
+    if (discovery.status === 'idle' && canDiscover(credentialModel)) void handleDiscoverModels()
   }
 
   const modelNameStatus = (): { tone: 'muted' | 'error', text: string } | null => {
@@ -248,13 +278,13 @@ export function ModelForm({
     if (discovery.status === 'loaded') {
       return { tone: 'muted', text: text(`已从端点获取 ${discovery.models.length} 个模型。`, `Fetched ${discovery.models.length} models from the endpoint.`) }
     }
-    if (canDiscover(model)) return null
+    if (canDiscover(credentialModel)) return null
     return isLocalModelEndpoint(model)
       ? { tone: 'muted', text: text('填写 base_url 后获取模型列表。', 'Enter the base_url to fetch the model list.') }
       : { tone: 'muted', text: text('填写 base_url 和 API Key 后获取模型列表。', 'Enter the base_url and API key to fetch the model list.') }
   }
 
-  const keyMissing = !hasRequiredApiKey(model)
+  const keyMissing = !hasRequiredApiKey(credentialModel)
   const missingForSave = [
     !model.baseUrl.trim() && 'base_url',
     keyMissing && 'API Key',
@@ -263,7 +293,7 @@ export function ModelForm({
 
   return (
     <div
-      className="rounded-xl p-5 space-y-4"
+      className="stage-model-form rounded-xl p-5 space-y-4"
       style={{ border: '1.5px solid var(--color-accent)', backgroundColor: 'var(--color-panel)' }}
     >
       <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
@@ -334,11 +364,17 @@ export function ModelForm({
             type={showKey ? 'text' : 'password'}
             value={model.apiKey}
             onChange={(e) => up('apiKey', e.target.value)}
-            placeholder={isLocalModelEndpoint(model) ? text('本地部署可留空', 'Optional for local deployment') : 'sk-...'}
+            placeholder={canUseSavedCredential
+              ? text('已配置，留空保留', 'Configured; leave blank to keep')
+              : isLocalModelEndpoint(model) ? text('本地部署可留空', 'Optional for local deployment') : 'sk-...'}
+            autoComplete="new-password"
+            autoCapitalize="none"
+            spellCheck={false}
             className="pr-9"
           />
           <button
             type="button"
+            aria-label={showKey ? text('隐藏 API Key', 'Hide API key') : text('显示 API Key', 'Show API key')}
             onClick={() => setShowKey(!showKey)}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
           >
@@ -356,7 +392,7 @@ export function ModelForm({
         onInput={(value) => up('modelName', value)}
         onSelect={handleModelSelect}
         onOpen={handleModelListOpen}
-        onRefresh={() => { if (canDiscover(model)) void handleDiscoverModels() }}
+        onRefresh={() => { if (canDiscover(credentialModel)) void handleDiscoverModels() }}
       />
 
       {isEmbedding && model.provider === 'siliconflow' && model.modelName === 'BAAI/bge-m3' && (
@@ -531,7 +567,7 @@ export function ModelForm({
           {text(`保存前还需填写：${missingForSave.join('、')}。`, `Fill in before saving: ${missingForSave.join(', ')}.`)}
         </p>
       )}
-      <div className="flex items-center gap-2 pt-1">
+      <div className="stage-model-form-actions flex items-center gap-2 pt-1">
         <Button
           variant="outline"
           onClick={handleTest}

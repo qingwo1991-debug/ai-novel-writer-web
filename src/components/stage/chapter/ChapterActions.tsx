@@ -39,6 +39,7 @@ import MergeView from './MergeView'
 import PostProcessSteps from './PostProcessSteps'
 import ReviewSheet from './ReviewSheet'
 import { pluralEn } from '../../../shared/plural-en'
+import { copyText } from '../../../utils/clipboard'
 
 type DraftActions = ReturnType<typeof useDraftActions>
 
@@ -177,7 +178,7 @@ export default function ChapterActions({ sheetSlot, tab, stage, chapterNumber, t
 
   const copyBody = () => {
     const body = useEditorStore.getState().tabs.find(candidate => candidate.id === tab.id)?.content ?? ''
-    void navigator.clipboard.writeText(body)
+    void copyText(body)
       .then(() => toast.success(text('已复制本章正文', 'Chapter text copied')))
       .catch(() => toast.error(text('无法复制正文', 'Could not copy the chapter text')))
   }

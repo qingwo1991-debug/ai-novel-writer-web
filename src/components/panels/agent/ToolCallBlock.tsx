@@ -18,6 +18,8 @@ import {
 } from 'lucide-react'
 import type { ToolCallInfo } from '../../../services/agent/agent-engine'
 import { useLocaleStore } from '../../../stores/locale-store'
+import { copyText } from '../../../utils/clipboard'
+import { toast } from '../../ui/Toast'
 
 interface Props {
   toolCall: ToolCallInfo
@@ -112,7 +114,7 @@ export default function ToolCallBlock({ toolCall }: Props) {
             <div className="tool-call-result" style={{ position: 'relative' }}>
               {result}
               <button
-                onClick={() => navigator.clipboard.writeText(result).catch(() => {})}
+                onClick={() => { void copyText(result).catch(() => toast.error(text('无法复制结果', 'Could not copy result'))) }}
                 className="absolute top-1 right-1 text-[0.65rem] px-1.5 py-0.5 rounded transition-opacity opacity-0 hover:opacity-100"
                 style={{
                   backgroundColor: 'var(--color-hover)',
