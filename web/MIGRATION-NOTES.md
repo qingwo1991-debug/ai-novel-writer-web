@@ -6,7 +6,7 @@
 
 来源基线为上游 `59153ceb`；本仓库是独立原生 Web 修改版，保留 GPL-3.0 与上游归属。原有 Linux 安全文件 helper/部署文件等相关工作保留，没有重置无关改动。独立 GitHub Actions/GHCR 构建说明见 [../docker/README.github.md](../docker/README.github.md)；源码推送不等于生产入口已切换。
 
-**当前不是“全部功能已验收/已上线”声明。** 官方8093/8445仍是原桌面入口，原作者卷未用于并行原生测试。逐项责任与证据以 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) 为准；维护、备份、切换和回滚步骤见 [../docker/README.web.md](../docker/README.web.md)。源码已推送独立私有仓库 `qingwo1991-debug/ai-novel-writer-web`，原始 `EthanYoQ/AI-Novel-Writer` 保留为 upstream；云端构建不自动部署生产。
+**当前不是“全部功能已验收/已上线”声明。** 官方8093/8445仍是原桌面入口，原作者卷未用于并行原生测试。逐项责任与证据以 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) 为准；维护、备份、切换和回滚步骤见 [../docker/README.web.md](../docker/README.web.md)。源码已推送独立私有仓库 `qingwo1991-debug/ai-novel-writer-web`，原始 `EthanYoQ/AI-Novel-Writer` 保留为 upstream；首次GitHub干净构建/65项测试/镜像冒烟/GHCR发布已成功，镜像digest见 [GITHUB-IMAGE-ACCEPTANCE.md](GITHUB-IMAGE-ACCEPTANCE.md)。云端构建不自动部署生产。
 
 ## 已实现的运行结构
 
