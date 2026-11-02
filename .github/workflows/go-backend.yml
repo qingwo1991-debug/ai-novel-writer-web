@@ -124,6 +124,10 @@ jobs:
           test -s "$GO_GEMINI_CONTRACT"
           test -s "$GO_VISIBLE_CONTRACT"
           test -s "$GO_OPENAI_CONTRACT"
+          export GO_EMBEDDING_CONTRACT="$RUNNER_TEMP/embedding-contract.json"
+          printf 'GO_EMBEDDING_CONTRACT=%s\n' "$GO_EMBEDDING_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/embedding-contract.mjs
+          test -s "$GO_EMBEDDING_CONTRACT"
       - name: Verify pinned modules
         run: |
           go mod download
