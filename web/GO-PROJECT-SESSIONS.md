@@ -7,7 +7,7 @@
 - `backend-go/internal/projectsession/session.go`：`OpenScratchCopy` 把已获准 project capability 的 DB/WAL 全集复制到私有目录，v7 exact-schema 检查后才构造 repository。不会把原项目 SQLite 路径交给 SQLite，不把私有编辑复制回作者目录。
 - 会话所有者由 cookie session ID + browser tab ID 共同确定，不使用用户名或路径单独授权。冻结上下文为 `{projectId,leaseId,projectPath}`。
 - 同所有者 refresh 保留同一个 private DB 和 lease，不从源重新复制覆盖尚存的私有编辑；其他标签/会话不能偷用 context。同 path/UUID 的物理目录替换也拒绝刷新，不把旧 scratch 会话借给新 inode。Release 和 Close 在存在完整 repository 调用 hold 时失败；释放后旧 lease 永久失效。私有文件清理失败会保留重试记录并返回错误，`Cleanup`/再次 `Close` 可继续清理，不默默丢弃记录。
-- `backend-go/internal/transport/drafts.go`：实际四个读取与一个正文 CAS handler，依赖注入 admitted repository provider。所有者 hold 包围整个读/写操作。
+- `backend-go/internal/transport/drafts.go`：实际八个读取/查询与一个正文 CAS handler，依赖注入 admitted repository provider。所有者 hold 包围整个读/写操作。
 - wire 保持现有 `ipc-client.ts`：原 typed arguments 后再追加冻结 context。保存仍是 `[id,content,wordCount,expectedProjectPath,expectedContent,context]`，没有移位 baseline，也没有 path-only fallback。
 - `expectedContent` 缺失或正文/status 已变，返回原 `DRAFT_CONTENT_CONFLICT` 业务 envelope；不读取新的 server baseline 替用户重试。
 
@@ -17,9 +17,9 @@
 
 ## 尚未接入正式二进制的业务
 
-`project:open`/create/save、library 枚举与隐藏状态、release HTTP route、持久作者库发布、global 配置/LanceDB 协调、恢复 journal、旧版本全迁移尚未完成。因此 main **没有绑定这五项草稿操作**，也不能将 scratch editor 宣称为作者保存成功；未绑定仍返回 501。
+`project:open`/create/save、library 枚举与隐藏状态、release HTTP route、持久作者库发布、global 配置/LanceDB 协调、恢复 journal、旧版本全迁移尚未完成。因此 main **没有绑定这九项草稿操作**，也不能将 scratch editor 宣称为作者保存成功；未绑定仍返回 501。
 
-矩阵这五项仅可标记 **IN PROGRESS — isolated HTTP/repository tests**，不能计入用户端到端完成数。当前两个固定导航操作是唯一已在 binary 绑定的业务。
+矩阵这九项仅可标记 **IN PROGRESS — isolated HTTP/repository tests**，不能计入用户端到端完成数。当前两个固定导航操作是唯一已在 binary 绑定的业务。
 
 ## 远端证据
 

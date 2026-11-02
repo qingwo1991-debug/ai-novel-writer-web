@@ -4,7 +4,7 @@
 
 Source baseline: `b69dc19c` (`fix(web): persist shelf visibility and fence concurrent draft commits`). Read-only audit of source; no production data, private files, credentials, runtime, CI or module manifests were changed. The only audit outputs are this document and `GO-MIGRATION-PLAN.md`. Existing React/CodeMirror stays; this is **not** a Go HTTP proxy over the Node workers. Prior Node acceptance records are reference tests, not Go parity evidence, and the latest Node fixes are not asserted production-deployed.
 
-Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 5 are IN PROGRESS (isolated draft HTTP/repository tests, NOT bound in binary); 274 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
+Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 9 are IN PROGRESS (isolated draft HTTP/repository tests, NOT bound in binary); 270 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
 
 ## Validated inventory
 
@@ -169,9 +169,9 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:draft-list-all | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — isolated private-copy HTTP PASS; no durable project open/binary binding |
 | db:draft-get-meta | P | DR; transport/drafts.go + transport/drafts_test.go | IN PROGRESS — isolated HTTP PASS; no durable project open/binary binding |
 | db:draft-get-full | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — isolated private-copy HTTP PASS; no durable project open/binary binding |
-| db:draft-get-latest | P | DR | NOT STARTED |
-| db:draft-get-finalized | P | DR; authoritative finalized source | NOT STARTED |
-| db:draft-get-max-finalized-chapter | P | DR | NOT STARTED |
+| db:draft-get-latest | P | DR; original metadata query, version-only order | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
+| db:draft-get-finalized | P | DR; exact finalized status, original metadata query | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
+| db:draft-get-max-finalized-chapter | P | DR; scalar MAX with original null fallback | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
 | db:draft-authority-sequence | P | DR | NOT STARTED |
 | db:draft-export-snapshot | P | DR | NOT STARTED |
 | db:draft-export-authority-current | P | DR; revalidate receipt | NOT STARTED |
@@ -191,7 +191,7 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:plot-tree-read | P | CONT | NOT STARTED |
 | db:plot-tree-save | P | GRAPH; reject direct graph bypass | NOT STARTED |
 | db:plot-tree-clear | P | CONT | NOT STARTED |
-| db:draft-next-version | P | DR; preview, not allocation authority | NOT STARTED |
+| db:draft-next-version | P | DR; preview, not allocation authority | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
 | db:draft-update-status | P | DR; finalized transitions guarded | NOT STARTED |
 | db:draft-update-content | P | DR; expectedContent CAS; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — real SQLite private-copy HTTP concurrent CAS PASS; not durable author save/binary bound |
 | db:draft-delete | P | DR; finalized deletion via CH | NOT STARTED |

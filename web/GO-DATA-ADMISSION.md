@@ -37,11 +37,15 @@ Go 的指纹 JSON 顺序和转义与原 `JSON.stringify` 对照，而不是用 G
 
 [GitHub Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660) 已验证：oracle 从**相同已关闭 v6 源字节**分别交给原 Node M06 和 Go，比较 baseline/donor 两种 schema 与完整逻辑 proof；不是另造一份近似数据，也不把物理文件 hash 相同当作要求。尚未连接作品打开或迁移发布；历史备份、恢复 journal 与全链路切换仍缺失。
 
+## v4→v5 / v5→v6 窄范围升级
+
+`UpgradeSnapshotV4`、`UpgradeSnapshotV5` 已按原 M04/M05 确切 DDL 实现并通过 [Actions 41383135731](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41383135731) 的 baseline/donor 原 Node 对照。两者均要求审稿周期/发现项、导入 run/receipt 为空（v5 source 的 effect ledger 也须空），使尚未移植的复杂历史 verifier 可明确拒绝而非假装通过。逻辑原表内容、source/target fingerprints、FK/integrity/M02 在事务内检查；目标失败回滚 DDL/版本。M05 这里只装 schema，不迁移头像文件或建立 binding。返回 intermediate stage evidence，不能令 v5/v6 绕过当前 v7 admission。
+
 ## 尚未达到的兼容范围
 
-- v0–v5 升级及历史发行版规范化尚未移植；v6 仅以上空审稿周期的私有副本 lane，不能视为旧库全兼容。常规 VerifySnapshot 仍只读核验 v7。
+- v0–v3 升级及历史发行版规范化尚未移植；v4/v5/v6 仅以上空历史限定私有副本 lane，不能视为旧库全兼容。常规 VerifySnapshot 仍只读核验 v7。
 - manifest 日期先覆盖 ISO/RFC3339 等常见形式；暂时拒绝 JS `Date.parse` 宽松接受的本地格式、日期溢出、扩展年份、24:00；重复键也比原解析严格。正式兼容前须消除/审定这些差异，不能静默重写 manifest。
 - 新 `StageDatabase` 流式复制使用固定 128 KiB buffer，调用者指定总物理字节预算，不受旧 `SnapshotDatabase` 的 64 MiB ceiling 限制；`projectdata.Inspect` 已改用新 API。旧内存接口暂保留兼容测试，不用于当前检查流程。新 API 已通过 [GitHub 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128) 的 65 MiB 文件、取消/漂移/回滚回归，不代表正式大作品端到端已验收。
 - Linux descriptor 安全实现；其他平台失败关闭。目标容器为 Linux，不代表所有桌面平台均兼容。
-- 物理 DB/WAL SHA256 不等于现 Node 行级 `authorContentHash`。新增 opt-in `VerifySnapshotWithDomain` 移植行级证明：SQLite 整数 decimal wrapper、BLOB Buffer JSON、JS UTF-16 行排序、非空表计数及逐表哈希；GitHub 用原 `probeProjectSqlite` 输出对照。当前排序仍有累计 64 MiB encoded rows 明确上限，需外排才支持任意大库行级证明；跨版本保全、幂等 receipt、导出权威尚待移植。常规 schema 检查不触发全文排序。
+- 物理 DB/WAL SHA256 不等于现 Node 行级 `authorContentHash`。新增 opt-in `VerifySnapshotWithDomain` 移植行级证明：SQLite 整数 decimal wrapper、BLOB Buffer JSON、JS UTF-16 行排序、非空表计数及逐表哈希；GitHub 用原 `probeProjectSqlite` 输出对照。已实现 chunk/8路归并私有外部排序，独立 Node 对照的 >64 MiB 总编码行量测试通过；单行仍有保守64MiB upper-bound、merge内存峰值和磁盘配额/失败残留清理限制，见 [GO-CONTENT-PROOF.md](GO-CONTENT-PROOF.md)，不声称任意大库无资源限制；跨版本保全、幂等 receipt、导出权威尚待移植。常规 schema 检查不触发全文排序。
 - LanceDB 文档/分块正文仍未迁移或验证，保留原文件，不重建成空索引。

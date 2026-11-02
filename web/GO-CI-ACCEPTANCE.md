@@ -68,6 +68,16 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 五项草稿操作还**没有绑定正式 binary**：scratch 写入不是持久作者保存，`project:open` 与 LanceDB/global/发布恢复未完成。矩阵只标 IN PROGRESS，不计入 2 项已完成业务。详见 [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md)。
 
+## 外部内容证明与早期升级第六轮
+
+源码 `30373e5152608708e39de6bee047e420fc2022cd`，[Actions 41383135731](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41383135731) **success**，job 3m34s：**151 顶层 / 465 含子用例、0 fail、0 skip、10 个测试 package**。vet、race、build、credential oracle 与无 Node smoke 通过；本轮首个提交即通过所有CI门。
+
+- `TestTypeScriptDomainProofBeyondOld64MiBCeiling`：280 行合成大文本，总 encoded rows >64MiB，Go私有外排 proof 与独立 Node 原格式 hash 一致。多层8路归并、重复行、UTF16、取消/IO/visitor失败、部分及完整记录边界截断拒绝/权限/清理回归通过。新 SQLite upper-bound preflight 在 Go driver fetch 前拒绝过大行，避免先分配巨大正文才检查。不是4MiB进程RSS承诺，资源/清理边界见 [GO-CONTENT-PROOF.md](GO-CONTENT-PROOF.md)。
+- `TestEarlyUpgradeMatchesOriginalTypeScriptM04M05BothDonors`：v4→v5/v5→v6 两种 source family 的原实现对照通过；坏域/指纹/FK、非空审稿/导入历史、unsafefile/sidecar、回滚均覆盖。只支持文档所列空历史窄 lane；M05仅schema不处理avatar文件。
+- 新四项草稿查询保持原 metadata/scalar形状和version-only顺序；原例的NULL/zero/negative/default/stale依赖行为被覆盖。真实 authenticated HTTP 私有副本集成也执行了四项查询和跨tab拒绝。
+
+当前 **2 项完成、9 项进行中、270 项未开始**。新增查询仍未绑定 binary；无持久作品业务完成或作者保存可用声明。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
