@@ -5,6 +5,7 @@
 ## 当前实现与准入边界
 
 - `internal/llm/openai.go`：非流式/流式请求、可选 temperature（未定义不 fallback）、token cap field、已解析 reasoning directive 的序列化、NovelAI narrow payload、finish normalization、usage evidence、显式 DONE 必须出现、协议错误与 partial visible candidate。
+- `internal/llm/gemini.go`：原生Gemini非流式/流式、system last-wins/assistant→model、thinkingBudget/Level、原safeinteger用量规范化与thoughts合计；原始usage evidence保留不可信字段，不作为billing authority。精确原LF逐行`data: `解析，而非套用OpenAI SSE拼event规则。Gemini正常EOF可OnDone但unknown/length绝非语义stop；原[syntaxError]diagnostic仅此类固定化，见下。
 - `internal/llm/visible.go`：原 VisibleStreamFilter 与 InBandReasoningStream 的增量 scanner，保留空白、nested tags、partial tags 不泄漏、UTF16拆分与大小写细节。协议 reasoning_content 只走临时reasoning回调，不混入 visible candidate。
 - `[DONE]` 只证明 transport结束；`unknown`/`length`/`content_filter` 不是允许持久化正文的成功证据。creative owner 后续仍须检查 semantic stop、full-body source/target CAS、reservation/receipt/idempotency。provider 不持有数据库也不替 owner 保存。
 - `internal/egress`：独立native HTTP client每次检查最终目标的精确管理员origin白名单，无默认网关/环境proxy、无任何redirect、保持context取消。它允许管理员显式配置LAN/loopback；DNS跟随已批准hostname，不声称全局禁止私网或抵御恶意管理员DNS。当前host语法保守（ASCII/punycode、canonicalIP），与旧WHATWG宽松hostname尚有兼容边界。
@@ -18,8 +19,14 @@
 
 合成真实HTTP测试通过原生egress连接httptest server，覆盖增量stream、取消、未获准目标不dispatch。[Actions 41385531191](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41385531191) 在源码73244fa7上通过72个原provider +922个原scanner differential cases，以及vet/race/build/无Node smoke；全套183顶层/1512含子用例PASS、0 fail、1个writerlock权限case skip（非AI用例）。所有编译/测试只在GitHub，完整记录在 `GO-CI-ACCEPTANCE.md`。
 
+## Gemini新增对照与显式差异
+
+[Actions 41388270772](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41388270772) 源码6d5f2f71通过**154项原Gemini differential cases**（以实际test输出计数）、新增unit/取消/resource tests及vet/race/build/smoke。新增原GeminiProvider oracle仅stub endpoint-fetch，其他scanner/diagnostics/shared链均原代码。覆盖visible/legacy、LF/framing、EOF/semanticfinish、HTTPcontext、原usage raw字段与规范化、空/坏payload、firstpart非流式返回、temperature null-vs-omitted与maxTokens fallback。Gemini不是JSONarray decoder：原代码忽略该body；`[DONE]`在visible路径是非法JSON而非结束标记，legacy忽略，均保留。
+
+唯一diagnostic文本对照例外：原`String(JSON.parse(...))`产生的engine-dependent SyntaxError可能含provider文本，Go固定`Error: LLM_STREAM_INVALID`；测试仅转换expected以该prefix开头的error，其他事件/请求/返回都逐字段原样比较。严格visible输入覆盖所有candidate验证；legacy malformed thought.text非string回调因Go typedAPI不能原样发送任意对象，仍是未支持边界。missing thinkingLevel与empty string暂未区分，正常有效directive不受影响，不能宣称任意损坏配置全兼容。
+
 ## 未迁移/未验证
 
-Gemini、模型配置/凭据绑定、真实provider presets与generation-parameter-policy、discovery/embeddings、精细transport diagnostics/timing、tokens/reservations/accounting owner、AI工作流、历史恢复、SSE到浏览器、正文source/target CAS、LanceDB、所有业务operation绑定仍待实现与契约验收。
+模型配置/凭据绑定、真实provider presets与generation-parameter-policy、discovery/embeddings、精细transport diagnostics/timing、tokens/reservations/accounting owner、AI工作流、历史恢复、SSE到浏览器、正文source/target CAS、LanceDB、所有业务operation绑定仍待实现与契约验收。
 
 本轮provider显式增加了8MiB SSE event、64MiB累计raw wire、累计输出及非流式响应预算（comment/metadata也计入raw wire，避免心跳逃逸预算）；这不是与无界原transport完全相同的资源策略。非流式异常映射固定symbolic code而非旧 String(error)，避免原URL/凭据泄漏，需在最终兼容验收审定。原HTTPFailure.body仍保留provider原始错误payload，仅供未来受控diagnostics owner处理；上层必须redact，禁止直接送浏览器或日志（上游可能回显prompt/key）。所有body/候选只在调用生命周期内存，不写作者库。不可把基于mock或合成HTTP的通过声称为真实外部服务已验证。

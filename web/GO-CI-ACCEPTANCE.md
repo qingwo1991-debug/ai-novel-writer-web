@@ -90,6 +90,17 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 无RPC新增绑定，矩阵仍 **2完成、9进行中、270未开始**。本轮没有触碰作者数据或部署镜像；Gemini/AI工作流/LanceDB/持久项目/全局协调及外部真实服务验收仍未完成。详见 [GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md)、[GO-WRITER-LOCK.md](GO-WRITER-LOCK.md)。
 
+## Gemini与主台账业务第八轮
+
+源码 `6d5f2f7190b6240128f04cd5ed8dca9cc25b99ec`，[Actions 41388270772](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41388270772) **success**，job4m26s：**207 顶层PASS /1764含子用例PASS、0 fail、1 skipped子用例、13测试package通过**。该skip仍为非root runner不能chown的writerlock foreign-owner，未被隐藏；vet/race/build/credentials双向oracle/无Node smoke均通过。
+
+- **154 Gemini原provider differential cases**（实际计数，不使用最初估算170）：请求、visible/legacy精确LF framing、rawusage/规范化/thoughts、finish、EOF、空与非法payload、HTTPcontext、null/omitted选项。Go仅将原JSON.parse engine-dependent SyntaxError安全固定为`Error: LLM_STREAM_INVALID`，测试对此prefix做显式局部转换，其余字段原样比较；该差异不伪装为完全字节一致。原OpenAI72/scanner922继续通过。
+- **30 项原ProjectCoreRepository differential cases**：同原schema字节复制、完整返回及原始行变化、allowlist/readonly/threshold、11个源字段CASdrift。Go另覆盖独立连接池并发CAS和SQLabort原子性。
+- 新authenticated HTTP私有副本test从原schema开始，通过冻结context/lease读取与更新主台账，两次相同source/target baseline提交恰1成功1冲突；cross-tab、stale、readonly、generated/recovery presence拒绝及inflight release阻止均通过。NULL/negative/REAL baseline和Node Buffer wire的额外transport回归通过。
+- 初run41387677962失败在oracle driver的lazy native binding被过窄loader拦截，Go未执行；先在hook前初始化memory-only driver解决。run41387998418仅三项Gemini回调对照因显式空content和省略字段比较错误而失败，修正test adapter保留visible parser error空串后通过；未把实际provider错误删掉或放宽全局比较。
+
+矩阵 **2完成、12进行中、267未开始**；三个core操作仅隔离业务实现（synopsis generated/recovery仍缺），无main绑定、持久作者保存或AI工作流完成声明。见 [GO-PROJECT-CORE.md](GO-PROJECT-CORE.md)、[GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md)。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

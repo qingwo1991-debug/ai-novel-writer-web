@@ -10,11 +10,11 @@
 - `internal/runtime`：按会话 + 标签绑定的独占项目租约、在途请求围栏、同标签重开保留租约、失败打开仅回滚新占用；有界 SSE 历史/重放/慢连接断开。
 - `internal/policy`：读取现有显式 281 操作路由清单，拒绝暴露内部/桌面排除项。清单不是授权，也不代表业务已迁移。
 - `internal/transport`：bootstrap、健康与 SSE、RPC envelope；域操作仅显式注册，未迁移路由/操作返回 501。
-- `internal/store`：现有 SQLite 布局的草稿读取和事务化正文 CAS 原型；仅对已验证数据库开放，**九项草稿 handler 已通过隔离私有副本 HTTP/CAS 集成，但没有绑定正式 binary，不能持久保存作者项目**。
+- `internal/store`：现有 SQLite 布局的草稿读取和事务化正文 CAS 原型；仅对已验证数据库开放，**九项草稿和三项主台账 handler 已通过隔离私有副本 HTTP/CAS 集成（主台账synopsis生成/恢复owner仍拒绝），但没有绑定正式 binary，不能持久保存作者项目**。
 - `internal/projectfs`、`internal/admission`、`internal/projectdata`：只读物理路径/项目身份与 SQLite v7 准入检查；连接私有完整 DB/WAL 副本而非原库，保留写者排除前置条件。新增固定 128 KiB buffer 流式快照，检查流程不再使用旧 64 MiB 内存快照；opt-in 行级内容证明已用私有外部排序并通过>64MiB总行量验证（单行限制/内存峰值/磁盘预算仍见专文），部分 manifest 日期格式有兼容差异，v4→v5、v5→v6、v6→v7 仅空历史限定私有副本 lane 已验证，其余旧版本升级待移植。详见 `web/GO-DATA-ADMISSION.md`。
 - `internal/projectsession`：私有 scratch copy 的 schema 准入、cookie session+tab 所有权、冻结上下文、refresh 保留编辑、在途围栏与可重试 cleanup；非持久作者会话，见 `web/GO-PROJECT-SESSIONS.md`。
 - `internal/secrets`：旧 AES-GCM envelope 和私人 key 文件兼容模块，不自动读取默认作者 key；全局配置/provider 尚未连接，见 `web/GO-CREDENTIAL-COMPATIBILITY.md`。
-- `internal/llm`、`internal/egress`：Go原生OpenAI-compatible非流式/流式、UTF16可见/推理隔离、finish/usage证据、取消围栏和精确origin无proxy/redirect HTTP；72个原provider及900+原scanner合成对照已通过，**未绑定AI工作流或RPC**，见 `web/GO-AI-TRANSPORT.md`。
+- `internal/llm`、`internal/egress`：Go原生OpenAI-compatible/Gemini非流式/流式、UTF16可见/推理隔离、finish/usage证据、取消围栏和精确origin无proxy/redirect HTTP；72个原OpenAI/154个原Gemini provider及922个原scanner合成对照已通过，**未绑定AI工作流或RPC**，见 `web/GO-AI-TRANSPORT.md`。
 - `internal/writerlock`：真实openat/NOFOLLOW+flock跨进程排他，安全persistent lock inode、多进程/exit/CLOEXEC验证；未与现生产lock约定/全局状态集成，见 `web/GO-WRITER-LOCK.md`。
 - `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 
