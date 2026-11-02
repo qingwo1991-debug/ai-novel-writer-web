@@ -103,6 +103,19 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 矩阵 **2完成、12进行中、267未开始**；三个core操作仅隔离业务实现（synopsis generated/recovery仍缺），无main绑定、持久作者保存或AI工作流完成声明。见 [GO-PROJECT-CORE.md](GO-PROJECT-CORE.md)、[GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md)。
 
+## 审稿修稿第九轮
+
+源码 `a5e38a20a85ea04ea02c6498fc3c31258976936b`，[Actions 41391829983](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41391829983) **success，4m42s：227顶层PASS /1996含子用例PASS，0 fail，1 skipped子用例，13 package通过**。该skip为`TestRejectUnsafeLockEntriesWithoutMutation/foreign-owner`（runner非root不能chown）；没有隐藏或把skip说成全覆盖。全部format/vet/unit/race/credential双向oracle/build/noNode smoke通过，本轮首次远端运行即通过；本机无Go执行、大安装或author数据访问。
+
+- **162项原ReviewRepository/RevisionRepository差分**，使用真实review-cycle依赖，仅替换私有synthetic DB getter。每case恢复完整pre-operation DB字节，Go对照相同输入/返回/error及七张表完整副作用，仅排除created/updated时钟字段。
+- 完整来源id/chapter/version/status/body与逐字段变化、missing/null/partial、BLOB不强制string、REAL快照读取；MAX序号事务分配、caller index忽略、nullable历史读取和pending替换通过。
+- 合并原错误优先级、目标全文CAS+冻结来源检查、exact receipt和重放校验通过。独立pool多并发序号、不同revision同baseline仅一胜、同revision并发重放、作者后续编辑旧请求不得重写，SQL ABORT/ROLLBACK原子性与取消后pool恢复通过。
+- authenticated cookie/CSRF/tab/frozenprojectcontext HTTP整链路通过：审稿、修稿、替换、合并、重放、lateredit、stalesource、cross-tab/stalelease、inflightrelease阻止与源fixture字节未改变。格式/owner preflight与provider诊断redaction也通过。
+- 安全审查发现历史schema允许content_id共享；新增合并及普通正文CAS事务内独占检查。共享finalized draft/review/revision分别拒绝`CONTENT_OWNERSHIP_CONFLICT`、没有半合并/半字数变化，BLOB正文不转string保存。这是主动安全收紧，不能宣称复制原缺陷也是兼容。
+- bound cycle图不在原oracle支持域。Go另以故障注入式结构性不完整cycle绑定验证不跳过owner，**不把这些单元图冒充准入有效/完整review-cycle验收**。真正generation root、作者确认、复查和recovery仍缺，见 [GO-REVIEW-REVISION.md](GO-REVIEW-REVISION.md)。
+
+操作矩阵 **2完成、26进行中、253未开始**；新增14项全为隔离私有副本IN PROGRESS，未在main绑定、未发布作者文件、未部署生产。GitHubcache restore/save的服务故障warning不影响实际冷构建成功，非测试失败。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

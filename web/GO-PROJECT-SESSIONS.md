@@ -11,6 +11,12 @@
 - wire 保持现有 `ipc-client.ts`：原 typed arguments 后再追加冻结 context。保存仍是 `[id,content,wordCount,expectedProjectPath,expectedContent,context]`，没有移位 baseline，也没有 path-only fallback。
 - `expectedContent` 缺失或正文/status 已变，返回原 `DRAFT_CONTENT_CONFLICT` 业务 envelope；不读取新的 server baseline 替用户重试。
 
+## 主台账、审稿和修稿扩展
+
+同一Manager新增`BeginProjectCore`及`BeginReviewRevisions`，各返回受完整leasehold保护的领域repository，不暴露rawDB。三项主台账及十四项审稿/修稿handler已经隔离HTTP+原TypeScript差分验证，合并/重放/跨tab/stale拒绝通过；仍不在main绑定、不发布回作者项目。当前合计26项隔离业务仅IN PROGRESS。普通draft CAS和修稿合并还拒绝跨draft/review/revision共享content_id改写，事务中检查独占性；旧schema可以存在共享引用，Go不会自动修复。
+
+源码`a5e38a20`，[Actions 41391829983](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41391829983) 全套227顶层/1996含子用例PASS、0fail、1个非root writerlock权限skip。见`GO-REVIEW-REVISION.md`、`GO-PROJECT-CORE.md`；历史下面草稿证据仍保留原统计。
+
 ## 准入与生命周期前置条件
 
 源写者/检查点进程必须由上层持续排除到 stage + schema 检查 + source proof 完成。scratch parent 来自可信管理员配置，不是 RPC 参数；私有目录不允许恶意并发替换。单个 Manager 的锁与 lease 不是跨进程单写者锁，不可替代部署时的全局 flock。

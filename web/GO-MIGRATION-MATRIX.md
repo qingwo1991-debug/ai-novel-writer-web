@@ -4,9 +4,11 @@
 
 Source baseline: `b69dc19c` (`fix(web): persist shelf visibility and fence concurrent draft commits`). Read-only audit of source; no production data, private files, credentials, runtime, CI or module manifests were changed. The only audit outputs are this document and `GO-MIGRATION-PLAN.md`. Existing React/CodeMirror stays; this is **not** a Go HTTP proxy over the Node workers. Prior Node acceptance records are reference tests, not Go parity evidence, and the latest Node fixes are not asserted production-deployed.
 
-Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 12 are IN PROGRESS (isolated draft/core HTTP/repository tests, NOT bound in binary); 267 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
+Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 26 are IN PROGRESS (isolated draft/core/review/revision HTTP/repository tests, NOT bound in binary); 253 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
 
 Round7 source `73244fa7` passed [Actions 41385531191](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41385531191): native OpenAI request/SSE/visible reasoning filtering (72 provider +922 scanner differential cases), exact-origin native egress, and Linux cross-process writer module. **No operation status is promoted by these modules**: providers remain unbound and workflows/source-target CAS/reservations/diagnostics/Gemini and production writer coordination are missing. Full suite183 top-level/1512 including subtests PASS; one foreign-owner lock test skipped due to nonroot runner, disclosed in GO-CI-ACCEPTANCE.md. See [GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md) and [GO-WRITER-LOCK.md](GO-WRITER-LOCK.md).
+
+Round9 source `a5e38a20` passed [Actions 41391829983](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41391829983): **162 actual original review/revision repository differential cases**, source snapshot create, transactional pending replacement, exact source/target merge CAS and idempotency, private-session authenticated HTTP and exclusive content-pool mutation guard. Full suite **227 top-level/1996 including subtests PASS, 0 fail, 1 foreign-owner permission skip, 13 packages**, plus vet/race/build/noNode smoke. Fourteen operations below move only to IN PROGRESS: no durable author save, main binding or review-cycle owner parity. Bound cycle/recovery/generation requests fail closed, not skipped-success. See [GO-REVIEW-REVISION.md](GO-REVIEW-REVISION.md). Gemini now also qualified; older round7 missing lists describe that historical round, not current provider status.
 
 ## Validated inventory
 
@@ -202,22 +204,22 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:recovery-candidate-update | P | REC | NOT STARTED |
 | db:recovery-candidate-resolve | P | REC | NOT STARTED |
 | db:finalization-link-knowledge-document | P | FIN/KB; verify linkage | NOT STARTED |
-| db:revision-create | P | REV; expectedSource | NOT STARTED |
-| db:revision-replace-pending | P | REV; transaction rollback | NOT STARTED |
-| db:revision-list | P | REV | NOT STARTED |
-| db:revision-get-pending | P | REV | NOT STARTED |
-| db:revision-get-full | P | REV | NOT STARTED |
-| db:revision-next-index | P | REV; not allocation authority | NOT STARTED |
-| db:revision-merge | P | REV; source CAS + recheck receipt | NOT STARTED |
-| db:revision-mark-merged | P | REV; cannot bypass merge semantics | NOT STARTED |
-| db:revision-mark-discarded | P | REV | NOT STARTED |
-| db:review-create | P | REV; source snapshot | NOT STARTED |
-| db:review-list | P | REV | NOT STARTED |
-| db:review-get-latest | P | REV | NOT STARTED |
-| db:review-get-full | P | REV | NOT STARTED |
+| db:revision-create | P | REV; exact expectedSource, transaction MAX allocation | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle owner missing |
+| db:revision-replace-pending | P | REV; insert/discard atomic rollback | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; bound cycles rejected |
+| db:revision-list | P | REV; nullable raw metadata | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:revision-get-pending | P | REV; exact pending filter/index-only ordering | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:revision-get-full | P | REV; frozen source + content pool, Buffer/REAL | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:revision-next-index | P | REV; preview not allocation authority | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:revision-merge | P | REV; source+target full body CAS/idempotency/content exclusivity | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle/recheck receipt missing |
+| db:revision-mark-merged | P | REV; legacy metadata-only unbound behavior, bound merge required | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; final workflow review pending |
+| db:revision-mark-discarded | P | REV; pending only, bound cycles failclosed | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle reconciliation missing |
+| db:review-create | P | REV; exact source snapshot/content+metadata atomicity | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; reviewCycle confirmation rejected |
+| db:review-list | P | REV; metadata only/index ASC | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:review-get-latest | P | REV; frozen source/content/index DESC | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:review-get-full | P | REV; source nullable/Buffer body | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
 | db:review-cycle-get | P | REV | NOT STARTED |
 | db:review-cycle-list-pending-rechecks | P | REV | NOT STARTED |
-| db:review-next-index | P | REV | NOT STARTED |
+| db:review-next-index | P | REV; preview not allocation authority | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
 | db:post-process-create-run | P | POST | NOT STARTED |
 | db:post-process-get-latest-run | P | POST | NOT STARTED |
 | db:post-process-get-steps | P | POST | NOT STARTED |
