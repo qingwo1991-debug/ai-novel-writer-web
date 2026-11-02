@@ -33,8 +33,6 @@ jobs:
     name: Go format, vet, synthetic tests, race and binary
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      GO_SQLITE_CONTRACT: ${{ runner.temp }}/novel-go-contract/contract.json
     defaults:
       run:
         working-directory: backend-go
@@ -56,6 +54,8 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
         run: |
+          export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
+          printf 'GO_SQLITE_CONTRACT=%s\n' "$GO_SQLITE_CONTRACT" >> "$GITHUB_ENV"
           npm install --prefix "$RUNNER_TEMP/novel-go-oracle" --no-audit --no-fund --package-lock=false better-sqlite3@13.0.3
           node --import ./contract/register-typescript.mjs ./contract/export-sqlite-contract.mjs
           test -s "$GO_SQLITE_CONTRACT"
