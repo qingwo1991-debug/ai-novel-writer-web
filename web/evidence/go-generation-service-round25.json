@@ -1,0 +1,82 @@
+{
+  "format": 1,
+  "round": 25,
+  "objective": "native internal ordinary streaming execution with trusted usage arithmetic and native provider integration",
+  "qualifiedSource": "d7780031e7e3c7b147a87c01bc107518f9365c14",
+  "qualifiedRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41539542139",
+  "conclusion": "success",
+  "ordinaryGo": {
+    "topLevelPassed": 524,
+    "includingSubtestsPassed": 5819,
+    "failedEvents": 0,
+    "packagesPassed": 19,
+    "testSkipped": 3,
+    "packageWithoutTests": "cmd/novel-server",
+    "newTopLevelPassed": 14,
+    "newIncludingSubtestsPassed": 551,
+    "newFailedOrSkipped": 0,
+    "newBreakdown": {"actualContractTopAndNested": 505, "pureUsageNativeTopAndNested": 31, "ordinaryServiceNativeTopAndNested": 11, "parentNativeProviderIntegrationTopAndNested": 4},
+    "vet": "pass",
+    "race": "pass",
+    "originalCredentialDecrypt": "pass",
+    "build": "pass",
+    "noNodeSmoke": "pass"
+  },
+  "multiAgent": {
+    "ordinaryService": "9b92be9d-9a7d-46f6-be91-d04ed6645374",
+    "pureUsage": "de1f7dd1-0b4b-4afd-866e-b803f194a0bf",
+    "actualOracle": "33776de7-691f-488f-9707-a45c5abfbc5b",
+    "readonlySafetyAudit": "2d40f214-ad40-4c99-9391-18756baad155",
+    "parent": "native provider bridge, actual HTTP to ledger integration, workflow, remote failure analysis and qualification evidence",
+    "ownership": "separate new source/test files, parent coordination and frozen handoffs; no agent local compilation/test/oracle"
+  },
+  "oracle": {
+    "actualOriginalCases": 504,
+    "usageCases": 444,
+    "lifecycleTraces": 60,
+    "actualRecursiveModules": 12,
+    "separateOriginalTypeErrorObservations": 1,
+    "seams": ["synthetic captured project DB admission", "repository injected now fixed1000", "only randomUUID replaced while original createHash reexported"],
+    "source": "untouched recursively transpiled actual generation-run-service, GenerationRunRepository and shared modules on per-scenario private original centrally migrated baseline-v7 copies",
+    "provider": "controlled synthetic native events/results/errors; no replacement business repository or business method",
+    "perScenarioCompared": ["whole receipt and error", "whole replay receipt/error", "whole readAttempt/get", "all snapshot and reasoning callbacks", "all tables raw final SQL with declared ledger JSON parsed", "4095/4096/4097 and Unicode byte event whole SQL checkpoints", "UUID and dispatch counts and provider abort", "request original JSON byte equality before/after", "unchanged source baseline DB bytes"],
+    "normalization": "only generated UUID labels and declared generation JSON SQL column structural parsing; no author text/hash/time/metadata stripping",
+    "notProven": ["schema SQL equivalence", "arbitrary ledger JSON insertion-order byte parity", "timer scheduling or concurrency from immediate original fixtures", "current owner, HTTP, author durable project or Agent workflow"]
+  },
+  "nativeSafety": [
+    "same nonce concurrent join and changed-hash conflict",
+    "reentrant snapshot callback Pause without mutex deadlock",
+    "split-think/conflicting event ID/cumulative nonprefix fail closed",
+    "trigger abort snapshot and block retain entire remaining Unicode tail and memory root fence",
+    "failed durable candidate discard retains tail; successful discard clears tail after refused project close",
+    "close flush/recover/capture then abort, late callback after DB close performs no ledger access",
+    "pre-cancelled controls neither close nor poison healthy project",
+    "finite safe diagnostics allowlist, default-deny recovery",
+    "actual httptest OpenAI and Gemini native streaming into real original-schema ledger, Unicode body and trusted15token usage, no reasoning/prompt/key persistence or final cumulative duplication",
+    "durable nonce replay does not issue second HTTP provider request"
+  ],
+  "fixedByReview": ["cancel versus trusted final settlement race", "recovery validator held-gate reentry deadlock", "cancelled request incorrectly fencing healthy storage", "no way to acknowledge in-memory tails after durable discard", "resolved-provider final snapshot failure usage/finish semantics", "OpenAI typed nil and pointer counts", "Gemini raw candidates/reasoning double count", "stable context length/network failure categories", "pre/post threshold and suspend dirty flush notification order"],
+  "earlierFailedRuns": [
+    {"source": "702aa32e63fe0078fcdb7e1e295bac46b9d38e40", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41538480795", "failure": "actual Oracle strict hook denied lazy better-sqlite3 native addon before Go", "fix": "prewarm in-memory DB before registering strict hooks; no business hook expansion"},
+    {"source": "fad56d9883a5bf2c516dbec4ada5c702db694de6", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41538840715", "failure": "444 usage passed; 59 traces failed final caller-input comparison due asymmetric UUID normalization; one suspend trace missing dirty flush callback", "fix": "exact raw request JSON bytes equality; captured dirty flush snapshots notified after unlocking all mutexes"}
+  ],
+  "explicitLimits": [
+    "internal trusted ordinary lane, no HTTP/main/public operation promotion",
+    "projectaccess preflight and writer exclusion prerequisite; scratch lease not current generation epoch/source/model authority",
+    "Agent protocols/planning/blueprint/author effects/portable/composition/finalization/postprocess absent",
+    "Resume internal source/native default-deny only, no actual full recovery qualification",
+    "trusted NativeProvider HTTP Dispatch still needs future model-owner exact origin/DNS/current-authority policy; not safe raw RPC URL dispatch",
+    "reasoning display-only and credentials/providerRequest memory-only; callbacks/callers remain trusted internal code",
+    "uncooperative custom Dispatch may outlive cancellation; no guarantee arbitrary external implementation never sends postcancel network requests",
+    "no aggregate service RSS/event-set/concurrency or custom goroutine bound proof",
+    "deadline over Go Duration range capped to representable duration; no century-scale full JS timer parity claim",
+    "native Lance unchanged and not requalified",
+    "no author data upload, original author DB mutation, full author lifecycle or deployment acceptance"
+  ],
+  "operationStatus": {"implemented": 2, "inProgress": 69, "notStarted": 210, "total": 281},
+  "postQualificationChanges": "only GitHub-produced formatting for new generation files and documentation/evidence; final docs SHA not separately compiled",
+  "localGoBuildTestGofmtOrOracleExecuted": false,
+  "productionChanged": false,
+  "wholeMigrationComplete": false,
+  "finalDeliveryRequired": "complete full Go compatibility and safety acceptance, then back up author data, pull fixed-digest complete GHCR image, deploy on existing local installation, verify real business/data preservation with rollback retained"
+}

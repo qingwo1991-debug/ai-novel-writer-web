@@ -1,5 +1,17 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十五轮：四agent普通流式生成服务与可信usage结算
+
+最终资格源码`d7780031e7e3c7b147a87c01bc107518f9365c14`，[41539542139](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41539542139) **success：524顶层/5819含子用例PASS、0fail、19packages**，另3既有foreign-owner测试skip及cmd/novel-server无testfiles package skip。新增**14顶层/551含子用例全通过、0fail/skip**；vet/race/原版凭据decrypt/build/noNode smoke全通过。
+
+实际递归12模块，**444 usage案例＋60生命周期trace**。整receipt/get/readAttempt、可见snapshot与display-only reasoning、4095/4096/4097及Unicode byte边界全SQL中间状态、全部表最终SQL、UUID/dispatch/abort和输入不变逐项对照。仅生成UUID规范、声明ledger JSON结构化，不删除正文/hash/作者时钟。独立null-policy原TypeError仅记不支持域，不计Go错误等价；Oracle505all＋usage31all＋service11all＋父OpenAI/Gemini真实HTTP→ledger4all＝551。
+
+独立审查修复取消/settle竞争、validator持锁重入、取消请求误标永久存储失败、尾部不能确认清除、provider最后flush失败结算差异；父provider适配修复OpenAI typed-nil/count指针、Gemini raw reasoning双计、稳定context/network错误分类。真实baseline测试覆盖并发nonce加入、reentrant Pause、trigger snapshot+block双失败保留完整tail、持久discard失败不清tail/成功清除、Suspend后关闭DB迟到事件不再访问、预取消control不关闭或毒化健康库。
+
+首轮`702aa32e` [41538480795](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41538480795) Oracle addon loader在Go前失败→hook前预热SQLite addon；第二轮`fad56d98` [41538840715](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41538840715) 原版fixture/compile/vet通过、444usage过，59trace在末尾测试UUID非对称规范化失败，另1trace缺suspend-flush通知→request原JSONbytes前后精确比较、锁外捕获通知修复。第三轮全绿，失败run不算通过。
+
+仍是**内部可信普通lane，不绑定公开handler/main，不提升2/69/210矩阵**。当前generation owner、source/target/epoch/modellease、真实网络egress授权、Agent/规划/effects/定稿/后处理、durable作者保存未完成。恢复默认拒绝；任意自定义Dispatch的取消后网络行为及整体RSS不作保证。native Lance不变不重验。用户最终交付要求已扩展为全部完成后本地拉取固定digest镜像部署、数据备份和回滚验收；当前production不变。见[GO-GENERATION-SERVICE.md](GO-GENERATION-SERVICE.md)及[evidence/go-generation-service-round25.json](evidence/go-generation-service-round25.json)。
+
 ## 第二十四轮：四agent普通生成预算与可见正文账本基础
 
 首次资格源码`2d4f8a9e440732e827a61854749786b97575da0b`，[41471547497](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41471547497) **success：510顶层/5268含子用例PASS、0fail、3既有foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。新增15顶层/692含子用例全通过，无fail/skip；vet/race/原版凭据decrypt/build/noNode smoke通过。
