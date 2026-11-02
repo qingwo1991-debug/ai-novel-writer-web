@@ -192,6 +192,19 @@ func TestServiceSuspendFlushRecoveryAndNoPostCloseLedgerAccess(t *testing.T) {
 	if result["failureCode"]!="GENERATION_PROJECT_CLOSED" || smap(result["artifact"])["text"]!="unflushed😀" {t.Fatal(result)}
 	_,err=s.Execute(context.Background(),serviceRequest(runID));wantServiceCode(t,err,"GENERATION_PROJECT_CLOSED")
 }
+func TestServicePreCancelledControlDoesNotCloseOrPoisonHealthyRoot(t *testing.T) {
+	_,ledger,runID:=serviceFixture(t)
+	s:=New(Dependencies{Ledger:ledger,Dispatch:func(ctx context.Context,request any,c Callbacks)(DispatchResult,error){c.OnVisible(VisibleEvent{Kind:"delta",Text:"healthy"});return DispatchResult{Usage:serviceUsage(),FinishReason:"stop"},nil}})
+	raw,_:=json.Marshal([]any{runID})
+	runValue,err:=ledger.CallJSON(context.Background(),"get",raw);if err!=nil{t.Fatal(err)}
+	rootID:=stext(smap(runValue)["rootActionId"])
+	ctx,cancel:=context.WithCancel(context.Background());cancel()
+	_,err=s.Pause(ctx,rootID);wantServiceCode(t,err,"GENERATION_CANCELLED")
+	_,err=s.Cancel(ctx,rootID);wantServiceCode(t,err,"GENERATION_CANCELLED")
+	_,err=s.SuspendForProjectClose(ctx);wantServiceCode(t,err,"GENERATION_CANCELLED")
+	result:=mustServiceExecute(t,s,serviceRequest(runID))
+	if result["failureCode"]!=nil || smap(result["attempt"])["status"]!="settled" || smap(result["artifact"])["text"]!="healthy" {t.Fatal("cancelled UI control poisoned root",result)}
+}
 func TestServiceDiagnosticsFiniteAllowlistAndRecoveryDefaultDeny(t *testing.T) {
 	_,ledger,runID:=serviceFixture(t)
 	s:=New(Dependencies{Ledger:ledger,Dispatch:func(ctx context.Context,request any,c Callbacks)(DispatchResult,error){c.OnDiagnostics(map[string]any{"startedAt":float64(1),"elapsedMs":math.Inf(1),"httpStatus":float64(502),"phase":"stream","errorName":"private name","errorCode":"ECONNRESET private credentials","causeCode":"ECONNRESET","message":"private provider body","visibleEvents":float64(1)});return DispatchResult{},errors.New("secret URL apiKey and prompt")}})

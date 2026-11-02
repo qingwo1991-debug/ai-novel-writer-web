@@ -494,16 +494,20 @@ func (s *Service) DiscardCandidate(ctx context.Context, artifactID string) (map[
 	return map[string]any{}, nil
 }
 func (s *Service) stop(ctx context.Context, rootID string, cancelRoot bool) (map[string]any, error) {
+	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
 	s.gate.Lock(); defer s.gate.Unlock()
+	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
 	s.mu.Lock(); closed := s.closed; s.mu.Unlock()
 	if closed { return nil, serviceError("GENERATION_PROJECT_CLOSED") }
-	_, err := s.call(ctx, "pause", rootID, cancelRoot)
+	// Once control admission commits, finish durable cancellation independently
+	// of the caller's display/request lifetime; cancellation is not DB failure.
+	_, err := s.cleanupCall("pause", rootID, cancelRoot)
 	for _, x := range s.states() {
 		if x.rootID != rootID { continue }
 		x.mu.Lock(); if !x.terminal { x.stopped = true; x.cancel(); if err != nil { s.storageFailureLocked(x) } }; x.mu.Unlock()
 	}
 	if err != nil { s.failRoot(rootID); return nil, err }
-	out, err := s.call(ctx, "budget", rootID)
+	out, err := s.cleanupCall("budget", rootID)
 	return smap(out), err
 }
 func (s *Service) Pause(ctx context.Context, rootID string) (map[string]any, error) { return s.stop(ctx, rootID, false) }
@@ -512,17 +516,19 @@ func (s *Service) Cancel(ctx context.Context, rootID string) (map[string]any, er
 // fences admission, flushes full bodies, recovers accounting, captures receipts,
 // then aborts providers. Returned unsaved tails prevent the caller closing DB.
 func (s *Service) SuspendForProjectClose(ctx context.Context) ([]map[string]any, error) {
+	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
 	s.gate.Lock(); defer s.gate.Unlock()
+	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
 	s.mu.Lock(); s.closed = true; s.mu.Unlock()
 	states := s.states()
 	for _, x := range states { x.mu.Lock() }
 	defer func() { for i := len(states)-1; i >= 0; i-- { states[i].mu.Unlock() } }()
 	for _, x := range states { if !x.terminal { s.flushLocked(x) } }
-	_, failure := s.call(ctx, "recoverInterrupted")
+	_, failure := s.cleanupCall("recoverInterrupted")
 	out := make([]map[string]any, 0, len(states))
 	for _, x := range states {
 		if !x.terminal {
-			receipt, err := s.call(ctx, "receipt", x.attemptID)
+			receipt, err := s.cleanupCall("receipt", x.attemptID)
 			if err != nil { s.storageFailureLocked(x); failure = err } else { x.receipt = smap(receipt) }
 			if failure != nil { s.storageFailureLocked(x) }
 			x.suspended, x.terminal = true, true

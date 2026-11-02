@@ -24,6 +24,9 @@ const root = new URL('../../', import.meta.url), databaseURL = new URL('electron
 const key = '__GO_GENERATION_SERVICE_ORIGINAL__', databaseSeam = 'generation-service-contract:database', cryptoSeam = 'generation-service-contract:crypto'
 assert(!Object.hasOwn(globalThis, key))
 const Database = createRequire(import.meta.url)('better-sqlite3')
+// Load the native addon before restricting recursive original-module imports.
+// better-sqlite3 resolves its lazy native binding on the first constructor call.
+const prewarm = new Database(':memory:'); prewarm.close()
 const state = { db: null, now: 1000, sequence: 0 }
 state.uuid = () => `00000000-0000-4000-8000-${String(++state.sequence).padStart(12, '0')}`
 globalThis[key] = state
