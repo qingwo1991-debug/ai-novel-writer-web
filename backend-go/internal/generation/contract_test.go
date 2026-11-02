@@ -230,7 +230,10 @@ func TestOriginalGenerationServiceContracts(t *testing.T) {
 			var request Request
 			serviceContractDecode(t, fixture.Execute, &request)
 			request.RunID = runID
-			beforeRequest := serviceContractWire(t, request)
+			// Caller immutability compares native request bytes, not fixture UUID
+			// labels: the before and after values both contain the real seam IDs.
+			beforeRequest, err := json.Marshal(request)
+			if err != nil { t.Fatal(err) }
 			snapshots, reasoning, checkpoints, controls := []any{}, []any{}, []any{}, []any{}
 			dispatches, providerAborted := 0, false
 			dispatchStarted, dispatchDone := make(chan struct{}, 1), make(chan struct{})
@@ -310,7 +313,8 @@ func TestOriginalGenerationServiceContracts(t *testing.T) {
 			if sequence != fixture.Expected.GeneratedIDs || dispatches != fixture.Expected.Dispatches || providerAborted != fixture.Expected.ProviderAborted { t.Fatal("UUID/dispatch/abort mismatch", sequence, fixture.Expected.GeneratedIDs, dispatches, fixture.Expected.Dispatches, providerAborted, fixture.Expected.ProviderAborted) }
 			if len(service.ReadUnsavedTails()) != len(fixture.Expected.UnsavedTails) { t.Fatal("unsaved tails differ") }
 			if !fixture.Expected.ArgsUnchanged { t.Fatal("actual source changed execute input") }
-			serviceContractCompare(t, "execute caller request remains untouched", request, beforeRequest, sequence)
+			afterRequest, err := json.Marshal(request)
+			if err != nil || !bytes.Equal(beforeRequest, afterRequest) { t.Fatal("execute changed caller request bytes", err) }
 			still, err := os.ReadFile(baseline)
 			if err != nil || !bytes.Equal(still, seed) { t.Fatal("original baseline fixture mutated", err) }
 		})

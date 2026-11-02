@@ -179,11 +179,15 @@ func TestServiceSuspendFlushRecoveryAndNoPostCloseLedgerAccess(t *testing.T) {
 	db,ledger,runID:=serviceFixture(t)
 	ready:=make(chan struct{});release:=make(chan struct{});returned:=make(chan map[string]any,1)
 	var callbacks Callbacks
-	s:=New(Dependencies{Ledger:ledger,FlushInterval:time.Hour,Dispatch:func(ctx context.Context,request any,c Callbacks)(DispatchResult,error){callbacks=c;c.OnVisible(VisibleEvent{Kind:"delta",Text:"unflushed😀"});close(ready);<-release;c.OnVisible(VisibleEvent{Kind:"delta",Text:"late"});return DispatchResult{Usage:serviceUsage(),FinishReason:"stop"},nil}})
+	var snapshots []Snapshot
+	s:=New(Dependencies{Ledger:ledger,FlushInterval:time.Hour,OnSnapshot:func(snapshot Snapshot){snapshots=append(snapshots,snapshot)},Dispatch:func(ctx context.Context,request any,c Callbacks)(DispatchResult,error){callbacks=c;c.OnVisible(VisibleEvent{Kind:"delta",Text:"unflushed😀"});close(ready);<-release;c.OnVisible(VisibleEvent{Kind:"delta",Text:"late"});return DispatchResult{Usage:serviceUsage(),FinishReason:"stop"},nil}})
 	go func(){result,err:=s.Execute(context.Background(),serviceRequest(runID));if err!=nil{t.Error(err)};returned<-result}()
 	<-ready
-	if err:=s.Flush(context.Background());err!=nil{t.Fatal(err)}
 	receipts,err:=s.SuspendForProjectClose(context.Background());if err!=nil{t.Fatal(err)}
+	if len(snapshots)!=2 || snapshots[0].DurableText!="" || snapshots[1].DurableText!="unflushed😀" {t.Fatal("suspend dirty-flush notifications",snapshots)}
+	if err:=s.Flush(context.Background());err!=nil{t.Fatal(err)}
+	if len(snapshots)!=2 {t.Fatal("clean/terminal flush emitted redundant snapshot")}
+
 	if len(receipts)!=1 || smap(receipts[0]["attempt"])["status"]!="unknown" || smap(receipts[0]["artifact"])["text"]!="unflushed😀" {t.Fatal(receipts)}
 	if err:=db.Close();err!=nil{t.Fatal(err)}
 	callbacks.OnDiagnostics(map[string]any{"phase":"stream"});callbacks.OnReasoning("late")

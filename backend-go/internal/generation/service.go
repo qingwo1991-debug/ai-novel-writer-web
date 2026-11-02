@@ -473,7 +473,7 @@ func (s *Service) Flush(ctx context.Context) error {
 	_ = ctx
 	var failure error
 	for _, x := range s.states() {
-		x.mu.Lock(); if !x.terminal { s.flushLocked(x) }; if x.storageFailed { failure = serviceError("GENERATION_STORAGE_FAILED") }; snap := s.snapshotLocked(x); x.mu.Unlock(); s.notify(snap)
+		x.mu.Lock(); dirty := !x.terminal && !x.storageFailed && x.text != x.durable; if dirty { s.flushLocked(x) }; if x.storageFailed { failure = serviceError("GENERATION_STORAGE_FAILED") }; snap := s.snapshotLocked(x); x.mu.Unlock(); if dirty { s.notify(snap) }
 	}
 	return failure
 }
@@ -517,13 +517,19 @@ func (s *Service) Cancel(ctx context.Context, rootID string) (map[string]any, er
 // then aborts providers. Returned unsaved tails prevent the caller closing DB.
 func (s *Service) SuspendForProjectClose(ctx context.Context) ([]map[string]any, error) {
 	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
+	var snapshots []Snapshot
+	// Registered before the lock-release defers: observers run last, outside
+	// every lock, but see the exact dirty-flush projections captured in order.
+	defer func() { for _, snapshot := range snapshots { s.notify(snapshot) } }()
 	s.gate.Lock(); defer s.gate.Unlock()
 	if ctx.Err() != nil { return nil, serviceError("GENERATION_CANCELLED") }
 	s.mu.Lock(); s.closed = true; s.mu.Unlock()
 	states := s.states()
 	for _, x := range states { x.mu.Lock() }
 	defer func() { for i := len(states)-1; i >= 0; i-- { states[i].mu.Unlock() } }()
-	for _, x := range states { if !x.terminal { s.flushLocked(x) } }
+	for _, x := range states {
+		if !x.terminal && !x.storageFailed && x.text != x.durable { s.flushLocked(x); snapshots = append(snapshots, s.snapshotLocked(x)) }
+	}
 	_, failure := s.cleanupCall("recoverInterrupted")
 	out := make([]map[string]any, 0, len(states))
 	for _, x := range states {
