@@ -156,6 +156,18 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 操作矩阵 **2完成、46进行中、233未开始**。本机没有Go/gofmt/test/oracle/build/install；生产容器、镜像、作者数据不变。
 
+## 普通蓝图与幂等范围提交第十三轮
+
+源码`c001a386e69762e860b359323eeb817c093c0557`，[Actions 41404142751](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41404142751) **success，4m58s：285顶层PASS、3165含子用例PASS，0 fail，1 skip，13 package**；format/vet/unit/race/凭据双向oracle/build/noNode smoke全部通过，skip仍非root writerlock foreign-owner权限子用例。
+
+- 原BlueprintRepository **160项**：All18/Get16/Upsert24/UpsertMany12/Delete10/CommitRange54/PendingSync12/GetSync14。原TS递归依赖全部真实文件，仅DB access seam替换，完整调用前DB副本、返回/原错误+三表完整语义副作用；author notes/time不忽略，committed_at由两端相同fixture trigger固定后精确比较。
+- **精确性边界没有隐藏**：仅characters/character_sync_input合法JSON字符串的键插入顺序未兼容，比较完整解析值/数组顺序，原export raw字符串不改；payload_hash仍严格原值匹配，包括ab/aB/Ab/AB+numeric own keys、Unicode值。2项原Unicode/punctuation canonical-key证据、4项畸形参数JS TypeError证据独立留存，**不计160通过兼容域**。Go unsupported canonical keys显式拒绝；畸形参数固定诊断、安全整数/10000章限制均为安全收紧。
+- 事务范围包含full外部delete、author notes+timestamp分组保留、upsert读回一致、commit+sync双ledger；同ID同hash重放只读当前范围，不覆盖后来作者编辑。同ID异payload冲突，ABORT/ROLLBACK/取消与独立pool并发回放/竞争全部通过；旧ledger缺sync依原在effect tx外回填，不能假称pending查询绝无写副作用。
+- HTTP owner/cookie/tab/CSRF/lease、UseNumber、整调用hold、原源字节不变；生成handle/authorRecovery无权通过普通commit，completed sync须真实未迁移权威证据故拒绝；clear-all/character-sync-complete不绑定，update-notes仍原finalization admission拒绝，不算完成。
+- 首次[41403128338](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41403128338)失败：parent oracle cleaner把typed nil错误变{}，已修；原better-sqlite3会展开array位置参数/将object当named-bind而非通用拒绝，补blueprint-specific arity适配。未改原expected；正常commit原hash首次即过，修复后160全过。
+
+矩阵 **2完成、54进行中、225未开始**，新增8项仅隔离业务。见[GO-BLUEPRINTS.md](GO-BLUEPRINTS.md)。main未绑定、未发布作者durableDB。本机没有Go/gofmt/test/oracle/build/install，生产容器/镜像/作者数据未变。后续真实writer协调/Lance/portable权限准入排序记录在[GO-DURABLE-PREFLIGHT-NOTES.md](GO-DURABLE-PREFLIGHT-NOTES.md)，是方案而非已实现。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

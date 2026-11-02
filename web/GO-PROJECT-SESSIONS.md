@@ -29,6 +29,10 @@
 
 `BeginPlotTree`保持exact owner/context与lease整调用hold。聚合读取同一事务来源，损坏存储快照仅隔离，显式clear才清字段；renderer save经过真实lease检查后仍返回原`GENERATION_GRAPH_ADMISSION_REQUIRED`，无权调用事务Save原型。read/clear仅隔离验证，main未绑定，持久发布/生成owner未完成；异常文本编码完整兼容待解决，见`GO-PLOT-TREE.md`。
 
+## 蓝图扩展
+
+`BeginBlueprints`保持owner/lease整调用hold，普通CRUD/范围幂等+双ledger/pending-sync隔离业务；generation handle/authorRecovery拒绝，不能通过普通scope移除owner继续写。角色同步完成须权威roster/proposal证据，clear-all须退休generation recovery，两条路径未绑定；派生notes继续原finalization门禁。main和持久项目发布未接入；JSON键顺序/canonical key完整域待解决，见`GO-BLUEPRINTS.md`。
+
 ## 准入与生命周期前置条件
 
 源写者/检查点进程必须由上层持续排除到 stage + schema 检查 + source proof 完成。scratch parent 来自可信管理员配置，不是 RPC 参数；私有目录不允许恶意并发替换。单个 Manager 的锁与 lease 不是跨进程单写者锁，不可替代部署时的全局 flock。
