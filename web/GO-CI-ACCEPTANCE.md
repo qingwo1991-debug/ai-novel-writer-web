@@ -55,6 +55,19 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 首轮测试发现 preservation 测试错误地调用要求 single-link 的 SOURCE validator 检查故意构造的目录/hardlink，导致 8 个子用例失败。修正为比较目标身份/元数据而不要求安全文件类型；未放宽实际 StageDatabase 拒绝规则。以上是修正后的实际通过记录。所有执行继续仅在 GitHub，本机未编译/测试。
 
+## 私有项目会话与 M06 第五轮
+
+源码 `3a2bc9669d62b4c44ef9e8ec99dc47c6e7f6aa40`（实现 `aba22a03`），[Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660) **success**，job 2m47s：**134 顶层 / 392 含子用例，0 fail、0 skip，10 个测试 package**。vet、race、build、双向 credential oracle 与无 Node smoke 全通过。
+
+- `TestBrowserWireDraftCASOnAdmittedScratchSession`：原 TypeScript schema 合成库 → projectfs 流式快照/schema 准入 → 真实 cookie/CSRF RPC → 冻结 context/租约 → SQLite 正文 CAS。两个相同 baseline 并发写入恰好 1 成功/1 冲突；源项目字节不变。
+- 四个草稿读与正文 CAS handler 保持当前前端原 typed args + trailing context wire；缺 baseline 不补读、不重试；跨标签/会话、旧 lease、只读状态与错误脱敏通过。
+- scratch refresh 保留编辑；Release/Close 被在途 hold 围栏；同 UUID 物理目录替换被拒绝；清理失败返回错误并保留记录，后续 Cleanup/Close 能重试。
+- `TestUpgradeV6MatchesOriginalNodeM06BothDonors`：相同 v6 源字节，原 Node 与 Go 分别完成**空审稿周期限定 lane**，baseline/donor schema、counts 和完整逻辑 proof 一致。最终指纹失败回滚 DDL/版本；非空周期、坏域、FK、unsafe file/sidecar 拒绝。
+
+首轮 oracle 误用分别初始化的 v6/v7 fixture 做全文 proof 比较，metadata defaults 不同导致 hash 不同；改为从同一关闭 v6 字节独占复制给原 Node 升级，没有删除内容验证。另 missing-file 测试 parent 未设0700，被更早的 private-path 门拒绝；修正 fixture 权限后断言实际缺文件错误。源码审查发现的 refresh 物理身份与 cleanup 重试两项也已修复并补测。
+
+五项草稿操作还**没有绑定正式 binary**：scratch 写入不是持久作者保存，`project:open` 与 LanceDB/global/发布恢复未完成。矩阵只标 IN PROGRESS，不计入 2 项已完成业务。详见 [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md)。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

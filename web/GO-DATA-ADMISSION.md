@@ -29,9 +29,17 @@ Go 的指纹 JSON 顺序和转义与原 `JSON.stringify` 对照，而不是用 G
 
 本机不运行任何编译、测试、构建或大型安装；CI 不读取作者目录、生产卷、模型凭据或真实 key。跨语言文件仅在 runner 的临时目录生成，不下载这些数据库到本机。
 
+## v6→v7 私有副本升级（窄范围实现）
+
+`admission.UpgradeSnapshotV6` 已移植原 M06 的确切 `review_cycle_merges` DDL，仅支持 `review_cycles`/`review_findings` 均为空的 lane。非空数据需要完整 M03 历史证明与 merged body 回填，目前明确拒绝，不能伪造完成。
+
+要求来源受信的私有复制库、0700 parent、0600 单链接 DB、非 WAL header、无 sidecars。transaction 内检查 trusted exact v6 fingerprint、integrity/FK/M02，再执行 DDL 和 `user_version=7`；原表行级内容证明不变且目标指纹确切匹配才提交。目标指纹失败同时回滚 DDL/版本。提交后最终 I/O/取消仍可能报错，因此任意失败都应丢弃私有副本，禁止拿原作者库重试。
+
+[GitHub Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660) 已验证：oracle 从**相同已关闭 v6 源字节**分别交给原 Node M06 和 Go，比较 baseline/donor 两种 schema 与完整逻辑 proof；不是另造一份近似数据，也不把物理文件 hash 相同当作要求。尚未连接作品打开或迁移发布；历史备份、恢复 journal 与全链路切换仍缺失。
+
 ## 尚未达到的兼容范围
 
-- 旧库 v0–v6 升级及历史发行版规范化尚未移植；当前只读核验 v7，不代表旧版本可迁移。
+- v0–v5 升级及历史发行版规范化尚未移植；v6 仅以上空审稿周期的私有副本 lane，不能视为旧库全兼容。常规 VerifySnapshot 仍只读核验 v7。
 - manifest 日期先覆盖 ISO/RFC3339 等常见形式；暂时拒绝 JS `Date.parse` 宽松接受的本地格式、日期溢出、扩展年份、24:00；重复键也比原解析严格。正式兼容前须消除/审定这些差异，不能静默重写 manifest。
 - 新 `StageDatabase` 流式复制使用固定 128 KiB buffer，调用者指定总物理字节预算，不受旧 `SnapshotDatabase` 的 64 MiB ceiling 限制；`projectdata.Inspect` 已改用新 API。旧内存接口暂保留兼容测试，不用于当前检查流程。新 API 已通过 [GitHub 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128) 的 65 MiB 文件、取消/漂移/回滚回归，不代表正式大作品端到端已验收。
 - Linux descriptor 安全实现；其他平台失败关闭。目标容器为 Linux，不代表所有桌面平台均兼容。
