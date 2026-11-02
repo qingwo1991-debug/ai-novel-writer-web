@@ -61,6 +61,12 @@ func (s *Server) BindRecovery(provider RecoveryProvider) error {
 			if len(args) != arity {
 				return fail(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
 			}
+			// Reject extra frozen-context fields before the shared parser clones
+			// only the three accepted identity fields and loses that evidence.
+			rawContext, ok := args[arity-1].(map[string]any)
+			if !ok || len(rawContext) != 3 {
+				return fail(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
+			}
 			expected, err := draftExpectedContext(args, arity-1)
 			if err != nil {
 				return fail(err)

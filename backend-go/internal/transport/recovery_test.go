@@ -173,6 +173,7 @@ func TestRecoveryRejectsMalformedBodiesBeforeBorrowing(t *testing.T) {
 	for _, row := range []struct { name string; args []any; code string }{
 		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path}, "INVALID_ARGUMENTS"},
 		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path, nil}, "PROJECT_SESSION_REQUIRED"},
+		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path, map[string]any{"projectId": "project", "leaseId": "lease", "projectPath": path, "extra": true}}, "PROJECT_SESSION_REQUIRED"},
 		{"db:recovery-candidate-update", []any{"id", "body", "/foreign", expected}, "PROJECT_CONTEXT_CHANGED"},
 		{"db:recovery-candidate-resolve", []any{"id", "pending", path, expected}, "RECOVERY_CANDIDATE_ACTION_INVALID"},
 		{"db:recovery-candidate-update", []any{float64(1), "body", path, expected}, "INVALID_ARGUMENTS"},
