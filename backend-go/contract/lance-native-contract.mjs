@@ -152,10 +152,10 @@ function rowsOf(table) {
 }
 const expectedSchema = name => {
   const shape = schemaShape(name === 'documents' ? documentSchema() : chunkSchema(name === 'chunks' ? undefined : name === 'chunks__space_2' ? 3 : 2))
-  // Real 0.22.3 createTable(record objects) canonicalizes vector child to nullable,
+  // Real 0.22.3 createTable/createEmptyTable canonicalize vector child to nullable,
   // despite the application's nonnullable supplied item Field. Preserve and test
   // the actual persisted schema, not an invented schema from constructor input.
-  if (name.startsWith('chunks__space_') && name !== 'chunks__space_4') shape.find(field => field.name === 'vector').children[0].nullable = true
+  if (name.startsWith('chunks__space_')) shape.find(field => field.name === 'vector').children[0].nullable = true
   return shape
 }
 function decodedIPC(file) {
