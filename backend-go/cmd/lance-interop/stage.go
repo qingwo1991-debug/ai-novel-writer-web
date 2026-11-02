@@ -4,11 +4,15 @@ package main
 
 import (
 	"context"
+	"bytes"
+	"encoding/json"
+	"io"
 	"errors"
 	"os"
 	"path/filepath"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/lancenative"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
@@ -68,6 +72,11 @@ func runStaged(ctx context.Context, root string) (err error) {
 	if err != nil {
 		return err
 	}
+	raw,err:=lancenative.ReadDomain(ctx,ipc);if err!=nil{return err}
+	var snapshot knowledgedomain.Snapshot;decoder:=json.NewDecoder(bytes.NewReader(raw));decoder.UseNumber();decoder.DisallowUnknownFields();if err:=decoder.Decode(&snapshot);err!=nil{return errors.New("DOMAIN_SNAPSHOT_INVALID")};if decoder.Decode(new(any))!=io.EOF{return errors.New("DOMAIN_SNAPSHOT_TRAILING")}
+	registryFile,err:=destination.Open("embedding-spaces.json");if err!=nil{return err};registry,readErr:=io.ReadAll(io.LimitReader(registryFile,8*1024*1024+1));closeErr:=registryFile.Close();if readErr!=nil||closeErr!=nil||len(registry)>8*1024*1024{return errors.New("DOMAIN_REGISTRY_READ")};snapshot.Registry=registry
+	domain,err:=knowledgedomain.Validate(ctx,snapshot,knowledgedomain.Budget{MaxTables:32,MaxRows:10000,MaxCells:200000,MaxTextBytes:32*1024*1024});if err!=nil{return err}
+	if err:=save(filepath.Join(root,"native-domain-summary.json"),domain);err!=nil{return err}
 	if err := proof.VerifyUnchanged(ctx); err != nil {
 		return err
 	}

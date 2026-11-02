@@ -350,8 +350,10 @@ function checkedManifest(file, contract, versions) {
 }
 function verifyIPC(dir, manifest, contract) {
   directory(dir)
-  assert.deepEqual(fs.readdirSync(dir).sort(byteOrder), manifest.tables.map(table => table.file).sort(byteOrder), `IPC membership: ${dir}`)
+  const native=path.basename(dir)!=='oracle-ipc'
+  assert.deepEqual(fs.readdirSync(dir).sort(byteOrder), [...manifest.tables.map(table => table.file),...(native?['domain.json']:[])].sort(byteOrder), `IPC membership: ${dir}`)
   for (const table of manifest.tables) compareArrow(table.name, decodedIPC(path.join(dir, table.file)), contract.expected[table.name], path.basename(dir))
+  if(native){const domain=readJSON(path.join(dir,'domain.json'));assert.deepEqual(domain.tables.map(t=>t.name).sort(byteOrder),tableNames,'native domain table membership');for(const t of domain.tables){assert.equal(t.version,manifest.tables.find(x=>x.name===t.name).version);assert.equal(t.metadata,false);const shape=f=>({name:f.name,nullable:f.nullable,type:f.type==='fixed_size_list'?`FixedSizeList[${f.listSize}]<${f.children[0].type==='float32'?'Float32':'unsupported'}>`:({utf8:'Utf8',int32:'Int32',float64:'Float64',float32:'Float32'}[f.type]),children:f.children.map(shape)});for(const f of t.schema){assert.equal(f.metadata,false);for(const child of f.children)assert.equal(child.metadata,false)};assert.deepEqual(t.schema.map(shape),contract.expected[t.name].schema,'native typed domain schema');assert.deepEqual([...t.records].sort((a,b)=>byteOrder(a.id,b.id)),contract.expected[t.name].rows,'native typed domain full records')}}
 }
 async function verify() {
   directory(root)
@@ -380,6 +382,8 @@ async function verify() {
   verifyIPC(at('native-restored-ipc'), restoredExport, contract)
   const stagedExport = checkedManifest(at('native-staged-export.json'), contract, originalVersions)
   verifyIPC(at('native-staged-ipc'), stagedExport, contract)
+  const domainSummary=readJSON(at('native-domain-summary.json'))
+  assert.equal(domainSummary.tableCount,6);assert.equal(domainSummary.documents,3);assert.equal(domainSummary.chunks,4);assert.equal(domainSummary.spaces,4);assert.equal(domainSummary.embeddingRows,7);assert.equal(domainSummary.activeGeneration,1)
   const staging = readJSON(at('native-staging-proof.json'))
   assert(staging.physical.digest && staging.physical.bytes > 0 && staging.physical.entries > 0, 'bounded Go physical-copy evidence required')
   assert.equal(staging.metadata.Copies, 3, 'all raw copied knowledge files validated')
@@ -421,8 +425,8 @@ async function verify() {
     format: 1, syntheticOnly: true, status: 'passed',
     dependencies: contract.dependencies,
     tables: contract.tables.map(table => ({ name: table.name, rows: table.rows, sourceVersion: table.version, restoredVersion: restoredVersions[table.name] })),
-    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true },
-    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, table-domain crosslink admission, or TS logicalHash parity claim.'],
+    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true, nativeTypedDomainMatchesArrow: true, goCanonicalTableDomainAdmission: true },
+    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, document-to-copy filename crosslink admission, or TS logicalHash parity claim.'],
   }
   writeJSON(at('summary.json'), summary)
   console.log(JSON.stringify({ mode: 'verify', status: summary.status, tables: contract.tables.length, summary: 'summary.json' }))

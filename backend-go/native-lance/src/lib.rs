@@ -11,10 +11,11 @@ use std::path::{Component, Path, PathBuf};
 use std::ptr;
 use std::slice;
 
-use arrow_array::RecordBatchReader;
+use arrow_array::{Array, FixedSizeListArray, Float32Array, Float64Array, Int32Array,
+    RecordBatch, RecordBatchReader, StringArray};
 use arrow_ipc::reader::StreamReader;
 use arrow_ipc::writer::StreamWriter;
-use arrow_schema::SchemaRef;
+use arrow_schema::{DataType, Field, SchemaRef};
 use futures::TryStreamExt;
 use lancedb::database::CreateTableMode;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
@@ -26,6 +27,12 @@ const MAX_MANIFEST: usize = 1024 * 1024;
 const MAX_TABLES: usize = 32;
 const MAX_PATH: usize = 4096;
 const MAX_TREE_ENTRIES: usize = 100_000;
+const MAX_DOMAIN: usize = 64 * 1024 * 1024;
+const MAX_DOMAIN_ROWS: usize = 10_000;
+const MAX_DOMAIN_CELLS: usize = 200_000;
+const MAX_DOMAIN_STRINGS: usize = 32 * 1024 * 1024;
+const MAX_DOMAIN_FIELDS: usize = 128;
+const MAX_DOMAIN_DEPTH: usize = 16;
 
 #[derive(Clone, Copy)]
 enum Fault {
@@ -91,6 +98,172 @@ struct TableEntry {
     version: u64,
     rows: u64,
     file: String,
+}
+
+// This deliberately narrow sidecar is not an Arrow compatibility layer. It is
+// derived from the SAME checked-out batches as IPC, never a second live query.
+#[derive(Serialize)]
+struct Domain {
+    tables: Vec<DomainTable>,
+}
+
+#[derive(Serialize)]
+struct DomainTable {
+    name: String,
+    version: u64,
+    metadata: bool,
+    schema: Vec<DomainField>,
+    records: Vec<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Serialize)]
+struct DomainField {
+    name: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    nullable: bool,
+    #[serde(rename = "listSize")]
+    list_size: i32,
+    metadata: bool,
+    children: Vec<DomainField>,
+}
+
+#[derive(Default)]
+struct DomainBudget {
+    rows: usize,
+    cells: usize,
+    strings: usize,
+    fields: usize,
+}
+
+impl DomainBudget {
+    fn string(&mut self, value: &str) -> Result<()> {
+        self.strings = self.strings.checked_add(value.len()).ok_or(Fault::Limit)?;
+        if self.strings > MAX_DOMAIN_STRINGS { return Err(Fault::Limit); }
+        Ok(())
+    }
+}
+
+fn domain_field(field: &Field, depth: usize, budget: &mut DomainBudget) -> Result<DomainField> {
+    if depth > MAX_DOMAIN_DEPTH { return Err(Fault::Limit); }
+    budget.fields += 1;
+    if budget.fields > MAX_DOMAIN_FIELDS { return Err(Fault::Limit); }
+    budget.string(field.name())?;
+    let (kind, list_size, children) = match field.data_type() {
+        DataType::Utf8 => ("utf8", 0, Vec::new()),
+        DataType::Int32 => ("int32", 0, Vec::new()),
+        DataType::Float32 => ("float32", 0, Vec::new()),
+        DataType::Float64 => ("float64", 0, Vec::new()),
+        DataType::FixedSizeList(child, size) if *size >= 0 =>
+            ("fixed_size_list", *size, vec![domain_field(child, depth + 1, budget)?]),
+        _ => return Err(Fault::Ipc),
+    };
+    Ok(DomainField {
+        name: field.name().clone(), kind, nullable: field.is_nullable(), list_size,
+        metadata: !field.metadata().is_empty(), children,
+    })
+}
+
+fn domain_value(array: &dyn Array, row: usize, depth: usize,
+    budget: &mut DomainBudget) -> Result<serde_json::Value> {
+    if depth > MAX_DOMAIN_DEPTH { return Err(Fault::Limit); }
+    budget.cells += 1;
+    if budget.cells > MAX_DOMAIN_CELLS { return Err(Fault::Limit); }
+    if array.is_null(row) { return Ok(serde_json::Value::Null); }
+    match array.data_type() {
+        DataType::Utf8 => {
+            let array = array.as_any().downcast_ref::<StringArray>().ok_or(Fault::Ipc)?;
+            let value = array.value(row);
+            budget.string(value)?;
+            Ok(serde_json::Value::String(value.to_owned()))
+        }
+        DataType::Int32 => {
+            let array = array.as_any().downcast_ref::<Int32Array>().ok_or(Fault::Ipc)?;
+            Ok(serde_json::Value::from(array.value(row)))
+        }
+        DataType::Float32 => {
+            let array = array.as_any().downcast_ref::<Float32Array>().ok_or(Fault::Ipc)?;
+            // Widen the actual float32 value, not its shortest f32 decimal form.
+            let value = array.value(row) as f64;
+            if !value.is_finite() { return Err(Fault::Ipc); }
+            Ok(serde_json::Value::from(value))
+        }
+        DataType::Float64 => {
+            let array = array.as_any().downcast_ref::<Float64Array>().ok_or(Fault::Ipc)?;
+            let value = array.value(row);
+            if !value.is_finite() { return Err(Fault::Ipc); }
+            Ok(serde_json::Value::from(value))
+        }
+        DataType::FixedSizeList(_, _) => {
+            let array = array.as_any().downcast_ref::<FixedSizeListArray>().ok_or(Fault::Ipc)?;
+            let values = array.value(row);
+            if values.len() > MAX_DOMAIN_CELLS.saturating_sub(budget.cells) {
+                return Err(Fault::Limit);
+            }
+            let mut items = Vec::with_capacity(values.len());
+            for index in 0..values.len() {
+                items.push(domain_value(values.as_ref(), index, depth + 1, budget)?);
+            }
+            Ok(serde_json::Value::Array(items))
+        }
+        _ => Err(Fault::Ipc),
+    }
+}
+
+fn domain_batch(batch: &RecordBatch, table: &mut DomainTable,
+    budget: &mut DomainBudget) -> Result<()> {
+    budget.rows = budget.rows.checked_add(batch.num_rows()).ok_or(Fault::Limit)?;
+    if budget.rows > MAX_DOMAIN_ROWS { return Err(Fault::Limit); }
+    for row in 0..batch.num_rows() {
+        let mut record = serde_json::Map::new();
+        for (column, field) in table.schema.iter().enumerate() {
+            budget.string(&field.name)?;
+            let value = domain_value(batch.column(column).as_ref(), row, 0, budget)?;
+            if record.insert(field.name.clone(), value).is_some() { return Err(Fault::Ipc); }
+        }
+        table.records.push(record);
+    }
+    Ok(())
+}
+
+// Bound serialized bytes while writing; do not first allocate an unbounded Vec.
+// This is NOT a bound on Arrow/native process RSS, nor a logical-hash encoding.
+#[derive(Default)]
+struct DomainWriter {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+impl Write for DomainWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > MAX_DOMAIN.saturating_sub(self.bytes.len()) {
+            self.exceeded = true;
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "NV_LANCE_LIMIT"));
+        }
+        // Grow in bounded chunks, avoiding both per-byte reallocations and an
+        // unchecked geometric capacity beyond the raw serialized-byte cap.
+        let needed = self.bytes.len() + bytes.len();
+        if needed > self.bytes.capacity() {
+            let capacity = needed.saturating_add(65535).min(MAX_DOMAIN) / 65536 * 65536;
+            self.bytes.try_reserve_exact(capacity - self.bytes.len())
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "NV_LANCE_LIMIT"))?;
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+fn write_domain(out: &Path, domain: Domain) -> Result<()> {
+    let mut writer = DomainWriter::default();
+    let encoded = serde_json::to_writer(&mut writer, &domain);
+    if writer.exceeded { return Err(Fault::Limit); }
+    encoded.map_err(|_| Fault::Limit)?;
+    let mut file = OpenOptions::new().write(true).create_new(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW).open(out.join("domain.json")).map_err(|_| Fault::Io)?;
+    file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|_| Fault::Io)?;
+    file.write_all(&writer.bytes).map_err(|_| Fault::Io)?;
+    file.sync_all().map_err(|_| Fault::Io)
 }
 
 fn allowed_name(name: &str) -> bool {
@@ -211,11 +384,26 @@ impl Write for CappedWriter<'_> {
     }
 }
 
-async fn export_one(table: lancedb::Table, name: String, out: &Path) -> Result<TableEntry> {
+async fn export_one(table: lancedb::Table, name: String, out: &Path,
+    budget: &mut DomainBudget) -> Result<(TableEntry, DomainTable)> {
     let version = table.version().await.map_err(|_| Fault::Database)?;
     table.checkout(version).await.map_err(|_| Fault::Database)?;
     let schema: SchemaRef = table.schema().await.map_err(|_| Fault::Database)?;
     let expected_rows = table.count_rows(None).await.map_err(|_| Fault::Database)? as u64;
+    if expected_rows > MAX_DOMAIN_ROWS.saturating_sub(budget.rows) as u64 {
+        return Err(Fault::Limit);
+    }
+    budget.string(&name)?;
+    let mut fields = Vec::with_capacity(schema.fields().len().min(MAX_DOMAIN_FIELDS));
+    let mut names = BTreeSet::new();
+    for field in schema.fields() {
+        if !names.insert(field.name()) { return Err(Fault::Ipc); }
+        fields.push(domain_field(field, 0, budget)?);
+    }
+    let mut domain = DomainTable {
+        name: name.clone(), version, metadata: !schema.metadata().is_empty(),
+        schema: fields, records: Vec::new(),
+    };
     let query = table.query().select(Select::All);
     let mut stream = query.execute().await.map_err(|_| Fault::Database)?;
     // Refuse unexpected projections; use the TABLE schema even for no batches.
@@ -236,6 +424,7 @@ async fn export_one(table: lancedb::Table, name: String, out: &Path) -> Result<T
                 return Err(Fault::Ipc);
             }
             rows = rows.checked_add(batch.num_rows() as u64).ok_or(Fault::Limit)?;
+            domain_batch(&batch, &mut domain, budget)?;
             writer.write(&batch).map_err(|_| Fault::Ipc)?;
         }
         writer.finish().map_err(|_| Fault::Ipc)?;
@@ -249,7 +438,7 @@ async fn export_one(table: lancedb::Table, name: String, out: &Path) -> Result<T
         return Err(Fault::Database);
     }
     file.sync_all().map_err(|_| Fault::Io)?;
-    Ok(TableEntry { name, version, rows, file: filename })
+    Ok((TableEntry { name, version, rows, file: filename }, domain))
 }
 
 async fn export_db(path: &Path, out: &Path) -> Result<Manifest> {
@@ -273,10 +462,15 @@ async fn export_db(path: &Path, out: &Path) -> Result<Manifest> {
         }
     }
     let mut tables = Vec::with_capacity(names.len());
+    let mut domain_tables = Vec::with_capacity(names.len());
+    let mut budget = DomainBudget::default();
     for name in names {
         let table = db.open_table(&name).execute().await.map_err(|_| Fault::Database)?;
-        tables.push(export_one(table, name, out).await?);
+        let (entry, domain) = export_one(table, name, out, &mut budget).await?;
+        tables.push(entry);
+        domain_tables.push(domain);
     }
+    write_domain(out, Domain { tables: domain_tables })?;
     Ok(Manifest { tables })
 }
 

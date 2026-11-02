@@ -16,9 +16,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unsafe"
 )
 
@@ -26,6 +28,7 @@ var ErrInput = errors.New("LANCE_NATIVE_INPUT_INVALID")
 var ErrNative = errors.New("LANCE_NATIVE_OPERATION_FAILED")
 
 const maxManifest = 1024 * 1024
+const maxDomain = 64 * 1024 * 1024
 
 // Table describes a pinned current snapshot. Import creates a fresh history;
 // it does not claim to recreate historical versions or migrate author assets.
@@ -136,6 +139,74 @@ func Import(ctx context.Context, staging, input string, manifest Manifest) (Mani
 		return Manifest{}, err
 	}
 	return restored, nil
+}
+
+// ReadDomain returns only the fixed export sidecar, never a caller-supplied
+// filename or an author's source file. It deliberately leaves domain decoding
+// and the stricter accepted schema to its caller. Like Export, this requires a
+// private trusted CI copy with no concurrent same-user filesystem writers.
+// Cancellation is checked before and after synchronous file work, not mid-read.
+// Returned errors contain no source paths, native diagnostics or row values.
+func ReadDomain(ctx context.Context, out string) ([]byte, error) {
+	if ctx == nil {
+		return nil, ErrInput
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := EnsureExistingCopy(out); err != nil {
+		return nil, ErrInput
+	}
+	root, err := os.Lstat(out)
+	if err != nil || !root.IsDir() || root.Mode().Perm()&0077 != 0 {
+		return nil, ErrInput
+	}
+	rootStat, ok := root.Sys().(*syscall.Stat_t)
+	if !ok || rootStat.Uid != uint32(os.Geteuid()) {
+		return nil, ErrInput
+	}
+	path := filepath.Join(out, "domain.json")
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w (status 2)", ErrNative)
+	}
+	beforeStat, ok := before.Sys().(*syscall.Stat_t)
+	if !ok || !before.Mode().IsRegular() || before.Mode().Perm()&0077 != 0 || beforeStat.Nlink != 1 || beforeStat.Uid != uint32(os.Geteuid()) {
+		return nil, fmt.Errorf("%w (status 2)", ErrNative)
+	}
+	if before.Size() > maxDomain {
+		return nil, fmt.Errorf("%w (status 3)", ErrNative)
+	}
+	// O_NONBLOCK avoids blocking if a prohibited concurrent replacement is a
+	// FIFO; fstat still requires the opened object to be a private regular file.
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%w (status 2)", ErrNative)
+	}
+	file := os.NewFile(uintptr(fd), "domain.json")
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%w (status 6)", ErrNative)
+	}
+	openedStat, ok := opened.Sys().(*syscall.Stat_t)
+	if !ok || !opened.Mode().IsRegular() || opened.Mode().Perm()&0077 != 0 || openedStat.Nlink != 1 || openedStat.Uid != uint32(os.Geteuid()) || !os.SameFile(before, opened) {
+		return nil, fmt.Errorf("%w (status 2)", ErrNative)
+	}
+	if opened.Size() > maxDomain {
+		return nil, fmt.Errorf("%w (status 3)", ErrNative)
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maxDomain+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w (status 6)", ErrNative)
+	}
+	if len(raw) > maxDomain {
+		return nil, fmt.Errorf("%w (status 3)", ErrNative)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // EnsureExistingCopy validates a physical directory before invoking an API that

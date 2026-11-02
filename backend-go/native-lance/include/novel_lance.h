@@ -50,6 +50,23 @@ enum {
  * tables. Opens existing tables only, pins each latest version with checkout and
  * full-scans all fields into exclusive mode-0600 <name>.arrows IPC STREAM files.
  * Each IPC file is limited to 64 MiB, including schema and stream terminator.
+ * Also writes one exclusive mode-0600 domain.json from those SAME batches, even
+ * for an empty database. The returned manifest and IPC formats are unchanged;
+ * import does not read the sidecar. Domain JSON is {"tables":[{"name":string,
+ * "version":u64,"metadata":bool,"schema":[FIELD...],"records":[OBJECT...]}]}.
+ * FIELD is {"name":string,"type":string,"nullable":bool,"listSize":int,
+ * "metadata":bool,"children":[FIELD...]}; scalar listSize is 0. Metadata booleans
+ * report presence only. Records include every schema field, preserving JSON null.
+ * Supported Arrow types: utf8, int32, float32, float64 and fixed_size_list with
+ * recursively supported children. Other types and nonfinite numbers fail IPC.
+ * Float32 values are widened to f64 before JSON serialization. Object key order,
+ * negative-zero round trips and canonical logical hashes are NOT guaranteed.
+ * Limits across ALL tables: 10,000 rows, 200,000 cells (lists and child scalars
+ * count), 32 MiB UTF-8 string bytes (including repeated record keys), 128 schema
+ * fields including children and maximum recursive depth 16. Serialized domain
+ * JSON is capped at 64 MiB while encoding. These bounds are NOT a process-RSS or
+ * underlying Arrow batch allocation bound; this is a narrow synthetic domain,
+ * not general Arrow export compatibility. No external registry is native input.
  * No manifest file is written. Version selection is per-table, not a cross-table
  * transaction. No mutation API is used on the export database; caller must still
  * compare its before/after filesystem manifest as an independent side-effect gate.
