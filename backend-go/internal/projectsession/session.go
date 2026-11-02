@@ -159,6 +159,15 @@ func(m *Manager)BeginRecovery(ctx context.Context,owner Owner,expected Context)(
  done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
  return store.NewRecovery(mounted.db),done,nil
 }
+// BeginSummary lends only continuity reads and legacy, non-source-bound snapshots.
+// It confers no finalization/generation admission or durable author write authority.
+func(m *Manager)BeginSummary(ctx context.Context,owner Owner,expected Context)(*store.Summary,func(),error){
+ if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
+ m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
+ mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
+ done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
+ return store.NewSummary(mounted.db),done,nil
+}
 func(m *Manager)Release(owner Owner,expected Context)error{
  m.mu.Lock();defer m.mu.Unlock();if m.closed{return ErrClosed};if !owner.valid(){return ErrContext}
  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}

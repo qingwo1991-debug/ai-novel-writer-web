@@ -104,6 +104,10 @@ jobs:
           printf 'GO_RECOVERY_CONTRACT=%s\n' "$GO_RECOVERY_CONTRACT" >> "$GITHUB_ENV"
           node ./contract/recovery-contract.mjs
           test -s "$GO_RECOVERY_CONTRACT"
+          export GO_SUMMARY_CONTRACT="$RUNNER_TEMP/novel-go-summary/contract.json"
+          printf 'GO_SUMMARY_CONTRACT=%s\n' "$GO_SUMMARY_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/summary-contract.mjs
+          test -s "$GO_SUMMARY_CONTRACT"
           test -s "$GO_BLUEPRINT_CONTRACT"
           node ./contract/plottree-contract.mjs
           node --import ./contract/register-typescript.mjs ./contract/plottree-validation-contract.mjs
