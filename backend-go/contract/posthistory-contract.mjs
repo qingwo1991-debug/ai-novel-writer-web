@@ -207,7 +207,7 @@ latest('decimal-finalization-source-lookup', { args: ['chapter_finalize', '7'], 
 latest('leading-zero-finalization-source-lookup', { args: ['chapter_finalize', '007'], seed: finalizedRuns })
 latest('literal-finalization-source-id', { args: ['chapter_finalize', `finalization:${FID}`], seed: finalizedRuns })
 latest('nondecimal-id-not-rewritten', { args: ['chapter_finalize', '7.0'], seed: db => { finalizedRuns(db); seedRun(db, { id: 'decimal-text', type: 'chapter_finalize', sourceId: '7.0' }) } })
-latest('other-source-type-digits-not-rewritten', { args: ['arch_extract', '7'], seed: db => { seedRun(db, { sourceId: '7' }); finalizedRuns(db) } })
+latest('other-source-type-digits-not-rewritten', { args: ['arch_extract', '7'], seed: db => { seedRun(db, { id: 'other-type-run', sourceId: '7' }); finalizedRuns(db) } })
 latest('no-finalized-draft-falls-back-to-numeric', { args: ['chapter_finalize', '7'], seed: db => { finalizedRuns(db); update(db, 'drafts', 'id=11', { status: 'draft' }) } })
 latest('new-current-finalization-has-no-run', { args: ['chapter_finalize', '7'], seed: db => { finalizedRuns(db); seedDraft(db, { id: 31, version: 4 }); seedOutbox(db, { draftId: 31, fid: 'synthetic-new-finalization' }) } })
 latest('newest-draft-without-outbox-join-selects-earlier', { args: ['chapter_finalize', '7'], seed: db => { finalizedRuns(db); seedDraft(db, { id: 31, version: 4 }) } })
