@@ -1,0 +1,52 @@
+{
+  "round": 17,
+  "qualifiedSourceSha": "54bc66125f52c18cfc2449b0d78dd1dd82ea989c",
+  "ordinary": {
+    "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924274",
+    "status": "success",
+    "topLevelPass": 363,
+    "includingSubtestsPass": 3584,
+    "fail": 0,
+    "skipEvents": 3,
+    "topLevelSkip": 1,
+    "passingPackages": 16,
+    "newDomainPackageTopPass": 12,
+    "newDomainPackageIncludingSubtestsPass": 139,
+    "newDomainPackageSkip": 0,
+    "originalTypeScriptOracleCases": 22,
+    "deliberateStricterSchemaCases": 1,
+    "vetRaceBuildNoNodeSmoke": true
+  },
+  "native": {
+    "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924196",
+    "status": "success",
+    "nativeTestsPass": 8,
+    "nativeTestsFail": 0,
+    "nativeTestsSkip": 0,
+    "originalJSFullSchemaRowsDomainAndInvariantChecks": 10,
+    "allChecksPassed": true,
+    "domainSummary": {"tableCount": 6, "documents": 3, "chunks": 4, "spaces": 4, "activeGeneration": 1, "embeddingRows": 7},
+    "stagedPhysicalBytes": 29322,
+    "stagedPhysicalEntries": 49,
+    "sourceAndCopyBytesRegistryCopiesUnchanged": true,
+    "stagedOwnedAssetsCleaned": true,
+    "runtimePATH": "/nonexistent",
+    "tinyFixtureRuntimeSeconds": 0.20,
+    "tinyFixtureMaxRSSKiB": 112200,
+    "versions": {"lancedb": "0.22.3", "lance": "0.39.0", "arrowRust": "56.2.0", "arrowJS": "18.1.0", "rust": "1.90.0"}
+  },
+  "review": {
+    "readOnlyOracleReview": "Found metadata-negative fixture hash computed before intended rejection; fixed before qualified push.",
+    "readOnlyNativeSourceAudit": "No definite blocker within trusted quiescent synthetic copy scope.",
+    "readOnlyGoDomainAudit": "No definite panic, resource bypass, count/order/active coverage gap found under bounded decoded caller contract."
+  },
+  "boundaries": [
+    "All builds, tests, gofmt, dependencies and original oracle execution ran only on GitHub. No author data or secrets uploaded or read.",
+    "Native domain is a deliberately narrower experimental export domain:32tables/10000rows/200000cells/32MiBstrings/128fields/depth16/64MiBserialized JSON; not arbitrary Arrow or process RSS compatibility.",
+    "Go domain accepts explicit positive budgets and validates already-decoded private typed snapshots. Caller owns bounded raw decoding and exclusion against concurrent mutation.",
+    "Original tableHash is used only inside the CI original validator oracle; Go JS locale/JSON logicalHash parity is not implemented.",
+    "No document-to-copy filename or copy/indexed-text crosslink policy is implemented; edited/dirty source text is preserved, not repaired.",
+    "Preflight/main/RPC remain unbound to native domain and native fixture SQLite remains opaque synthetic placeholder, not combined SQLite/Lance durable author admission.",
+    "Production unchanged;281 matrix remains2implemented/54inprogress/225notstarted."
+  ]
+}

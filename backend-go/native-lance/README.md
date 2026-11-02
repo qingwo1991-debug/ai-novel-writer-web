@@ -6,6 +6,12 @@ Not a production adapter. `novel_lance` is a Rust static library linked **in-pro
 
 [GitHub41420077722](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077722), source `bc14231b`: Rust locked build, Go vet,5native tests0fail0skip, PATH=/nonexistent real native driver and original Node verifier all passed. Six tables/14rows, full schemas/rows, empty stream table, latestv2→freshv1, and source/copy file contents/membership including registry/copies unchanged. Measurements: Rust build5m25s/maxRSS1619064KiB, target3.0G/staticlib841M/strippedGo215M; tiny fixture0.10s/maxRSS109712KiB. ELF dynamically needs libm/libgcc_s/libc/loader, not a fully-static executable. No author workload performance claim. Persisted bounded evidence: `web/evidence/go-lance-native-round15.json`.
 
+## Round17 typed-domain extension (qualified synthetic source54bc6612)
+
+Export now additionally writes one exclusive0600 `domain.json` from the same pinned batches as IPC. Supported scalar types are Utf8/Int32/Float32/Float64 plus recursive FixedSizeList; unsupported types/nonfinite numbers reject rather than guess. Actual Float32 widens to Float64 before serialization. Global extra bounds:10000rows/200000cells incl list children/32MiB UTF8 strings/128schema fields incl children/depth16/64MiB serialized sidecar. This deliberately NARROWS the experimental export domain and is not arbitrary Arrow compatibility or a process-RSS bound. Existing C ABI/manifest/import remain unchanged; Go `ReadDomain` reads only the fixed bounded owner-private regular nofollow/singlelink file. Native memory and synchronous cancellation limits still apply.
+
+`internal/knowledgedomain` checks copied schema/cells, document/chunk ordering and embedding active/registry relations without storage access. Ordinary [41429924274](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924274) and native [41429924196](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924196) both passed:8native tests/no skips, complete typed schema/rows vs JS Arrow, and Go domain summary6tables/3docs/4chunks/4spaces/7embeddingrows/active1, with copied source proofs and cleanup. Tiny fixture0.20s/maxRSS112200KiB, not author-performance evidence. No document-copy filename crosslink or Go JS logicalHash parity is included. See `web/GO-KNOWLEDGE-DOMAIN.md`.
+
 ## Version and build policy
 
 - Exact Rust LanceDB `=0.22.3`, matching npm `@lancedb/lancedb@0.22.3` release; underlying Lance family0.39.0.

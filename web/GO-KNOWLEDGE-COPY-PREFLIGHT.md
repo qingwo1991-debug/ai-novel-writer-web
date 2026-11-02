@@ -1,5 +1,7 @@
 # 知识资产私有复制与只读元数据预检
 
+第十七轮补充：隔离驱动现已增加native typed sidecar→Go canonical table/domain验证，并通过原Oracle与真实native组合；详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。这不改变本页Preflight尚未调用native的边界，也不补上copy文件引用或JS精确logicalHash。
+
 第十六轮隔离实现。**不是项目打开、可写Lance库、完整知识库或281操作迁移完成。** 未接main，不读取正式作者数据。编译、测试和依赖安装只在GitHub，本文中的源码范围不自动视为验收通过。
 
 ## 固定物理资产

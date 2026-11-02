@@ -23,6 +23,7 @@
 - `internal/writerlock`：真实openat/NOFOLLOW+flock跨进程排他，安全persistent lock inode、多进程/exit/CLOEXEC验证。第十四轮新增固定`AcquireLegacy`复用现gateway `.native-web.gateway.lock`及`Lock.Verify`；原Acquire不同名不互代。未接main/全局状态/正式生命周期，见 `web/GO-WRITER-LOCK.md`。
 - `internal/projectaccess`：锁内只读作者预检，拒绝portable历史authority/restore markers，三个canonical Lance入口metadata inventory，私有完整副本SQLite准入+source未变证明与cleanup；不返回源DB/repository/写能力、不计operation实现；Lance子树/格式/全文兼容仍未证明，见 `web/GO-AUTHOR-PREFLIGHT.md`。
 - `native-lance`、`internal/lancenative`、`cmd/lance-interop`：精确Rust LanceDB0.22.3/Arrow56.2静态库+Go/CGO进程内IPC stream导入导出隔离试验；6表/14行原Node合成fixture、原生编译/5项测试/完整跨语言schema与全文互操作/物理保全已通过独立GitHub任务41420077722（源码bc14231b），仅隔离合成资格，详见`native-lance/README.md`。未接main/作者预检/KB业务，不通过Node/Python桥接；不能将源码或普通GoCI通过算原生通过。
+- `internal/knowledgedomain`：有界合成typed快照的schema/cell、document/chunk count/order/orphan、embedding空间/active完整性验证。原TS真实22case Oracle与139领域用例在GitHub通过；不含Go精确logicalHash、document/copy文件引用或durable authority，native typed reader→Go领域验证组合亦已独立通过（8native tests、10项JS保全检查）；仍为有上限的合成域。见 `web/GO-KNOWLEDGE-DOMAIN.md`。
 - `internal/projectfs/knowledge*.go`、`internal/knowledgecopy`与opt-in `projectaccess.Config.Knowledge`：固定知识资产完整物理stage、缺失/legacy门、源/副本字节与identity proof、replacement-safe清理、只读registry/copy状态和rawdigest。普通Go合成回归和Go stage→native scan→原JS全schema/rows组合均已通过；不是Lance表/domain准入、document/copy引用证明或作者原库写能力。详见 `web/GO-KNOWLEDGE-COPY-PREFLIGHT.md`。
 - `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 

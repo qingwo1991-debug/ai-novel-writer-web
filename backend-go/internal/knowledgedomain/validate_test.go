@@ -43,13 +43,17 @@ func domainSpace(generation int, table, status string, dimension int) map[string
 func domainSetRegistry(t *testing.T, snapshot *Snapshot, registry map[string]any) {
 	t.Helper()
 	raw, err := json.Marshal(registry)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	snapshot.Registry = raw
 }
 func domainMutateRegistry(t *testing.T, snapshot *Snapshot, mutate func(map[string]any)) {
 	t.Helper()
 	var registry map[string]any
-	if err := json.Unmarshal(snapshot.Registry, &registry); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(snapshot.Registry, &registry); err != nil {
+		t.Fatal(err)
+	}
 	mutate(registry)
 	domainSetRegistry(t, snapshot, registry)
 }
@@ -70,7 +74,9 @@ func domainFixture(t *testing.T) Snapshot {
 		for i := 0; i < count; i++ {
 			row := domainChunk([]string{"synthetic-a", "synthetic-b"}[i], i)
 			vector := make([]any, dimension)
-			for j := range vector { vector[j] = json.Number("0.25") }
+			for j := range vector {
+				vector[j] = json.Number("0.25")
+			}
 			row["vector"] = vector
 			table.Records = append(table.Records, row)
 		}
@@ -87,44 +93,77 @@ func domainFixture(t *testing.T) Snapshot {
 func domainAssertRejected(t *testing.T, snapshot Snapshot, budget Budget) {
 	t.Helper()
 	summary, err := Validate(context.Background(), snapshot, budget)
-	if err == nil { t.Fatal("accepted invalid snapshot") }
-	if summary != (Summary{}) { t.Fatalf("nonzero summary on failure: %+v", summary) }
-	if !strings.HasPrefix(err.Error(), "KNOWLEDGE_DOMAIN_") { t.Fatalf("not symbolic: %v", err) }
-	if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), "合成") { t.Fatalf("author data in error: %v", err) }
+	if err == nil {
+		t.Fatal("accepted invalid snapshot")
+	}
+	if summary != (Summary{}) {
+		t.Fatalf("nonzero summary on failure: %+v", summary)
+	}
+	if !strings.HasPrefix(err.Error(), "KNOWLEDGE_DOMAIN_") {
+		t.Fatalf("not symbolic: %v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), "合成") {
+		t.Fatalf("author data in error: %v", err)
+	}
 }
 
 func TestValidateDomainSyntheticFixture(t *testing.T) {
 	snapshot := domainFixture(t)
 	summary, err := Validate(context.Background(), snapshot, domainBudget())
-	if err != nil { t.Fatal(err) }
-	if summary.TableCount != 5 || summary.Documents != 1 || summary.Chunks != 2 || summary.Spaces != 3 || summary.EmbeddingRows != 3 || summary.ActiveGeneration == nil || *summary.ActiveGeneration != 1 { t.Fatalf("summary: %+v", summary) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TableCount != 5 || summary.Documents != 1 || summary.Chunks != 2 || summary.Spaces != 3 || summary.EmbeddingRows != 3 || summary.ActiveGeneration == nil || *summary.ActiveGeneration != 1 {
+		t.Fatalf("summary: %+v", summary)
+	}
 	before := domainFixture(t)
-	if !reflect.DeepEqual(snapshot, before) { t.Fatal("validator mutated input") }
+	if !reflect.DeepEqual(snapshot, before) {
+		t.Fatal("validator mutated input")
+	}
 	raw, err := json.Marshal(summary)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var keys map[string]any
-	if err := json.Unmarshal(raw, &keys); err != nil { t.Fatal(err) }
-	if len(keys) != 6 || keys["tableCount"] != float64(5) || keys["activeGeneration"] != float64(1) { t.Fatalf("unexpected summary wire shape: %s", raw) }
-	if _, exists := keys["logicalHash"]; exists { t.Fatal("validator must not claim a logical hash") }
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 6 || keys["tableCount"] != float64(5) || keys["activeGeneration"] != float64(1) {
+		t.Fatalf("unexpected summary wire shape: %s", raw)
+	}
+	if _, exists := keys["logicalHash"]; exists {
+		t.Fatal("validator must not claim a logical hash")
+	}
 }
 
 func TestValidateDomainEmptyAndRegistryAbsence(t *testing.T) {
 	for _, raw := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage(" \n null \t")} {
 		summary, err := Validate(context.Background(), Snapshot{Registry: raw}, domainBudget())
-		if err != nil || summary != (Summary{}) { t.Fatalf("empty snapshot: %+v %v", summary, err) }
+		if err != nil || summary != (Summary{}) {
+			t.Fatalf("empty snapshot: %+v %v", summary, err)
+		}
 	}
 	snapshot := domainFixture(t)
 	snapshot.Tables = snapshot.Tables[:2]
 	snapshot.Registry = nil
-	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.Spaces != 0 || summary.ActiveGeneration != nil { t.Fatalf("canonical only: %+v %v", summary, err) }
-	for i := range snapshot.Tables { snapshot.Tables[i].Records = nil }
-	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.TableCount != 2 { t.Fatalf("schema-carrying empty tables: %+v %v", summary, err) }
+	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.Spaces != 0 || summary.ActiveGeneration != nil {
+		t.Fatalf("canonical only: %+v %v", summary, err)
+	}
+	for i := range snapshot.Tables {
+		snapshot.Tables[i].Records = nil
+	}
+	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.TableCount != 2 {
+		t.Fatalf("schema-carrying empty tables: %+v %v", summary, err)
+	}
 	snapshot.Tables[0].Schema = nil
 	domainAssertRejected(t, snapshot, domainBudget())
 }
 
 func TestValidateDomainSchemaMutations(t *testing.T) {
-	cases := []struct{name string; mutate func(*Snapshot)}{
+	cases := []struct {
+		name   string
+		mutate func(*Snapshot)
+	}{
 		{"unknown table", func(s *Snapshot) { s.Tables[0].Name = "author-secrets" }},
 		{"unsafe table suffix", func(s *Snapshot) { s.Tables[2].Name = "chunks__space_1/other" }},
 		{"empty space suffix", func(s *Snapshot) { s.Tables[2].Name = "chunks__space_" }},
@@ -150,14 +189,26 @@ func TestValidateDomainSchemaMutations(t *testing.T) {
 		{"empty table still checks schema", func(s *Snapshot) { s.Tables[4].Schema[0].Type = "binary" }},
 		{"invalid utf8 schema", func(s *Snapshot) { s.Tables[0].Schema[0].Name = string([]byte{255}) }},
 	}
-	for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { snapshot := domainFixture(t); tc.mutate(&snapshot); domainAssertRejected(t, snapshot, domainBudget()) }) }
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			tc.mutate(&snapshot)
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
+	}
 }
 
 func TestValidateDomainRowAndRelationshipMutations(t *testing.T) {
-	cases := []struct{name string; mutate func(*Snapshot)}{
+	cases := []struct {
+		name   string
+		mutate func(*Snapshot)
+	}{
 		{"extra key", func(s *Snapshot) { s.Tables[0].Records[0]["unexpected"] = "value" }},
 		{"missing key", func(s *Snapshot) { delete(s.Tables[0].Records[0], "filePath") }},
-		{"substituted key", func(s *Snapshot) { delete(s.Tables[0].Records[0], "filePath"); s.Tables[0].Records[0]["unexpected"] = "value" }},
+		{"substituted key", func(s *Snapshot) {
+			delete(s.Tables[0].Records[0], "filePath")
+			s.Tables[0].Records[0]["unexpected"] = "value"
+		}},
 		{"empty id", func(s *Snapshot) { s.Tables[0].Records[0]["id"] = "" }},
 		{"duplicate id", func(s *Snapshot) { s.Tables[1].Records[1]["id"] = "synthetic-a" }},
 		{"null required string", func(s *Snapshot) { s.Tables[0].Schema[1].Nullable = true; s.Tables[0].Records[0]["fileName"] = nil }},
@@ -184,11 +235,20 @@ func TestValidateDomainRowAndRelationshipMutations(t *testing.T) {
 		{"nan number", func(s *Snapshot) { s.Tables[0].Records[0]["chunkCount"] = math.NaN() }},
 		{"infinite number", func(s *Snapshot) { s.Tables[0].Records[0]["chunkCount"] = math.Inf(1) }},
 	}
-	for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { snapshot := domainFixture(t); tc.mutate(&snapshot); domainAssertRejected(t, snapshot, domainBudget()) }) }
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			tc.mutate(&snapshot)
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
+	}
 }
 
 func TestValidateDomainVectorMutations(t *testing.T) {
-	cases := []struct{name string; value any}{
+	cases := []struct {
+		name  string
+		value any
+	}{
 		{"short", []any{0, 1}}, {"long", []any{0, 1, 2, 3}}, {"nil", nil},
 		{"typed slice not JSON array", []float32{0, 1, 2}}, {"number", 1},
 		{"nan", []any{0, math.NaN(), 1}}, {"positive infinity", []any{0, math.Inf(1), 1}},
@@ -197,14 +257,27 @@ func TestValidateDomainVectorMutations(t *testing.T) {
 		{"nested array", []any{0, []any{1}, 1}}, {"float32 overflow", []any{0, math.MaxFloat64, 1}},
 		{"bad json number", []any{0, json.Number("NaN"), 1}},
 	}
-	for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { snapshot := domainFixture(t); snapshot.Tables[2].Records[0]["vector"] = tc.value; domainAssertRejected(t, snapshot, domainBudget()) }) }
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			snapshot.Tables[2].Records[0]["vector"] = tc.value
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
+	}
 	for _, key := range []string{"id", "docId", "text"} {
-		t.Run("canonical mismatch "+key, func(t *testing.T) { snapshot := domainFixture(t); snapshot.Tables[2].Records[0][key] = "missing-synthetic"; domainAssertRejected(t, snapshot, domainBudget()) })
+		t.Run("canonical mismatch "+key, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			snapshot.Tables[2].Records[0][key] = "missing-synthetic"
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
 	}
 }
 
 func TestValidateDomainRegistryMutations(t *testing.T) {
-	cases := []struct{name string; mutate func(map[string]any)}{
+	cases := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
 		{"wrong version", func(r map[string]any) { r["version"] = 2 }},
 		{"version string", func(r map[string]any) { r["version"] = "1" }},
 		{"missing spaces", func(r map[string]any) { delete(r, "spaces") }},
@@ -213,7 +286,9 @@ func TestValidateDomainRegistryMutations(t *testing.T) {
 		{"duplicate generation", func(r map[string]any) { r["spaces"].([]any)[1].(map[string]any)["generation"] = 1 }},
 		{"negative generation", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["generation"] = -1 }},
 		{"fractional generation", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["generation"] = 1.5 }},
-		{"unsafe generation", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["generation"] = json.Number("9007199254740992") }},
+		{"unsafe generation", func(r map[string]any) {
+			r["spaces"].([]any)[0].(map[string]any)["generation"] = json.Number("9007199254740992")
+		}},
 		{"duplicate table", func(r map[string]any) { r["spaces"].([]any)[1].(map[string]any)["tableName"] = "chunks__space_1" }},
 		{"absent table", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["tableName"] = "chunks__space_99" }},
 		{"wrong status", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["status"] = "ready" }},
@@ -232,13 +307,27 @@ func TestValidateDomainRegistryMutations(t *testing.T) {
 		{"no active but pointer", func(r map[string]any) { r["spaces"].([]any)[0].(map[string]any)["status"] = "inactive" }},
 		{"unregistered table", func(r map[string]any) { r["spaces"] = r["spaces"].([]any)[:2] }},
 	}
-	for _, tc := range cases { t.Run(tc.name, func(t *testing.T) { snapshot := domainFixture(t); domainMutateRegistry(t, &snapshot, tc.mutate); domainAssertRejected(t, snapshot, domainBudget()) }) }
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			domainMutateRegistry(t, &snapshot, tc.mutate)
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
+	}
 	for _, raw := range []string{"", " ", "{", "[]", "1", "true", `{"version":1,"spaces":[],"activeGeneration":null} {}`, `{"version":1,"spaces":[],"activeGeneration":null} false`} {
-		if raw == "" { continue } // Missing is a supported absence representation.
-		t.Run("malformed "+raw, func(t *testing.T) { snapshot := domainFixture(t); snapshot.Registry = json.RawMessage(raw); domainAssertRejected(t, snapshot, domainBudget()) })
+		if raw == "" {
+			continue
+		} // Missing is a supported absence representation.
+		t.Run("malformed "+raw, func(t *testing.T) {
+			snapshot := domainFixture(t)
+			snapshot.Registry = json.RawMessage(raw)
+			domainAssertRejected(t, snapshot, domainBudget())
+		})
 	}
 	for _, raw := range []json.RawMessage{nil, json.RawMessage("null")} {
-		snapshot := domainFixture(t); snapshot.Registry = raw; domainAssertRejected(t, snapshot, domainBudget())
+		snapshot := domainFixture(t)
+		snapshot.Registry = raw
+		domainAssertRejected(t, snapshot, domainBudget())
 	}
 }
 
@@ -251,32 +340,58 @@ func TestValidateDomainRegistryPositiveVariants(t *testing.T) {
 				r["spaces"].([]any)[0].(map[string]any)["distanceMetric"] = metric
 				r["spaces"].([]any)[0].(map[string]any)["unknownField"] = []any{true, nil}
 			})
-			if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil { t.Fatal(err) }
+			if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 	snapshot := domainFixture(t)
-	domainMutateRegistry(t, &snapshot, func(r map[string]any) { r["activeGeneration"] = nil; r["spaces"].([]any)[0].(map[string]any)["status"] = "inactive" })
-	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.ActiveGeneration != nil { t.Fatalf("all inactive: %+v %v", summary, err) }
-	for i := range snapshot.Tables { snapshot.Tables[i].Records = nil }
-	domainMutateRegistry(t, &snapshot, func(r map[string]any) { r["activeGeneration"] = 1; r["spaces"].([]any)[0].(map[string]any)["status"] = "active" })
-	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.ActiveGeneration == nil { t.Fatalf("empty active: %+v %v", summary, err) }
+	domainMutateRegistry(t, &snapshot, func(r map[string]any) {
+		r["activeGeneration"] = nil
+		r["spaces"].([]any)[0].(map[string]any)["status"] = "inactive"
+	})
+	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.ActiveGeneration != nil {
+		t.Fatalf("all inactive: %+v %v", summary, err)
+	}
+	for i := range snapshot.Tables {
+		snapshot.Tables[i].Records = nil
+	}
+	domainMutateRegistry(t, &snapshot, func(r map[string]any) {
+		r["activeGeneration"] = 1
+		r["spaces"].([]any)[0].(map[string]any)["status"] = "active"
+	})
+	if summary, err := Validate(context.Background(), snapshot, domainBudget()); err != nil || summary.ActiveGeneration == nil {
+		t.Fatalf("empty active: %+v %v", summary, err)
+	}
 }
 
 func TestValidateDomainNumericRepresentations(t *testing.T) {
 	for _, value := range []any{int(2), int8(2), int16(2), int32(2), int64(2), uint(2), uint8(2), uint16(2), uint32(2), uint64(2), float32(2), float64(2), json.Number("2"), json.Number("2.0"), json.Number("2e0"), json.Number("2.0000000000000001")} {
 		snapshot := domainFixture(t)
 		snapshot.Tables[0].Records[0]["chunkCount"] = value
-		if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil { t.Fatalf("numeric %T %v: %v", value, value, err) }
+		if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil {
+			t.Fatalf("numeric %T %v: %v", value, value, err)
+		}
 	}
 	for _, value := range []any{json.Number(""), json.Number("NaN"), json.Number("Infinity"), json.Number("01"), json.Number("+2"), json.Number("true"), json.Number("2 3"), json.Number("1e9999"), json.Number(strings.Repeat("0", 129)), "2", true, nil, uint64(math.MaxUint64)} {
-		snapshot := domainFixture(t); snapshot.Tables[0].Records[0]["chunkCount"] = value; domainAssertRejected(t, snapshot, domainBudget())
+		snapshot := domainFixture(t)
+		snapshot.Tables[0].Records[0]["chunkCount"] = value
+		domainAssertRejected(t, snapshot, domainBudget())
 	}
 	snapshot := domainFixture(t)
-	for i := range snapshot.Tables[1].Schema { if numericField(snapshot.Tables[1].Schema[i].Name) { snapshot.Tables[1].Schema[i].Type = "float64" } }
+	for i := range snapshot.Tables[1].Schema {
+		if numericField(snapshot.Tables[1].Schema[i].Name) {
+			snapshot.Tables[1].Schema[i].Type = "float64"
+		}
+	}
 	snapshot.Tables[1].Records[0]["chunkIndex"] = json.Number("0e-99999999")
-	if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil { t.Fatal(err) }
+	if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil {
+		t.Fatal(err)
+	}
 	snapshot.Tables[2].Records[0]["vector"] = []any{float32(0.1), float64(float32(0.2)), int(1)}
-	if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil { t.Fatal(err) }
+	if _, err := Validate(context.Background(), snapshot, domainBudget()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestValidateDomainBudgets(t *testing.T) {
@@ -286,29 +401,50 @@ func TestValidateDomainBudgets(t *testing.T) {
 		{MaxTables: 1, MaxRows: 10001, MaxCells: 1, MaxTextBytes: 1},
 		{MaxTables: 1, MaxRows: 1, MaxCells: 200001, MaxTextBytes: 1},
 		{MaxTables: 1, MaxRows: 1, MaxCells: 1, MaxTextBytes: (32 << 20) + 1},
-	} { domainAssertRejected(t, Snapshot{}, budget) }
+	} {
+		domainAssertRejected(t, Snapshot{}, budget)
+	}
 	snapshot := domainFixture(t)
 	for _, modify := range []func(*Budget){
 		func(b *Budget) { b.MaxTables = 4 },
-		func(b *Budget) { b.MaxRows = 5 }, // 1 doc + 2 canonical + 3 embeddings.
+		func(b *Budget) { b.MaxRows = 5 },   // 1 doc + 2 canonical + 3 embeddings.
 		func(b *Budget) { b.MaxCells = 61 }, // 59 top-level values plus 8 vector elements = 67.
 		func(b *Budget) { b.MaxTextBytes = len(snapshot.Registry) },
-	} { budget := domainBudget(); modify(&budget); domainAssertRejected(t, snapshot, budget) }
-	budget := domainBudget(); budget.MaxTables = 5; budget.MaxRows = 6; budget.MaxCells = 67
-	if _, err := Validate(context.Background(), snapshot, budget); err != nil { t.Fatalf("exact resource limits: %v", err) }
+	} {
+		budget := domainBudget()
+		modify(&budget)
+		domainAssertRejected(t, snapshot, budget)
+	}
+	budget := domainBudget()
+	budget.MaxTables = 5
+	budget.MaxRows = 6
+	budget.MaxCells = 67
+	if _, err := Validate(context.Background(), snapshot, budget); err != nil {
+		t.Fatalf("exact resource limits: %v", err)
+	}
 	budget.MaxCells = 66
 	domainAssertRejected(t, snapshot, budget)
 	// All raw registry bytes, including ignored keys and whitespace, count.
-	budget = domainBudget(); budget.MaxTextBytes = 128
+	budget = domainBudget()
+	budget.MaxTextBytes = 128
 	domainAssertRejected(t, Snapshot{Registry: json.RawMessage(strings.Repeat(" ", 129) + "null")}, budget)
 	// The aggregate text boundary is discoverable exactly, not per-table.
 	low, high := 1, 10000
 	for low < high {
-		mid := (low + high) / 2; budget = domainBudget(); budget.MaxTextBytes = mid
-		if _, err := Validate(context.Background(), snapshot, budget); err == nil { high = mid } else { low = mid + 1 }
+		mid := (low + high) / 2
+		budget = domainBudget()
+		budget.MaxTextBytes = mid
+		if _, err := Validate(context.Background(), snapshot, budget); err == nil {
+			high = mid
+		} else {
+			low = mid + 1
+		}
 	}
-	budget = domainBudget(); budget.MaxTextBytes = low
-	if _, err := Validate(context.Background(), snapshot, budget); err != nil { t.Fatal(err) }
+	budget = domainBudget()
+	budget.MaxTextBytes = low
+	if _, err := Validate(context.Background(), snapshot, budget); err != nil {
+		t.Fatal(err)
+	}
 	budget.MaxTextBytes--
 	domainAssertRejected(t, snapshot, budget)
 }
@@ -317,13 +453,23 @@ func TestValidateDomainLargeVectorCountPreflight(t *testing.T) {
 	snapshot := domainFixture(t)
 	snapshot.Tables[2].Records[0]["vector"] = make([]any, HardMaxCells)
 	summary, err := Validate(context.Background(), snapshot, domainBudget())
-	if err == nil || err.Error() != "KNOWLEDGE_DOMAIN_CELL_LIMIT" || summary != (Summary{}) { t.Fatalf("vector elements must consume cells before validation: %+v %v", summary, err) }
+	if err == nil || err.Error() != "KNOWLEDGE_DOMAIN_CELL_LIMIT" || summary != (Summary{}) {
+		t.Fatalf("vector elements must consume cells before validation: %+v %v", summary, err)
+	}
 }
 
 func TestValidateDomainContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background()); cancel()
-	if summary, err := Validate(ctx, domainFixture(t), domainBudget()); !errors.Is(err, context.Canceled) || summary != (Summary{}) { t.Fatalf("cancellation: %+v %v", summary, err) }
-	ctx, cancel = context.WithDeadline(context.Background(), time.Unix(1, 0)); defer cancel()
-	if summary, err := Validate(ctx, Snapshot{}, domainBudget()); !errors.Is(err, context.DeadlineExceeded) || summary != (Summary{}) { t.Fatalf("deadline: %+v %v", summary, err) }
-	if summary, err := Validate(nil, Snapshot{}, domainBudget()); err == nil || summary != (Summary{}) { t.Fatalf("nil context: %+v %v", summary, err) }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if summary, err := Validate(ctx, domainFixture(t), domainBudget()); !errors.Is(err, context.Canceled) || summary != (Summary{}) {
+		t.Fatalf("cancellation: %+v %v", summary, err)
+	}
+	ctx, cancel = context.WithDeadline(context.Background(), time.Unix(1, 0))
+	defer cancel()
+	if summary, err := Validate(ctx, Snapshot{}, domainBudget()); !errors.Is(err, context.DeadlineExceeded) || summary != (Summary{}) {
+		t.Fatalf("deadline: %+v %v", summary, err)
+	}
+	if summary, err := Validate(nil, Snapshot{}, domainBudget()); err == nil || summary != (Summary{}) {
+		t.Fatalf("nil context: %+v %v", summary, err)
+	}
 }

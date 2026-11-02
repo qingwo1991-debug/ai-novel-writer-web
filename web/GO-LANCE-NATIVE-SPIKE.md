@@ -1,5 +1,9 @@
 # 原生Lance兼容试验（隔离合成数据互操作已通过，非生产能力）
 
+## 第十七轮typed领域组合
+
+源码`54bc6612` [41429924196](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924196) **success**：同pinned batches额外生成有界`domain.json`，JS对全部typed schema/records逐项与原Arrow核对，Go验证canonical文档/chunk count/order/orphan、registry/space/active完整性；8native tests无fail/skip、10项原互操作与保全检查通过。普通Go [41429924274](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924274)通过363/3584含子用例、0fail、3权限skip、16packages，含原TS validateTables真实22case。合成快照上限/严格类型域是明确限制，不是任意作者库兼容或Go原logicalHash完成，详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。
+
 ## 第十六轮组合补充
 
 `2b1f5dbd` [41424195098](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195098)已success：Go完整物理知识assetstage→副本metadata校验→native扫描→原JS全schema/rows核对→source/copy proof→attempt-owned cleanup。49entries/29322bytes、4spaces/3copies、6表/14行；原方向互操作和5项native测试仍通过。驱动project.db为opaque合成占位，不声称SQLite/Lance联合语义准入。元数据validator不替代table-domain/copy引用关系、原logicalHash；详见[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。新门设计见[GO-LANCE-DOMAIN-NEXT.md](GO-LANCE-DOMAIN-NEXT.md)。

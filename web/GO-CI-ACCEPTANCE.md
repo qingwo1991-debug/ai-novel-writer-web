@@ -1,6 +1,12 @@
 # Go 基础层：GitHub Actions 验证记录
 
-## 第十六轮：知识资产stage与只读元数据（新增）
+## 第十七轮：typed native snapshot与canonical领域门
+
+源码`54bc66125f52c18cfc2449b0d78dd1dd82ea989c`，普通Go[41429924274](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924274) **success：363顶层/3584含子用例PASS、0fail、3foreign-owner skip、16packages**；format/vet/race/原凭据解密/build/无Node烟测全过。新`knowledgedomain`12顶层/139含子用例（含真实原TS validateTables/tableHash 22case Oracle）均无skip通过。22case中一项明确记录原宽松emptyfieldtype接受而Go strictschema拒绝，不声称全输入域相同。
+
+native[41429924196](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924196) **success**：Rust --lockedbuild、Go vet/build、8native tests无fail/skip、PATH=/nonexistent驱动、10项原JS核对/保全检查全过。Lance→domain typed sidecar→Go领域验证摘要6表/3docs/4chunks/4spaces/7embeddingrows/activeGeneration1，49entry/29322byte完整物理stage清理。微型fixture0.20s/maxRSS112200KiB；不外推作者工作负载。证据后续commit只吸收远端format/注释/文档，不宣称其新SHA另编译。详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。本机仅编辑、静态检查及下载小型证据，不运行原Oracle/Go/Rust/gofmt/npm install。
+
+## 第十六轮：知识资产stage与只读元数据
 
 首轮源码`2b1f5dbd423472f904c0fedf39da3d5bc16f249e`，普通Go[41424195056](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195056) **success**：350顶层/3444含子用例PASS，0fail、3明确foreign-owner权限skip，15packages；vet/race/build/无Node烟测全部成功。新原TypeScript copy reader/current函数oracle7例实际通过，涵盖Unicode、edited-current、dirty、hashmismatch、empty和unknownrawfields。
 

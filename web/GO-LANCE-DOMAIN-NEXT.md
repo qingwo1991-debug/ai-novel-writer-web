@@ -1,5 +1,7 @@
 # Native Lance域准入下一关（设计，不是已实现）
 
+第十七轮状态补充：`knowledgedomain`已实现下述schema/cell/docchunk/registry-active关系的**有界合成快照**版本，普通GitHub原Oracle22case与139领域测试通过；typed-native链也已独立GitHub通过（8native tests、10项JS全schema/rows/domain保全检查）。没有任意大库external-sort、JS精确logicalHash或copyfilename引用准入。详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。本页仍保留完整最终门设计，不将所有研究项计为实现。
+
 前置已达：native0.22.3/Arrow stream双向schema/rows/reopen，Go有界完整物理assetstage、rawcopymetadata、源/副本proof和安全cleanup。下一步不能直接把此结果变成project:open。源码参考原`electron/services/vector-migration-snapshot.ts:68–139`和`electron/vector-store.ts:135–173`。
 
 ## 一次私有副本中的schema/stream域验证

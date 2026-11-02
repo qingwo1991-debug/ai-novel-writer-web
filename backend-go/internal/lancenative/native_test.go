@@ -198,10 +198,10 @@ func TestNativeExportDomainFixture(t *testing.T) {
 	}
 	var domain struct {
 		Tables []struct {
-			Name     string            `json:"name"`
-			Version  uint64            `json:"version"`
-			Metadata bool              `json:"metadata"`
-			Schema   []domainField     `json:"schema"`
+			Name     string           `json:"name"`
+			Version  uint64           `json:"version"`
+			Metadata bool             `json:"metadata"`
+			Schema   []domainField    `json:"schema"`
 			Records  []map[string]any `json:"records"`
 		} `json:"tables"`
 	}
