@@ -2,17 +2,392 @@
 
 package projectfs
 
-import("context";"errors";"os";"path/filepath";"strings";"syscall";"testing")
-func knowledgeFixture(t *testing.T)(*Project,string,*os.Root,string){t.Helper();library,path,storage:=fixture(t);_,p:=openFixture(t,library,path);target:=t.TempDir();if err:=os.Chmod(target,0700);err!=nil{t.Fatal(err)};root,err:=os.OpenRoot(target);if err!=nil{t.Fatal(err)};t.Cleanup(func(){root.Close()});return p,storage,root,target}
-func knowledgeBudget()KnowledgeBudget{return KnowledgeBudget{MaxBytes:128<<20,MaxEntries:1000,MaxDepth:16}}
-func knowledgeTree(t *testing.T,storage string){t.Helper();for _,name:=range []string{"lancedb/chunks.lance/data","knowledge-copies/nested"}{if err:=os.MkdirAll(filepath.Join(storage,name),0700);err!=nil{t.Fatal(err)}};for name,data:=range map[string]string{"lancedb/chunks.lance/data/1.lance":"fake physical Lance bytes Ω🙂", "embedding-spaces.json":"\n {\"synthetic\":true}\n", "knowledge-copies/nested/copy.json":"{\"content\":\"not parsed synthetic\"}","vectors.json.migrated":"opaque historical receipt"}{put(t,filepath.Join(storage,name),[]byte(data))}}
-func TestKnowledgeNestedPhysicalStageAndProof(t *testing.T){p,storage,root,target:=knowledgeFixture(t);knowledgeTree(t,storage);proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};defer proof.Cleanup();summary:=proof.Summary();if summary.Entries!=9||summary.Bytes==0||len(summary.Digest)!=64||!summary.LanceDB||!summary.EmbeddingRegistry||!summary.KnowledgeCopies||!summary.LegacyReceipt{t.Fatal(summary)};if strings.Contains(summary.Digest,storage){t.Fatal("path exposed")};if err:=proof.VerifyUnchanged(context.Background());err!=nil{t.Fatal(err)};if err:=root.Close();err!=nil{t.Fatal(err)};if err:=proof.VerifyCopy(context.Background());err!=nil{t.Fatal(err)};for _,name:=range []string{"lancedb/chunks.lance/data/1.lance","embedding-spaces.json","knowledge-copies/nested/copy.json","vectors.json.migrated"}{data,err:=os.ReadFile(filepath.Join(target,name));if err!=nil{t.Fatal(err)};source,err:=os.ReadFile(filepath.Join(storage,name));if err!=nil||string(data)!=string(source){t.Fatal("copy mismatch",err)};info,err:=os.Stat(filepath.Join(target,name));if err!=nil||info.Mode().Perm()!=0600{t.Fatal(err)}};if err:=proof.Cleanup();err!=nil{t.Fatal(err)};if err:=proof.Cleanup();err!=nil{t.Fatal(err)};entries,err:=os.ReadDir(target);if err!=nil||len(entries)!=0{t.Fatal(entries,err)};if !errors.Is(proof.VerifyCopy(context.Background()),ErrClosed){t.Fatal("cleaned proof usable")}}
-func TestKnowledgeAllAssetsAbsentAndAbsenceDrift(t *testing.T){p,storage,root,_:=knowledgeFixture(t);proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};defer proof.Cleanup();s:=proof.Summary();if s.Entries!=0||s.Bytes!=0||s.LanceDB||s.LegacyReceipt||s.Digest==""{t.Fatal(s)};if err:=proof.VerifyCopy(context.Background());err!=nil{t.Fatal(err)};put(t,filepath.Join(storage,"vectors.json.migrated"),[]byte("new"));if !errors.Is(proof.VerifyUnchanged(context.Background()),ErrChanged){t.Fatal("absent asset appeared")}}
-func TestKnowledgeLegacyAnyTypeRejected(t *testing.T){for _,name:=range []string{"vectors.json","vectors.json.migration-journal.json"}{for _,kind:=range []string{"file","dir","symlink","fifo"}{t.Run(name+"/"+kind,func(t *testing.T){p,storage,root,target:=knowledgeFixture(t);path:=filepath.Join(storage,name);switch kind{case "file":put(t,path,[]byte("never parse"));case "dir":if err:=os.Mkdir(path,0700);err!=nil{t.Fatal(err)};case "symlink":link(t,"missing",path,true);case "fifo":if err:=syscall.Mkfifo(path,0600);err!=nil{t.Fatal(err)}};proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if proof!=nil||!errors.Is(err,ErrKnowledgeLegacyPending){t.Fatal(proof,err)};entries,_:=os.ReadDir(target);if len(entries)!=0{t.Fatal(entries)}})}}}
-func TestKnowledgeSourceAndCopyDrift(t *testing.T){for _,side:=range []string{"source","copy"}{for _,kind:=range []string{"bytes","new-inode-same-bytes","member","mode"}{t.Run(side+"/"+kind,func(t *testing.T){p,storage,root,target:=knowledgeFixture(t);knowledgeTree(t,storage);proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};defer proof.Cleanup();base:=storage;if side=="copy"{base=target};path:=filepath.Join(base,"embedding-spaces.json");switch kind{case "bytes":put(t,path,[]byte("different"));case "new-inode-same-bytes":data,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)};if err:=os.Rename(path,path+".old");err!=nil{t.Fatal(err)};put(t,path,data);case "member":put(t,filepath.Join(base,"knowledge-copies","new.json"),[]byte("new"));case "mode":if err:=os.Chmod(path,0640);err!=nil{t.Fatal(err)}};if side=="source"{err=proof.VerifyUnchanged(context.Background())}else{err=proof.VerifyCopy(context.Background())};if err==nil{t.Fatal("drift accepted")}})}}}
-func TestKnowledgeUnsafeEntriesAndBudgetsCleanup(t *testing.T){for _,kind:=range []string{"symlink","hardlink","fifo","bytes","entries","depth","unsafe-name"}{t.Run(kind,func(t *testing.T){p,storage,root,target:=knowledgeFixture(t);if err:=os.Mkdir(filepath.Join(storage,"lancedb"),0700);err!=nil{t.Fatal(err)};file:=filepath.Join(storage,"lancedb","one");budget:=knowledgeBudget();switch kind{case "symlink":link(t,"missing",file,true);case "hardlink":put(t,filepath.Join(storage,"outside"),[]byte("x"));link(t,filepath.Join(storage,"outside"),file,false);case "fifo":if err:=syscall.Mkfifo(file,0600);err!=nil{t.Fatal(err)};case "bytes":put(t,file,[]byte("12345"));budget.MaxBytes=4;case "entries":for i:=0;i<130;i++{put(t,filepath.Join(storage,"lancedb",strings.Repeat("x",i+1)),nil)};budget.MaxEntries=129;case "depth":if err:=os.MkdirAll(filepath.Join(storage,"lancedb","a","b"),0700);err!=nil{t.Fatal(err)};budget.MaxDepth=2;case "unsafe-name":put(t,filepath.Join(storage,"lancedb","back\\slash"),nil)};proof,err:=p.StageCanonicalKnowledge(context.Background(),root,budget);if proof!=nil||err==nil{t.Fatal(proof,err)};entries,_:=os.ReadDir(target);if len(entries)!=0{t.Fatal("partial stage leaked",entries)}})}}
-func TestKnowledgeCanceledAndBadConfiguration(t *testing.T){p,_,root,target:=knowledgeFixture(t);ctx,cancel:=context.WithCancel(context.Background());cancel();if proof,err:=p.StageCanonicalKnowledge(ctx,root,knowledgeBudget());proof!=nil||!errors.Is(err,context.Canceled){t.Fatal(err)};for _,budget:=range []KnowledgeBudget{{},{MaxBytes:-1,MaxEntries:1,MaxDepth:1},{MaxBytes:1,MaxEntries:10001,MaxDepth:1},{MaxBytes:1,MaxEntries:1,MaxDepth:65},{MaxBytes:1<<40+1,MaxEntries:1,MaxDepth:1}}{if proof,err:=p.StageCanonicalKnowledge(context.Background(),root,budget);proof!=nil||err==nil{t.Fatal(budget,err)}};if proof,err:=p.StageCanonicalKnowledge(nil,root,knowledgeBudget());proof!=nil||err==nil{t.Fatal(err)};if err:=os.Chmod(target,0750);err!=nil{t.Fatal(err)};if proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());proof!=nil||err==nil{t.Fatal("nonprivate target accepted")}}
-func TestKnowledgeTargetOverlapAndPhysicalAliasRejected(t *testing.T){p,storage,_,_:=knowledgeFixture(t);path:=filepath.Join(storage,"nested-target");if err:=os.Mkdir(path,0700);err!=nil{t.Fatal(err)};root,err:=os.OpenRoot(path);if err!=nil{t.Fatal(err)};defer root.Close();if proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());proof!=nil||err==nil{t.Fatal("overlap accepted")};actual:=t.TempDir();if err:=os.Chmod(actual,0700);err!=nil{t.Fatal(err)};alias:=filepath.Join(t.TempDir(),"alias");link(t,actual,alias,true);aliased,err:=os.OpenRoot(alias);if err!=nil{t.Fatal(err)};defer aliased.Close();if proof,err:=p.StageCanonicalKnowledge(context.Background(),aliased,knowledgeBudget());proof!=nil||err==nil{t.Fatal("symlink alias accepted")}}
-func TestKnowledgeCleanupPinnedAfterRootRename(t *testing.T){p,storage,root,target:=knowledgeFixture(t);knowledgeTree(t,storage);proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};moved:=target+"-moved";if err:=os.Rename(target,moved);err!=nil{t.Fatal(err)};t.Cleanup(func(){os.RemoveAll(moved)});if err:=os.Mkdir(target,0700);err!=nil{t.Fatal(err)};put(t,filepath.Join(target,"unknown"),[]byte("preserve replacement"));if err:=proof.VerifyCopy(context.Background());err==nil{t.Fatal("renamed root accepted")};if err:=proof.Cleanup();err!=nil{t.Fatal(err)};entries,_:=os.ReadDir(moved);if len(entries)!=0{t.Fatal(entries)};if data,err:=os.ReadFile(filepath.Join(target,"unknown"));err!=nil||string(data)!="preserve replacement"{t.Fatal(err)}}
-func TestKnowledgeCleanupPreservesUnknownAndReplacedObjects(t *testing.T){for _,kind:=range []string{"unknown","replacement","missing"}{t.Run(kind,func(t *testing.T){p,storage,root,target:=knowledgeFixture(t);knowledgeTree(t,storage);proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};file:=filepath.Join(target,"embedding-spaces.json");switch kind{case "unknown":put(t,filepath.Join(target,"knowledge-copies","unknown"),[]byte("foreign"));case "replacement":if err:=os.Remove(file);err!=nil{t.Fatal(err)};put(t,file,[]byte("replacement"));case "missing":if err:=os.Remove(file);err!=nil{t.Fatal(err)}};err=proof.Cleanup();if kind=="missing"{if err!=nil{t.Fatal(err)}}else{if !errors.Is(err,ErrKnowledgeCleanup){t.Fatal(err)};if err2:=proof.Cleanup();!errors.Is(err2,ErrKnowledgeCleanup){t.Fatal(err2)};path:=file;if kind=="unknown"{path=filepath.Join(target,"knowledge-copies","unknown")};if _,err:=os.Stat(path);err!=nil{t.Fatal("foreign object deleted",err)}}})}}
-func TestKnowledgeSparseBeyondOld64MiBLimit(t *testing.T){p,storage,root,target:=knowledgeFixture(t);path:=filepath.Join(storage,"vectors.json.migrated");file,err:=os.OpenFile(path,os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600);if err!=nil{t.Fatal(err)};if err:=file.Truncate(65<<20);err!=nil{file.Close();t.Fatal(err)};if err:=file.Close();err!=nil{t.Fatal(err)};proof,err:=p.StageCanonicalKnowledge(context.Background(),root,knowledgeBudget());if err!=nil{t.Fatal(err)};defer proof.Cleanup();if proof.Summary().Bytes!=65<<20{t.Fatal(proof.Summary())};info,err:=os.Stat(filepath.Join(target,"vectors.json.migrated"));if err!=nil||info.Size()!=65<<20{t.Fatal(err)}}
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+)
+
+func knowledgeFixture(t *testing.T) (*Project, string, *os.Root, string) {
+	t.Helper()
+	library, path, storage := fixture(t)
+	_, p := openFixture(t, library, path)
+	target := t.TempDir()
+	if err := os.Chmod(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { root.Close() })
+	return p, storage, root, target
+}
+func knowledgeBudget() KnowledgeBudget {
+	return KnowledgeBudget{MaxBytes: 128 << 20, MaxEntries: 1000, MaxDepth: 16}
+}
+func knowledgeTree(t *testing.T, storage string) {
+	t.Helper()
+	for _, name := range []string{"lancedb/chunks.lance/data", "knowledge-copies/nested"} {
+		if err := os.MkdirAll(filepath.Join(storage, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, data := range map[string]string{"lancedb/chunks.lance/data/1.lance": "fake physical Lance bytes Ω🙂", "embedding-spaces.json": "\n {\"synthetic\":true}\n", "knowledge-copies/nested/copy.json": "{\"content\":\"not parsed synthetic\"}", "vectors.json.migrated": "opaque historical receipt"} {
+		put(t, filepath.Join(storage, name), []byte(data))
+	}
+}
+func TestKnowledgeNestedPhysicalStageAndProof(t *testing.T) {
+	p, storage, root, target := knowledgeFixture(t)
+	knowledgeTree(t, storage)
+	proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proof.Cleanup()
+	summary := proof.Summary()
+	if summary.Entries != 9 || summary.Bytes == 0 || len(summary.Digest) != 64 || !summary.LanceDB || !summary.EmbeddingRegistry || !summary.KnowledgeCopies || !summary.LegacyReceipt {
+		t.Fatal(summary)
+	}
+	if strings.Contains(summary.Digest, storage) {
+		t.Fatal("path exposed")
+	}
+	if err := proof.VerifyUnchanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := proof.VerifyCopy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"lancedb/chunks.lance/data/1.lance", "embedding-spaces.json", "knowledge-copies/nested/copy.json", "vectors.json.migrated"} {
+		data, err := os.ReadFile(filepath.Join(target, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.ReadFile(filepath.Join(storage, name))
+		if err != nil || string(data) != string(source) {
+			t.Fatal("copy mismatch", err)
+		}
+		info, err := os.Stat(filepath.Join(target, name))
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatal(err)
+		}
+	}
+	if err := proof.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if err := proof.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil || len(entries) != 0 {
+		t.Fatal(entries, err)
+	}
+	if !errors.Is(proof.VerifyCopy(context.Background()), ErrClosed) {
+		t.Fatal("cleaned proof usable")
+	}
+}
+func TestKnowledgeAllAssetsAbsentAndAbsenceDrift(t *testing.T) {
+	p, storage, root, _ := knowledgeFixture(t)
+	proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proof.Cleanup()
+	s := proof.Summary()
+	if s.Entries != 0 || s.Bytes != 0 || s.LanceDB || s.LegacyReceipt || s.Digest == "" {
+		t.Fatal(s)
+	}
+	if err := proof.VerifyCopy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(storage, "vectors.json.migrated"), []byte("new"))
+	if !errors.Is(proof.VerifyUnchanged(context.Background()), ErrChanged) {
+		t.Fatal("absent asset appeared")
+	}
+}
+func TestKnowledgeLegacyAnyTypeRejected(t *testing.T) {
+	for _, name := range []string{"vectors.json", "vectors.json.migration-journal.json"} {
+		for _, kind := range []string{"file", "dir", "symlink", "fifo"} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				p, storage, root, target := knowledgeFixture(t)
+				path := filepath.Join(storage, name)
+				switch kind {
+				case "file":
+					put(t, path, []byte("never parse"))
+				case "dir":
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+				case "symlink":
+					link(t, "missing", path, true)
+				case "fifo":
+					if err := syscall.Mkfifo(path, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+				if proof != nil || !errors.Is(err, ErrKnowledgeLegacyPending) {
+					t.Fatal(proof, err)
+				}
+				entries, _ := os.ReadDir(target)
+				if len(entries) != 0 {
+					t.Fatal(entries)
+				}
+			})
+		}
+	}
+}
+func TestKnowledgeSourceAndCopyDrift(t *testing.T) {
+	for _, side := range []string{"source", "copy"} {
+		for _, kind := range []string{"bytes", "new-inode-same-bytes", "member", "mode"} {
+			t.Run(side+"/"+kind, func(t *testing.T) {
+				p, storage, root, target := knowledgeFixture(t)
+				knowledgeTree(t, storage)
+				proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer proof.Cleanup()
+				base := storage
+				if side == "copy" {
+					base = target
+				}
+				path := filepath.Join(base, "embedding-spaces.json")
+				switch kind {
+				case "bytes":
+					put(t, path, []byte("different"))
+				case "new-inode-same-bytes":
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(path, path+".old"); err != nil {
+						t.Fatal(err)
+					}
+					put(t, path, data)
+				case "member":
+					put(t, filepath.Join(base, "knowledge-copies", "new.json"), []byte("new"))
+				case "mode":
+					if err := os.Chmod(path, 0640); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if side == "source" {
+					err = proof.VerifyUnchanged(context.Background())
+				} else {
+					err = proof.VerifyCopy(context.Background())
+				}
+				if err == nil {
+					t.Fatal("drift accepted")
+				}
+			})
+		}
+	}
+}
+func TestKnowledgeUnsafeEntriesAndBudgetsCleanup(t *testing.T) {
+	for _, kind := range []string{"symlink", "hardlink", "fifo", "bytes", "entries", "depth", "unsafe-name"} {
+		t.Run(kind, func(t *testing.T) {
+			p, storage, root, target := knowledgeFixture(t)
+			if err := os.Mkdir(filepath.Join(storage, "lancedb"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(storage, "lancedb", "one")
+			budget := knowledgeBudget()
+			switch kind {
+			case "symlink":
+				link(t, "missing", file, true)
+			case "hardlink":
+				put(t, filepath.Join(storage, "outside"), []byte("x"))
+				link(t, filepath.Join(storage, "outside"), file, false)
+			case "fifo":
+				if err := syscall.Mkfifo(file, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "bytes":
+				put(t, file, []byte("12345"))
+				budget.MaxBytes = 4
+			case "entries":
+				for i := 0; i < 130; i++ {
+					put(t, filepath.Join(storage, "lancedb", strings.Repeat("x", i+1)), nil)
+				}
+				budget.MaxEntries = 129
+			case "depth":
+				if err := os.MkdirAll(filepath.Join(storage, "lancedb", "a", "b"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				budget.MaxDepth = 2
+			case "unsafe-name":
+				put(t, filepath.Join(storage, "lancedb", "back\\slash"), nil)
+			}
+			proof, err := p.StageCanonicalKnowledge(context.Background(), root, budget)
+			if proof != nil || err == nil {
+				t.Fatal(proof, err)
+			}
+			entries, _ := os.ReadDir(target)
+			if len(entries) != 0 {
+				t.Fatal("partial stage leaked", entries)
+			}
+		})
+	}
+}
+func TestKnowledgeCanceledAndBadConfiguration(t *testing.T) {
+	p, _, root, target := knowledgeFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if proof, err := p.StageCanonicalKnowledge(ctx, root, knowledgeBudget()); proof != nil || !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	for _, budget := range []KnowledgeBudget{{}, {MaxBytes: -1, MaxEntries: 1, MaxDepth: 1}, {MaxBytes: 1, MaxEntries: 10001, MaxDepth: 1}, {MaxBytes: 1, MaxEntries: 1, MaxDepth: 65}, {MaxBytes: 1<<40 + 1, MaxEntries: 1, MaxDepth: 1}} {
+		if proof, err := p.StageCanonicalKnowledge(context.Background(), root, budget); proof != nil || err == nil {
+			t.Fatal(budget, err)
+		}
+	}
+	if proof, err := p.StageCanonicalKnowledge(nil, root, knowledgeBudget()); proof != nil || err == nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget()); proof != nil || err == nil {
+		t.Fatal("nonprivate target accepted")
+	}
+}
+func TestKnowledgeTargetOverlapAndPhysicalAliasRejected(t *testing.T) {
+	p, storage, _, _ := knowledgeFixture(t)
+	path := filepath.Join(storage, "nested-target")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget()); proof != nil || err == nil {
+		t.Fatal("overlap accepted")
+	}
+	actual := t.TempDir()
+	if err := os.Chmod(actual, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	link(t, actual, alias, true)
+	aliased, err := os.OpenRoot(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer aliased.Close()
+	if proof, err := p.StageCanonicalKnowledge(context.Background(), aliased, knowledgeBudget()); proof != nil || err == nil {
+		t.Fatal("symlink alias accepted")
+	}
+}
+func TestKnowledgeCleanupPinnedAfterRootRename(t *testing.T) {
+	p, storage, root, target := knowledgeFixture(t)
+	knowledgeTree(t, storage)
+	proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := target + "-moved"
+	if err := os.Rename(target, moved); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(moved) })
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	put(t, filepath.Join(target, "unknown"), []byte("preserve replacement"))
+	if err := proof.VerifyCopy(context.Background()); err == nil {
+		t.Fatal("renamed root accepted")
+	}
+	if err := proof.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(moved)
+	if len(entries) != 0 {
+		t.Fatal(entries)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "unknown")); err != nil || string(data) != "preserve replacement" {
+		t.Fatal(err)
+	}
+}
+func TestKnowledgeCleanupPreservesUnknownAndReplacedObjects(t *testing.T) {
+	for _, kind := range []string{"unknown", "replacement", "missing"} {
+		t.Run(kind, func(t *testing.T) {
+			p, storage, root, target := knowledgeFixture(t)
+			knowledgeTree(t, storage)
+			proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(target, "embedding-spaces.json")
+			switch kind {
+			case "unknown":
+				put(t, filepath.Join(target, "knowledge-copies", "unknown"), []byte("foreign"))
+			case "replacement":
+				if err := os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+				put(t, file, []byte("replacement"))
+			case "missing":
+				if err := os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = proof.Cleanup()
+			if kind == "missing" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if !errors.Is(err, ErrKnowledgeCleanup) {
+					t.Fatal(err)
+				}
+				if err2 := proof.Cleanup(); !errors.Is(err2, ErrKnowledgeCleanup) {
+					t.Fatal(err2)
+				}
+				path := file
+				if kind == "unknown" {
+					path = filepath.Join(target, "knowledge-copies", "unknown")
+				}
+				if _, err := os.Stat(path); err != nil {
+					t.Fatal("foreign object deleted", err)
+				}
+			}
+		})
+	}
+}
+func TestKnowledgeSparseBeyondOld64MiBLimit(t *testing.T) {
+	p, storage, root, target := knowledgeFixture(t)
+	path := filepath.Join(storage, "vectors.json.migrated")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(65 << 20); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := p.StageCanonicalKnowledge(context.Background(), root, knowledgeBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proof.Cleanup()
+	if proof.Summary().Bytes != 65<<20 {
+		t.Fatal(proof.Summary())
+	}
+	info, err := os.Stat(filepath.Join(target, "vectors.json.migrated"))
+	if err != nil || info.Size() != 65<<20 {
+		t.Fatal(err)
+	}
+}

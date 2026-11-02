@@ -1,25 +1,314 @@
 package knowledgecopy
-import("bytes";"context";"crypto/sha256";"encoding/hex";"encoding/json";"io";"math";"strconv";"strings";"unicode/utf8")
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"math"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
 // Original JSON.parse accepts duplicate keys and lone UTF16 surrogates. This
 // copied-metadata lane intentionally rejects both, and invalid UTF8, rather than
 // let encoding/json silently replace text and compute a different content hash.
 // Unknown fields remain accepted and committed by their unmodified raw digest.
-func parse(ctx context.Context,raw []byte)(any,error){if err:=ctx.Err();err!=nil{return nil,err};if !utf8.Valid(raw){return nil,ErrInvalid};if err:=unicodeEscapes(ctx,raw);err!=nil{return nil,err};decoder:=json.NewDecoder(bytes.NewReader(raw));decoder.UseNumber();value,err:=node(ctx,decoder,0);if err!=nil{return nil,err};if _,err:=decoder.Token();err!=io.EOF{return nil,ErrInvalid};return value,nil}
-func node(ctx context.Context,d *json.Decoder,depth int)(any,error){if err:=ctx.Err();err!=nil{return nil,err};if depth>128{return nil,ErrInvalid};token,err:=d.Token();if err!=nil{return nil,ErrInvalid};switch v:=token.(type){case json.Delim:switch v{case '{':out:=map[string]any{};for d.More(){if err:=ctx.Err();err!=nil{return nil,err};key,err:=d.Token();if err!=nil{return nil,ErrInvalid};name,ok:=key.(string);if !ok{return nil,ErrInvalid};if _,duplicate:=out[name];duplicate{return nil,ErrInvalid};value,err:=node(ctx,d,depth+1);if err!=nil{return nil,err};out[name]=value};end,err:=d.Token();if err!=nil||end!=json.Delim('}'){return nil,ErrInvalid};return out,nil;case '[':out:=[]any{};for d.More(){value,err:=node(ctx,d,depth+1);if err!=nil{return nil,err};out=append(out,value)};end,err:=d.Token();if err!=nil||end!=json.Delim(']'){return nil,ErrInvalid};return out,nil;default:return nil,ErrInvalid};default:return token,nil}}
-func hex4(raw []byte)(uint16,bool){if len(raw)<4{return 0,false};var v uint16;for _,c:=range raw[:4]{v<<=4;switch{case c>='0'&&c<='9':v+=uint16(c-'0');case c>='a'&&c<='f':v+=uint16(c-'a'+10);case c>='A'&&c<='F':v+=uint16(c-'A'+10);default:return 0,false}};return v,true}
-func unicodeEscapes(ctx context.Context,raw []byte)error{inside:=false;for i:=0;i<len(raw);i++{if i%32768==0{if err:=ctx.Err();err!=nil{return err}};if raw[i]=='"'{inside=!inside;continue};if !inside||raw[i]!='\\'{continue};i++;if i>=len(raw){return ErrInvalid};if raw[i]!='u'{continue};if i+4>=len(raw){return ErrInvalid};v,ok:=hex4(raw[i+1:i+5]);if !ok{return ErrInvalid};i+=4;if v>=0xdc00&&v<=0xdfff{return ErrInvalid};if v>=0xd800&&v<=0xdbff{if i+6>=len(raw)||raw[i+1]!='\\'||raw[i+2]!='u'{return ErrInvalid};low,ok:=hex4(raw[i+3:i+7]);if !ok||low<0xdc00||low>0xdfff{return ErrInvalid};i+=6}};if inside{return ErrInvalid};return ctx.Err()}
-func object(v any)(map[string]any,bool){out,ok:=v.(map[string]any);return out,ok}
-func integer(v any,minimum int64)(int64,bool){n,ok:=v.(json.Number);if !ok{return 0,false};value,err:=strconv.ParseFloat(string(n),64);if err!=nil||math.IsNaN(value)||math.IsInf(value,0)||math.Trunc(value)!=value||value<float64(minimum)||value>9007199254740991{return 0,false};return int64(value),true}
-func nonempty(v any)bool{s,ok:=v.(string);return ok&&s!=""}
-func tableName(v any)bool{name,ok:=v.(string);if !ok{return false};if name=="chunks"{return true};suffix,ok:=strings.CutPrefix(name,"chunks__space_");if !ok||len(suffix)==0||len(suffix)>20{return false};for _,c:=range []byte(suffix){if c<'0'||c>'9'{return false}};return true}
+func parse(ctx context.Context, raw []byte) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(raw) {
+		return nil, ErrInvalid
+	}
+	if err := unicodeEscapes(ctx, raw); err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	value, err := node(ctx, decoder, 0)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, ErrInvalid
+	}
+	return value, nil
+}
+func node(ctx context.Context, d *json.Decoder, depth int) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if depth > 128 {
+		return nil, ErrInvalid
+	}
+	token, err := d.Token()
+	if err != nil {
+		return nil, ErrInvalid
+	}
+	switch v := token.(type) {
+	case json.Delim:
+		switch v {
+		case '{':
+			out := map[string]any{}
+			for d.More() {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				key, err := d.Token()
+				if err != nil {
+					return nil, ErrInvalid
+				}
+				name, ok := key.(string)
+				if !ok {
+					return nil, ErrInvalid
+				}
+				if _, duplicate := out[name]; duplicate {
+					return nil, ErrInvalid
+				}
+				value, err := node(ctx, d, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				out[name] = value
+			}
+			end, err := d.Token()
+			if err != nil || end != json.Delim('}') {
+				return nil, ErrInvalid
+			}
+			return out, nil
+		case '[':
+			out := []any{}
+			for d.More() {
+				value, err := node(ctx, d, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, value)
+			}
+			end, err := d.Token()
+			if err != nil || end != json.Delim(']') {
+				return nil, ErrInvalid
+			}
+			return out, nil
+		default:
+			return nil, ErrInvalid
+		}
+	default:
+		return token, nil
+	}
+}
+func hex4(raw []byte) (uint16, bool) {
+	if len(raw) < 4 {
+		return 0, false
+	}
+	var v uint16
+	for _, c := range raw[:4] {
+		v <<= 4
+		switch {
+		case c >= '0' && c <= '9':
+			v += uint16(c - '0')
+		case c >= 'a' && c <= 'f':
+			v += uint16(c - 'a' + 10)
+		case c >= 'A' && c <= 'F':
+			v += uint16(c - 'A' + 10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
+}
+func unicodeEscapes(ctx context.Context, raw []byte) error {
+	inside := false
+	for i := 0; i < len(raw); i++ {
+		if i%32768 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if raw[i] == '"' {
+			inside = !inside
+			continue
+		}
+		if !inside || raw[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(raw) {
+			return ErrInvalid
+		}
+		if raw[i] != 'u' {
+			continue
+		}
+		if i+4 >= len(raw) {
+			return ErrInvalid
+		}
+		v, ok := hex4(raw[i+1 : i+5])
+		if !ok {
+			return ErrInvalid
+		}
+		i += 4
+		if v >= 0xdc00 && v <= 0xdfff {
+			return ErrInvalid
+		}
+		if v >= 0xd800 && v <= 0xdbff {
+			if i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+				return ErrInvalid
+			}
+			low, ok := hex4(raw[i+3 : i+7])
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return ErrInvalid
+			}
+			i += 6
+		}
+	}
+	if inside {
+		return ErrInvalid
+	}
+	return ctx.Err()
+}
+func object(v any) (map[string]any, bool) { out, ok := v.(map[string]any); return out, ok }
+func integer(v any, minimum int64) (int64, bool) {
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(string(n), 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value || value < float64(minimum) || value > 9007199254740991 {
+		return 0, false
+	}
+	return int64(value), true
+}
+func nonempty(v any) bool { s, ok := v.(string); return ok && s != "" }
+func tableName(v any) bool {
+	name, ok := v.(string)
+	if !ok {
+		return false
+	}
+	if name == "chunks" {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(name, "chunks__space_")
+	if !ok || len(suffix) == 0 || len(suffix) > 20 {
+		return false
+	}
+	for _, c := range []byte(suffix) {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // Original validateRegistry only checks nonempty table/metric, integer domains
 // and active pointer membership. This lane additionally requires safe integers,
 // unique generations/tables, bounded canonical table names and supported metrics.
 // Missing activeGeneration remains null; status need not match pointer (original
 // local-registry semantics). Full active-generation/table relations are NOT here.
-func registrySummary(ctx context.Context,value any,out *Summary)error{
- registry,ok:=object(value);if !ok{return ErrInvalid};version,ok:=integer(registry["version"],1);if !ok||version!=1{return ErrInvalid};spaces,ok:=registry["spaces"].([]any);if !ok{return ErrInvalid};generations:=map[int64]bool{};tables:=map[string]bool{}
- for _,raw:=range spaces{if err:=ctx.Err();err!=nil{return err};space,ok:=object(raw);if !ok{return ErrInvalid};generation,ok:=integer(space["generation"],0);if !ok||generations[generation]{return ErrInvalid};if !tableName(space["tableName"])||!nonempty(space["modelFingerprint"]){return ErrInvalid};name:=space["tableName"].(string);if tables[name]{return ErrInvalid};if _,ok:=integer(space["vectorDimension"],1);!ok{return ErrInvalid};metric,ok:=space["distanceMetric"].(string);if !ok||(metric!="l2"&&metric!="cosine"&&metric!="dot"){return ErrInvalid};if _,ok:=space["createdAt"].(string);!ok{return ErrInvalid};switch space["status"]{case "active":out.Active++;case "inactive":out.Inactive++;case "building":out.Building++;default:return ErrInvalid};generations[generation]=true;tables[name]=true;out.Spaces++}
- if raw,exists:=registry["activeGeneration"];exists&&raw!=nil{generation,ok:=integer(raw,0);if !ok||!generations[generation]{return ErrInvalid}};return nil
+func registrySummary(ctx context.Context, value any, out *Summary) error {
+	registry, ok := object(value)
+	if !ok {
+		return ErrInvalid
+	}
+	version, ok := integer(registry["version"], 1)
+	if !ok || version != 1 {
+		return ErrInvalid
+	}
+	spaces, ok := registry["spaces"].([]any)
+	if !ok {
+		return ErrInvalid
+	}
+	generations := map[int64]bool{}
+	tables := map[string]bool{}
+	for _, raw := range spaces {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		space, ok := object(raw)
+		if !ok {
+			return ErrInvalid
+		}
+		generation, ok := integer(space["generation"], 0)
+		if !ok || generations[generation] {
+			return ErrInvalid
+		}
+		if !tableName(space["tableName"]) || !nonempty(space["modelFingerprint"]) {
+			return ErrInvalid
+		}
+		name := space["tableName"].(string)
+		if tables[name] {
+			return ErrInvalid
+		}
+		if _, ok := integer(space["vectorDimension"], 1); !ok {
+			return ErrInvalid
+		}
+		metric, ok := space["distanceMetric"].(string)
+		if !ok || (metric != "l2" && metric != "cosine" && metric != "dot") {
+			return ErrInvalid
+		}
+		if _, ok := space["createdAt"].(string); !ok {
+			return ErrInvalid
+		}
+		switch space["status"] {
+		case "active":
+			out.Active++
+		case "inactive":
+			out.Inactive++
+		case "building":
+			out.Building++
+		default:
+			return ErrInvalid
+		}
+		generations[generation] = true
+		tables[name] = true
+		out.Spaces++
+	}
+	if raw, exists := registry["activeGeneration"]; exists && raw != nil {
+		generation, ok := integer(raw, 0)
+		if !ok || !generations[generation] {
+			return ErrInvalid
+		}
+	}
+	return nil
 }
-func copySummary(value any,out *Summary)error{copy,ok:=object(value);if !ok{return ErrInvalid};content,ok:=copy["content"].(string);if !ok{return ErrInvalid};indexed,ok:=copy["indexedHash"].(string);if !ok{return ErrInvalid};edited,ok:=copy["edited"].(bool);if !ok{return ErrInvalid};dirty,ok:=copy["indexDirty"].(bool);if !ok{return ErrInvalid};digest:=sha256.Sum256([]byte(content));mismatch:=hex.EncodeToString(digest[:])!=indexed;out.Copies++;if dirty{out.Dirty++};if edited{out.Edited++};if mismatch{out.HashMismatch++};if !dirty&&!mismatch{out.Current++};return nil}
+func copySummary(value any, out *Summary) error {
+	copy, ok := object(value)
+	if !ok {
+		return ErrInvalid
+	}
+	content, ok := copy["content"].(string)
+	if !ok {
+		return ErrInvalid
+	}
+	indexed, ok := copy["indexedHash"].(string)
+	if !ok {
+		return ErrInvalid
+	}
+	edited, ok := copy["edited"].(bool)
+	if !ok {
+		return ErrInvalid
+	}
+	dirty, ok := copy["indexDirty"].(bool)
+	if !ok {
+		return ErrInvalid
+	}
+	digest := sha256.Sum256([]byte(content))
+	mismatch := hex.EncodeToString(digest[:]) != indexed
+	out.Copies++
+	if dirty {
+		out.Dirty++
+	}
+	if edited {
+		out.Edited++
+	}
+	if mismatch {
+		out.HashMismatch++
+	}
+	if !dirty && !mismatch {
+		out.Current++
+	}
+	return nil
+}

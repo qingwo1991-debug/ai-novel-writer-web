@@ -1,29 +1,393 @@
 //go:build linux
+
 package knowledgecopy
-import("context";"crypto/sha256";"encoding/hex";"encoding/json";"errors";"fmt";"os";"path/filepath";"reflect";"strings";"syscall";"testing";"time")
-func fixture(t *testing.T)(string,*os.Root){t.Helper();path:=t.TempDir();if err:=os.Chmod(path,0700);err!=nil{t.Fatal(err)};root,err:=os.OpenRoot(path);if err!=nil{t.Fatal(err)};t.Cleanup(func(){root.Close()});return path,root}
-func budget()Budget{return Budget{1024*1024,100}}
-func put(t *testing.T,path,name string,raw []byte){t.Helper();if err:=os.WriteFile(filepath.Join(path,name),raw,0600);err!=nil{t.Fatal(err)}}
-func copiesDir(t *testing.T,path string){t.Helper();if err:=os.Mkdir(filepath.Join(path,"knowledge-copies"),0700);err!=nil{t.Fatal(err)}}
-func name(n int)string{return fmt.Sprintf("%064x.json",n)}
-func copyJSON(content,index string,edited,dirty bool)[]byte{raw,_:=json.Marshal(map[string]any{"content":content,"indexedHash":index,"edited":edited,"indexDirty":dirty});return raw}
-func hashText(text string)string{sum:=sha256.Sum256([]byte(text));return hex.EncodeToString(sum[:])}
-func registry(spaces string,active string)[]byte{return []byte(`{"version":1,"spaces":`+spaces+`,"activeGeneration":`+active+`}`)}
-func space(gen int,table,status string)string{return fmt.Sprintf(`{"generation":%d,"tableName":%q,"modelFingerprint":"synthetic","vectorDimension":2,"distanceMetric":"l2","status":%q,"createdAt":"not a V8 date"}`,gen,table,status)}
-func validate(t *testing.T,root *os.Root)Summary{t.Helper();out,err:=Validate(context.Background(),root,budget());if err!=nil{t.Fatal(err)};return out}
-func fail(t *testing.T,root *os.Root,b Budget,want error){t.Helper();out,err:=Validate(context.Background(),root,b);if !errors.Is(err,want)||!reflect.DeepEqual(out,Summary{}){t.Fatalf("out=%+v err=%v want=%v",out,err,want)}}
-func TestEmptyOptionalAssetsAndPresenceDigests(t *testing.T){path,root:=fixture(t);empty:=validate(t,root);if empty.RegistryPresent||empty.CopiesPresent||empty.Copies!=0||empty.MetadataBytes!=0||empty.RegistrySHA256!=""||empty.CopiesSHA256!=hashText(""){t.Fatal(empty)};put(t,path,"embedding-spaces.json",registry("[]","null"));withRegistry:=validate(t,root);if !withRegistry.RegistryPresent||withRegistry.Spaces!=0||withRegistry.MetadataSHA256==empty.MetadataSHA256{t.Fatal(withRegistry)};copiesDir(t,path);withCopies:=validate(t,root);if !withCopies.CopiesPresent||withCopies.MetadataSHA256==withRegistry.MetadataSHA256||withCopies.CopiesSHA256!=empty.CopiesSHA256{t.Fatal(withCopies)}}
-func TestRegistryStatesAndLocalPointerSemantics(t *testing.T){path,root:=fixture(t);put(t,path,"embedding-spaces.json",registry("["+space(0,"chunks","active")+","+space(1,"chunks__space_1","inactive")+","+space(2,"chunks__space_2","building")+"]","0"));out:=validate(t,root);if out.Spaces!=3||out.Active!=1||out.Inactive!=1||out.Building!=1{t.Fatal(out)};put(t,path,"embedding-spaces.json",registry("["+space(0,"chunks","inactive")+"]","0"));validate(t,root);put(t,path,"embedding-spaces.json",[]byte(`{"version":1,"spaces":[],"extra":{"keep":true}}`));validate(t,root)}
-func TestRegistryIntentionalNarrowingAndInvalidDomains(t *testing.T){valid:=space(0,"chunks","active");cases:=map[string][]byte{"dupe generation":registry("["+valid+","+space(0,"chunks__space_1","inactive")+"]","0"),"dupe table":registry("["+valid+","+space(1,"chunks","inactive")+"]","0"),"missing pointer":registry("[]","0"),"bad pointer":registry("[]","\"0\""),"bad type":[]byte(`[]`),"version":[]byte(`{"version":2,"spaces":[]}`),"spaces null":registry("null","null")};for label,pair:=range map[string][2]string{"negative generation":{"\"generation\":0","\"generation\":-1"},"fraction":{"\"generation\":0","\"generation\":0.5"},"unsafeinteger":{"\"generation\":0","\"generation\":9007199254740992"},"zero dimension":{"\"vectorDimension\":2","\"vectorDimension\":0"},"empty fingerprint":{"\"modelFingerprint\":\"synthetic\"","\"modelFingerprint\":\"\""},"metric":{"\"distanceMetric\":\"l2\"","\"distanceMetric\":\"hamming\""},"unknown table":{"\"tableName\":\"chunks\"","\"tableName\":\"documents\""},"table escape":{"\"tableName\":\"chunks\"","\"tableName\":\"../chunks\""},"status":{"\"status\":\"active\"","\"status\":\"other\""},"createdAt type":{"\"createdAt\":\"not a V8 date\"","\"createdAt\":0"}}{cases[label]=registry("["+strings.Replace(valid,pair[0],pair[1],1)+"]","null")};for label,raw:=range cases{t.Run(label,func(t *testing.T){path,root:=fixture(t);put(t,path,"embedding-spaces.json",raw);fail(t,root,budget(),ErrInvalid)})}}
-func TestCopiedContentClassificationEditedIndependent(t *testing.T){path,root:=fixture(t);copiesDir(t,path);for i,item:=range []struct{content,index string;edited,dirty bool}{{"plain",hashText("plain"),false,false},{"edited legitimate current",hashText("edited legitimate current"),true,false},{"pending change","previoushash",true,true},{"dirtybutmatching",hashText("dirtybutmatching"),false,true},{"mismatch only","",false,false},{"case mismatch",strings.ToUpper(hashText("case mismatch")),false,false}}{put(t,filepath.Join(path,"knowledge-copies"),name(i),copyJSON(item.content,item.index,item.edited,item.dirty))};out:=validate(t,root);if out.Copies!=6||out.Current!=2||out.Edited!=2||out.Dirty!=2||out.HashMismatch!=3{t.Fatal(out)}}
-func TestExactRawDigestsAndStableFilenameByteOrdering(t *testing.T){path,root:=fixture(t);copiesDir(t,path);raw:=copyJSON("Ω🙂\\ud800",hashText("Ω🙂\\ud800"),false,false);put(t,filepath.Join(path,"knowledge-copies"),name(2),raw);put(t,filepath.Join(path,"knowledge-copies"),name(1),raw);first:=validate(t,root);put(t,filepath.Join(path,"knowledge-copies"),name(1),append([]byte(" \n"),raw...));second:=validate(t,root);if first.CopiesSHA256==second.CopiesSHA256||first.MetadataSHA256==second.MetadataSHA256||first.Current!=second.Current{t.Fatal(first,second)};if second!=validate(t,root){t.Fatal("unstable summary")}}
-func TestJSONDuplicateUTF8AndSurrogateRejection(t *testing.T){cases:=[][]byte{[]byte(`{"version":1,"version":1,"spaces":[]}`),[]byte(`{"version":1,"spaces":[],"x":{"a":0,"\u0061":1}}`),[]byte(`{"version":1,"spaces":[],"x":"\ud800"}`),[]byte(`{"version":1,"spaces":[],"x":"\udc00"}`),[]byte(`{"version":1,"spaces":[],"x":"\ud800x"}`),append([]byte(`{"version":1,"spaces":[],"x":"`),0xff)};for i,raw:=range cases{t.Run(fmt.Sprint(i),func(t *testing.T){path,root:=fixture(t);put(t,path,"embedding-spaces.json",raw);fail(t,root,budget(),ErrInvalid)})};path,root:=fixture(t);put(t,path,"embedding-spaces.json",[]byte(`{"version":1,"spaces":[],"unknown":"\ud83d\ude42"}`));validate(t,root)}
-func TestCopyRequiredTypesUnknownFieldsAndNames(t *testing.T){for _,raw:=range []string{`{}`,`{"content":1,"indexedHash":"","edited":false,"indexDirty":false}`,`{"content":"","indexedHash":"","edited":0,"indexDirty":false}`,`{"content":"","indexedHash":"","edited":false,"indexDirty":null}`}{t.Run(raw,func(t *testing.T){path,root:=fixture(t);copiesDir(t,path);put(t,filepath.Join(path,"knowledge-copies"),name(0),[]byte(raw));fail(t,root,budget(),ErrInvalid)})};path,root:=fixture(t);copiesDir(t,path);put(t,filepath.Join(path,"knowledge-copies"),name(0),[]byte(`{"content":"","indexedHash":"","edited":false,"indexDirty":false,"unknown":{"retained":true}}`));if validate(t,root).HashMismatch!=1{t.Fatal("empty original hash must be accepted and mismatched")};put(t,filepath.Join(path,"knowledge-copies"),"bad-name.json",[]byte(`{}`));fail(t,root,budget(),ErrInvalid)}
-func TestBudgetValidationAndAggregateReads(t *testing.T){path,root:=fixture(t);for _,b:=range []Budget{{},{1,0},{0,1},{-1,1},{MaxMetadataBytes+1,1},{1,MaxCopies+1}}{fail(t,root,b,ErrInput)};raw:=registry("[]","null");put(t,path,"embedding-spaces.json",raw);fail(t,root,Budget{int64(len(raw)-1),1},ErrBudget);if _,err:=Validate(context.Background(),root,Budget{int64(len(raw)),1});err!=nil{t.Fatal(err)};copiesDir(t,path);put(t,filepath.Join(path,"knowledge-copies"),name(0),copyJSON("",hashText(""),false,false));fail(t,root,Budget{int64(len(raw)),1},ErrBudget);put(t,filepath.Join(path,"knowledge-copies"),name(1),[]byte(`{}`));fail(t,root,Budget{MaxMetadataBytes,1},ErrBudget)}
-func TestFilesystemLinksSpecialEntriesAndPrivateRoots(t *testing.T){for _,kind:=range []string{"registry-symlink","registry-hardlink","registry-fifo","copy-symlink","copy-hardlink","copy-fifo","copy-directory","copies-symlink","root-public","copies-public"}{t.Run(kind,func(t *testing.T){path,root:=fixture(t);outside:=filepath.Join(t.TempDir(),"external");if err:=os.WriteFile(outside,registry("[]","null"),0600);err!=nil{t.Fatal(err)};target:=filepath.Join(path,"embedding-spaces.json");if strings.HasPrefix(kind,"copy-"){copiesDir(t,path);target=filepath.Join(path,"knowledge-copies",name(0))};switch kind{case "registry-symlink","copy-symlink":if err:=os.Symlink(outside,target);err!=nil{t.Fatal(err)};case "registry-hardlink","copy-hardlink":if err:=os.Link(outside,target);err!=nil{t.Fatal(err)};case "registry-fifo","copy-fifo":if err:=syscall.Mkfifo(target,0600);err!=nil{t.Fatal(err)};case "copy-directory":if err:=os.Mkdir(target,0700);err!=nil{t.Fatal(err)};case "copies-symlink":if err:=os.Symlink(t.TempDir(),filepath.Join(path,"knowledge-copies"));err!=nil{t.Fatal(err)};case "root-public":if err:=os.Chmod(path,0755);err!=nil{t.Fatal(err)};case "copies-public":copiesDir(t,path);if err:=os.Chmod(filepath.Join(path,"knowledge-copies"),0755);err!=nil{t.Fatal(err)}};done:=make(chan error,1);go func(){_,err:=Validate(context.Background(),root,budget());done<-err}();select{case err:=<-done:if !errors.Is(err,ErrUnsafe){t.Fatal(err)};case <-time.After(2*time.Second):t.Fatal("unsafe entry read blocked")}})}}
-func TestLegacyAnyPresenceUnsupportedWithoutReading(t *testing.T){for _,file:=range []string{"vectors.json","vectors.json.migration-journal.json"}{for _,kind:=range []string{"file","fifo","directory","symlink"}{t.Run(file+kind,func(t *testing.T){path,root:=fixture(t);target:=filepath.Join(path,file);switch kind{case "file":put(t,path,file,[]byte("unread invalid legacy"));case "fifo":if err:=syscall.Mkfifo(target,0600);err!=nil{t.Fatal(err)};case "directory":if err:=os.Mkdir(target,0700);err!=nil{t.Fatal(err)};case "symlink":if err:=os.Symlink("missing",target);err!=nil{t.Fatal(err)}};fail(t,root,budget(),ErrLegacyUnsupported)})}};path,root:=fixture(t);put(t,path,"vectors.json.migrated",[]byte("historical opaque receipt ignored by metadata validator"));validate(t,root)}
-func TestCancellationNilAndClosedInputs(t *testing.T){_,root:=fixture(t);ctx,cancel:=context.WithCancel(context.Background());cancel();out,err:=Validate(ctx,root,budget());if !errors.Is(err,context.Canceled)||!reflect.DeepEqual(out,Summary{}){t.Fatal(out,err)};if _,err:=Validate(nil,root,budget());!errors.Is(err,ErrInput){t.Fatal(err)};if _,err:=Validate(context.Background(),nil,budget());!errors.Is(err,ErrInput){t.Fatal(err)};root.Close();fail(t,root,budget(),ErrUnsafe)}
-type steppedContext struct{context.Context;calls int;at int;action func();cancel bool}
-func(c *steppedContext)Err()error{c.calls++;if c.calls==c.at{if c.action!=nil{c.action()};if c.cancel{return context.Canceled}};if c.cancel&&c.calls>c.at{return context.Canceled};return nil}
-func TestCancellationDuringBoundedReadAndEntryMutation(t *testing.T){for _,mode:=range []string{"cancel","mutation"}{t.Run(mode,func(t *testing.T){path,root:=fixture(t);raw:=[]byte(`{"version":1,"spaces":[],"unknown":"`+strings.Repeat("x",96000)+`"}`);put(t,path,"embedding-spaces.json",raw);ctx:=&steppedContext{Context:context.Background(),at:6,cancel:mode=="cancel"};if mode=="mutation"{ctx.action=func(){file,err:=os.OpenFile(filepath.Join(path,"embedding-spaces.json"),os.O_APPEND|os.O_WRONLY,0);if err!=nil{t.Fatal(err)};if _,err:=file.Write([]byte(" "));err!=nil{t.Fatal(err)};if err:=file.Close();err!=nil{t.Fatal(err)}}};out,err:=Validate(ctx,root,budget());want:=ErrChanged;if mode=="cancel"{want=context.Canceled};if !errors.Is(err,want)||!reflect.DeepEqual(out,Summary{}){t.Fatal(out,err)}})}}
-func TestNoMutationPreservesRawBytesIdentityAndMetadata(t *testing.T){path,root:=fixture(t);copiesDir(t,path);put(t,path,"embedding-spaces.json",append([]byte(" \n"),registry("[]","null")...));put(t,filepath.Join(path,"knowledge-copies"),name(0),copyJSON("author-like SYNTHETIC Ω🙂",hashText("author-like SYNTHETIC Ω🙂"),true,false));paths:=[]string{path,filepath.Join(path,"knowledge-copies"),filepath.Join(path,"embedding-spaces.json"),filepath.Join(path,"knowledge-copies",name(0))};before:=map[string]os.FileInfo{};bytes:=map[string]string{};for _,p:=range paths{v,err:=os.Lstat(p);if err!=nil{t.Fatal(err)};before[p]=v;if v.Mode().IsRegular(){raw,err:=os.ReadFile(p);if err!=nil{t.Fatal(err)};bytes[p]=string(raw)}};validate(t,root);for _,p:=range paths{after,err:=os.Lstat(p);if err!=nil||!sameEntry(before[p],after){t.Fatal("metadata mutated",err)};if after.Mode().IsRegular(){raw,err:=os.ReadFile(p);if err!=nil||string(raw)!=bytes[p]{t.Fatal("bytes mutated",err)}}}}
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func fixture(t *testing.T) (string, *os.Root) {
+	t.Helper()
+	path := t.TempDir()
+	if err := os.Chmod(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { root.Close() })
+	return path, root
+}
+func budget() Budget { return Budget{1024 * 1024, 100} }
+func put(t *testing.T, path, name string, raw []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(path, name), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+func copiesDir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Mkdir(filepath.Join(path, "knowledge-copies"), 0700); err != nil {
+		t.Fatal(err)
+	}
+}
+func name(n int) string { return fmt.Sprintf("%064x.json", n) }
+func copyJSON(content, index string, edited, dirty bool) []byte {
+	raw, _ := json.Marshal(map[string]any{"content": content, "indexedHash": index, "edited": edited, "indexDirty": dirty})
+	return raw
+}
+func hashText(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+func registry(spaces string, active string) []byte {
+	return []byte(`{"version":1,"spaces":` + spaces + `,"activeGeneration":` + active + `}`)
+}
+func space(gen int, table, status string) string {
+	return fmt.Sprintf(`{"generation":%d,"tableName":%q,"modelFingerprint":"synthetic","vectorDimension":2,"distanceMetric":"l2","status":%q,"createdAt":"not a V8 date"}`, gen, table, status)
+}
+func validate(t *testing.T, root *os.Root) Summary {
+	t.Helper()
+	out, err := Validate(context.Background(), root, budget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+func fail(t *testing.T, root *os.Root, b Budget, want error) {
+	t.Helper()
+	out, err := Validate(context.Background(), root, b)
+	if !errors.Is(err, want) || !reflect.DeepEqual(out, Summary{}) {
+		t.Fatalf("out=%+v err=%v want=%v", out, err, want)
+	}
+}
+func TestEmptyOptionalAssetsAndPresenceDigests(t *testing.T) {
+	path, root := fixture(t)
+	empty := validate(t, root)
+	if empty.RegistryPresent || empty.CopiesPresent || empty.Copies != 0 || empty.MetadataBytes != 0 || empty.RegistrySHA256 != "" || empty.CopiesSHA256 != hashText("") {
+		t.Fatal(empty)
+	}
+	put(t, path, "embedding-spaces.json", registry("[]", "null"))
+	withRegistry := validate(t, root)
+	if !withRegistry.RegistryPresent || withRegistry.Spaces != 0 || withRegistry.MetadataSHA256 == empty.MetadataSHA256 {
+		t.Fatal(withRegistry)
+	}
+	copiesDir(t, path)
+	withCopies := validate(t, root)
+	if !withCopies.CopiesPresent || withCopies.MetadataSHA256 == withRegistry.MetadataSHA256 || withCopies.CopiesSHA256 != empty.CopiesSHA256 {
+		t.Fatal(withCopies)
+	}
+}
+func TestRegistryStatesAndLocalPointerSemantics(t *testing.T) {
+	path, root := fixture(t)
+	put(t, path, "embedding-spaces.json", registry("["+space(0, "chunks", "active")+","+space(1, "chunks__space_1", "inactive")+","+space(2, "chunks__space_2", "building")+"]", "0"))
+	out := validate(t, root)
+	if out.Spaces != 3 || out.Active != 1 || out.Inactive != 1 || out.Building != 1 {
+		t.Fatal(out)
+	}
+	put(t, path, "embedding-spaces.json", registry("["+space(0, "chunks", "inactive")+"]", "0"))
+	validate(t, root)
+	put(t, path, "embedding-spaces.json", []byte(`{"version":1,"spaces":[],"extra":{"keep":true}}`))
+	validate(t, root)
+}
+func TestRegistryIntentionalNarrowingAndInvalidDomains(t *testing.T) {
+	valid := space(0, "chunks", "active")
+	cases := map[string][]byte{"dupe generation": registry("["+valid+","+space(0, "chunks__space_1", "inactive")+"]", "0"), "dupe table": registry("["+valid+","+space(1, "chunks", "inactive")+"]", "0"), "missing pointer": registry("[]", "0"), "bad pointer": registry("[]", "\"0\""), "bad type": []byte(`[]`), "version": []byte(`{"version":2,"spaces":[]}`), "spaces null": registry("null", "null")}
+	for label, pair := range map[string][2]string{"negative generation": {"\"generation\":0", "\"generation\":-1"}, "fraction": {"\"generation\":0", "\"generation\":0.5"}, "unsafeinteger": {"\"generation\":0", "\"generation\":9007199254740992"}, "zero dimension": {"\"vectorDimension\":2", "\"vectorDimension\":0"}, "empty fingerprint": {"\"modelFingerprint\":\"synthetic\"", "\"modelFingerprint\":\"\""}, "metric": {"\"distanceMetric\":\"l2\"", "\"distanceMetric\":\"hamming\""}, "unknown table": {"\"tableName\":\"chunks\"", "\"tableName\":\"documents\""}, "table escape": {"\"tableName\":\"chunks\"", "\"tableName\":\"../chunks\""}, "status": {"\"status\":\"active\"", "\"status\":\"other\""}, "createdAt type": {"\"createdAt\":\"not a V8 date\"", "\"createdAt\":0"}} {
+		cases[label] = registry("["+strings.Replace(valid, pair[0], pair[1], 1)+"]", "null")
+	}
+	for label, raw := range cases {
+		t.Run(label, func(t *testing.T) {
+			path, root := fixture(t)
+			put(t, path, "embedding-spaces.json", raw)
+			fail(t, root, budget(), ErrInvalid)
+		})
+	}
+}
+func TestCopiedContentClassificationEditedIndependent(t *testing.T) {
+	path, root := fixture(t)
+	copiesDir(t, path)
+	for i, item := range []struct {
+		content, index string
+		edited, dirty  bool
+	}{{"plain", hashText("plain"), false, false}, {"edited legitimate current", hashText("edited legitimate current"), true, false}, {"pending change", "previoushash", true, true}, {"dirtybutmatching", hashText("dirtybutmatching"), false, true}, {"mismatch only", "", false, false}, {"case mismatch", strings.ToUpper(hashText("case mismatch")), false, false}} {
+		put(t, filepath.Join(path, "knowledge-copies"), name(i), copyJSON(item.content, item.index, item.edited, item.dirty))
+	}
+	out := validate(t, root)
+	if out.Copies != 6 || out.Current != 2 || out.Edited != 2 || out.Dirty != 2 || out.HashMismatch != 3 {
+		t.Fatal(out)
+	}
+}
+func TestExactRawDigestsAndStableFilenameByteOrdering(t *testing.T) {
+	path, root := fixture(t)
+	copiesDir(t, path)
+	raw := copyJSON("Ω🙂\\ud800", hashText("Ω🙂\\ud800"), false, false)
+	put(t, filepath.Join(path, "knowledge-copies"), name(2), raw)
+	put(t, filepath.Join(path, "knowledge-copies"), name(1), raw)
+	first := validate(t, root)
+	put(t, filepath.Join(path, "knowledge-copies"), name(1), append([]byte(" \n"), raw...))
+	second := validate(t, root)
+	if first.CopiesSHA256 == second.CopiesSHA256 || first.MetadataSHA256 == second.MetadataSHA256 || first.Current != second.Current {
+		t.Fatal(first, second)
+	}
+	if second != validate(t, root) {
+		t.Fatal("unstable summary")
+	}
+}
+func TestJSONDuplicateUTF8AndSurrogateRejection(t *testing.T) {
+	cases := [][]byte{[]byte(`{"version":1,"version":1,"spaces":[]}`), []byte(`{"version":1,"spaces":[],"x":{"a":0,"\u0061":1}}`), []byte(`{"version":1,"spaces":[],"x":"\ud800"}`), []byte(`{"version":1,"spaces":[],"x":"\udc00"}`), []byte(`{"version":1,"spaces":[],"x":"\ud800x"}`), append([]byte(`{"version":1,"spaces":[],"x":"`), 0xff)}
+	for i, raw := range cases {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			path, root := fixture(t)
+			put(t, path, "embedding-spaces.json", raw)
+			fail(t, root, budget(), ErrInvalid)
+		})
+	}
+	path, root := fixture(t)
+	put(t, path, "embedding-spaces.json", []byte(`{"version":1,"spaces":[],"unknown":"\ud83d\ude42"}`))
+	validate(t, root)
+}
+func TestCopyRequiredTypesUnknownFieldsAndNames(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"content":1,"indexedHash":"","edited":false,"indexDirty":false}`, `{"content":"","indexedHash":"","edited":0,"indexDirty":false}`, `{"content":"","indexedHash":"","edited":false,"indexDirty":null}`} {
+		t.Run(raw, func(t *testing.T) {
+			path, root := fixture(t)
+			copiesDir(t, path)
+			put(t, filepath.Join(path, "knowledge-copies"), name(0), []byte(raw))
+			fail(t, root, budget(), ErrInvalid)
+		})
+	}
+	path, root := fixture(t)
+	copiesDir(t, path)
+	put(t, filepath.Join(path, "knowledge-copies"), name(0), []byte(`{"content":"","indexedHash":"","edited":false,"indexDirty":false,"unknown":{"retained":true}}`))
+	if validate(t, root).HashMismatch != 1 {
+		t.Fatal("empty original hash must be accepted and mismatched")
+	}
+	put(t, filepath.Join(path, "knowledge-copies"), "bad-name.json", []byte(`{}`))
+	fail(t, root, budget(), ErrInvalid)
+}
+func TestBudgetValidationAndAggregateReads(t *testing.T) {
+	path, root := fixture(t)
+	for _, b := range []Budget{{}, {1, 0}, {0, 1}, {-1, 1}, {MaxMetadataBytes + 1, 1}, {1, MaxCopies + 1}} {
+		fail(t, root, b, ErrInput)
+	}
+	raw := registry("[]", "null")
+	put(t, path, "embedding-spaces.json", raw)
+	fail(t, root, Budget{int64(len(raw) - 1), 1}, ErrBudget)
+	if _, err := Validate(context.Background(), root, Budget{int64(len(raw)), 1}); err != nil {
+		t.Fatal(err)
+	}
+	copiesDir(t, path)
+	put(t, filepath.Join(path, "knowledge-copies"), name(0), copyJSON("", hashText(""), false, false))
+	fail(t, root, Budget{int64(len(raw)), 1}, ErrBudget)
+	put(t, filepath.Join(path, "knowledge-copies"), name(1), []byte(`{}`))
+	fail(t, root, Budget{MaxMetadataBytes, 1}, ErrBudget)
+}
+func TestFilesystemLinksSpecialEntriesAndPrivateRoots(t *testing.T) {
+	for _, kind := range []string{"registry-symlink", "registry-hardlink", "registry-fifo", "copy-symlink", "copy-hardlink", "copy-fifo", "copy-directory", "copies-symlink", "root-public", "copies-public"} {
+		t.Run(kind, func(t *testing.T) {
+			path, root := fixture(t)
+			outside := filepath.Join(t.TempDir(), "external")
+			if err := os.WriteFile(outside, registry("[]", "null"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(path, "embedding-spaces.json")
+			if strings.HasPrefix(kind, "copy-") {
+				copiesDir(t, path)
+				target = filepath.Join(path, "knowledge-copies", name(0))
+			}
+			switch kind {
+			case "registry-symlink", "copy-symlink":
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			case "registry-hardlink", "copy-hardlink":
+				if err := os.Link(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			case "registry-fifo", "copy-fifo":
+				if err := syscall.Mkfifo(target, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "copy-directory":
+				if err := os.Mkdir(target, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "copies-symlink":
+				if err := os.Symlink(t.TempDir(), filepath.Join(path, "knowledge-copies")); err != nil {
+					t.Fatal(err)
+				}
+			case "root-public":
+				if err := os.Chmod(path, 0755); err != nil {
+					t.Fatal(err)
+				}
+			case "copies-public":
+				copiesDir(t, path)
+				if err := os.Chmod(filepath.Join(path, "knowledge-copies"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := make(chan error, 1)
+			go func() { _, err := Validate(context.Background(), root, budget()); done <- err }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, ErrUnsafe) {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("unsafe entry read blocked")
+			}
+		})
+	}
+}
+func TestLegacyAnyPresenceUnsupportedWithoutReading(t *testing.T) {
+	for _, file := range []string{"vectors.json", "vectors.json.migration-journal.json"} {
+		for _, kind := range []string{"file", "fifo", "directory", "symlink"} {
+			t.Run(file+kind, func(t *testing.T) {
+				path, root := fixture(t)
+				target := filepath.Join(path, file)
+				switch kind {
+				case "file":
+					put(t, path, file, []byte("unread invalid legacy"))
+				case "fifo":
+					if err := syscall.Mkfifo(target, 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "directory":
+					if err := os.Mkdir(target, 0700); err != nil {
+						t.Fatal(err)
+					}
+				case "symlink":
+					if err := os.Symlink("missing", target); err != nil {
+						t.Fatal(err)
+					}
+				}
+				fail(t, root, budget(), ErrLegacyUnsupported)
+			})
+		}
+	}
+	path, root := fixture(t)
+	put(t, path, "vectors.json.migrated", []byte("historical opaque receipt ignored by metadata validator"))
+	validate(t, root)
+}
+func TestCancellationNilAndClosedInputs(t *testing.T) {
+	_, root := fixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out, err := Validate(ctx, root, budget())
+	if !errors.Is(err, context.Canceled) || !reflect.DeepEqual(out, Summary{}) {
+		t.Fatal(out, err)
+	}
+	if _, err := Validate(nil, root, budget()); !errors.Is(err, ErrInput) {
+		t.Fatal(err)
+	}
+	if _, err := Validate(context.Background(), nil, budget()); !errors.Is(err, ErrInput) {
+		t.Fatal(err)
+	}
+	root.Close()
+	fail(t, root, budget(), ErrUnsafe)
+}
+
+type steppedContext struct {
+	context.Context
+	calls  int
+	at     int
+	action func()
+	cancel bool
+}
+
+func (c *steppedContext) Err() error {
+	c.calls++
+	if c.calls == c.at {
+		if c.action != nil {
+			c.action()
+		}
+		if c.cancel {
+			return context.Canceled
+		}
+	}
+	if c.cancel && c.calls > c.at {
+		return context.Canceled
+	}
+	return nil
+}
+func TestCancellationDuringBoundedReadAndEntryMutation(t *testing.T) {
+	for _, mode := range []string{"cancel", "mutation"} {
+		t.Run(mode, func(t *testing.T) {
+			path, root := fixture(t)
+			raw := []byte(`{"version":1,"spaces":[],"unknown":"` + strings.Repeat("x", 96000) + `"}`)
+			put(t, path, "embedding-spaces.json", raw)
+			ctx := &steppedContext{Context: context.Background(), at: 6, cancel: mode == "cancel"}
+			if mode == "mutation" {
+				ctx.action = func() {
+					file, err := os.OpenFile(filepath.Join(path, "embedding-spaces.json"), os.O_APPEND|os.O_WRONLY, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := file.Write([]byte(" ")); err != nil {
+						t.Fatal(err)
+					}
+					if err := file.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			out, err := Validate(ctx, root, budget())
+			want := ErrChanged
+			if mode == "cancel" {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || !reflect.DeepEqual(out, Summary{}) {
+				t.Fatal(out, err)
+			}
+		})
+	}
+}
+func TestNoMutationPreservesRawBytesIdentityAndMetadata(t *testing.T) {
+	path, root := fixture(t)
+	copiesDir(t, path)
+	put(t, path, "embedding-spaces.json", append([]byte(" \n"), registry("[]", "null")...))
+	put(t, filepath.Join(path, "knowledge-copies"), name(0), copyJSON("author-like SYNTHETIC Ω🙂", hashText("author-like SYNTHETIC Ω🙂"), true, false))
+	paths := []string{path, filepath.Join(path, "knowledge-copies"), filepath.Join(path, "embedding-spaces.json"), filepath.Join(path, "knowledge-copies", name(0))}
+	before := map[string]os.FileInfo{}
+	bytes := map[string]string{}
+	for _, p := range paths {
+		v, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[p] = v
+		if v.Mode().IsRegular() {
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bytes[p] = string(raw)
+		}
+	}
+	validate(t, root)
+	for _, p := range paths {
+		after, err := os.Lstat(p)
+		if err != nil || !sameEntry(before[p], after) {
+			t.Fatal("metadata mutated", err)
+		}
+		if after.Mode().IsRegular() {
+			raw, err := os.ReadFile(p)
+			if err != nil || string(raw) != bytes[p] {
+				t.Fatal("bytes mutated", err)
+			}
+		}
+	}
+}

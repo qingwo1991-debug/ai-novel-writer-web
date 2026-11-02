@@ -57,7 +57,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err:=save(filepath.Join(root, "native-restored-export.json"), reexported);err!=nil{return err};return runStaged(ctx,root)
+	if err := save(filepath.Join(root, "native-restored-export.json"), reexported); err != nil {
+		return err
+	}
+	return runStaged(ctx, root)
 }
 func save(path string, value any) error {
 	data, err := json.Marshal(value)
