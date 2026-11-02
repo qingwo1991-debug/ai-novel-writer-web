@@ -112,6 +112,10 @@ jobs:
           printf 'GO_CHARACTERS_CONTRACT=%s\n' "$GO_CHARACTERS_CONTRACT" >> "$GITHUB_ENV"
           node ./contract/characters-contract.mjs
           test -s "$GO_CHARACTERS_CONTRACT"
+          export GO_GENERATION_LEDGER_CONTRACT="$RUNNER_TEMP/novel-go-generation-ledger/contract.json"
+          printf 'GO_GENERATION_LEDGER_CONTRACT=%s\n' "$GO_GENERATION_LEDGER_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/generation-ledger-contract.mjs
+          test -s "$GO_GENERATION_LEDGER_CONTRACT"
           test -s "$GO_BLUEPRINT_CONTRACT"
           node ./contract/plottree-contract.mjs
           node --import ./contract/register-typescript.mjs ./contract/plottree-validation-contract.mjs

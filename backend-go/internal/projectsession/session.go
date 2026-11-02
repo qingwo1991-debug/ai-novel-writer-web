@@ -177,6 +177,16 @@ func(m *Manager)BeginCharacters(ctx context.Context,owner Owner,expected Context
   done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
   return store.NewCharacters(mounted.db),done,nil
 }
+// BeginGenerationLedger lends an internal ordinary-run ledger in the private copy.
+// The lease is not generation epoch/source admission or author-write authority.
+// No renderer handler exposes this primitive; planning/effects require separate owners.
+func(m *Manager)BeginGenerationLedger(ctx context.Context,owner Owner,expected Context)(*store.GenerationLedger,func(),error){
+ if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
+ m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
+ mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
+ done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
+ return store.NewGenerationLedger(mounted.db,nil,nil),done,nil
+}
 func(m *Manager)Release(owner Owner,expected Context)error{
  m.mu.Lock();defer m.mu.Unlock();if m.closed{return ErrClosed};if !owner.valid(){return ErrContext}
  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}
