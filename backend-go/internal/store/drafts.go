@@ -152,6 +152,47 @@ func (r *Drafts) GetMeta(ctx context.Context, id int64) (*DraftMeta, error) {
 	return &metas[0], nil
 }
 
+// GetLatestByChapter returns metadata, not content, just like the original
+// DraftRepository. Deliberately do not add an ID tiebreak: its query orders only
+// by version, unlike the authoritative-finalized dependency check.
+func (r *Drafts) GetLatestByChapter(ctx context.Context, chapterNumber int64) (*DraftMeta, error) {
+	metas, err := r.list(ctx, " WHERE d.chapter_number = ? ORDER BY d.version DESC LIMIT 1", chapterNumber)
+	if err != nil || len(metas) == 0 {
+		return nil, err
+	}
+	return &metas[0], nil
+}
+
+// GetFinalizedByChapter excludes superseded and all working/unknown statuses.
+// Selection and dependency metadata share the same read transaction.
+func (r *Drafts) GetFinalizedByChapter(ctx context.Context, chapterNumber int64) (*DraftMeta, error) {
+	metas, err := r.list(ctx, " WHERE d.chapter_number = ? AND d.status = 'finalized' ORDER BY d.version DESC LIMIT 1", chapterNumber)
+	if err != nil || len(metas) == 0 {
+		return nil, err
+	}
+	return &metas[0], nil
+}
+
+// GetMaxFinalizedChapter returns the maximum exact-finalized chapter, or zero
+// when MAX has no non-NULL value. Existing zero/negative maxima are not clamped.
+func (r *Drafts) GetMaxFinalizedChapter(ctx context.Context) (int64, error) {
+	var chapter sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, "SELECT MAX(chapter_number) FROM drafts WHERE status = 'finalized'").Scan(&chapter); err != nil {
+		return 0, err
+	}
+	return chapter.Int64, nil
+}
+
+// GetNextVersion is a read-only hint, not a version reservation. All statuses
+// participate, and only a NULL maximum falls back to zero before adding one.
+func (r *Drafts) GetNextVersion(ctx context.Context, chapterNumber int64) (int64, error) {
+	var version sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, "SELECT MAX(version) FROM drafts WHERE chapter_number = ?", chapterNumber).Scan(&version); err != nil {
+		return 0, err
+	}
+	return version.Int64 + 1, nil
+}
+
 func (r *Drafts) GetFull(ctx context.Context, id int64) (*DraftFull, error) {
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {

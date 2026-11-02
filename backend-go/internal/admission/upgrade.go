@@ -37,7 +37,7 @@ const m06ReviewCycleMergeSQL = `CREATE TABLE review_cycle_merges (
 // On the empty lane its proof/backfill is vacuous. Existing M02 identity, exact
 // trusted v6/v7 fingerprints, integrity/FK checks, and logical preservation of
 // every pre-existing user table are required inside one immediate transaction.
-// The 64MiB logical-proof limit is inherited from VerifySnapshotWithDomain.
+// Logical proof uses private external sorting; single encoded rows cap at64MiB.
 //
 // The DDL and user_version commit together only after all transactional checks.
 // A final read-only VerifySnapshotWithDomain returns fresh v7 evidence. A final

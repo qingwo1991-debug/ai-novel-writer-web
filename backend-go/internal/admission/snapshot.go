@@ -107,8 +107,8 @@ func VerifySnapshot(ctx context.Context, path string, expected SchemaContract) (
 }
 // VerifySnapshotWithDomain adds the original migration lane's logical row proof.
 // It is deliberately opt-in: opening current projects must not sort all author
-// text in memory merely to inspect their schema. This temporary implementation
-// fails closed above 64MiB encoded rows; external sorting is still required.
+// text merely to inspect their schema. Logical rows use bounded sorted spill
+// runs in private temporary directories; a single encoded row is capped at64MiB.
 func VerifySnapshotWithDomain(ctx context.Context,path string,expected SchemaContract)(Evidence,error){
  return verifySnapshot(ctx,path,expected,true)
 }

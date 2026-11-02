@@ -52,5 +52,16 @@ func TestBrowserWireDraftCASOnAdmittedScratchSession(t *testing.T){
   value,ok:=result["result"].(map[string]any);if !ok{t.Errorf("CAS envelope %+v",result);return};mu.Lock();defer mu.Unlock();if value["success"]==true{wins++}else if value["errorCode"]=="DRAFT_CONTENT_CONFLICT"{conflicts++}else{t.Errorf("unexpected CAS %+v",value)}
  })};wg.Wait();if wins!=1||conflicts!=1{t.Fatal("full-body CAS lost update",wins,conflicts)}
  status,result=invoke("db:draft-get-full",tab,[]any{1,project.Path(),expected});if status!=200{t.Fatal(status,result)};encoded,_:=json.Marshal(result);if !strings.Contains(string(encoded),"browser body"){t.Fatal(result)}
+ for _,op:=range []string{"db:draft-get-latest","db:draft-get-finalized","db:draft-next-version","db:draft-get-max-finalized-chapter"}{
+  args:=[]any{1,project.Path(),expected};if op=="db:draft-get-max-finalized-chapter"{args=[]any{project.Path(),expected}}
+  status,result:=invoke(op,tab,args);if status!=200{t.Fatal(op,status,result)}
+  switch op{
+  case "db:draft-get-latest":meta,ok:=result["result"].(map[string]any);if !ok||meta["id"]!=float64(1)||meta["content"]!=nil{t.Fatal("latest metadata shape",result)}
+  case "db:draft-get-finalized":if result["result"]!=nil{t.Fatal("working draft finalized",result)}
+  case "db:draft-next-version":if result["result"]!=float64(2){t.Fatal("next version",result)}
+  case "db:draft-get-max-finalized-chapter":if result["result"]!=float64(0){t.Fatal("max finalized",result)}
+  }
+  if status,result:=invoke(op,"synthetic-browser-tab-0002",args);status==200{t.Fatal("new draft query cross-tab leak",op,result)}
+ }
  after,err:=os.ReadFile(source);if err!=nil||!bytes.Equal(original,after){t.Fatal("HTTP mutated original project",err)}
 }

@@ -27,19 +27,22 @@ const domainProofs = []
 for (const [name, donor, version] of [
   ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6], ['donor-v6', true, 6],
   ['baseline-v6-upgraded-v7', false, 7], ['donor-v6-upgraded-v7', true, 7],
+  ['baseline-v4',false,4],['donor-v4',true,4],['baseline-v5',false,5],['donor-v5',true,5],
+  ['baseline-v4-upgraded-v5',false,5],['donor-v4-upgraded-v5',true,5],
+  ['baseline-v5-upgraded-v6',false,6],['donor-v5-upgraded-v6',true,6],
 ]) {
   const file = name + '.db'
   const filename = path.join(directory, file)
   assert(!existsSync(filename), 'never open an existing database')
   // Expected upgrades start from the EXACT closed v6 bytes, not a separately
   // initialized database whose metadata timestamps/default rows may differ.
-  const upgraded = name.includes('-upgraded-')
-  if (upgraded) copyFileSync(path.join(directory, name.replace('-v6-upgraded-v7', '-v6') + '.db'), filename, constants.COPYFILE_EXCL)
+  const upgraded = name.match(/^(baseline|donor)-v(\d+)-upgraded-v(\d+)$/u)
+  if (upgraded) copyFileSync(path.join(directory, `${upgraded[1]}-v${upgraded[2]}.db`), filename, constants.COPYFILE_EXCL)
   const db = new Database(filename)
   try {
     db.pragma('foreign_keys=ON')
     if (upgraded) {
-      migrateSchema(new SqliteSchemaAdapter(db), registry, 7)
+      migrateSchema(new SqliteSchemaAdapter(db), registry, version)
     } else {
     // Pass an explicit public synthetic key. No application credentials or
     // source identity key from the host can be loaded by baseline backfills.
@@ -53,7 +56,7 @@ for (const [name, donor, version] of [
       db.exec(sql)
       db.exec('DROP TABLE characters_without_avatar')
     }
-    migrateSchema(new SqliteSchemaAdapter(db), registry, name.includes('-upgraded-') ? 6 : version)
+    migrateSchema(new SqliteSchemaAdapter(db), registry, version)
     db.prepare('INSERT INTO contents(body,created_at) VALUES(?,?)').run('Go 合成兼容样例 😀 <&>\u2028\u2029', '2026-01-01 00:00:00')
     }
     verifySchema(new SqliteSchemaAdapter(db), registry, version)
@@ -83,6 +86,22 @@ try {
     tableCounts: { values_test: encoded.length }, authorContentHash: createHash('sha256').update(JSON.stringify(['values_test', encoded])).digest('hex'),
   } })
 } finally { values.close() }
+// CI-only >64MiB logical proof oracle. This tests total-row spilling, not a
+// single oversized row. No production recognized schema is extended.
+const largeFile = 'domain-large.db'
+const large = new Database(path.join(directory, largeFile))
+try {
+  large.exec('CREATE TABLE large_rows (body TEXT NOT NULL); PRAGMA user_version=7')
+  const insert = large.prepare('INSERT INTO large_rows(body) VALUES(?)')
+  const payload = 'x'.repeat(256 * 1024)
+  large.transaction(() => { for (let i = 0; i < 280; i++) insert.run(`${String((i * 97) % 281).padStart(3, '0')}:${payload}`) })()
+  const rows = large.prepare('SELECT * FROM large_rows').raw().all().map(row => JSON.stringify(row)).sort()
+  assert(rows.reduce((sum, row) => sum + Buffer.byteLength(row), 0) > 64 * 1024 * 1024)
+  const digest = createHash('sha256').update('["large_rows",[')
+  for (let i = 0; i < rows.length; i++) { if (i) digest.update(','); digest.update(JSON.stringify(rows[i])) }
+  digest.update(']]')
+  writeFileSync(path.join(directory, 'large-domain-proof.json'), JSON.stringify({ file: largeFile, fingerprint: sqliteSchemaFingerprint(large), domain: { tableCounts: { large_rows: rows.length }, authorContentHash: digest.digest('hex') } }) + '\n', { flag: 'wx', mode: 0o600 })
+} finally { large.close() }
 writeFileSync(path.join(directory, 'domain-proofs.json'), JSON.stringify(domainProofs) + '\n', { flag: 'wx', mode: 0o600 })
 writeFileSync(target, JSON.stringify({
   formatVersion: 1,
