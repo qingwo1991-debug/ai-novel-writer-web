@@ -15,6 +15,7 @@ func rosterFixture(t *testing.T) (*sql.DB, *Characters) {
  t.Helper()
  db, _, _ := narrativeFixture(t)
  mustExec(t, db, `UPDATE characters SET retired=1;
+ INSERT OR IGNORE INTO project_core(id) VALUES('main');
  UPDATE character_identity_meta SET revision=17 WHERE id='main';
  UPDATE project_core SET writing_language='zh-CN',characters_arch='' WHERE id='main';
  UPDATE character_roster_meta SET revision=11,migration_state='empty',legacy_markdown='',projection_hash='',fact_hash='' WHERE id='main'`)

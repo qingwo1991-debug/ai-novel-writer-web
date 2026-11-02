@@ -62,7 +62,7 @@ func TestCharactersActualPrivateSessionSourceProofAndIdentityWire(t *testing.T){
   if err:=json.Unmarshal(w.Body.Bytes(),&result);err!=nil{t.Fatal(err)};return w.Code,result
  }
  cookie,csrf:=bootstrap();const tab="synthetic-characters-tab-0001"
- if status,_:=invoke(cookie,csrf,tab,"config:get",nil);status!=200{t.Fatal(status)}
+ if status,_:=invoke(cookie,csrf,tab,"config:get",[]any{});status!=200{t.Fatal(status)}
  owner:=Owner{caller.SessionID,caller.ClientID}
  expected,err:=manager.OpenScratchCopy(context.Background(),owner,project,contract,t.TempDir(),32<<20);if err!=nil{t.Fatal(err)}
  call:=func(op string,args ...any)any{
