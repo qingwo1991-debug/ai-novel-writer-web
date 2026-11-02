@@ -253,7 +253,7 @@ pending('multiple-created-time-then-operation-id', db => {
   syncPatch(db, { created_at: EARLY }, 'blueprint-sync-z')
 })
 pending('backfill-missing-sync-on-read', db => seedOrphanLedger(db))
-pending('backfill-two-with-one-already-present', db => { seedOrphanLedger(db); seedCommit(db, { operationId: 'second' }) })
+pending('backfill-two-with-one-already-present', db => { seedCommit(db); seedCommit(db, { operationId: 'second' }); db.prepare("DELETE FROM blueprint_character_sync_operations WHERE blueprint_commit_operation_id='synthetic-blueprint'").run() })
 pending('backfill-malformed-original-commit-input', db => { seedOrphanLedger(db); commitPatch(db, { character_sync_input: '{bad' }) })
 pending('malformed-sync-input-json', db => { seedCommit(db); syncPatch(db, { character_sync_input: '{bad' }) })
 pending('nonarray-sync-input-object', db => { seedCommit(db); syncPatch(db, { character_sync_input: '{}' }) })
