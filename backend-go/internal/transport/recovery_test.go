@@ -45,7 +45,7 @@ func recoveryTransportDB(t *testing.T) (*sql.DB, *store.Recovery) {
 func recoveryTransportInput() map[string]any {
 	return map[string]any{
 		"runId": "run-1", "stepId": "step-1", "chapterNumber": float64(1), "chapterTitle": " 第一章 ",
-		"source": map[string]any{"chapterNumber": float64(1), "title": "第一章", "role": "开篇", "purpose": "目标", "keyEvents": "事件", "characters": []any{"甲"}},
+		"source":      map[string]any{"chapterNumber": float64(1), "title": "第一章", "role": "开篇", "purpose": "目标", "keyEvents": "事件", "characters": []any{"甲"}},
 		"sourceDraft": nil, "visibleText": " <think>private model reasoning</think>正文😀 ",
 		"failureCode": " INTERRUPTED ", "failureReason": " 连接断开 ",
 	}
@@ -170,7 +170,11 @@ func TestRecoveryRejectsMalformedBodiesBeforeBorrowing(t *testing.T) {
 		mutation(input)
 		requireDraftFailure(t, draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", "db:recovery-candidate-record", input, path, expected), "INVALID_ARGUMENTS")
 	}
-	for _, row := range []struct { name string; args []any; code string }{
+	for _, row := range []struct {
+		name string
+		args []any
+		code string
+	}{
 		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path}, "INVALID_ARGUMENTS"},
 		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path, nil}, "PROJECT_SESSION_REQUIRED"},
 		{"db:recovery-candidate-record", []any{recoveryTransportInput(), path, map[string]any{"projectId": "project", "leaseId": "lease", "projectPath": path, "extra": true}}, "PROJECT_SESSION_REQUIRED"},
@@ -219,8 +223,14 @@ func TestRecoveryHTTPAuthOwnershipAndStaleSource(t *testing.T) {
 	}
 	args := []any{expected["projectPath"], expected}
 	body, err := json.Marshal(map[string]any{"args": args})
-	if err != nil { t.Fatal(err) }
-	for _, row := range []struct { headers map[string]string; status int; code string }{
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		headers map[string]string
+		status  int
+		code    string
+	}{
 		{map[string]string{"X-Novel-User": ""}, 401, "AUTHENTICATION_REQUIRED"},
 		{map[string]string{"X-Client-Id": ""}, 400, "CLIENT_ID_REQUIRED"},
 		{map[string]string{"X-CSRF-Token": "bad"}, 403, "CSRF_DENIED"},
@@ -229,8 +239,14 @@ func TestRecoveryHTTPAuthOwnershipAndStaleSource(t *testing.T) {
 	} {
 		requireDraftHTTPError(t, rpc(t, server, cookie, csrf, "db:recovery-candidate-list", string(body), row.headers), row.status, row.code)
 	}
-	if begins.Load() != 0 { t.Fatal("HTTP denial reached provider") }
-	for _, row := range []struct { cookie *http.Cookie; csrf, tab string; context map[string]any }{
+	if begins.Load() != 0 {
+		t.Fatal("HTTP denial reached provider")
+	}
+	for _, row := range []struct {
+		cookie    *http.Cookie
+		csrf, tab string
+		context   map[string]any
+	}{
 		{cookie, csrf, "synthetic-tab-other", expected},
 		{otherCookie, otherCSRF, owner.ClientID, expected},
 		{cookie, csrf, owner.ClientID, draftContext("project", "old-lease", "/synthetic/recovery")},
@@ -242,13 +258,17 @@ func TestRecoveryHTTPAuthOwnershipAndStaleSource(t *testing.T) {
 	created := draftResult(t, draftRPC(t, server, cookie, csrf, owner.ClientID, "db:recovery-candidate-record", recoveryTransportInput(), expected["projectPath"], expected)).(map[string]any)
 	id := created["candidate"].(map[string]any)["candidateId"]
 	draftExec(t, db, "UPDATE blueprints SET purpose='changed' WHERE chapter_number=1")
-	for _, row := range []struct { operation, text string }{{"db:recovery-candidate-update", "edited"}, {"db:recovery-candidate-resolve", "continued"}} {
+	for _, row := range []struct{ operation, text string }{{"db:recovery-candidate-update", "edited"}, {"db:recovery-candidate-resolve", "continued"}} {
 		requireDraftFailure(t, draftRPC(t, server, cookie, csrf, owner.ClientID, row.operation, id, row.text, expected["projectPath"], expected), "RECOVERY_CANDIDATE_SOURCE_CHANGED")
 	}
 	listed := draftResult(t, draftRPC(t, server, cookie, csrf, owner.ClientID, "db:recovery-candidate-list", args...)).([]any)
-	if len(listed) != 1 || listed[0].(map[string]any)["sourceCurrent"] != false { t.Fatal(listed) }
+	if len(listed) != 1 || listed[0].(map[string]any)["sourceCurrent"] != false {
+		t.Fatal(listed)
+	}
 	resolved := draftResult(t, draftRPC(t, server, cookie, csrf, owner.ClientID, "db:recovery-candidate-resolve", id, "discarded", expected["projectPath"], expected))
-	if !reflect.DeepEqual(resolved, map[string]any{"success": true}) { t.Fatal(resolved) }
+	if !reflect.DeepEqual(resolved, map[string]any{"success": true}) {
+		t.Fatal(resolved)
+	}
 }
 
 func TestRecoveryProviderErrorsReleaseAndRedact(t *testing.T) {
@@ -266,18 +286,26 @@ func TestRecoveryProviderErrorsReleaseAndRedact(t *testing.T) {
 		var releases int
 		if err := server.BindRecovery(RecoveryProviderFunc(func(context.Context, Caller, any) (*store.Recovery, func(), error) {
 			return nil, func() { releases++ }, failure
-		})); err != nil { t.Fatal(err) }
+		})); err != nil {
+			t.Fatal(err)
+		}
 		cookie, csrf := bootstrap(t, server)
 		for _, operation := range []string{"db:recovery-candidate-list", "db:recovery-candidate-record"} {
 			args := []any{expected["projectPath"], expected}
-			if operation == "db:recovery-candidate-record" { args = append([]any{recoveryTransportInput()}, args...) }
+			if operation == "db:recovery-candidate-record" {
+				args = append([]any{recoveryTransportInput()}, args...)
+			}
 			response := draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", operation, args...)
 			if strings.Contains(response.Body.String(), "private") || strings.Contains(response.Body.String(), "PRIVATE_SECRET") || strings.Contains(response.Body.String(), "book.sqlite") {
 				t.Fatal("provider diagnostic leaked", response.Body.String())
 			}
-			if operation == "db:recovery-candidate-record" { requireDraftFailure(t, response, recoveryCode(failure)) }
+			if operation == "db:recovery-candidate-record" {
+				requireDraftFailure(t, response, recoveryCode(failure))
+			}
 		}
-		if releases != 2 { t.Fatal("provider returned hold plus error was not released", releases) }
+		if releases != 2 {
+			t.Fatal("provider returned hold plus error was not released", releases)
+		}
 	}
 }
 
@@ -292,13 +320,23 @@ func TestRecoveryRecordCloneAndFrozenIdentity(t *testing.T) {
 		expected["projectId"] = "renderer-mutated"
 		input["runId"] = "renderer-mutated"
 		input["source"].(map[string]any)["title"] = "renderer-mutated"
-		if raw.(map[string]any)["projectId"] != "frozen-project" { t.Fatal(raw) }
+		if raw.(map[string]any)["projectId"] != "frozen-project" {
+			t.Fatal(raw)
+		}
 		return repository, func() {}, nil
-	})); err != nil { t.Fatal(err) }
+	})); err != nil {
+		t.Fatal(err)
+	}
 	value, err := server.handlers["db:recovery-candidate-record"](context.Background(), Caller{}, []any{input, expected["projectPath"], expected})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := value.(map[string]any)
-	if result["success"] != true { t.Fatal(result) }
+	if result["success"] != true {
+		t.Fatal(result)
+	}
 	candidate := result["candidate"].(map[string]any)
-	if candidate["projectId"] != "frozen-project" || candidate["runId"] != "run-1" || candidate["sourceCurrent"] != true { t.Fatal(candidate) }
+	if candidate["projectId"] != "frozen-project" || candidate["runId"] != "run-1" || candidate["sourceCurrent"] != true {
+		t.Fatal(candidate)
+	}
 }

@@ -1,5 +1,11 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十一轮：恢复候选正文与来源身份保护
+
+最终资格源码`8d890fb6d1995a1f2810e932abce9fc7fc91b605`，[41449598057](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41449598057) **success：450顶层/4237含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。恢复候选新增15顶层/70含子用例PASS、0fail/skip。原仓储实际55case差分、原始候选全字段后状态、Unicode有序sourceHash/contentHash、legacy sourceDraft captured bit、最新draft id/version身份检查、正文过滤/编辑、replacement边界与continued/discarded原版不对称语义。实际OpenScratchCopy→认证四项HTTP→蓝图变更拒绝edit/continue→discard→revoke→作者源fixture bytes不变通过。vet/race/原凭据decrypt/build/PATH无Node smoke均通过；精确测试计数见下面本轮证据文件。
+
+首轮`7e880e03`，[41448240304](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41448240304)成功，450top/4237all PASS、0fail、3foreign-owner testskip、18packages。随后只读审查补强原始上下文恰好3fields（额外key不得被共享parser静默丢弃）和typed-nil HTTPError防panic/有限脱敏；中间`81166ff5` [41449262813](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41449262813)被后续push取消，不计通过；两项新增回归包含最终完整资格，没有失败测试被当成通过。`sourceCurrent`忠实原语义仅draft id/version，不等价正文CAS；continued只处置metadata，不授予AI继续或合并权威。四row仅→IN PROGRESS，**2/62/217**，main/production不变，不重验未变native Lance。详见[GO-RECOVERY-CANDIDATES.md](GO-RECOVERY-CANDIDATES.md)和[evidence/go-recovery-candidates-round21.json](evidence/go-recovery-candidates-round21.json)。
+
 ## 第二十轮：原生embedding双协议与UTF16分块
 
 资格源码`7a2e50c6ca72c1bfb29b6ae4bd8d06f3e641026d`，普通[41443533098](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41443533098) **success：435顶层/4167含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。embedding新包21顶层/428含子用例全通过、0fail/skip；原TS真实38response+16URL/body+12batch+240chunk共306差分case，12batch另以真实nativeegress HTTP重放。vet/race/原凭据解密/build/noNode smoke通过。

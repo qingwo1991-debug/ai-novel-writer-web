@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "round": 21,
+  "objective": "native Go recovery candidate repository and four authenticated operations in admitted private-copy sessions only",
+  "qualifiedSource": "8d890fb6d1995a1f2810e932abce9fc7fc91b605",
+  "qualifiedRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41449598057",
+  "conclusion": "success",
+  "ordinaryGo": {
+    "topLevelPassed": 450,
+    "includingSubtestsPassed": 4237,
+    "failedEvents": 0,
+    "testSkipped": 3,
+    "packagesPassed": 18,
+    "packageWithoutTests": "cmd/novel-server",
+    "skips": [
+      "projectaccess/TestScratchConfigurationForeignOwnerRejectedWithoutRepair",
+      "writerlock/TestLegacyRejectUnsafeEntriesWithoutMutation/foreign-owner",
+      "writerlock/TestRejectUnsafeLockEntriesWithoutMutation/foreign-owner"
+    ],
+    "recoveryTopLevelPassed": 15,
+    "recoveryIncludingSubtestsPassed": 70,
+    "recoveryFailedOrSkipped": 0,
+    "originalRepositoryCases": 55,
+    "vet": "pass",
+    "race": "pass",
+    "originalCredentialDecrypt": "pass",
+    "build": "pass",
+    "noNodeSmoke": "pass"
+  },
+  "oracle": {
+    "actualOriginalRepository": "electron/repositories/recovery-candidate-repository.ts",
+    "actualRecursiveBusinessDependencies": true,
+    "environmentSeam": "getProjectDb selects each actual synthetic before DB; getCurrentProjectPath=null deliberately selects inactive portable freeze",
+    "baseline": "actual original SQLite v7 migration fixture, byte-for-byte copied before each case",
+    "compared": ["complete successful return values", "original error strings", "all recovery_candidates raw post-state fields", "byte equality for reads and error paths"],
+    "normalization": ["random candidate UUIDs map by raw rowid order", "created_at/resolved_at/createdAt/resolvedAt clocks excluded"],
+    "sourceAndBodyHashesNotNormalized": true,
+    "notClaimed": "portable frozen projections, malformed dynamic JS source types, arbitrary author datasets, trigger behavior equivalence"
+  },
+  "protectedBehavior": [
+    "fixed-order eight-field JS source JSON SHA256, Unicode and non-HTML-escaped strings",
+    "visible-only think filtering, ECMAScript trim and SHA256 body integrity",
+    "source_draft_identity_captured legacy refusal, exact latest draft id/version and current blueprint hash",
+    "same run/project/chapter replacement restriction",
+    "single connection BEGIN IMMEDIATE check/write/readback and rollback on errors/cancellation",
+    "strict cloned request shapes, exactly three frozen context fields, trusted projectId injection",
+    "cookie/CSRF/origin/tab/lease/path identity, whole-call release and typed-nil error redaction",
+    "real OpenScratchCopy to HTTP CRUD/disposition, stale-source denial, revocation, original source fixture unchanged"
+  ],
+  "explicitLimits": [
+    "main does not bind these handlers; no deployment or durable author saving",
+    "sourceCurrent uses id/version metadata, not full-body CAS; editing same-id/version draft body does not change original currentness semantics",
+    "continued only marks metadata with original source-current check, not integrity/AI execution authority; discarded allows corrupt or stale cleanup",
+    "record is not an idempotent generation receipt; replacement does not resolve old candidate",
+    "no AI failed-run auto-capture/continue/merge, generation root ownership or finalization linkage",
+    "portable authority projects rejected by preceding admission; no runtime historical-row exemption",
+    "typed UTF8/string-array and per-field 32MiB input bounds; surrogate-splitting failure-field truncation explicitly rejected",
+    "native Lance unchanged and not requalified in this round"
+  ],
+  "priorRuns": [
+    {"source": "7e880e038c237dacd72d73e77c0971410b6ea424", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41448240304", "conclusion": "success", "topPassed": 450, "allPassed": 4237},
+    {"source": "81166ff5ab10d893da3bce7c66a76615df6c6e23", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41449262813", "conclusion": "cancelled after newer push", "countedAsQualified": false}
+  ],
+  "postQualificationChanges": "evidence/docs and GitHub-generated formatting of round21 new Go files only; no local Go/Rust/gofmt/tests or Oracle execution; final documentation SHA not independently recompiled",
+  "operationStatus": {"implemented": 2, "inProgress": 62, "notStarted": 217, "total": 281},
+  "productionChanged": false
+}

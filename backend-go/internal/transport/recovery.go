@@ -34,7 +34,7 @@ func (s *Server) BindRecovery(provider RecoveryProvider) error {
 		return errors.New("RECOVERY_PROVIDER_REQUIRED")
 	}
 	operations := []struct {
-		name string
+		name             string
 		arity, pathIndex int
 	}{
 		{"db:recovery-candidate-record", 3, 1},
