@@ -1,0 +1,89 @@
+{
+  "format": 1,
+  "round": 22,
+  "objective": "native Go legacy summary snapshots and finalized continuity/source reads, isolated private-copy sessions",
+  "qualifiedSource": "02c04cb6fa2e4202cf8f80eeb95aea6a2699bbb5",
+  "qualifiedRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41457578715",
+  "conclusion": "success",
+  "ordinaryGo": {
+    "topLevelPassed": 469,
+    "includingSubtestsPassed": 4397,
+    "failedEvents": 0,
+    "testSkipped": 3,
+    "packagesPassed": 18,
+    "packageWithoutTests": "cmd/novel-server",
+    "skips": [
+      "projectaccess/TestScratchConfigurationForeignOwnerRejectedWithoutRepair",
+      "writerlock/TestLegacyRejectUnsafeEntriesWithoutMutation/foreign-owner",
+      "writerlock/TestRejectUnsafeLockEntriesWithoutMutation/foreign-owner"
+    ],
+    "summaryTopLevelPassed": 19,
+    "summaryIncludingSubtestsPassed": 160,
+    "summaryFailedOrSkipped": 0,
+    "actualOriginalSummaryCases": 141,
+    "separateStrongerAtomicFixtures": 1,
+    "vet": "pass",
+    "race": "pass",
+    "originalCredentialDecrypt": "pass",
+    "build": "pass",
+    "noNodeSmoke": "pass"
+  },
+  "parallelAgents": {
+    "store": "810531bc-d9c9-48dd-a3e8-eb5e1e10070b",
+    "transport": "4481758f-4d4d-4328-8369-700ceedc6147",
+    "originalOracle": "549e402d-75a7-43d9-8199-4b8ec494ab49",
+    "sourceAuthorityReviewAndNumberBoundary": "3f449c69-131a-468e-a003-915cab8f0e30",
+    "parent": "actual private-session HTTP integration, workflow, review, remote failure repairs, qualification evidence",
+    "overlapControl": "nonoverlapping new files; review agent only edited store after explicit handoff"
+  },
+  "oracle": {
+    "actualRepository": "electron/repositories/summary-repository.ts",
+    "requiredActualRecursiveModules": [
+      "electron/repositories/character-repository.ts",
+      "electron/repositories/character-roster-repository.ts",
+      "src/shared/finalized-continuity.ts",
+      "src/shared/draft-status.ts"
+    ],
+    "environmentSeam": "getProjectDb chooses copied synthetic DB, getCurrentProjectPath=null; no business function stubs",
+    "baseline": "actual original migrated SQLite v7 before each case, Go opens private byte-copy",
+    "compared": ["complete method result", "exact original error strings", "all raw summary_snapshots poststate fields", "unchanged bytes on original-marked reads/error paths"],
+    "normalization": "only top-level created_at of raw SQL summary rows excluded; nested rawValue.created_at retained and tested",
+    "richCases": [
+      "legacy snapshot signed-safe-integer chapter and exact Unicode text, latest excludes formal summaries",
+      "source valid/legacy/invalid, complete >14KiB body, Unicode hash, missing/bad receipt/status/watermark",
+      "latest summary id suppression including ineligible newer rows, receipted finalized/superseded, current finalized version/id",
+      "body/hash mismatch fallback id, generation cutoff, missing/valid/corrupt frozen identity, ambiguity and refs",
+      "facts whole-row failure and trimming/deduplication, candidate array/version2 and optional source-bound metadata",
+      "raw nested author clock properties, actual raw JSON large integer rounding and underflow"
+    ],
+    "explicitSyntheticCorruptionCases": "dropped version unique index for id tie branch and missing identity table branch are repository-level fixtures, not admission acceptance",
+    "separateGoOnlyGuarantee": "AFTER INSERT RAISE(FAIL) witness rolls back all rows; not compared to original nonatomic save"
+  },
+  "actualSessionHTTP": [
+    "OpenScratchCopy from actual baseline with finalized outbox and frozen identity snapshot",
+    "legacy save/latest and formal-summary separation, same-owner refresh preserves scratch edits",
+    "valid immutable source and current continuity, generation invalidation returns stale while source stays valid",
+    "corrupt copied receipt becomes invalid, renderer formal writes remain admission-denied",
+    "foreign session/tab, bad CSRF, inflight Release/Close and revoked lease rejected",
+    "original synthetic source SQLite bytes unchanged"
+  ],
+  "explicitLimits": [
+    "main does not bind these handlers, no durable author save or production cutover",
+    "two formal continuity writes explicitly denied GENERATION_FINALIZATION_ADMISSION_REQUIRED and remain NOT STARTED",
+    "no semantic extraction workflow, generation/finalization owner proof, character proposal commit, cross-storage finalization or AI merge",
+    "native legacy save accepts safe integers only; original driver fractional/null/string domain not claimed",
+    "invalid UTF8, valid JSON lone surrogate, nonfinite numeric overflow, >64 JSON nesting or per-field >32MiB explicitly rejected",
+    "finite JSON numbers normalize to original JavaScript binary64 rounding; raw frozen/source SHA bytes remain unchanged",
+    "per-field/depth guards are not whole-project row/output or native/process RSS bounds",
+    "portable authority projects rejected by preceding admission, not repaired or replay-authorized",
+    "native Lance unchanged and not requalified"
+  ],
+  "earlierRuns": [
+    {"source": "74b9b96db3f6191834befe13aef14a6358595c0d", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41454246646", "conclusion": "failure", "reason": "vet: unused net/http import in new test", "countedAsQualified": false},
+    {"source": "ad88fd5df128a3b312d6d0cb6a7a1a12188ba89c", "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41455201247", "conclusion": "failure", "reason": "one test incorrectly expected error code as HTTP error message instead of existing generic redacted message; original141 cases passed", "countedAsQualified": false}
+  ],
+  "postQualificationChanges": "GitHub-generated formatting on new round22 Go files plus docs/evidence only; final docs SHA not independently recompiled",
+  "operationStatus": {"implemented": 2, "inProgress": 66, "notStarted": 213, "total": 281},
+  "localGoBuildTestGofmtOrOracleExecuted": false,
+  "productionChanged": false
+}

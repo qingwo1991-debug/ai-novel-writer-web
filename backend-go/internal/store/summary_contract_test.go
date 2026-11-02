@@ -14,19 +14,19 @@ import (
 // The original repository is invoked only by GitHub fixture generation. Go
 // opens private copies of its actual post-seeding, pre-invocation databases.
 type summaryOriginalContract struct {
-	Format             int
-	OriginalModules    []string
-	ReceiptedStatuses  []string
-	Cases              []summaryOriginalCase
-	StrongerAtomic     []summaryAtomicCase
+	Format            int
+	OriginalModules   []string
+	ReceiptedStatuses []string
+	Cases             []summaryOriginalCase
+	StrongerAtomic    []summaryAtomicCase
 }
 
 type summaryOriginalCase struct {
 	Name, Method, Text, Error string
-	Chapter, DraftID         any
-	NilDB, Unchanged         bool
-	Result                   any
-	After                    []map[string]any
+	Chapter, DraftID          any
+	NilDB, Unchanged          bool
+	Result                    any
+	After                     []map[string]any
 }
 
 type summaryAtomicCase struct {

@@ -1,5 +1,13 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十二轮：多agent摘要快照与定稿连续性读取
+
+最终资格源码`02c04cb6fa2e4202cf8f80eeb95aea6a2699bbb5`，[41457578715](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41457578715) **success：469顶层/4397含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。本轮新增19顶层/160含子用例全通过、0fail/skip，含实际SummaryRepository141个差分case；另有一个明确分开的Go-only RAISE(FAIL)事务强保证fixture，不冒充原非事务行为。vet/race/原凭据decrypt/build/PATH无Node smoke通过。
+
+三个agent分别实现仓储、认证HTTP和真实递归原TS Oracle，父代理整合实际OpenScratchCopy→四业务HTTP→generation失效→receipt破坏拒绝→hold/revoke→原fixturebytes不变，第四审查agent交叉核对source/frozen identity/JSON数字。读路径完整保留原正文、outbox/hash、latest summary/version/id、legacy/current/stale分支及冻结角色身份；legacy snapshot写入不创建formal source。两个formal continuity写仍拒绝，不升级矩阵。native Lance无改动不重验，main不绑定，生产不动。只有四row→IN PROGRESS，**2/66/213**。
+
+首次`74b9b96d`，[41454246646](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41454246646)失败于测试文件unused import；第二次`ad88fd5d`，[41455201247](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41455201247)原差分141/141及业务测试通过，但一个HTTP error message断言误把通用脱敏消息预期为code；修复测试期待、保留统一脱敏后第三次全过。两个失败run不计整体通过。JSON有限数按JS binary64舍入（真实bigint/underflow原case），非finite overflow/合法JSON孤立surrogate/超64层/非法UTF8或单字段超32MiB显式unsupported，不静默改写作者元数据；不是全表大小或RSS限额。见[GO-SUMMARY-CONTINUITY.md](GO-SUMMARY-CONTINUITY.md)和[evidence/go-summary-continuity-round22.json](evidence/go-summary-continuity-round22.json)。
+
 ## 第二十一轮：恢复候选正文与来源身份保护
 
 最终资格源码`8d890fb6d1995a1f2810e932abce9fc7fc91b605`，[41449598057](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41449598057) **success：450顶层/4237含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。恢复候选新增15顶层/70含子用例PASS、0fail/skip。原仓储实际55case差分、原始候选全字段后状态、Unicode有序sourceHash/contentHash、legacy sourceDraft captured bit、最新draft id/version身份检查、正文过滤/编辑、replacement边界与continued/discarded原版不对称语义。实际OpenScratchCopy→认证四项HTTP→蓝图变更拒绝edit/continue→discard→revoke→作者源fixture bytes不变通过。vet/race/原凭据decrypt/build/PATH无Node smoke均通过；精确测试计数见下面本轮证据文件。

@@ -105,7 +105,7 @@ func TestSummaryHTTPOriginalShapesAndHeldBorrow(t *testing.T) {
 		t.Fatal(listed)
 	}
 	wantSource := map[string]any{"status": "valid", "snapshot": map[string]any{
-		"source": map[string]any{"draftId": float64(1), "chapterNumber": float64(1), "finalizationId": "receipt-1", "contentHash": hash},
+		"source":       map[string]any{"draftId": float64(1), "chapterNumber": float64(1), "finalizationId": "receipt-1", "contentHash": hash},
 		"chapterTitle": "第一章", "content": "定稿原文😀", "projectionGeneration": float64(0),
 	}}
 	if got := call("db:continuity-read-source", 1); !reflect.DeepEqual(got, wantSource) {
@@ -245,8 +245,8 @@ func TestSummaryHTTPAuthOwnershipAndStaleContext(t *testing.T) {
 	}
 	for _, row := range []struct {
 		headers map[string]string
-		status int
-		code string
+		status  int
+		code    string
 	}{
 		{map[string]string{"X-Novel-User": ""}, 401, "AUTHENTICATION_REQUIRED"},
 		{map[string]string{"X-Client-Id": ""}, 400, "CLIENT_ID_REQUIRED"},
@@ -270,7 +270,7 @@ func TestSummaryProviderErrorsAreFiniteRedactedAndReleased(t *testing.T) {
 	expected := draftContext("project", "lease", "/synthetic/summary")
 	var nilPublic *security.HTTPError
 	for _, row := range []struct {
-		err error
+		err  error
 		code string
 	}{
 		{nilPublic, "SUMMARY_OPERATION_FAILED"},
@@ -363,8 +363,12 @@ func TestSummaryClosedDatabaseSaveHasRootErrorAndReleases(t *testing.T) {
 	cookie, csrf := bootstrap(t, server)
 	expected := draftContext("project", "lease", "/synthetic/summary")
 	response := draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", "db:save-summary-snapshot", 1, "states", expected["projectPath"], expected)
-	var wire struct { Error struct { Code, Message string } }
-	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil { t.Fatal(err) }
+	var wire struct {
+		Error struct{ Code, Message string }
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
+	}
 	if response.Code != 500 || wire.Error.Code != "SUMMARY_OPERATION_FAILED" || wire.Error.Message != "服务暂时无法完成此操作，请重试或查看服务器日志。" {
 		t.Fatal("closed database error must retain generic transport redaction", response.Code, response.Body.String())
 	}
