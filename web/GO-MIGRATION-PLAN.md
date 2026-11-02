@@ -12,6 +12,8 @@ Audit baseline is Node commit `b69dc19c`; its fixes are not asserted deployed. C
 
 Round19 qualifies native-admitted immutable capture→separate KnowledgeManager→authenticated four read-only KB HTTP operations. OriginalTS14 complete query cases, ordinary414top/3739all, native7top/21all preflight plus real OpenKnowledge→HTTP passed on GitHub; only four rows become IN PROGRESS (2/58/221). Fixed-capture refresh is not current author state; main still unbound, search/write/embedding/durable lifecycle absent. See [GO-KNOWLEDGE-READS.md](GO-KNOWLEDGE-READS.md).
 
+Round20 adds native OpenAI/Gemini embedding protocols/strict vector response+cross-batch validation, context+authority fencing, mandatory exact-origin egress and UTF16 chunk compatibility. Ordinary435top/4167all and306 originalTS contract cases passed GitHub; no operation status promotion. Lone-surrogate chunk output deliberately fails closed rather than replacing text. No actual import/reindex/search/model-policy workflow binding; see [GO-EMBEDDING.md](GO-EMBEDDING.md).
+
 ## Architecture decisions
 
 | Concern | Decision / implementation requirement |

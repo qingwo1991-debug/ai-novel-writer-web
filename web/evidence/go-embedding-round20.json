@@ -1,0 +1,72 @@
+{
+  "round": 20,
+  "status": "qualified-synthetic-native-embedding-module-not-business-complete",
+  "source": "7a2e50c6ca72c1bfb29b6ae4bd8d06f3e641026d",
+  "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41443533098",
+  "conclusion": "success",
+  "ordinary": {
+    "passedTopLevel": 435,
+    "passedIncludingSubtests": 4167,
+    "failed": 0,
+    "foreignOwnerTestSkips": 3,
+    "additionalNoTestFilesPackageSkipEvents": 1,
+    "packagesPassed": 18,
+    "vetRaceBuildCredentialDecryptNoNodeSmoke": true
+  },
+  "embedding": {
+    "passedTopLevel": 21,
+    "passedIncludingSubtests": 428,
+    "failed": 0,
+    "skipped": 0,
+    "originalTypeScriptValidatorCases": 38,
+    "originalTypeScriptURLBodyCases": 16,
+    "originalTypeScriptBatchCasesReplayedRealHTTP": 12,
+    "originalTypeScriptChunkCasesIncludingExplicitUTF16Rejects": 240,
+    "originalTypeScriptTotalCases": 306,
+    "methodsAndAuthHeadersCoveredSeparatelyByRealHTTP": true,
+    "mandatoryNativeEgressExactOrigin": true,
+    "noAmbientProxyOrRedirects": true,
+    "contextCancellationObservedByRealNativeServer": true,
+    "authorityChecksBeforeAfterEveryBatch": true,
+    "nilResultsOnLateBatchFailureOrRevocation": true,
+    "openAIIndexCoverageDedupReordering": true,
+    "finiteNonemptyUniformDimensionAcrossAllBatches": true,
+    "emptyGenerateNoDispatch": true
+  },
+  "budgets": {
+    "inputTexts": 10000,
+    "perTextBytes": 1048576,
+    "aggregateInputBytes": 33554432,
+    "encodedRequestBytes": 67108864,
+    "responseBytes": 16777216,
+    "jsonDepth": 64,
+    "vectorDimension": 65536,
+    "aggregateResultNumbers": 1000000,
+    "nativeRequestSeconds": 60,
+    "chunkInputAndOutputBytesEach": 33554432,
+    "chunks": 10000,
+    "chunkSizeMin": 1,
+    "chunkSizeMax": 4000
+  },
+  "explicitDifferences": [
+    "Original JS may emit unpaired UTF16 surrogate chunks; Go rejects entire result with EMBEDDING_CHUNK_UTF16_BOUNDARY instead of replacing Unicode",
+    "Raw endpoint query/fragment/userinfo/control characters unsupported",
+    "Configured batchSize is a typed int; arbitrary JavaScript Number coercion/options normalization is not claimed",
+    "Fixed request/input/response/vector/count bounds and native 60-second deadline",
+    "Release-smoke fake embedding provider not implemented"
+  ],
+  "noRuntimeNodePythonSubprocessBridge": true,
+  "mainBindsEmbedding": false,
+  "productionUnchanged": true,
+  "nativeLanceRerun": false,
+  "operationStatusPromotions": [],
+  "matrix": {"implemented": 2, "inProgress": 58, "notStarted": 221, "total": 281},
+  "remaining": [
+    "KB canonical chunk/vector writes, copy save CAS, import receipts, reindex, delete and search",
+    "Embedding generation identity/source proof/activation ownership",
+    "Public model-policy/global credential/execution-lease integration and llm:test-connection",
+    "Full durable project lifecycle, AI workflow and production acceptance"
+  ],
+  "localWork": "Source edits, node --check, git checks and bounded text artifact analysis only; all compilation/tests/original Oracle execution on GitHub",
+  "finalEvidenceCommit": "Runner-generated formatting and docs only; not separately compiled"
+}

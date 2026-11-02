@@ -1,5 +1,11 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十轮：原生embedding双协议与UTF16分块
+
+资格源码`7a2e50c6ca72c1bfb29b6ae4bd8d06f3e641026d`，普通[41443533098](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41443533098) **success：435顶层/4167含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。embedding新包21顶层/428含子用例全通过、0fail/skip；原TS真实38response+16URL/body+12batch+240chunk共306差分case，12batch另以真实nativeegress HTTP重放。vet/race/原凭据解密/build/noNode smoke通过。
+
+覆盖默认OpenAI50/Gemini100、显式clamp、两协议header/body、index覆盖重排/严格finite维数/跨批维数、nil partial、authority撤销/cancel、超时context、JSON/大小/数值预算、proxy/redirect隔离和Unicode分块。JS会产生孤立UTF16 surrogate的chunk输出明确failclosed拒绝，未以U+FFFD冒充兼容；query/fragment/userinfo/typed options等输入差异公开。没有KB写/检索/激活或public模型工作流绑定，本轮**不提升操作数，仍2/58/221**，main/生产不变。只改普通Go模块，不将它算native Lance重验。见[GO-EMBEDDING.md](GO-EMBEDDING.md)。
+
 ## 第十九轮：四项知识只读业务与不可变capture租约
 
 普通Go修复源码`59176ff1b813348264c63ccf2de6c345690ae071`，[41439146355](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41439146355) **success：414顶层/3739含子用例PASS、0fail、3foreign-owner测试skip、17packages**；另有cmd/novel-server无testfiles package skip不混计。knowledgequery12顶层/40含子用例含原TS14组完整列表/统计/vectorless/copy读取差分；HTTP12顶层/47含子用例、KnowledgeManager8顶层均通过。vet/race/原凭据解密/build/noNode smoke通过。
