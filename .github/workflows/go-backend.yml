@@ -64,6 +64,9 @@ jobs:
           export GO_REVIEWREVISION_CONTRACT="$RUNNER_TEMP/novel-go-reviewrevision/contract.json"
           export GO_POSTHISTORY_CONTRACT="$RUNNER_TEMP/novel-go-posthistory/contract.json"
           export GO_NARRATIVE_CONTRACT="$RUNNER_TEMP/novel-go-narrative/contract.json"
+          export GO_PLOTTREE_CONTRACT="$RUNNER_TEMP/novel-go-plottree/contract.json"
+          export GO_PLOTVALIDATION_CONTRACT="$RUNNER_TEMP/novel-go-plotvalidation/contract.json"
+          printf 'GO_PLOTTREE_CONTRACT=%s\nGO_PLOTVALIDATION_CONTRACT=%s\n' "$GO_PLOTTREE_CONTRACT" "$GO_PLOTVALIDATION_CONTRACT" >> "$GITHUB_ENV"
           printf 'GO_NARRATIVE_CONTRACT=%s\n' "$GO_NARRATIVE_CONTRACT" >> "$GITHUB_ENV"
           printf 'GO_POSTHISTORY_CONTRACT=%s\n' "$GO_POSTHISTORY_CONTRACT" >> "$GITHUB_ENV"
           printf 'GO_REVIEWREVISION_CONTRACT=%s\n' "$GO_REVIEWREVISION_CONTRACT" >> "$GITHUB_ENV"
@@ -76,6 +79,10 @@ jobs:
           node ./contract/reviewrevision-contract.mjs
           node ./contract/posthistory-contract.mjs
           node ./contract/narrative-contract.mjs
+          node ./contract/plottree-contract.mjs
+          node --import ./contract/register-typescript.mjs ./contract/plottree-validation-contract.mjs
+          test -s "$GO_PLOTTREE_CONTRACT"
+          test -s "$GO_PLOTVALIDATION_CONTRACT"
           test -s "$GO_NARRATIVE_CONTRACT"
           test -s "$GO_POSTHISTORY_CONTRACT"
           test -s "$GO_REVIEWREVISION_CONTRACT"
