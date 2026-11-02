@@ -1,4 +1,17 @@
-# 下一轮原生Lance兼容试验（仅研究，尚未实现）
+# 原生Lance兼容试验（隔离源码已实现，原生验证进行中）
+
+## 第十五轮执行状态
+
+- 源码起点`d1ac97b5`，当前远程原生试验源码`07a17833`；`backend-go/native-lance/`为精确0.22.3 Rust staticlib，Go/CGO进程内调用，只有`lance_native && cgo`显式构建标签可用，没有接入main/RPC/作者预检。
+- [GitHub原生任务41418579889](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579889)：原Node0.22.3/Arrow18.1合成6表与stream IPC生成已通过；Rust构建、Go链接及完整跨语言校验仍在进行，**未通过前不称兼容验收完成**。Cargo.lock待远程生成、下载审计并提交。
+- [普通Go回归41418579981](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579981)已全绿：316顶层/3319含子测试PASS、0fail、3skip、14packages；format/vet/unit/race/凭据原版解密/build/无Node运行均通过。此任务不编译显式标签native包，不能替代原生验收。
+- 原生workflow初次因job级env不能使用runner context而未入场；改运行步骤注入固定RUNNER_TEMP路径。原oracle随后两次真实发现createTable及createEmptyTable持久化vector child nullable=true，虽原传入Field为false；已按实际持久化schema建立明确预期，未放宽字段/行比较。
+- 当前真实覆盖：documents、canonical chunks、active2D/inactive3D/building2D与空2D表，共6表/14行，Unicode/null/Float32，active表append成第二版本。没有历史override checkout、删除、FTS/旧layout或作者数据；不得把下文研究目标全算已实现。
+- 两个互操作方向独立：原版IPC→native新Lance→原版重开；native读物理副本→IPC→JS Arrow校验。当前不是将native-export IPC再送native-import的组合自往返。
+- ABI同步无handle、Rust Box bytes配套free、返回仅状态token，Go只保留数字status；catch_unwind不屏蔽默认panic hook的stderr，也不防abort/OOM/UB。私有合成目录独占条件是前提，IPC64MiB/表与128MiB总保留输入不代表解码后内存硬上限。
+- 部署、作者卷、281操作矩阵均未推进：仍2 IMPLEMENTED/54 IN PROGRESS/225 NOT STARTED；原生试验基础设施不是业务操作实现。
+
+以下版本研究与未来验收目标保留，不能误读为已经通过的证据。
 
 第十四轮仅inventory固定入口metadata，**没有读取或验证Lance格式/表/正文**。下一轮必须先用原Node0.22.3产生的合成populated fixture证明原生兼容，再接任何作者项目。不能清空、重建或用Node/Python运行时桥接。
 

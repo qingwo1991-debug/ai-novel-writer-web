@@ -49,7 +49,10 @@ jobs:
           df -h .
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends protobuf-compiler libssl-dev pkg-config clang lld
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang lld
+          printf 'PROTOC=/usr/bin/protoc\nPROTOC_INCLUDE=/usr/include\n' >> "$GITHUB_ENV"
+          test -s /usr/include/google/protobuf/empty.proto
+          /usr/bin/protoc --version
           rustup toolchain install 1.90.0 --profile minimal
           rustc +1.90.0 --version
           df -h .
