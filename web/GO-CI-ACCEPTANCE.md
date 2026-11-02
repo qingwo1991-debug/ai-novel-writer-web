@@ -78,6 +78,18 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 当前 **2 项完成、9 项进行中、270 项未开始**。新增查询仍未绑定 binary；无持久作品业务完成或作者保存可用声明。
 
+## 原生AI传输与跨进程写者第七轮
+
+源码 `73244fa788dcbe878c2185bf9a8c047a1cd524bf`，[Actions 41385531191](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41385531191) **success**，job2m59s：**183 顶层PASS / 1512 含子用例PASS、0 fail、1 skipped子用例、13个测试package通过**。另cmd/novel-server没有unit test的package级skip不计为测试子用例。不能把本轮说成零跳过：`writerlock/TestRejectUnsafeLockEntriesWithoutMutation/foreign-owner` 需要chown，runner非root而明确跳过；其他ownership guard及进程竞争测试通过，foreign-owner实际文件场景仍待有权限的隔离runner补验。
+
+- 原TypeScript OpenAI provider **72 case（46 stream/26 generate）**，原visible/reasoning scanner **922 case** 对照通过。原请求、ordered callbacks、partial content/usage、显式DONE与semantic finish区分、CR/LF/UTF8与think拆分保密均覆盖。mapping只是明确synthetic stub，不声称真实preset/parameterpolicy移植完成。
+- 原生受控egress的精确origin、禁止所有redirect/closebody、无环境proxy、TLS默认验证、取消、request snapshot与symbolic error验证通过。允许管理员显式LAN/loopback；DNS和hostname保守语法限制见专文。
+- nativeHTTP provider集成、最终read时取消不返回完成、response+error的body关闭、64MiB aggregate heartbeat预算通过；legacy输出改strings.Builder，避免tinychunks二次复制。
+- Linux openat/NOFOLLOW+flock：sameprocess/多个self-Go-child恰一赢家、退出/kill释放、CLOEXEC、entry/ancestor替换和常见unsafe文件拒绝通过。不是现production/global writer集成；旧Node/desktop必须持续排除，不能假定新lockname互斥旧进程。
+- vet/race/build、credential双向oracle和无Node smoke全部通过。源码bridge guard仍检查cmd/internal全部production `.go`；只排除 `_test.go` 允许Go自执行child锁测试，不放宽实际runtime为Node代理。
+
+无RPC新增绑定，矩阵仍 **2完成、9进行中、270未开始**。本轮没有触碰作者数据或部署镜像；Gemini/AI工作流/LanceDB/持久项目/全局协调及外部真实服务验收仍未完成。详见 [GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md)、[GO-WRITER-LOCK.md](GO-WRITER-LOCK.md)。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
