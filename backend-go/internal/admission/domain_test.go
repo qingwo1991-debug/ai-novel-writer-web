@@ -14,7 +14,7 @@ func TestTypeScriptAuthorContentHash(t *testing.T){
  file,err:=os.Open(path);if err!=nil{t.Fatal(err)};contract,err:=ParseContract(file);file.Close();if err!=nil{t.Fatal(err)}
  body,err:=os.ReadFile(filepath.Join(filepath.Dir(path),"domain-proofs.json"));if err!=nil{t.Fatal(err)}
  var fixtures []struct{File string `json:"file"`;Fingerprint string `json:"fingerprint"`;Domain DomainEvidence `json:"domain"`}
- if err:=json.Unmarshal(body,&fixtures);err!=nil{t.Fatal(err)};if len(fixtures)!=3{t.Fatal("missing logical proof oracles")}
+ if err:=json.Unmarshal(body,&fixtures);err!=nil{t.Fatal(err)};if len(fixtures)!=5{t.Fatal("missing logical proof oracles")}
  for _,fixture:=range fixtures{t.Run(fixture.File,func(t *testing.T){
   expected:=contract;if fixture.Fingerprint!=""{expected=SchemaContract{{Version:7,Fingerprints:[]string{fixture.Fingerprint}}}}
   evidence,err:=VerifySnapshotWithDomain(context.Background(),filepath.Join(filepath.Dir(path),fixture.File),expected);if err!=nil{t.Fatal(err)}

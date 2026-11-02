@@ -64,6 +64,14 @@ func (m *Leases) Release(expected Lease) error {
  if state.active>0 { return ErrBusy }
  delete(m.projects,expected.ProjectPath); return nil
 }
+// ReleaseAll atomically closes this lease set only when all operations are idle.
+// The owner of the complete Leases instance may use it for orderly shutdown;
+// this is never a browser-callable force release or ownership transfer.
+func(m *Leases)ReleaseAll()error{
+ m.mu.Lock();defer m.mu.Unlock()
+ for _,state:=range m.projects{if state.active>0{return ErrBusy}}
+ clear(m.projects);return nil
+}
 // CommitAcquire adopts the exact acquisition after a successful open. Adoption
 // is idempotent and prevents a concurrent failed opener from rolling it back.
 // It does not bypass the active-operation fence used by explicit Release.

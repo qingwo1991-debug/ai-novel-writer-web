@@ -25,7 +25,8 @@ const registry = getDesktopMigrationRegistry()
 const fixtures = []
 const domainProofs = []
 for (const [name, donor, version] of [
-  ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6],
+  ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6], ['donor-v6', true, 6],
+  ['baseline-v6-upgraded-v7', false, 7], ['donor-v6-upgraded-v7', true, 7],
 ]) {
   const file = name + '.db'
   const filename = path.join(directory, file)
@@ -45,8 +46,9 @@ for (const [name, donor, version] of [
       db.exec(sql)
       db.exec('DROP TABLE characters_without_avatar')
     }
-    migrateSchema(new SqliteSchemaAdapter(db), registry, version)
-    db.prepare('INSERT INTO contents(body) VALUES(?)').run('Go 合成兼容样例 😀 <&>\u2028\u2029')
+    migrateSchema(new SqliteSchemaAdapter(db), registry, name.includes('-upgraded-') ? 6 : version)
+    db.prepare('INSERT INTO contents(body,created_at) VALUES(?,?)').run('Go 合成兼容样例 😀 <&>\u2028\u2029', '2026-01-01 00:00:00')
+    if (name.includes('-upgraded-')) migrateSchema(new SqliteSchemaAdapter(db), registry, 7)
     verifySchema(new SqliteSchemaAdapter(db), registry, version)
     fixtures.push({ name, file, version, fingerprint: sqliteSchemaFingerprint(db) })
   } finally { db.close() }
