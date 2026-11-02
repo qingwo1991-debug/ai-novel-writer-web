@@ -33,13 +33,18 @@ func(s *Server)BindProjectCore(provider ProjectCoreProvider)error{
   }
   repository,release,err:=provider.BeginProjectCore(ctx,caller,expected);if release!=nil{defer release()};if err!=nil{return fail(err)};if repository==nil||release==nil{return fail(errors.New("PROJECT_CORE_PROVIDER_UNAVAILABLE"))}
   switch name{
-  case "db:project-core-get":result,err:=repository.Get(ctx);if err!=nil{return fail(errors.New("PROJECT_CORE_READ_FAILED"))};return result,nil
+  case "db:project-core-get":result,err:=repository.Get(ctx);if err!=nil{return fail(errors.New("PROJECT_CORE_READ_FAILED"))};return projectCoreWire(result),nil
   case "db:project-core-update":if err:=repository.Update(ctx,data);err!=nil{return fail(err)};return map[string]any{"success":true},nil
   default:changed,err:=repository.CommitSynopsis(ctx,data);if err!=nil{return fail(errors.New(projectCoreErrorCode(err)))};if !changed{return map[string]any{"success":false,"error":"PROJECT_CORE_SYNOPSIS_CHANGED"},nil};return map[string]any{"success":true},nil
   }
  }}
  s.mu.Lock();defer s.mu.Unlock();for _,name:=range names{if _,ok:=s.registry.Lookup(name);!ok{return errors.New("OPERATION_NOT_EXPOSED")};if _,ok:=s.handlers[name];ok{return errors.New("OPERATION_ALREADY_BOUND")}}
  for name,handler:=range handlers{s.handlers[name]=handler};return nil
+}
+// Node Buffer.toJSON, not Go's base64 encoding of []byte. SQLite's flexible
+// storage classes can preserve a legacy BLOB even in a nominal TEXT column.
+func projectCoreWire(result map[string]any)map[string]any{
+ if result==nil{return nil};wire:=make(map[string]any,len(result));for key,value:=range result{if bytes,ok:=value.([]byte);ok{data:=make([]int,len(bytes));for i,b:=range bytes{data[i]=int(b)};wire[key]=map[string]any{"type":"Buffer","data":data}}else{wire[key]=value}};return wire
 }
 func projectCoreErrorCode(err error)string{
  var securityError *security.HTTPError;if errors.As(err,&securityError){return securityError.Code}
@@ -51,7 +56,7 @@ func validateSynopsisRequest(data map[string]any)error{
  if _,ok:=data["generationRunHandle"];ok{return security.NewHTTPError(http.StatusConflict,"GENERATION_OWNER_REQUIRED")};if _,ok:=data["authorRecovery"];ok{return security.NewHTTPError(http.StatusConflict,"GENERATION_OWNER_REQUIRED")}
  if _,ok:=data["synopsis"].(string);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
  expected,ok:=data["expected"].(map[string]any);if !ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
- for _,key:=range []string{"synopsis","premise","charactersArch","worldbuilding","genre","writingLanguage","plotStructure","narrativePov","globalGuidance"}{if _,ok:=expected[key].(string);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
- for _,key:=range []string{"totalChapters","wordsPerChapter"}{if _,ok:=draftSafeInteger(expected[key],0);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
+ for _,key:=range []string{"synopsis","premise","charactersArch","worldbuilding","genre","writingLanguage","plotStructure","narrativePov","globalGuidance"}{value,exists:=expected[key];if !exists{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")};if value==nil{continue};if _,ok:=value.(string);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
+ for _,key:=range []string{"totalChapters","wordsPerChapter"}{value,exists:=expected[key];if !exists{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")};if value==nil{continue};if _,ok:=draftSafeInteger(value,-9007199254740991);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
  return nil
 }

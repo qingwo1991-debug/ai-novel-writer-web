@@ -18,6 +18,10 @@ const names = ['electron/repositories/project-core-repository.ts', 'src/shared/r
 const sources = new Map(names.map(name => [new URL(name, root).href, readFileSync(new URL(name, root), 'utf8')]))
 const databaseStub = 'projectcore-contract:database'
 const Database = createRequire(import.meta.url)('better-sqlite3')
+// Force the driver's lazy native binding load before installing the deliberately
+// narrow TS source loader. This database is memory-only and synthetic.
+const driverProbe = new Database(':memory:')
+driverProbe.close()
 const hooks = registerHooks({
   resolve(specifier, context) {
     const url = new URL(specifier, context.parentURL).href
