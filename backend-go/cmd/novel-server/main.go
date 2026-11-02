@@ -29,7 +29,8 @@ func run()error{
  registry,err:=policy.Load(file);if err!=nil{return err}
  handler:=transport.New(registry,security.NewOrigins("http://127.0.0.1:16082"),"go-migration-uncommitted")
  defer handler.Close()
- // No database is opened and no domain operation is falsely bound to success.
+ if err:=handler.BindNavigation();err!=nil{return err}
+ // Only fixed browser-navigation intents are bound; no database is opened.
  server:=&http.Server{Addr:*address,Handler:handler,ReadHeaderTimeout:30*time.Second,ReadTimeout:16*time.Minute,IdleTimeout:90*time.Second,MaxHeaderBytes:1024*1024}
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  done:=make(chan error,1);go func(){done<-server.ListenAndServe()}()

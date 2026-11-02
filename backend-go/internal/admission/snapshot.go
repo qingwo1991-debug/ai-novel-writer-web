@@ -71,6 +71,7 @@ type Evidence struct {
 	SchemaFingerprint string `json:"schemaFingerprint"`
 	TableCounts map[string]int64 `json:"tableCounts"`
 	ContentIdentity ContentIdentity `json:"contentIdentity"`
+	Domain *DomainEvidence `json:"domain,omitempty"`
 }
 
 func validateContract(expected SchemaContract) error {
@@ -102,6 +103,16 @@ func validateContract(expected SchemaContract) error {
 // All reads share one connection/transaction; pre/post byte identities detect
 // drift. Sidecars must be regular files in this same caller-owned directory.
 func VerifySnapshot(ctx context.Context, path string, expected SchemaContract) (Evidence, error) {
+ return verifySnapshot(ctx,path,expected,false)
+}
+// VerifySnapshotWithDomain adds the original migration lane's logical row proof.
+// It is deliberately opt-in: opening current projects must not sort all author
+// text in memory merely to inspect their schema. This temporary implementation
+// fails closed above 64MiB encoded rows; external sorting is still required.
+func VerifySnapshotWithDomain(ctx context.Context,path string,expected SchemaContract)(Evidence,error){
+ return verifySnapshot(ctx,path,expected,true)
+}
+func verifySnapshot(ctx context.Context, path string, expected SchemaContract, withDomain bool) (Evidence, error) {
 	var zero Evidence
 	if err := validateContract(expected); err != nil { return zero, err }
 	if err := ctx.Err(); err != nil { return zero, err }
@@ -154,6 +165,8 @@ func VerifySnapshot(ctx context.Context, path string, expected SchemaContract) (
 	if _, desktop := counts["character_identity_meta"]; desktop {
 		if err := verifyCharacterIdentity(ctx, tx); err != nil { return zero, failure(CodeDomain, err) }
 	}
+ var domain *DomainEvidence
+ if withDomain{proof,err:=logicalDomain(ctx,tx,tables);if err!=nil{return zero,failure(CodeDomain,err)};domain=&proof}
 	// Closing the transaction/connection before hashing also catches any unexpected
 	// close-time persistent changes. ROLLBACK is read-only and never checkpoints.
 	if err := tx.Rollback(); err != nil { return zero, failure(CodeSnapshotRead, err) }
@@ -162,7 +175,7 @@ func VerifySnapshot(ctx context.Context, path string, expected SchemaContract) (
 	if err != nil { return zero, err }
 	if before != after { return zero, failure(CodeSnapshotChanged, nil) }
 	return Evidence{UserVersion: version, SchemaFingerprint: fingerprint, TableCounts: counts,
-		ContentIdentity: ContentIdentity{Database: before.database, WAL: before.wal}}, nil
+		ContentIdentity: ContentIdentity{Database: before.database, WAL: before.wal},Domain:domain}, nil
 }
 
 func checkIntegrity(ctx context.Context, tx *sql.Tx) error {
