@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "round": 23,
+  "objective": "native character cards, M02 roster and actual public identity reads under isolated private-copy leases",
+  "qualifiedSource": "058f98059c943f688bb77bf267dcc0d19bd66044",
+  "qualifiedRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41464730633",
+  "conclusion": "success",
+  "ordinaryGo": {
+    "topLevelPassed": 495,
+    "includingSubtestsPassed": 4576,
+    "failedEvents": 0,
+    "packagesPassed": 18,
+    "testSkipped": 3,
+    "packageWithoutTests": "cmd/novel-server",
+    "skips": [
+      "projectaccess/TestScratchConfigurationForeignOwnerRejectedWithoutRepair",
+      "writerlock/TestLegacyRejectUnsafeEntriesWithoutMutation/foreign-owner",
+      "writerlock/TestRejectUnsafeLockEntriesWithoutMutation/foreign-owner"
+    ],
+    "newTopLevelPassed": 26,
+    "newIncludingSubtestsPassed": 179,
+    "newFailedOrSkipped": 0,
+    "vet": "pass",
+    "race": "pass",
+    "originalCredentialDecrypt": "pass",
+    "build": "pass",
+    "noNodeSmoke": "pass"
+  },
+  "multiAgent": {
+    "baseAndDerived": "195e0aae-c8fb-4377-b9c4-210d1800492a",
+    "rosterOrderedHashes": "5f30d562-7dcd-4c82-acdd-3cd5b19e333e",
+    "transport": "1c5bdb05-0f8a-4fc6-ac53-8218d170e344",
+    "originalOracle": "79eb0415-1e8e-4731-80be-74376cbf5eb6",
+    "readonlySafetyAudit": "6c05ba29-fea4-4f2f-bf8c-8afa517a63c9",
+    "parent": "one-transaction public wrapper, lease integration, actual scratch HTTP fixture, workflow, qualification repairs and evidence",
+    "ownership": "separate new files, frozen handoffs, parent-owned remote verification; further rounds retain multi-agent requirement"
+  },
+  "oracle": {
+    "actualOriginalCases": 140,
+    "counts": {"All": 25, "ReadRoster": 29, "IdentitySnapshot": 9, "IdentityView": 12, "CurrentDerivedFields": 65},
+    "separateGoOnlyMissingMetaBoundaries": 2,
+    "allContractSubtests": 142,
+    "actualRecursiveModules": 31,
+    "actualBusinessEntryPoints": [
+      "CharacterRepository.getAll",
+      "CharacterRosterRepository.read",
+      "readCharacterIdentitySnapshot (internal raw evidence, not public operation)",
+      "CharacterProposalService.identitySnapshot (public identity DTO)",
+      "currentDerivedCharacterFields"
+    ],
+    "environmentSeam": "getProjectDb synthetic copied SQLite; getCurrentProjectPath=null; original recursive business modules retained",
+    "publicIdentityProofCallback": "assertion sentinel constructor dependency never called; counter checked zero",
+    "readyFixtureSeal": "actual refreshCharacterIdentityProjection inside actual original transaction",
+    "compared": ["complete original result/errors within supported input domain", "every raw row of every actual SQLite table post-call", "exact original created_at/updated_at including nested author clock text", "whole original-marked read DB bytes unchanged"],
+    "noTimestampStripping": true,
+    "input": "actual original migrated v7 schema byte-copy, ordinary synthetic project_core main explicitly inserted",
+    "separateUnsupported": "original missing-meta TypeError evidence recorded, not claimed equal to stable Go CHARACTER_ID_META_MISSING"
+  },
+  "actualSessionHTTP": [
+    "positive synthetic M02 active/retired characters plus alias, immutable finalized outbox/summary/fullbody",
+    "getAll filters retired while actual public identity includes retired and returns fields/provenance DTO without proposals",
+    "roster entries/aliases and same-connection derived grants",
+    "source epoch scoped to actual admitted project ID, generation invalidation and old epoch refuse grants",
+    "matching refreshed epoch permits grant; changed fullbody revokes it",
+    "formal roster manual/other commit remains denied without mutations",
+    "foreign cookie/tab, CSRF, inflight Release/Close, idempotent done, revoked reads",
+    "original synthetic source SQLite bytes unchanged"
+  ],
+  "reviewFixesBeforeFirstQualification": [
+    "identity display String(Buffer) invalidUTF8 replacement grouping differs between Go and Node: reject invalid coerced BLOB explicitly, preserve arbitrary raw Buffer wire",
+    "MAİN/MİNOR U0130 Go simple lowercase differs from JS full lowercase: normalize ASCII role aliases without incorrect Unicode alias activation",
+    "public identity wire is [context] only and actual proposal-service DTO, not repository raw evidence snapshot",
+    "roster/provenance hashes retain JS UTF16 ordering, nested JSON insertion order, numeric-key enumeration and duplicate key behavior"
+  ],
+  "explicitLimits": [
+    "main remains navigation-only and does not bind character handlers; no durable author lifecycle or deployment",
+    "only three read operation rows promoted; internal raw identity and derived helpers are not extra public operations",
+    "roster commit remains NOT STARTED and rejects missing author/identity write ownership",
+    "no character proposal staging/approval/cancellation, AI character effects, avatars or finalization execution",
+    "ReadRoster supports existing M02 plus roster metadata only, no legacy ensure DDL, initialization, repair or migration writes",
+    "portable origin authority not admitted, no replay grant or author-state adoption",
+    "invalidUTF8/field32MiB/JSONdepth64/lone-surrogate/nonfinite boundaries explicit; hash-consumed static BLOB and unsupported scalars reject",
+    "Object.prototype inherited non-role alias values explicitly unsupported instead of fabricated fallback",
+    "per-field/depth restrictions are not whole-project row/output or RSS hard limits",
+    "native Lance unchanged and not requalified"
+  ],
+  "earlierRuns": [
+    {
+      "source": "c383420b623e8ce77371e788386a76b4b17159dc",
+      "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41463551803",
+      "conclusion": "failure",
+      "reason": "all140 actual original cases plus2 Go boundaries passed; overall failed three synthetic tests: args null vs empty array and missing project_core.main caused two no-op UPDATE projection assertions",
+      "repair": "only fixtures changed: []any{} and INSERT OR IGNORE project_core main; passing business logic unchanged",
+      "countedAsQualified": false
+    }
+  ],
+  "postQualificationChanges": "GitHub-produced formatting on this round's new Go files and docs/evidence only; final documentation SHA not independently compiled",
+  "operationStatus": {"implemented": 2, "inProgress": 69, "notStarted": 210, "total": 281},
+  "localGoBuildTestGofmtOrOracleExecuted": false,
+  "productionChanged": false,
+  "wholeMigrationComplete": false
+}

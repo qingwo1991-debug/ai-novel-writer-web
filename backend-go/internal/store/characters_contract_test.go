@@ -29,13 +29,13 @@ type charactersOriginalContract struct {
 type charactersOriginalCase struct {
 	Name, Method, ProjectID, Error string
 	NilDB, Unchanged               bool
-	Result                        any
-	After                         map[string][]map[string]any
+	Result                         any
+	After                          map[string][]map[string]any
 }
 
 type charactersUnsupportedBoundary struct {
 	Name, Method, ExpectedGoError, OriginalError, OriginalErrorName string
-	After                                                        map[string][]map[string]any
+	After                                                           map[string][]map[string]any
 }
 
 // No timestamp omission, rewriting, blanket recursive field stripping or JSON

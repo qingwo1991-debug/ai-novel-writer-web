@@ -46,7 +46,7 @@ func (s *Server) BindCharacters(provider CharactersProvider) error {
 		}
 	}
 	operations := []struct {
-		name string
+		name             string
 		arity, pathIndex int
 	}{
 		{"db:character-get-all", 2, 0},

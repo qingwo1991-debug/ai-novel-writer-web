@@ -1,5 +1,13 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十三轮：五agent角色卡/名册/公开身份读取
+
+最终资格源码`058f98059c943f688bb77bf267dcc0d19bd66044`，[41464730633](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41464730633) **success：495顶层/4576含子用例PASS、0fail、3既有foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。本轮新增26顶层/179含子用例全通过，无fail/skip；140实际原版case=25getAll+29Roster+9内部rawIdentity+12公开IdentityView+65CurrentDerivedFields，另2独立Go-only缺meta边界，共142契约子用例。31实际递归原模块，原完整SQL后状态、原有时间字符串与输入DB bytes不变均比较。vet/race/原凭据decrypt/build/noNode smoke通过。
+
+四个实施agent分别负责base/derived、M02名册有序哈希、HTTP及Oracle，第五只读审查agent核对安全和来源，父整合实际OpenScratchCopy→三公开HTTP→generation/epoch/fullbody失效→commit拒绝→foreigncookie/tab/CSRF→hold/revoke→原合成库bytes不变。公开identity实际采用proposal-service DTO、args仅[context]，不是内部含proposals的SQL快照；名册/derived一次同连接snapshot；ID/name hash及provenance嵌套顺序、UTF16/locale历史投影忠实原版。审查提前修复非法UTF8 Buffer转String替换分组、MAİN/MİNOR Go/JS lowercase差异；不支持的输入域显式拒绝，未做泛化RSS保证。只有三row→IN PROGRESS，**2/69/210**；roster commit拒绝未迁移author/ID owner不算完成。main/production不变，native Lance未变不重验。
+
+首次`c383420b`，[41463551803](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41463551803)140实际差分+2边界全过，但整体失败于3合成测试断言：父bootstrap空args误编码null，及rosterFixture未插入baseline中不存在的project_core.main导致两投影UPDATE no-op。只修复夹具后第二次全资格通过，失败run不计整体通过。见[GO-CHARACTER-READS.md](GO-CHARACTER-READS.md)和[evidence/go-character-reads-round23.json](evidence/go-character-reads-round23.json)。
+
 ## 第二十二轮：多agent摘要快照与定稿连续性读取
 
 最终资格源码`02c04cb6fa2e4202cf8f80eeb95aea6a2699bbb5`，[41457578715](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41457578715) **success：469顶层/4397含子用例PASS、0fail、3foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。本轮新增19顶层/160含子用例全通过、0fail/skip，含实际SummaryRepository141个差分case；另有一个明确分开的Go-only RAISE(FAIL)事务强保证fixture，不冒充原非事务行为。vet/race/原凭据decrypt/build/PATH无Node smoke通过。
