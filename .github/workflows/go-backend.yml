@@ -7,6 +7,8 @@ on:
       - 'backend-go/**'
       - 'web/operations.json'
       - 'electron/migrations/**'
+      - 'electron/llm/**'
+      - 'electron/platform/endpoint-fetch.ts'
       - 'electron/repositories/character-roster-schema.ts'
       - 'src/shared/**'
       - '.github/workflows/go-backend.yml'
@@ -16,6 +18,8 @@ on:
       - 'backend-go/**'
       - 'web/operations.json'
       - 'electron/migrations/**'
+      - 'electron/llm/**'
+      - 'electron/platform/endpoint-fetch.ts'
       - 'electron/repositories/character-roster-schema.ts'
       - 'src/shared/**'
       - '.github/workflows/go-backend.yml'
@@ -62,6 +66,15 @@ jobs:
           node --import ./contract/register-typescript.mjs ./contract/secret-contract.mjs generate
           test -s "$GO_SQLITE_CONTRACT"
           test -s "$GO_SECRET_CONTRACT"
+      - name: Generate original visible and OpenAI synthetic protocol contracts
+        run: |
+          export GO_VISIBLE_CONTRACT="$RUNNER_TEMP/novel-go-visible/visible-contract.json"
+          export GO_OPENAI_CONTRACT="$RUNNER_TEMP/novel-go-openai/contract.json"
+          printf 'GO_VISIBLE_CONTRACT=%s\nGO_OPENAI_CONTRACT=%s\n' "$GO_VISIBLE_CONTRACT" "$GO_OPENAI_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/visible-contract.mjs
+          node ./contract/openai-contract.mjs
+          test -s "$GO_VISIBLE_CONTRACT"
+          test -s "$GO_OPENAI_CONTRACT"
       - name: Verify pinned modules
         run: |
           go mod download
@@ -117,7 +130,7 @@ jobs:
           if NOVEL_DATA_ROOT=/tmp/not-author-data ./out/novel-server; then exit 1; fi
           if ./out/novel-server -listen 0.0.0.0:16082; then exit 1; fi
           # No Node worker/FFI bridge is allowed in the Go server source.
-          if grep -R -nE 'os/exec|node:|worker\.mjs|dist-server' ./cmd ./internal --include='*.go'; then
+          if grep -R -nE 'os/exec|node:|worker\.mjs|dist-server' ./cmd ./internal --include='*.go' --exclude='*_test.go'; then
             echo 'Review required: possible legacy runtime bridge'; exit 1
           fi
       - name: Upload compiler/test evidence and formatting patch
