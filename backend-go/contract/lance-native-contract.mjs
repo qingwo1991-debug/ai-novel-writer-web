@@ -150,7 +150,14 @@ function rowsOf(table) {
   assert.equal(new Set(rows.map(row => row.id)).size, rows.length, 'duplicate fixture id')
   return rows.sort((a, b) => byteOrder(a.id, b.id))
 }
-const expectedSchema = name => schemaShape(name === 'documents' ? documentSchema() : chunkSchema(name === 'chunks' ? undefined : name === 'chunks__space_2' ? 3 : 2))
+const expectedSchema = name => {
+  const shape = schemaShape(name === 'documents' ? documentSchema() : chunkSchema(name === 'chunks' ? undefined : name === 'chunks__space_2' ? 3 : 2))
+  // Real 0.22.3 createTable(record objects) canonicalizes vector child to nullable,
+  // despite the application's nonnullable supplied item Field. Preserve and test
+  // the actual persisted schema, not an invented schema from constructor input.
+  if (name.startsWith('chunks__space_') && name !== 'chunks__space_4') shape.find(field => field.name === 'vector').children[0].nullable = true
+  return shape
+}
 function decodedIPC(file) {
   regular(file)
   const bytes = fs.readFileSync(file)
