@@ -110,8 +110,10 @@ jobs:
             done'
 
   publish:
-    name: Build, smoke, then publish GHCR (main only)
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    name: Legacy Node image (manual dispatch only during Go migration)
+    # Go migration commits must not automatically publish another Node image.
+    # Existing production stays pinned; this legacy build is opt-in only.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     needs: unit
     runs-on: ubuntu-24.04
     timeout-minutes: 40

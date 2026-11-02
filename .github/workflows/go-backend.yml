@@ -1,0 +1,118 @@
+name: Go backend migration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend-go/**'
+      - 'web/operations.json'
+      - '.github/workflows/go-backend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend-go/**'
+      - 'web/operations.json'
+      - '.github/workflows/go-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-backend-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Go format, vet, synthetic tests, race and binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend-go
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+          cache: true
+      - name: Verify pinned modules
+        run: |
+          go mod download
+          go mod verify
+      # Formatting is also performed remotely; no local compilation/test needed.
+      # The checked artifact below is built from the formatted temporary checkout.
+      - name: Format Go sources on the runner
+        run: |
+          gofmt -w ./cmd ./internal
+          git diff --binary -- . > /tmp/go-format.patch
+          if test -s /tmp/go-format.patch; then
+            printf 'Go source formatting patch is available as an artifact.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Static analysis
+        run: go vet ./...
+      - name: Synthetic-data unit and HTTP contract tests
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl
+      - name: Race detector (synthetic temporary databases only)
+        env:
+          CGO_ENABLED: '1'
+        run: go test -race -count=1 -timeout=5m ./...
+      - name: Build Go-only migration binary
+        run: |
+          mkdir -p out
+          CGO_ENABLED=1 go build -trimpath -buildvcs=true -o out/novel-server ./cmd/novel-server
+          sha256sum out/novel-server > out/SHA256SUMS
+      - name: Smoke binary without author data or Node
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATH=/nonexistent ./out/novel-server -listen 127.0.0.1:16082 > /tmp/go-smoke.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:16082/healthz > /tmp/go-health.json; then break; fi
+            kill -0 "$pid"
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          with open('/tmp/go-health.json') as file:
+              health = json.load(file)
+          assert health['runtime'] == 'go'
+          assert health['electron'] is False
+          assert health['migrationComplete'] is False
+          PY
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:16082/api/bootstrap)" = 401
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-Novel-User: synthetic-ci' http://127.0.0.1:16082/api/bootstrap)" = 200
+          if NOVEL_DATA_ROOT=/tmp/not-author-data ./out/novel-server; then exit 1; fi
+          if ./out/novel-server -listen 0.0.0.0:16082; then exit 1; fi
+          # No Node worker/FFI bridge is allowed in the Go server source.
+          if grep -R -nE 'os/exec|node:|worker\.mjs|dist-server' ./cmd ./internal --include='*.go'; then
+            echo 'Review required: possible legacy runtime bridge'; exit 1
+          fi
+      - name: Upload compiler/test evidence and formatting patch
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-migration-evidence-${{ github.sha }}
+          path: |
+            /tmp/go-format.patch
+            /tmp/go-tests.jsonl
+            /tmp/go-smoke.log
+            /tmp/go-health.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload non-production Go binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: novel-go-migration-linux-amd64-${{ github.sha }}
+          path: backend-go/out/
+          retention-days: 7
+      - name: State migration and deployment limits
+        run: |
+          printf '### Go migration foundation\n\nGo tests, race detector, compiler and smoke ran on GitHub, not on the deployment host.\n\nThis binary is **not feature complete**: unported operations return 501. No image push or production deployment was performed.\n' >> "$GITHUB_STEP_SUMMARY"
