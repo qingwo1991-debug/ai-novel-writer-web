@@ -58,6 +58,11 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
         run: |
+          export GO_AUTHORITY_CONTRACT="$RUNNER_TEMP/authority-contract.json"
+          printf 'GO_AUTHORITY_CONTRACT=%s\n' "$GO_AUTHORITY_CONTRACT" >> "$GITHUB_ENV"
+          command -v flock
+          node ./contract/authority-contract.mjs
+          test -s "$GO_AUTHORITY_CONTRACT"
           export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
           export GO_SECRET_CONTRACT="$RUNNER_TEMP/novel-go-secrets/contract.json"
           export GO_PROJECTCORE_CONTRACT="$RUNNER_TEMP/novel-go-projectcore/contract.json"

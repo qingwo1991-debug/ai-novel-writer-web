@@ -21,6 +21,16 @@ func Acquire(directory string) (*Lock, error) {
 	return nil, ErrUnsupported
 }
 
+// AcquireLegacy fails closed on non-Linux platforms without touching the path.
+func AcquireLegacy(directory string) (*Lock, error) {
+	return nil, ErrUnsupported
+}
+
+// Verify fails closed on unsupported platforms, including for nil/zero locks.
+func (lock *Lock) Verify() error {
+	return ErrUnsupported
+}
+
 // Close is a no-op for a nil or zero unsupported-platform Lock.
 func (lock *Lock) Close() error {
 	return nil

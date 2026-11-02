@@ -9,9 +9,9 @@
 // This is not a defense against a hostile administrator, same-UID writer, mount
 // changes, or programs that ignore flock. Do not rename the configured tree or
 // remove/replace the lock entry while a server is running. Anchors are checked
-// before and after acquisition, not continuously after Acquire returns. The lock
-// file is persistent: neither failed acquisition nor Close unlinks, truncates,
-// repairs, or changes permissions on an existing entry.
+// before and after acquisition and on explicit Verify calls, not continuously.
+// The lock file is persistent: neither failed acquisition nor Close unlinks,
+// truncates, repairs, or changes permissions on an existing entry.
 package writerlock
 
 import (
@@ -35,7 +35,26 @@ var (
 	ErrUnsupported = errors.New("writerlock_unsupported")
 )
 
-const lockName = ".novel-writer.lock"
+const (
+	lockName       = ".novel-writer.lock"
+	legacyLockName = ".native-web.gateway.lock"
+)
+
+// Policies are private and bound to fixed entry names, never request input.
+// The zero policy preserves Acquire's original exact-0600 requirements.
+type lockPolicy uint8
+
+const (
+	privateLockPolicy lockPolicy = iota
+	legacyLockPolicy
+)
+
+func (policy lockPolicy) name() string {
+	if policy == legacyLockPolicy {
+		return legacyLockName
+	}
+	return lockName
+}
 
 // Lock holds a Linux flock and its physical directory anchors. It must not be
 // copied. Close is idempotent and safe for concurrent calls. Every independent
@@ -44,6 +63,8 @@ type Lock struct {
 	mu       sync.Mutex
 	file     *os.File
 	anchor   *directoryAnchor
+	policy   lockPolicy
+	identity fs.FileInfo
 	closeErr error
 }
 
@@ -59,11 +80,26 @@ type Lock struct {
 // rejection, not chmod or deletion. All returned errors are symbolic and contain
 // no input paths or raw OS error strings.
 func Acquire(directory string) (*Lock, error) {
+	return acquire(directory, privateLockPolicy)
+}
+
+// AcquireLegacy joins the util-linux flock used by docker/web-entrypoint.sh on
+// the fixed .native-web.gateway.lock entry. Existing entries may be exactly 0600
+// or 0644 (the historical shell default umask); all other Acquire safety rules
+// apply. Missing entries are created exactly as for Acquire, with mode 0600.
+// Existing entries are never chmodded, truncated, unlinked, or recreated.
+// This coordinates cooperating native web writers only, not desktop writers
+// or any other process that ignores flock.
+func AcquireLegacy(directory string) (*Lock, error) {
+	return acquire(directory, legacyLockPolicy)
+}
+
+func acquire(directory string, policy lockPolicy) (*Lock, error) {
 	anchor, err := openDirectory(directory)
 	if err != nil {
 		return nil, err
 	}
-	lock, err := acquirePinned(anchor)
+	lock, err := acquirePinnedPolicy(anchor, policy)
 	if err != nil {
 		anchor.close()
 		return nil, err
@@ -72,10 +108,14 @@ func Acquire(directory string) (*Lock, error) {
 }
 
 func acquirePinned(anchor *directoryAnchor) (*Lock, error) {
+	return acquirePinnedPolicy(anchor, privateLockPolicy)
+}
+
+func acquirePinnedPolicy(anchor *directoryAnchor, policy lockPolicy) (*Lock, error) {
 	if !anchor.valid() {
 		return nil, ErrUnsafe
 	}
-	file, identity, err := openLock(anchor)
+	file, identity, err := openLockPolicy(anchor, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +126,7 @@ func acquirePinned(anchor *directoryAnchor) (*Lock, error) {
 			file.Close()
 		}
 	}()
-	if !anchor.valid() || !sameEntry(anchor, file, identity) {
+	if !anchor.valid() || !sameEntryPolicy(anchor, file, identity, policy) {
 		return nil, ErrUnsafe
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX | syscall.LOCK_NB); err != nil {
@@ -95,11 +135,28 @@ func acquirePinned(anchor *directoryAnchor) (*Lock, error) {
 		}
 		return nil, ErrIO
 	}
-	if !anchor.valid() || !sameEntry(anchor, file, identity) {
+	if !anchor.valid() || !sameEntryPolicy(anchor, file, identity, policy) {
 		return nil, ErrUnsafe
 	}
 	keep = true
-	return &Lock{file: file, anchor: anchor}, nil
+	return &Lock{file: file, anchor: anchor, policy: policy, identity: identity}, nil
+}
+
+// Verify rechecks every pinned parent and the held lock entry's identity,
+// permissions, ownership, link count, size, ctime and mtime. It is serialized
+// with Close. Nil, zero and closed locks return the stable ErrUnsafe sentinel.
+// Verification is an explicit point-in-time check, not continuous monitoring
+// or a defense against hostile same-UID writers or administrators.
+func (lock *Lock) Verify() error {
+	if lock == nil {
+		return ErrUnsafe
+	}
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+	if lock.file == nil || !lock.anchor.valid() || !sameEntryPolicy(lock.anchor, lock.file, lock.identity, lock.policy) {
+		return ErrUnsafe
+	}
+	return nil
 }
 
 // Close releases flock and closes descriptors only. The persistent lock entry
@@ -252,7 +309,15 @@ func (anchor *directoryAnchor) close() error {
 }
 
 func safeLock(info fs.FileInfo) bool {
-	if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky) != 0 || info.Size() != 0 {
+	return safeLockPolicy(info, privateLockPolicy)
+}
+
+func safeLockPolicy(info fs.FileInfo, policy lockPolicy) bool {
+	if info == nil || !info.Mode().IsRegular() || info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky) != 0 || info.Size() != 0 {
+		return false
+	}
+	mode := info.Mode().Perm()
+	if mode != 0o600 && (policy != legacyLockPolicy || mode != 0o644) {
 		return false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -260,7 +325,11 @@ func safeLock(info fs.FileInfo) bool {
 }
 
 func sameLock(a, b fs.FileInfo) bool {
-	if !safeLock(a) || !safeLock(b) || !os.SameFile(a, b) {
+	return sameLockPolicy(a, b, privateLockPolicy)
+}
+
+func sameLockPolicy(a, b fs.FileInfo, policy lockPolicy) bool {
+	if !safeLockPolicy(a, policy) || !safeLockPolicy(b, policy) || !os.SameFile(a, b) || a.Mode() != b.Mode() {
 		return false
 	}
 	x := a.Sys().(*syscall.Stat_t)
@@ -269,33 +338,41 @@ func sameLock(a, b fs.FileInfo) bool {
 }
 
 func openLock(anchor *directoryAnchor) (*os.File, fs.FileInfo, error) {
+	return openLockPolicy(anchor, privateLockPolicy)
+}
+
+func openLockPolicy(anchor *directoryAnchor, policy lockPolicy) (*os.File, fs.FileInfo, error) {
 	root := anchor.parts[len(anchor.parts)-1].root
-	before, err := root.Lstat(lockName)
+	name := policy.name()
+	before, err := root.Lstat(name)
 	flags := syscall.O_RDWR | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC
 	fd := -1
+	created := false
 	if errors.Is(err, fs.ErrNotExist) {
-		fd, err = syscall.Openat(int(anchor.dir.Fd()), lockName, flags | syscall.O_CREAT | syscall.O_EXCL, 0o600)
+		fd, err = syscall.Openat(int(anchor.dir.Fd()), name, flags | syscall.O_CREAT | syscall.O_EXCL, 0o600)
 		if errors.Is(err, syscall.EEXIST) {
 			// A concurrent creator won. Inspect it, but never retry creation
 			// after observing an existing entry, including if it disappears.
-			before, err = root.Lstat(lockName)
+			before, err = root.Lstat(name)
 		} else if err != nil {
 			return nil, nil, ErrIO
+		} else {
+			created = true
 		}
 	}
 	if fd < 0 {
-		if err != nil || !safeLock(before) {
+		if err != nil || !safeLockPolicy(before, policy) {
 			return nil, nil, ErrUnsafe
 		}
-		fd, err = syscall.Openat(int(anchor.dir.Fd()), lockName, flags, 0)
+		fd, err = syscall.Openat(int(anchor.dir.Fd()), name, flags, 0)
 		if err != nil {
 			return nil, nil, ErrUnsafe
 		}
 	}
-	file := os.NewFile(uintptr(fd), lockName)
+	file := os.NewFile(uintptr(fd), name)
 	opened, err := file.Stat()
-	entry, entryErr := root.Lstat(lockName)
-	if err != nil || entryErr != nil || !safeLock(opened) || !sameLock(opened, entry) || (before != nil && !sameLock(before, opened)) {
+	entry, entryErr := root.Lstat(name)
+	if err != nil || entryErr != nil || !safeLockPolicy(opened, policy) || (created && !safeLock(opened)) || !sameLockPolicy(opened, entry, policy) || (before != nil && !sameLockPolicy(before, opened, policy)) {
 		file.Close()
 		return nil, nil, ErrUnsafe
 	}
@@ -303,7 +380,11 @@ func openLock(anchor *directoryAnchor) (*os.File, fs.FileInfo, error) {
 }
 
 func sameEntry(anchor *directoryAnchor, file *os.File, identity fs.FileInfo) bool {
+	return sameEntryPolicy(anchor, file, identity, privateLockPolicy)
+}
+
+func sameEntryPolicy(anchor *directoryAnchor, file *os.File, identity fs.FileInfo, policy lockPolicy) bool {
 	opened, err := file.Stat()
-	entry, entryErr := anchor.parts[len(anchor.parts)-1].root.Lstat(lockName)
-	return err == nil && entryErr == nil && sameLock(identity, opened) && sameLock(identity, entry)
+	entry, entryErr := anchor.parts[len(anchor.parts)-1].root.Lstat(policy.name())
+	return err == nil && entryErr == nil && sameLockPolicy(identity, opened, policy) && sameLockPolicy(identity, entry, policy)
 }
