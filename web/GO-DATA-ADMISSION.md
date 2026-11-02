@@ -1,6 +1,6 @@
 # Go 数据准入：物理安全、只读快照与真实旧 schema 对照
 
-状态：源码实现进行中，须以 GitHub Actions 实际结果为准；不是生产可用或 281 项业务完成声明。
+状态：当前只读实现已由 [GitHub Actions 41376594444](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41376594444) 验证，81 顶层 / 237 含子用例、0 fail、0 skip，vet/race/build/smoke 通过。不是生产可用或 281 项业务完成声明；剩余兼容门见下文。
 
 ## 本阶段边界
 

@@ -34,11 +34,19 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 新增回归覆盖：读取慢请求 body 前即固定标签身份并占用并发配额；SSE 每连接待写/在写 payload 有 8 MiB 字节预算且完成后释放；同标签并发打开成功采纳租约后，不被另一路失败回滚删除。编译/测试仍全部在 GitHub；本机仅下载小型 JSON/格式化证据。
 
+## 数据准入第三轮
+
+源码 `f24e145ea94f44f56dc5a477b6a8c4e7cc11a9d4`（数据实现 `b3d956fc`），[Actions 41376594444](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41376594444) **success**，job 2m24s：**81 顶层 / 237 含子用例，0 fail、0 skip，8 个测试 package**。vet、race、build、无 Node smoke 全部通过。
+
+新增通过：`internal/projectfs`、`internal/admission`、`internal/projectdata`。原 TypeScript M00–M06 在 GitHub 生成两种确切 v7 schema 和一个 v6 合成库，Go 逐一核对；`TestTypeScriptRegistryContract` 与包含未 checkpoint WAL-only 行的 `TestInspectPhysicalWALSetFromOriginalSchema` 实际执行并通过，没有依靠 skip 绕过。原合成 DB/WAL/SHM 字节未变、私有暂存清理通过。详细边界见 [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md)。
+
+首个提交的 CI 因 workflow job-level `env` 引用了该位置不可用的 `runner` context，没有启动 runner，也未执行测试。随后改为步骤内使用 `RUNNER_TEMP` 并写入 `GITHUB_ENV`，上面记录的是修正后的实际成功结果，不隐瞒首轮失败。
+
 ## 不代表什么
 
 - 281 项公开业务操作仍未绑定为 Go HTTP 业务实现，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
-- 草稿正文 CAS/读取已有 Go 源码和合成测试，但 schema 准入、项目打开、迁移与 HTTP 领域绑定尚未完成，不能对原作者数据库启用。
+- 草稿正文 CAS/读取以及只读 v7 schema/物理路径核验已有 Go 源码和远端合成测试，但项目打开、旧库升级、完整作者内容证明与 HTTP 领域绑定尚未完成，不能对原作者数据库启用。
 - AI 生成/审稿修稿定稿、后处理、LanceDB、归档、WebDAV、MCP 等仍待迁移。原 Node 通过的验收不能转成 Go 通过。
 - 构建物明确标注非生产 scaffold；没有发布 Go 镜像或部署。正式容器保持原固定 Node 镜像；旧 Node 自动发布已改为仅手动 dispatch。
 
-下一阶段必须先实现数据准入/物理路径安全，再接入作品与草稿纵向业务；所有新增编译与测试继续交由 GitHub Actions。
+下一阶段继续完善数据准入的剩余兼容门并接入作品与草稿纵向业务；所有新增编译与测试继续交由 GitHub Actions。
