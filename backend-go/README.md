@@ -22,6 +22,7 @@
 - `internal/llm`、`internal/egress`：Go原生OpenAI-compatible/Gemini非流式/流式、UTF16可见/推理隔离、finish/usage证据、取消围栏和精确origin无proxy/redirect HTTP；72个原OpenAI/154个原Gemini provider及922个原scanner合成对照已通过，**未绑定AI工作流或RPC**，见 `web/GO-AI-TRANSPORT.md`。
 - `internal/writerlock`：真实openat/NOFOLLOW+flock跨进程排他，安全persistent lock inode、多进程/exit/CLOEXEC验证。第十四轮新增固定`AcquireLegacy`复用现gateway `.native-web.gateway.lock`及`Lock.Verify`；原Acquire不同名不互代。未接main/全局状态/正式生命周期，见 `web/GO-WRITER-LOCK.md`。
 - `internal/projectaccess`：锁内只读作者预检，拒绝portable历史authority/restore markers，三个canonical Lance入口metadata inventory，私有完整副本SQLite准入+source未变证明与cleanup；不返回源DB/repository/写能力、不计operation实现；Lance子树/格式/全文兼容仍未证明，见 `web/GO-AUTHOR-PREFLIGHT.md`。
+- `native-lance`、`internal/lancenative`、`cmd/lance-interop`：精确Rust LanceDB0.22.3/Arrow56.2静态库+Go/CGO进程内IPC stream导入导出隔离试验；6表/14行原Node合成fixture、原生编译/5项测试/完整跨语言schema与全文互操作/物理保全已通过独立GitHub任务41420077722（源码bc14231b），仅隔离合成资格，详见`native-lance/README.md`。未接main/作者预检/KB业务，不通过Node/Python桥接；不能将源码或普通GoCI通过算原生通过。
 - `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 
 完整操作清单和迁移门见 `web/GO-MIGRATION-MATRIX.md`、`web/GO-MIGRATION-PLAN.md`。AI 生成、定稿及后处理、知识库、归档和其他全部业务仍需要逐项迁移并验证。

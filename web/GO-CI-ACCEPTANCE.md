@@ -181,6 +181,16 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 本轮**不升级任何operation**：矩阵仍2/54/225；无durable原库能力，main不绑定，不创建/读写正式lock/作者DB，不部署。真正native Lance版本/全文、portable权限移植、populated迁移、全局/生成lifecycle及281浏览器完整验收仍未完成。详情[GO-AUTHOR-PREFLIGHT.md](GO-AUTHOR-PREFLIGHT.md)。
 
+## 精确原生Lance隔离试验第十五轮（合成互操作已通过）
+
+普通回归源码`07a17833cc1de7bc100ccfeafa632e5af6222f89`，[Actions41418579981](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579981) **success，4m56s，316顶层/3319含子用例PASS、0fail、3skip、14package**；format/vet/unit/race/凭据/build/noNode全过。普通CI不启用`lance_native`标签，不可把该结果当原生包已编译。
+
+新增精确Rust0.22.3/Arrow56.2静态库、C ABI、Go直接链接驱动与独立GitHub任务，均只对私有合成副本。原Node0.22.3/Arrow18.1已实际生成6表/14行、多个embedding generation、空schema-bearing表和active表第二版本。首次原生[41418579889](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579889)编译到lance-encoding因缺protobuf标准include失败；修复系统包与PROTOC_INCLUDE后`bc14231b`的[41420077722](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077722) **success，约9m50s**：Rust locked build、Go vet、5项native测试0fail0skip、215M Go/CGO产物PATH=/nonexistent真实执行、完整Rust/Go/Node schema/全文/空表/reopen及source/copy bytes/membership/registry/copies保全全通过。active源v2→新库v1，原Node确认；不恢复历史号。独立普通Go[41420077714](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077714)也success。Rust build5m25s、target3.0G/staticlib841M、time最大RSS1619064KiB；微型native fixture0.10s/RSS109712KiB，不能外推作者规模。
+
+锁文件在GitHub生成，下载审计591包sharedchecksum及Lance/Arrow/DataFusion版本后提交；root publishedcrate与upstream stale beta/root差异及license后续门有明确记录。原oracle实际发现vector-list childnullable在createTable和createEmptyTable均变true，按实际持久化schema严格校验，不把原构造Field当落盘schema。源码只读审查没有发现trustedfixture范围Critical/High；不是动态验收。详细[GO-LANCE-NATIVE-SPIKE.md](GO-LANCE-NATIVE-SPIKE.md)、`backend-go/native-lance/README.md`。
+
+仍2/54/225；未绑定任何KB业务、未读取作者正文、未部署。全程编译/测试/依赖安装仅GitHub，本机只改源码和读取小型证据。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

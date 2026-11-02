@@ -1,7 +1,6 @@
 //go:build lance_native && cgo
 
 // This executable only drives synthetic native interoperability on CI copies.
-//
 package main
 
 import (

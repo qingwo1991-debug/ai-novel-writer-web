@@ -3,7 +3,6 @@
 // Package lancenative is an isolated synthetic compatibility spike. It is not
 // used by main, author admission or production repositories. Paths are trusted
 // private CI copies; the caller must exclude all concurrent filesystem writers.
-//
 package lancenative
 
 /*

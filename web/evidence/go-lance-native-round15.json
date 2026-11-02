@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "syntheticOnly": true,
+  "status": "passed",
+  "sourceCommit": "bc14231bbff135a02cfb0336d89eee88e4de9fc6",
+  "nativeRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077722",
+  "ordinaryGoRun": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077714",
+  "nativeVersions": {"lancedb": "0.22.3", "lance": "0.39.0", "arrow": "56.2.0", "rust": "1.90.0"},
+  "oracleVersions": {"@lancedb/lancedb": "0.22.3", "apache-arrow": "18.1.0"},
+  "lock": {
+    "sha256": "a6252b1526248b36ff4168826cf3d91b7b43dc54b69ac600854d8d5bac705365",
+    "packages": 591,
+    "sharedRegistryChecksumsMatchUpstream": true,
+    "familyVersionsMatchUpstream": true,
+    "upstreamWorkspaceRoot": "0.22.3-beta.5",
+    "publishedLancedbChecksumVerifiedAgainstCratesIo": true,
+    "newNameVersionPairs": ["lancedb@0.22.3", "novel-lance@0.1.0"]
+  },
+  "tables": [
+    {"name": "chunks", "rows": 4, "sourceVersion": 1, "restoredVersion": 1},
+    {"name": "chunks__space_1", "rows": 4, "sourceVersion": 2, "restoredVersion": 1},
+    {"name": "chunks__space_2", "rows": 2, "sourceVersion": 1, "restoredVersion": 1},
+    {"name": "chunks__space_3", "rows": 1, "sourceVersion": 1, "restoredVersion": 1},
+    {"name": "chunks__space_4", "rows": 0, "sourceVersion": 1, "restoredVersion": 1},
+    {"name": "documents", "rows": 3, "sourceVersion": 1, "restoredVersion": 1}
+  ],
+  "checks": {
+    "nativeRustBuildLocked": true,
+    "nativeGoVet": true,
+    "nativeGoTests": {"pass": 5, "fail": 0, "skip": 0},
+    "nativeExecutablePathNonexistent": true,
+    "nativeExportFullRowsAndSchemas": true,
+    "nativeRestoredIPCFullRowsAndSchemas": true,
+    "nodeReopenedNativeRestored": true,
+    "pinnedLatestVersion": true,
+    "emptySchemaBearingTable": true,
+    "sourceAndCopyFileBytesAndMembershipUnchanged": true,
+    "registryAndKnowledgeCopiesUnchanged": true
+  },
+  "measurements": {
+    "rustBuildWallSeconds": 325.01,
+    "rustBuildTimeMaxRssKiB": 1619064,
+    "targetDirectoryReported": "3.0G",
+    "staticLibraryReported": "841M",
+    "strippedGoExecutableReported": "215M",
+    "nativeFixtureWallSeconds": 0.10,
+    "nativeFixtureMaxRssKiB": 109712,
+    "ldd": ["linux-vdso.so.1", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"]
+  },
+  "limitations": [
+    "Trusted quiescent private synthetic copies only; no original author database was opened.",
+    "Two separate cross-language directions, not native-export IPC fed back into native-import.",
+    "Fresh imported versions, not historical version preservation; latest checkout pin only.",
+    "No native package race-detector or hostile-input decompression memory proof.",
+    "No complete KB operations, registry semantic authority, copy/SQL/text consistency or production integration.",
+    "No JS logicalHash parity, FTS/index replay, legacy layout, cross-platform packaging or final linked SBOM qualification.",
+    "Measurements describe this dev-profile build and tiny fixture, not author workload budgets.",
+    "Migration matrix remains 2 implemented / 54 in progress / 225 not started; production unchanged."
+  ]
+}

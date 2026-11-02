@@ -60,7 +60,10 @@ int32_t nv_lance_export(const uint8_t *path, size_t pathlen,
 
 /*
  * staging is an existing EMPTY private LanceDB root; inputdir holds IPC STREAMS.
- * manifest is at most 1 MiB and has exactly the same JSON shape as export output;
+ * Input IPC is at most 64 MiB per table and 128 MiB retained in aggregate; this
+ * does not bound decoded Arrow allocation for hostile/compressed input. Only
+ * trusted synthetic inputs are supported. The manifest is at most 1 MiB and
+ * has exactly the same JSON shape as export output;
  * tables are unique, filenames exactly <name>.arrows, version > 0. Creates each
  * table in Create (never overwrite) mode directly from its IPC stream/schema,
  * including zero-row schema-only streams. Checks declared rows before any write

@@ -1,15 +1,29 @@
-# 原生Lance兼容试验（隔离源码已实现，原生验证进行中）
+# 原生Lance兼容试验（隔离合成数据互操作已通过，非生产能力）
 
 ## 第十五轮执行状态
 
-- 源码起点`d1ac97b5`，当前远程原生试验源码`07a17833`；`backend-go/native-lance/`为精确0.22.3 Rust staticlib，Go/CGO进程内调用，只有`lance_native && cgo`显式构建标签可用，没有接入main/RPC/作者预检。
-- [GitHub原生任务41418579889](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579889)：原Node0.22.3/Arrow18.1合成6表与stream IPC生成已通过；Rust构建、Go链接及完整跨语言校验仍在进行，**未通过前不称兼容验收完成**。Cargo.lock待远程生成、下载审计并提交。
+- 源码起点`d1ac97b5`，最终通过远程原生试验源码`bc14231b`；`backend-go/native-lance/`为精确0.22.3 Rust staticlib，Go/CGO进程内调用，只有`lance_native && cgo`显式构建标签可用，没有接入main/RPC/作者预检。
+- [首次原生编译41418579889](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579889)：原Node0.22.3/Arrow18.1合成6表与stream IPC生成通过；Rust编到lance-encoding后缺`google/protobuf/empty.proto`失败（5m31s，time记录最大RSS1275704KiB，不代表完整build峰值）。已添加libprotobuf-dev并强制/usr/bin/protoc、PROTOC_INCLUDE=/usr/include，提交`bc14231b`，[锁定依赖重试41420077722](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077722) **全绿（约9m50s）**：Rust --locked build、Go vet、5项native测试0fail0skip、Go静态链接产物在PATH=/nonexistent执行、原Node完整schema/rows/reopen与源/副本bytes/membership/registry/copies保全全部通过。独立普通Go[41420077714](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077714)也success。
+- GitHub生成591包Cargo.lock已下载审计并提交，SHA256`a6252b1526248b36ff4168826cf3d91b7b43dc54b69ac600854d8d5bac705365`；所有shared注册表包checksum与Lance/Arrow/DataFusion家族版本符合immutable上游，注意physical-expr-adapter原锁就是50.0.0。上游release workspace锁root仍是0.22.3-beta.5，实际发布crate0.22.3独立与crates.io checksum核对；仅新增published lancedb与shim两个name/version pair，不宣称root锁字节相同。metadata不等于最终链接SBOM；MPL-2.0 option-ext及其他notice仍需分发审查。
 - [普通Go回归41418579981](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41418579981)已全绿：316顶层/3319含子测试PASS、0fail、3skip、14packages；format/vet/unit/race/凭据原版解密/build/无Node运行均通过。此任务不编译显式标签native包，不能替代原生验收。
 - 原生workflow初次因job级env不能使用runner context而未入场；改运行步骤注入固定RUNNER_TEMP路径。原oracle随后两次真实发现createTable及createEmptyTable持久化vector child nullable=true，虽原传入Field为false；已按实际持久化schema建立明确预期，未放宽字段/行比较。
 - 当前真实覆盖：documents、canonical chunks、active2D/inactive3D/building2D与空2D表，共6表/14行，Unicode/null/Float32，active表append成第二版本。没有历史override checkout、删除、FTS/旧layout或作者数据；不得把下文研究目标全算已实现。
 - 两个互操作方向独立：原版IPC→native新Lance→原版重开；native读物理副本→IPC→JS Arrow校验。当前不是将native-export IPC再送native-import的组合自往返。
 - ABI同步无handle、Rust Box bytes配套free、返回仅状态token，Go只保留数字status；catch_unwind不屏蔽默认panic hook的stderr，也不防abort/OOM/UB。私有合成目录独占条件是前提，IPC64MiB/表与128MiB总保留输入不代表解码后内存硬上限。
 - 部署、作者卷、281操作矩阵均未推进：仍2 IMPLEMENTED/54 IN PROGRESS/225 NOT STARTED；原生试验基础设施不是业务操作实现。
+
+### 实测成本与精确边界
+
+- Rust dev/debug0/incremental=false/jobs2编译5m25.01s，time最大RSS1619064KiB；target3.0G，staticlib841M，strip Go可执行215M。这不是tiny binary，后续发行体积/优化待单独评估，未把编译挪回本机。
+- 6表/14行三次native调用合计约0.10s、最大RSS109712KiB；仅微型fixture，不是作者规模性能承诺。ldd只列libm/libgcc_s/libc与动态loader（加linux-vdso），没有Node/Python运行库；真实PATH隔离执行通过。Rust静态库链接不等于整个ELF全静态。
+- active源版本2导入后版本1，再由原Node重开确认；显式不保留原历史版本号。全部5项native单测通过，普通Go race通过但native标签包本轮没有race门。
+- 长期小证据见[web/evidence/go-lance-native-round15.json](evidence/go-lance-native-round15.json)。完整短期artifact只含合成契约/metadata/日志/manifest，不含作者数据或大二进制。
+
+### 下一步限定块（只读源码调查，不是已实现）
+
+1. `projectfs.StageCanonicalKnowledge`固定资产有界递归复制与源/副本proof：lancedb/registry/knowledge-copies；原`vector-migration-snapshot.ts:physicalManifest`不含copies，不能原样照搬冒充完整。原readSnapshot拒绝vectors.json或migration-journal存在，历史vectors.json.migrated需opaque保留。
+2. 在AcquireLegacy+外部旧desktop排除期间包住SQLite与知识资产stage、native同步scan、两个proof复核、cleanup；版本只从冻结副本取，不打开原库，不因context取消提前删scratch或解锁。逐表checkout不是跨表事务或句柄quiescence证据。
+3. port原validateTables与registry/copy关系：uniqueIDs、文档chunkCount/序列、向量dimension/finite/docId/text、active full generation及building prefix。registry只读，不调用会推断写入的getEmbeddingSpaces。knowledge-copy引用是SHA256(docId).json；edited/indexDirty可合法不同于indexed chunks，分类不修复、不要求content==joined chunks。报告仅counts/versions/digests/status，不含正文。
 
 以下版本研究与未来验收目标保留，不能误读为已经通过的证据。
 

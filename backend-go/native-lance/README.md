@@ -2,12 +2,20 @@
 
 Not a production adapter. `novel_lance` is a Rust static library linked **in-process** by Go/CGO under the explicit `lance_native && cgo` build tag. The normal application and standard Go build do not include it. No Node/Python subprocess or server is used by this native executable. Node 0.22.3 is a separate GitHub-only synthetic oracle.
 
+## Qualified synthetic result
+
+[GitHub41420077722](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41420077722), source `bc14231b`: Rust locked build, Go vet,5native tests0fail0skip, PATH=/nonexistent real native driver and original Node verifier all passed. Six tables/14rows, full schemas/rows, empty stream table, latestv2→freshv1, and source/copy file contents/membership including registry/copies unchanged. Measurements: Rust build5m25s/maxRSS1619064KiB, target3.0G/staticlib841M/strippedGo215M; tiny fixture0.10s/maxRSS109712KiB. ELF dynamically needs libm/libgcc_s/libc/loader, not a fully-static executable. No author workload performance claim. Persisted bounded evidence: `web/evidence/go-lance-native-round15.json`.
+
 ## Version and build policy
 
 - Exact Rust LanceDB `=0.22.3`, matching npm `@lancedb/lancedb@0.22.3` release; underlying Lance family0.39.0.
 - Direct Arrow array/schema/ipc `=56.2.0`; Rust1.90.0.
-- GitHub bootstrap starts from the immutable upstream release Cargo.lock, resolves shim root, emits the resulting lock for audit/commit. A missing committed lock means reproducibility qualification remains incomplete, not an implicit latest dependency approval.
+- GitHub bootstrap used immutable upstream release Cargo.lock, then resolved the shim root. Committed lock SHA256 `a6252b1526248b36ff4168826cf3d91b7b43dc54b69ac600854d8d5bac705365`:591 packages; all shared registry checksums and Lance/Arrow/DataFusion family versions match upstream, including upstream's deliberate DataFusion physical-expr-adapter50.0.0 exception. New package/version pairs are only novel-lance0.1.0 and published lancedb0.22.3; upstream release workspace lock still named its unpublished root0.22.3-beta.5. Published0.22.3 checksum separately matches crates.io version metadata. Builds use `--locked`; this audit is dependency identity evidence, not a successful native build.
 - Compilation, rustfmt/gofmt, tests and dependency installs **only on GitHub Actions**, never the deployment machine. Separate `.github/workflows/go-lance-native.yml` avoids making the lightweight Go regression job build Lance on every change. This job never deploys/publishes an image.
+
+## Distribution follow-up
+
+GitHub `cargo metadata` contains dependency/license declarations but is not a final linked-artifact SBOM or legal approval. Among591 resolved packages, option-ext0.2.0 declares MPL-2.0; r-efi5.3.0 offers MIT OR Apache-2.0 OR LGPL-2.1-or-later. Native distribution must inventory actually linked Rust/C libraries, choose permitted alternatives where applicable, preserve notices and satisfy relevant source obligations before release. This unpublished shim has no independent distribution license declaration. No artifact is deployed by this spike.
 
 ## Narrow ABI
 
