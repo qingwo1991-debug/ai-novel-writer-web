@@ -4,7 +4,7 @@
 
 `docker/README.md`、`Dockerfile`、`docker/compose.yaml` 和当前仓库中的 `docker/nginx-ai-novel-writer.conf` 描述的是旧桌面/VNC 部署，不应原样当作原生 Web 安装步骤。尤其旧 nginx 副本指向 **6080**，没有提供原生网关所需的已认证身份头。
 
-本文是运维步骤和已验证证据，**不是“全部功能已验收”声明**。逐项功能/验收边界见 `web/FEATURE-MATRIX.md`、`web/MIGRATION-NOTES.md`。当前现场已从GHCR拉取固定摘要并切换生产nginx/导航，原密码与证书未改，用户登录验收仍待完成；本次具体证据见 [../web/PRODUCTION-CUTOVER.md](../web/PRODUCTION-CUTOVER.md)。
+本文是运维步骤和已验证证据，**不是“全部功能已验收”声明**。逐项功能/验收边界见 `web/FEATURE-MATRIX.md`、`web/MIGRATION-NOTES.md`。当前现场已从GHCR拉取固定摘要并切换生产nginx/导航，原密码与证书未改，用户已确认原密码登录和原作品可打开（不是全部功能验收）；本次具体证据见 [../web/PRODUCTION-CUTOVER.md](../web/PRODUCTION-CUTOVER.md)。
 
 ## 1. 文件、端口与信任模型
 
@@ -191,7 +191,7 @@ location / {
 - 实际运行打包的 Python 安全文件 helper，读取能力内的真实测试文件成功；Python/flock 存在，Electron/Xvfb/x11vnc/websockify 可执行文件不存在。
 - 最小闭包 35 包，没有 Electron/sharp；测试容器和工作区测试卷均已清理，生产数据未复制/修改。
 
-上述基础候选早于最后的响应清洗等补丁整合，**不是最终生产镜像或完整安全/功能验收**；仅凭这组历史候选证据不能宣称生产切换或全部模型/知识库/导入归档/备份/MCP验收通过。后续GHCR实际镜像与正式切换另见 `web/PRODUCTION-CUTOVER.md`，用户登录和第三方服务未验证项仍明确保留。
+上述基础候选早于最后的响应清洗等补丁整合，**不是最终生产镜像或完整安全/功能验收**；仅凭这组历史候选证据不能宣称生产切换或全部模型/知识库/导入归档/备份/MCP验收通过。后续GHCR实际镜像与正式切换另见 `web/PRODUCTION-CUTOVER.md`，后续用户已确认基础登录/原作品打开；第三方服务与其他细分未验证项仍明确保留。
 
 云凭据/绑定元数据已采用**每文档同步读-改-写序列化**，不是伪装成单全局 owner，也不是跨两个 JSON 的原子事务。其未知/损坏遗留锁会保守拒绝；仅在所有写入者停止并审核后处理。不要将云元数据锁与可自动随进程释放的 gateway 内核 `flock` 混淆。
 
