@@ -100,7 +100,13 @@ func phTruthy(value any) bool {
 	return true
 }
 
-type phStep struct { key, label string; critical bool }
+type phStep struct { key string; label any; critical bool }
+
+// These schema labels are nullable despite the original TypeScript annotation.
+// Retain explicit NULL; read projections apply their own original defaults.
+func phNullableText(input map[string]any,key string)(any,error){
+ value,exists:=input[key];if !exists{return nil,ErrPostHistoryInvalidInput};if value==nil{return nil,nil};if _,ok:=value.(string);!ok{return nil,ErrPostHistoryInvalidInput};return value,nil
+}
 
 func phSteps(value any) ([]phStep, error) {
 	var entries []any
@@ -117,7 +123,7 @@ func phSteps(value any) ([]phStep, error) {
 		if !ok { return nil, ErrPostHistoryInvalidInput }
 		key, err := phText(item, "key")
 		if err != nil { return nil, err }
-		label, err := phText(item, "label")
+		label, err := phNullableText(item, "label")
 		if err != nil { return nil, err }
 		critical, ok := item["critical"].(bool)
 		if !ok { return nil, ErrPostHistoryInvalidInput }
@@ -132,7 +138,7 @@ func (p *PostHistory) CreateRun(ctx context.Context, input map[string]any) (stri
 	if err != nil { return "", err }
 	sourceID, err := phText(input, "triggerSourceId")
 	if err != nil { return "", err }
-	label, err := phText(input, "sourceLabel")
+	label, err := phNullableText(input, "sourceLabel")
 	if err != nil { return "", err }
 	steps, err := phSteps(input["steps"])
 	if err != nil { return "", err }
