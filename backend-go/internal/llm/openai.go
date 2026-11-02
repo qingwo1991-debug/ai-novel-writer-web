@@ -23,12 +23,14 @@ type Model struct{
  BaseURL string `json:"baseUrl"`
  APIKey string `json:"apiKey"`
  MaxTokens int64 `json:"maxTokens"`
+ MaxTokensMissing bool `json:"-"`
  // Mapping must be resolved by the future model-policy owner, not raw RPC.
  SyntheticMapping *Mapping `json:"syntheticMapping,omitempty"`
 }
-type Reasoning struct{Adapter string `json:"adapter"`;ReasoningEffort string `json:"reasoningEffort,omitempty"`;ThinkingBudget int64 `json:"thinkingBudget,omitempty"`;Thinking string `json:"thinking,omitempty"`}
+type Reasoning struct{Adapter string `json:"adapter"`;ReasoningEffort string `json:"reasoningEffort,omitempty"`;ThinkingBudget int64 `json:"thinkingBudget,omitempty"`;ThinkingBudgetMissing bool `json:"-"`;ThinkingLevel string `json:"thinkingLevel,omitempty"`;Thinking string `json:"thinking,omitempty"`}
 type Options struct{
  Temperature *float64 `json:"temperature,omitempty"`
+ TemperatureNull bool `json:"-"`
  MaxTokens *int64 `json:"maxTokens,omitempty"`
  OutputTokenParameter string `json:"outputTokenParameter,omitempty"`
  ResponseFormat map[string]any `json:"responseFormat,omitempty"`
@@ -37,7 +39,9 @@ type Options struct{
  VisibleOnly bool `json:"visibleOnly,omitempty"`
 }
 type Usage struct{PromptTokens *float64 `json:"promptTokens"`;CompletionTokens *float64 `json:"completionTokens"`;TotalTokens *float64 `json:"totalTokens"`}
-type UsageEvidence struct{Usage Usage `json:"usage"`;ReasoningTokens *float64 `json:"reasoningTokens"`;Accounting string `json:"accounting"`;TotalIncludesReasoning bool `json:"totalIncludesReasoning"`;Protocol string `json:"protocol"`}
+// UsageEvidence is untrusted protocol evidence, NOT normalized billing authority.
+// Gemini historically forwards raw malformed fields, unlike normalized Usage.
+type UsageEvidence struct{Usage any `json:"usage"`;ReasoningTokens any `json:"reasoningTokens"`;Accounting string `json:"accounting"`;TotalIncludesReasoning bool `json:"totalIncludesReasoning"`;Protocol string `json:"protocol"`}
 type HTTPFailure struct{Status int `json:"status"`;Body string `json:"body"`}
 type Response struct{Success bool `json:"success"`;Content string `json:"content"`;FinishReason string `json:"finishReason"`;Error string `json:"error,omitempty"`;Usage *Usage `json:"usage,omitempty"`;HTTPFailure *HTTPFailure `json:"httpFailure,omitempty"`}
 type Callbacks struct{
@@ -66,7 +70,7 @@ func BuildOpenAIRequest(ctx context.Context,model Model,messages []Message,opts 
  endpoint,err:=ResolveOpenAIURL(model.BaseURL,model.Provider);if err!=nil{return nil,err}
  maxTokens:=model.MaxTokens;if opts.MaxTokens!=nil{maxTokens=*opts.MaxTokens};parameter:="max_tokens";if opts.OutputTokenParameter!=""{if opts.OutputTokenParameter!="max_completion_tokens"{return nil,errors.New("LLM_PARAMETER_INVALID")};parameter=opts.OutputTokenParameter}
  body:=map[string]any{"model":model.ModelName,"messages":messages,parameter:maxTokens,"stream":stream}
- if opts.Temperature!=nil{body["temperature"]=*opts.Temperature}
+ if opts.Temperature!=nil{body["temperature"]=*opts.Temperature}else if opts.TemperatureNull{body["temperature"]=nil}
  novel:=model.Provider=="novelai"
  if r:=opts.Reasoning;r!=nil{
   mapping:="";if model.SyntheticMapping!=nil{mapping=model.SyntheticMapping.Adapter}

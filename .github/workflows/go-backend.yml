@@ -60,19 +60,27 @@ jobs:
         run: |
           export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
           export GO_SECRET_CONTRACT="$RUNNER_TEMP/novel-go-secrets/contract.json"
+          export GO_PROJECTCORE_CONTRACT="$RUNNER_TEMP/novel-go-projectcore/contract.json"
+          printf 'GO_PROJECTCORE_CONTRACT=%s\n' "$GO_PROJECTCORE_CONTRACT" >> "$GITHUB_ENV"
           printf 'GO_SQLITE_CONTRACT=%s\nGO_SECRET_CONTRACT=%s\n' "$GO_SQLITE_CONTRACT" "$GO_SECRET_CONTRACT" >> "$GITHUB_ENV"
           npm install --prefix "$RUNNER_TEMP/novel-go-oracle" --no-audit --no-fund --package-lock=false better-sqlite3@13.0.3
           node --import ./contract/register-typescript.mjs ./contract/export-sqlite-contract.mjs
           node --import ./contract/register-typescript.mjs ./contract/secret-contract.mjs generate
+          node ./contract/projectcore-contract.mjs
+          test -s "$GO_PROJECTCORE_CONTRACT"
           test -s "$GO_SQLITE_CONTRACT"
           test -s "$GO_SECRET_CONTRACT"
       - name: Generate original visible and OpenAI synthetic protocol contracts
         run: |
           export GO_VISIBLE_CONTRACT="$RUNNER_TEMP/novel-go-visible/visible-contract.json"
           export GO_OPENAI_CONTRACT="$RUNNER_TEMP/novel-go-openai/contract.json"
+          export GO_GEMINI_CONTRACT="$RUNNER_TEMP/novel-go-gemini/contract.json"
+          printf 'GO_GEMINI_CONTRACT=%s\n' "$GO_GEMINI_CONTRACT" >> "$GITHUB_ENV"
           printf 'GO_VISIBLE_CONTRACT=%s\nGO_OPENAI_CONTRACT=%s\n' "$GO_VISIBLE_CONTRACT" "$GO_OPENAI_CONTRACT" >> "$GITHUB_ENV"
           node --import ./contract/register-typescript.mjs ./contract/visible-contract.mjs
           node ./contract/openai-contract.mjs
+          node ./contract/gemini-contract.mjs
+          test -s "$GO_GEMINI_CONTRACT"
           test -s "$GO_VISIBLE_CONTRACT"
           test -s "$GO_OPENAI_CONTRACT"
       - name: Verify pinned modules
