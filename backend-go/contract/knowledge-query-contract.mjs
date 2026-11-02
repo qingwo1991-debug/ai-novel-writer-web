@@ -8,7 +8,7 @@ assert.equal(process.env.GITHUB_ACTIONS,'true')
 const out=process.env.GO_KNOWLEDGEQUERY_CONTRACT
 assert.equal(out,path.join(process.env.RUNNER_TEMP,'knowledge-query-contract.json'))
 const vector=fs.readFileSync(new URL('../../electron/vector-store.ts',import.meta.url),'utf8'),kb=fs.readFileSync(new URL('../../electron/knowledge-base.ts',import.meta.url),'utf8')
-function extract(source,name){const match=new RegExp(`^(?:export )?(?:async )?function ${name}\\(`,'m').exec(source);assert(match,name);const end=source.indexOf('\n}',match.index);assert(end>match.index);return source.slice(match.index,end+2).replace(/^export /,'')}
+function extract(source,name){const match=new RegExp(`^(?:export )?(?:async )?function ${name}\\(`,'m').exec(source);assert(match,name);const end=source.indexOf('\n}\n',match.index);assert(end>match.index);return source.slice(match.index,end+2).replace(/^export /,'')}
 const names=['asNumberArray','vectorIsUsable','activeSpace','backfillSpaceForIdentity','vectorisedIdsForSpace','missingCanonicalRows','getChunksWithoutVectorsInternal','getStatsInternal','listDocumentsInternal','knowledgeCopyPath','readKnowledgeCopy']
 const code=stripTypeScriptTypes(names.map(n=>extract(vector,n)).join('\n')+'\n'+extract(kb,'readDocumentCopy'),{mode:'transform'})
 const temp=fs.mkdtempSync(path.join(process.env.RUNNER_TEMP,'knowledge-query-original-'))
