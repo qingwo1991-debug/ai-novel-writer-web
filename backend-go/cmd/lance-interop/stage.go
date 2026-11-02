@@ -104,6 +104,8 @@ func runStaged(ctx context.Context, root string) (err error) {
 	if err := save(filepath.Join(root, "native-domain-summary.json"), domain); err != nil {
 		return err
 	}
+	refs:=[]knowledgecopy.DocumentRef{};for _,table:=range snapshot.Tables{if table.Name=="documents"{for _,row:=range table.Records{refs=append(refs,knowledgecopy.DocumentRef{ID:row["id"].(string),FilePath:row["filePath"].(string)})}}}
+	links,err:=knowledgecopy.ValidateLinks(ctx,destination,refs,knowledgecopy.Budget{MaxMetadataBytes:8*1024*1024,MaxCopies:100});if err!=nil{return err};if err:=save(filepath.Join(root,"native-copy-links.json"),links);err!=nil{return err}
 	if err := proof.VerifyUnchanged(ctx); err != nil {
 		return err
 	}

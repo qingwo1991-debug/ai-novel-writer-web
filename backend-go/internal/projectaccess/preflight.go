@@ -34,7 +34,8 @@ type Config struct {
 }
 
 // Report contains integrity evidence only, not a path, source descriptor, prose,
-// key or mutation handle. Success does NOT prove native Lance compatibility,
+// key or mutation handle. An optional native summary proves only this bounded
+// copied-table domain, not arbitrary author compatibility, writable authority,
 // portable restore support, populated legacy migration or production readiness.
 type Report struct {
 	ProjectID             string                    `json:"projectId"`

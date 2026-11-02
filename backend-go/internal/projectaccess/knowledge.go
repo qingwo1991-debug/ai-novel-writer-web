@@ -6,21 +6,26 @@ import (
 	"os"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
 // KnowledgeConfig is trusted administrator input. Opting in adds a complete
-// physical asset copy and bounded read-only metadata validation; it does NOT
-// enable native table/domain admission or grant original author write access.
+// physical asset copy and bounded read-only metadata validation. Native additionally
+// opts into bounded experimental copied-table domain inspection under the same
+// legacy exclusion, only in a native build. No original author write access is granted.
 type KnowledgeConfig struct {
 	Copy     projectfs.KnowledgeBudget
 	Metadata knowledgecopy.Budget
+	Native bool
 }
 
 // KnowledgeEvidence contains no paths, prose, IDs, registry values or handles.
 type KnowledgeEvidence struct {
 	Physical projectfs.KnowledgeSummary `json:"physical"`
 	Metadata knowledgecopy.Summary      `json:"metadata"`
+	Native *knowledgedomain.Summary `json:"native,omitempty"`
+	CopyLinks *knowledgecopy.LinkSummary `json:"copyLinks,omitempty"`
 }
 
 type stagedKnowledge struct {
@@ -32,7 +37,7 @@ type stagedKnowledge struct {
 }
 
 func validKnowledgeConfig(config KnowledgeConfig) bool {
-	return config.Copy.MaxBytes > 0 && config.Copy.MaxBytes <= 1<<40 && config.Copy.MaxEntries > 0 && config.Copy.MaxEntries <= 10000 && config.Copy.MaxDepth > 0 && config.Copy.MaxDepth <= 64 && knowledgecopy.ValidateBudget(config.Metadata) == nil
+	return config.Copy.MaxBytes > 0 && config.Copy.MaxBytes <= 1<<40 && config.Copy.MaxEntries > 0 && config.Copy.MaxEntries <= 10000 && config.Copy.MaxDepth > 0 && config.Copy.MaxDepth <= 64 && knowledgecopy.ValidateBudget(config.Metadata) == nil && (!config.Native || nativeKnowledgeSupported())
 }
 func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.Root, config KnowledgeConfig) (stage *stagedKnowledge, err error) {
 	if err := parent.Mkdir("knowledge", 0700); err != nil {
@@ -70,6 +75,14 @@ func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.
 		return stage, redact(err)
 	}
 	stage.evidence = KnowledgeEvidence{Physical: stage.proof.Summary(), Metadata: metadata}
+	if config.Native {
+		snapshot, summary, inspectErr := inspectNativeKnowledge(ctx, stage, config)
+		if inspectErr != nil { return stage, inspectErr }
+		refs:=[]knowledgecopy.DocumentRef{};for _,table:=range snapshot.Tables{if table.Name=="documents"{for _,row:=range table.Records{refs=append(refs,knowledgecopy.DocumentRef{ID:row["id"].(string),FilePath:row["filePath"].(string)})}}}
+		links,linkErr:=knowledgecopy.ValidateLinks(ctx,stage.root,refs,config.Metadata);if linkErr!=nil{return stage,redact(linkErr)};stage.evidence.CopyLinks=&links
+		stage.evidence.Native = &summary
+		if err := stage.verify(ctx); err != nil { return stage, err }
+	}
 	return stage, nil
 }
 func (s *stagedKnowledge) verify(ctx context.Context) error {

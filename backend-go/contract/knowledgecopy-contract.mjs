@@ -47,6 +47,18 @@ const cases=inputs.map(({name,copy},i)=>{
  const current=original.isDocumentCopyIndexCurrent(root,id,'knowledge-copy:'+id)
  return {name,raw,current,dirty:copy.indexDirty,edited:copy.edited,hashMismatch:sha(copy.content)!==copy.indexedHash,rawSHA256:sha(raw)}
 })
-fs.writeFileSync(out,JSON.stringify({format:1,cases})+'\n',{flag:'wx',mode:0o600})
+const linkInputs=[
+ {name:'managed-current-unicode',id:'doc-星海🙂',filePath:'knowledge-copy:doc-星海🙂',copy:inputs[0].copy},
+ {name:'managed-suffix-ignored',id:'doc-suffix',filePath:'knowledge-copy:OTHER-ID',copy:inputs[1].copy},
+ {name:'managed-empty-suffix',id:'doc-empty',filePath:'knowledge-copy:',copy:inputs[0].copy},
+ {name:'managed-missing',id:'doc-missing',filePath:'knowledge-copy:doc-missing',copy:null},
+ {name:'managed-dirty',id:'doc-dirty',filePath:'knowledge-copy:doc-dirty',copy:inputs[2].copy},
+ {name:'managed-mismatch',id:'doc-mismatch',filePath:'knowledge-copy:doc-mismatch',copy:inputs[3].copy},
+ {name:'unmanaged-no-file',id:'doc-unmanaged',filePath:'/synthetic/source.pdf',copy:null},
+ {name:'unmanaged-extra-copy',id:'doc-extra',filePath:'plain.pdf',copy:inputs[0].copy},
+ {name:'marker-not-prefix',id:'doc-not-prefix',filePath:'xknowledge-copy:doc-not-prefix',copy:null},
+]
+const linkCases=linkInputs.map(({name,id,filePath,copy})=>{const raw=copy===null?null:`\n${JSON.stringify(copy,null,2)}\n`;if(raw!==null)fs.writeFileSync(path.join(root,'knowledge-copies',`${sha(id)}.json`),raw,{flag:'wx',mode:0o600});const managed=filePath.startsWith('knowledge-copy:');const current=original.isDocumentCopyIndexCurrent(root,id,filePath);return {name,id,filePath,raw,managed,current}})
+fs.writeFileSync(out,JSON.stringify({format:1,cases,linkCases})+'\n',{flag:'wx',mode:0o600})
 fs.rmSync(root,{recursive:true}) // only this attempt-owned synthetic oracle dir
 console.log(`Original copy reader/current predicate emitted ${cases.length} cases`)

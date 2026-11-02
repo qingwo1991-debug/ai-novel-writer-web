@@ -382,6 +382,7 @@ async function verify() {
   verifyIPC(at('native-restored-ipc'), restoredExport, contract)
   const stagedExport = checkedManifest(at('native-staged-export.json'), contract, originalVersions)
   verifyIPC(at('native-staged-ipc'), stagedExport, contract)
+  const copyLinks=readJSON(at('native-copy-links.json'));assert.equal(copyLinks.documents,3);assert.equal(copyLinks.managed,3);assert.equal(copyLinks.present,3);assert.equal(copyLinks.current,3);assert.equal(copyLinks.missing,0);assert.equal(copyLinks.unreferenced,0)
   const domainSummary=readJSON(at('native-domain-summary.json'))
   assert.equal(domainSummary.tableCount,6);assert.equal(domainSummary.documents,3);assert.equal(domainSummary.chunks,4);assert.equal(domainSummary.spaces,4);assert.equal(domainSummary.embeddingRows,7);assert.equal(domainSummary.activeGeneration,1)
   const staging = readJSON(at('native-staging-proof.json'))
@@ -425,8 +426,8 @@ async function verify() {
     format: 1, syntheticOnly: true, status: 'passed',
     dependencies: contract.dependencies,
     tables: contract.tables.map(table => ({ name: table.name, rows: table.rows, sourceVersion: table.version, restoredVersion: restoredVersions[table.name] })),
-    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true, nativeTypedDomainMatchesArrow: true, goCanonicalTableDomainAdmission: true },
-    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, document-to-copy filename crosslink admission, or TS logicalHash parity claim.'],
+    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true, nativeTypedDomainMatchesArrow: true, goCanonicalTableDomainAdmission: true, documentCopyLinksClassified: true },
+    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, durable writer authority, copy/indexed-text equality policy, or TS logicalHash parity claim.'],
   }
   writeJSON(at('summary.json'), summary)
   console.log(JSON.stringify({ mode: 'verify', status: summary.status, tables: contract.tables.length, summary: 'summary.json' }))
