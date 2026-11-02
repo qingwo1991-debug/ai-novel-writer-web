@@ -33,7 +33,7 @@ Go 的指纹 JSON 顺序和转义与原 `JSON.stringify` 对照，而不是用 G
 
 - 旧库 v0–v6 升级及历史发行版规范化尚未移植；当前只读核验 v7，不代表旧版本可迁移。
 - manifest 日期先覆盖 ISO/RFC3339 等常见形式；暂时拒绝 JS `Date.parse` 宽松接受的本地格式、日期溢出、扩展年份、24:00；重复键也比原解析严格。正式兼容前须消除/审定这些差异，不能静默重写 manifest。
-- 当前快照为内存缓冲，物理文件总量硬上限 64 MiB，超过明确失败。正式作者库应改为有界流式快照，不能用此临时限制冒充大作品支持。
+- 新 `StageDatabase` 流式复制使用固定 128 KiB buffer，调用者指定总物理字节预算，不受旧 `SnapshotDatabase` 的 64 MiB ceiling 限制；`projectdata.Inspect` 已改用新 API。旧内存接口暂保留兼容测试，不用于当前检查流程。新 API 已通过 [GitHub 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128) 的 65 MiB 文件、取消/漂移/回滚回归，不代表正式大作品端到端已验收。
 - Linux descriptor 安全实现；其他平台失败关闭。目标容器为 Linux，不代表所有桌面平台均兼容。
-- 不能把物理 DB/WAL SHA256 称为与现 Node 行级 `authorContentHash` 等价；行级内容证明、跨版本保全、幂等 receipt、导出权威尚待移植。
+- 物理 DB/WAL SHA256 不等于现 Node 行级 `authorContentHash`。新增 opt-in `VerifySnapshotWithDomain` 移植行级证明：SQLite 整数 decimal wrapper、BLOB Buffer JSON、JS UTF-16 行排序、非空表计数及逐表哈希；GitHub 用原 `probeProjectSqlite` 输出对照。当前排序仍有累计 64 MiB encoded rows 明确上限，需外排才支持任意大库行级证明；跨版本保全、幂等 receipt、导出权威尚待移植。常规 schema 检查不触发全文排序。
 - LanceDB 文档/分块正文仍未迁移或验证，保留原文件，不重建成空索引。

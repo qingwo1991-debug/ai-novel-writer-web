@@ -42,9 +42,22 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 首个提交的 CI 因 workflow job-level `env` 引用了该位置不可用的 `runner` context，没有启动 runner，也未执行测试。随后改为步骤内使用 `RUNNER_TEMP` 并写入 `GITHUB_ENV`，上面记录的是修正后的实际成功结果，不隐瞒首轮失败。
 
+## 流式快照、凭据与内容证明第四轮
+
+源码 `e7457541ad637051e5252a15081ea2e06fa16112`（实现 `414cf30e`），[Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128) **success**，job 3m17s：**113 顶层 / 345 含子用例，0 fail、0 skip，9 个测试 package**。vet、race、Go binary build、无 Node smoke 均通过。
+
+新增实际通过：
+
+- 128 KiB buffer 的 DB/WAL 全集流式快照；65 MiB 合成 sparse file 超过旧 ceiling 的复制、hash、proof 校验；预算、取消、漂移、冲突目标和只清理自建文件回归。
+- `TestTypeScriptAuthorContentHash`：两种原 v7 schema 及特殊 SQLite 存储类型 fixture 与原 Node `authorContentHash` 对照一致。包含大整数、REAL 数值格式、BLOB、NULL、中文/emoji、UTF-16 排序及 HTML/U2028/U2029 转义。排序仍有明确 64 MiB 编码行预算，不代表任意大库行级证明完成。
+- `TestNodeGoSecretContract`：原 TypeScript 加密可被 Go 解密，Go 加密又由原 TypeScript 解密；空串、Unicode/NUL、64 KiB 边界，只有公开合成 key。私人 key 权限、损坏不覆盖、链接、并发创建与 envelope 篡改回归通过。
+- 两个固定导航意图已绑定：`official-homepage:open`、`model-provider-resource:open`；authenticated RPC → caller-private SSE，固定地址/ID、非法 URL 拒绝、跨标签隔离与 CSRF 回归通过。
+
+首轮测试发现 preservation 测试错误地调用要求 single-link 的 SOURCE validator 检查故意构造的目录/hardlink，导致 8 个子用例失败。修正为比较目标身份/元数据而不要求安全文件类型；未放宽实际 StageDatabase 拒绝规则。以上是修正后的实际通过记录。所有执行继续仅在 GitHub，本机未编译/测试。
+
 ## 不代表什么
 
-- 281 项公开业务操作仍未绑定为 Go HTTP 业务实现，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
+- 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
 - 草稿正文 CAS/读取以及只读 v7 schema/物理路径核验已有 Go 源码和远端合成测试，但项目打开、旧库升级、完整作者内容证明与 HTTP 领域绑定尚未完成，不能对原作者数据库启用。
 - AI 生成/审稿修稿定稿、后处理、LanceDB、归档、WebDAV、MCP 等仍待迁移。原 Node 通过的验收不能转成 Go 通过。
 - 构建物明确标注非生产 scaffold；没有发布 Go 镜像或部署。正式容器保持原固定 Node 镜像；旧 Node 自动发布已改为仅手动 dispatch。

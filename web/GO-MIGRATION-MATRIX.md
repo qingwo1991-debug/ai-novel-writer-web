@@ -4,7 +4,7 @@
 
 Source baseline: `b69dc19c` (`fix(web): persist shelf visibility and fence concurrent draft commits`). Read-only audit of source; no production data, private files, credentials, runtime, CI or module manifests were changed. The only audit outputs are this document and `GO-MIGRATION-PLAN.md`. Existing React/CodeMirror stays; this is **not** a Go HTTP proxy over the Node workers. Prior Node acceptance records are reference tests, not Go parity evidence, and the latest Node fixes are not asserted production-deployed.
 
-Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). No bound business-operation implementation evidence exists. Consequently **all 281 operation rows remain NOT STARTED**. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
+Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 279 remain NOT STARTED.** These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
 
 ## Validated inventory
 
@@ -342,8 +342,8 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | mcp:list-resources | G | MCP; current gateway admin restriction | NOT STARTED |
 | mcp:call-tool | G | MCP; admin baseline + tool/effect policy | NOT STARTED |
 | mcp:get-servers-status | G | MCP; sanitized projection | NOT STARTED |
-| model-provider-resource:open | G | LINK | NOT STARTED |
-| official-homepage:open | G | LINK | NOT STARTED |
+| model-provider-resource:open | G | LINK; internal/transport/navigation.go + navigation_test.go | IMPLEMENTED — fixed IDs, authenticated RPC, caller-private SSE; e7457541 remote PASS |
+| official-homepage:open | G | LINK; internal/transport/navigation.go + navigation_test.go | IMPLEMENTED — fixed URL, authenticated RPC, caller-private SSE; e7457541 remote PASS |
 | project:import-legacy-copy | F | PROJ/IMP; source untouched | NOT STARTED |
 | project:get-runtime-context | F | PROJ; truthful no-project state | NOT STARTED |
 | project:create | G | PROJ; granted controlled library | NOT STARTED |

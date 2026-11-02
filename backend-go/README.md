@@ -11,8 +11,9 @@
 - `internal/policy`：读取现有显式 281 操作路由清单，拒绝暴露内部/桌面排除项。清单不是授权，也不代表业务已迁移。
 - `internal/transport`：bootstrap、健康与 SSE、RPC envelope；域操作仅显式注册，未迁移路由/操作返回 501。
 - `internal/store`：现有 SQLite 布局的草稿读取和事务化正文 CAS 原型；仅对已验证数据库开放，**尚未接入 HTTP 或完成旧库准入/迁移**。
-- `internal/projectfs`、`internal/admission`、`internal/projectdata`：只读物理路径/项目身份与 SQLite v7 准入检查；连接私有完整 DB/WAL 副本而非原库，保留写者排除前置条件。当前存在 64 MiB 内存快照限制及部分 manifest 日期格式兼容差异，旧版本升级尚未移植。详见 `web/GO-DATA-ADMISSION.md`。
-- `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。
+- `internal/projectfs`、`internal/admission`、`internal/projectdata`：只读物理路径/项目身份与 SQLite v7 准入检查；连接私有完整 DB/WAL 副本而非原库，保留写者排除前置条件。新增固定 128 KiB buffer 流式快照，检查流程不再使用旧 64 MiB 内存快照；opt-in 行级内容证明暂有限量内存排序，部分 manifest 日期格式有兼容差异，旧版本升级尚未移植。详见 `web/GO-DATA-ADMISSION.md`。
+- `internal/secrets`：旧 AES-GCM envelope 和私人 key 文件兼容模块，不自动读取默认作者 key；全局配置/provider 尚未连接，见 `web/GO-CREDENTIAL-COMPATIBILITY.md`。
+- `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 
 完整操作清单和迁移门见 `web/GO-MIGRATION-MATRIX.md`、`web/GO-MIGRATION-PLAN.md`。AI 生成、定稿及后处理、知识库、归档和其他全部业务仍需要逐项迁移并验证。
 
