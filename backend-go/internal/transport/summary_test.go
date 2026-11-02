@@ -362,7 +362,12 @@ func TestSummaryClosedDatabaseSaveHasRootErrorAndReleases(t *testing.T) {
 	}
 	cookie, csrf := bootstrap(t, server)
 	expected := draftContext("project", "lease", "/synthetic/summary")
-	requireDraftHTTPError(t, draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", "db:save-summary-snapshot", 1, "states", expected["projectPath"], expected), 500, "SUMMARY_OPERATION_FAILED")
+	response := draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", "db:save-summary-snapshot", 1, "states", expected["projectPath"], expected)
+	var wire struct { Error struct { Code, Message string } }
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil { t.Fatal(err) }
+	if response.Code != 500 || wire.Error.Code != "SUMMARY_OPERATION_FAILED" || wire.Error.Message != "服务暂时无法完成此操作，请重试或查看服务器日志。" {
+		t.Fatal("closed database error must retain generic transport redaction", response.Code, response.Body.String())
+	}
 	if releases != 1 {
 		t.Fatal("store error leaked hold", releases)
 	}
