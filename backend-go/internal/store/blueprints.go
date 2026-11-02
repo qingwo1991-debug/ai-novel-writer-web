@@ -70,10 +70,19 @@ func (b *Blueprints) All(ctx context.Context) ([]map[string]any, error) {
  if b == nil || b.db == nil { return nil, ErrProjectNotOpen }
  return blueprintRows(ctx,b.db,"ORDER BY chapter_number ASC")
 }
+// better-sqlite3 treats arrays as positional packs and objects as named binds.
+// Anonymous-only SQL has no named slots; an object leaves the arity short.
+func blueprintBindings(values []any,count int)([]any,error){
+ out:=[]any{};var appendValue func(any)error;appendValue=func(value any)error{
+  switch v:=value.(type){case []any:for _,item:=range v{if err:=appendValue(item);err!=nil{return err}};return nil;case map[string]any:return nil}
+  if err:=narrativeBinding(value);err!=nil{return err};out=append(out,value);return nil
+ };for _,value:=range values{if err:=appendValue(value);err!=nil{return nil,err}}
+ if len(out)<count{return nil,errors.New("Too few parameter values were provided")};if len(out)>count{return nil,errors.New("Too many parameter values were provided")};return out,nil
+}
 func (b *Blueprints) Get(ctx context.Context, chapter any) (map[string]any, error) {
  if b == nil || b.db == nil { return nil, ErrProjectNotOpen }
- if err := narrativeBinding(chapter); err != nil { return nil, err }
- rows, err := blueprintRows(ctx,b.db,"WHERE chapter_number=?",chapter)
+ args,err:=blueprintBindings([]any{chapter},1);if err!=nil{return nil,err}
+ rows, err := blueprintRows(ctx,b.db,"WHERE chapter_number=?",args...)
  if err != nil || len(rows) == 0 { return nil, err }
  return rows[0],nil
 }
@@ -103,8 +112,8 @@ func blueprintUpsert(ctx context.Context, conn interface{ ExecContext(context.Co
  if value,exists:=input["characters"]; exists { encoded,err:=blueprintJSON(value); if err!=nil{return err}; characters=encoded }
  args:=[]any{input["chapterNumber"],input["title"],input["role"],input["purpose"],input["keyEvents"],characters,
   input["suspenseHook"],input["userGuidance"],input["notes"],input["notesUpdatedAt"]}
- for _,arg:=range args { if err:=narrativeBinding(arg);err!=nil{return err} }
- _,err:=conn.ExecContext(ctx,blueprintUpsertSQL,args...)
+ args,err:=blueprintBindings(args,10);if err!=nil{return err}
+ _,err=conn.ExecContext(ctx,blueprintUpsertSQL,args...)
  return err
 }
 func (b *Blueprints) Upsert(ctx context.Context,input map[string]any) error {
@@ -119,8 +128,8 @@ func (b *Blueprints) UpsertMany(ctx context.Context,items []map[string]any) erro
 }
 func (b *Blueprints) Delete(ctx context.Context,chapter any) error {
  if b==nil||b.db==nil{return ErrProjectNotOpen}
- if err:=narrativeBinding(chapter);err!=nil{return err}
- _,err:=b.db.ExecContext(ctx,"DELETE FROM blueprints WHERE chapter_number=?",chapter);return err
+ args,err:=blueprintBindings([]any{chapter},1);if err!=nil{return err}
+ _,err=b.db.ExecContext(ctx,"DELETE FROM blueprints WHERE chapter_number=?",args...);return err
 }
 
 // This is the sole lazy repair: one atomic DML statement on already-admitted

@@ -71,7 +71,7 @@ func TestBlueprintCRUDProjectionBindingsAndJSONValues(t *testing.T){
  if !reflect.DeepEqual(row["characters"],[]any{"阿青","😀"}){t.Fatalf("characters %v",row)}
  if row,err:=b.Get(ctx,"404");row!=nil||err!=nil{t.Fatalf("missing %v %v",row,err)}
  const bindError="SQLite3 can only bind numbers, strings, bigints, buffers, and null"
- for _,bad:=range []any{true,map[string]any{},[]any{1}}{
+ for _,bad:=range []any{true,false}{
   if _,err:=b.Get(ctx,bad);err==nil||err.Error()!=bindError{t.Fatalf("get binding %v %v",bad,err)}
   if err:=b.Delete(ctx,bad);err==nil||err.Error()!=bindError{t.Fatalf("delete binding %v %v",bad,err)}
   input:=blueprintData(4);input["role"]=bad;if err:=b.Upsert(ctx,input);err==nil||err.Error()!=bindError{t.Fatalf("upsert binding %v %v",bad,err)}
