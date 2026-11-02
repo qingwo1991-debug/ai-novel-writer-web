@@ -116,6 +116,10 @@ jobs:
           printf 'GO_GENERATION_LEDGER_CONTRACT=%s\n' "$GO_GENERATION_LEDGER_CONTRACT" >> "$GITHUB_ENV"
           node ./contract/generation-ledger-contract.mjs
           test -s "$GO_GENERATION_LEDGER_CONTRACT"
+          export GO_GENERATION_SERVICE_CONTRACT="$RUNNER_TEMP/novel-go-generation-service/contract.json"
+          printf 'GO_GENERATION_SERVICE_CONTRACT=%s\n' "$GO_GENERATION_SERVICE_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/generation-service-contract.mjs
+          test -s "$GO_GENERATION_SERVICE_CONTRACT"
           test -s "$GO_BLUEPRINT_CONTRACT"
           node ./contract/plottree-contract.mjs
           node --import ./contract/register-typescript.mjs ./contract/plottree-validation-contract.mjs
