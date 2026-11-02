@@ -12,6 +12,7 @@
 - `internal/transport`：bootstrap、健康与 SSE、RPC envelope；域操作仅显式注册，未迁移路由/操作返回 501。
 - `internal/store`：现有 SQLite 布局的草稿读取和事务化正文 CAS 原型；仅对已验证数据库开放，**九项草稿和三项主台账 handler 已通过隔离私有副本 HTTP/CAS 集成（主台账synopsis生成/恢复owner仍拒绝），但没有绑定正式 binary，不能持久保存作者项目**。
 - `internal/store/reviewrevision.go`、`transport/reviewrevision.go`：14项审稿/修稿RPC隔离业务，完整来源快照、事务内index分配与pending替换、作者全文CAS合并和防重放覆盖；162项原TypeScript repository差分+合成并发HTTP通过。绑定cycle/generation/recovery拒绝，未绑定main、无持久保存。合并与普通draft CAS拒绝共享content_id误覆盖，原始BLOB不强转string，见 `web/GO-REVIEW-REVISION.md`。
+- `internal/store/posthistory.go`、`transport/posthistory.go`：后处理run/step账本与LLM历史/nullable统计的9项隔离RPC；定稿source身份、原子汇总、随机UUID与诊断不泄露。不是实际后处理执行器或billing authority，main不绑定，见 `web/GO-POST-HISTORY.md`；GitHub资格记录见 `web/GO-CI-ACCEPTANCE.md`。
 - `internal/projectfs`、`internal/admission`、`internal/projectdata`：只读物理路径/项目身份与 SQLite v7 准入检查；连接私有完整 DB/WAL 副本而非原库，保留写者排除前置条件。新增固定 128 KiB buffer 流式快照，检查流程不再使用旧 64 MiB 内存快照；opt-in 行级内容证明已用私有外部排序并通过>64MiB总行量验证（单行限制/内存峰值/磁盘预算仍见专文），部分 manifest 日期格式有兼容差异，v4→v5、v5→v6、v6→v7 仅空历史限定私有副本 lane 已验证，其余旧版本升级待移植。详见 `web/GO-DATA-ADMISSION.md`。
 - `internal/projectsession`：私有 scratch copy 的 schema 准入、cookie session+tab 所有权、冻结上下文、refresh 保留编辑、在途围栏与可重试 cleanup；非持久作者会话，见 `web/GO-PROJECT-SESSIONS.md`。
 - `internal/secrets`：旧 AES-GCM envelope 和私人 key 文件兼容模块，不自动读取默认作者 key；全局配置/provider 尚未连接，见 `web/GO-CREDENTIAL-COMPATIBILITY.md`。

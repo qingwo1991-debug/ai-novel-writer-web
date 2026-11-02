@@ -116,6 +116,20 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 操作矩阵 **2完成、26进行中、253未开始**；新增14项全为隔离私有副本IN PROGRESS，未在main绑定、未发布作者文件、未部署生产。GitHubcache restore/save的服务故障warning不影响实际冷构建成功，非测试失败。
 
+## 后处理账本与调用历史第十轮
+
+最终源码`64d044fddf2eed1583c8fda86711df5d02c6013a`，[Actions 41395057332](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41395057332) **success，4m43s：244顶层PASS、2177含子用例PASS、0 fail、1 skip、13 package**。skip仍为非root runner的writerlock foreign-owner子用例，不是本轮oracle；132项原差分全部PASS。format/vet/unit/race/双向credential/build/noNode smoke全部通过。cache restore400/save服务可用性warning不影响实际冷构建通过，不冒充测试失败或隐藏其存在。
+
+本轮原实现差分为**132项**：36 CreateRun、14 LatestRun、8 AllPassed、6 Steps、5 FailedStepLabels、13 MarkStepOK、13 MarkStepFailed、11 LogCall、9 Stats、17 History。全部使用原PostProcessRepository/LLMHistoryRepository，只有private DB getter stub；UUID在调用后透明canonicalize，不替换原crypto。Go对照调用前完整DB字节、返回/error和三张表原始副作用；时间字段局部规范化范围见 [GO-POST-HISTORY.md](GO-POST-HISTORY.md)。
+
+- create原子性、重复step key标记全部回滚、summary触发器ABORT回滚、独立pool24次并发attempt无丢失，通过专用测试。步骤ok/失败和all_critical_passed不能分开成功。
+- 定稿来源校验精确draft/chapter/status/latest version+ID、outbox finalizationID/hash/full snapshot/body和SHA256；支持历史REAL章号，拒绝BLOB冒充正文。没有读取Lance或发布文件，不能称后处理执行链通过。
+- unknown usage NULL、known-zero、分量NULL独立SUM和finish CASE差分通过；History永不输出raw error_message，固定domain错误不泄露provider/path/SQL。
+- 合成真实cookie/CSRF/tab/lease HTTP覆盖来源变化、fullidentity成功、关键重跑失败撤销汇总、可选步骤失败不影响关键汇总、跨cookie/tab/stale拒绝和hold阻止Release；原fixture字节不变。
+- 首次 [41394277265](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41394277265) 因oracle一个case重复seed同run主键失败；修复为独立runID。随后 [41394461951](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41394461951) 揭示原schema source/step label允许NULL而Go校验过严，两项差分失败；修复存储保留NULL并新增回归。第三次 [41394769438](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41394769438) **132项原差分全过**，但旧invalid-input测试仍把null当错误，修正其测试数据为非文本false；不删原差分、不改expected成Go输出。
+
+九项操作仅隔离账本/历史 **IN PROGRESS**，main未绑定，无持久作者保存；全操作矩阵2完成/35进行中/244未开始。完整runner、LanceDB既有正文、finalization publication、generation/billing owner/recovery仍未完成。本机仅source/JS syntax/git与读取远端文本证据，无Go执行、localoracle、大安装或生产数据读取。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

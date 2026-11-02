@@ -17,6 +17,10 @@
 
 源码`a5e38a20`，[Actions 41391829983](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41391829983) 全套227顶层/1996含子用例PASS、0fail、1个非root writerlock权限skip。见`GO-REVIEW-REVISION.md`、`GO-PROJECT-CORE.md`；历史下面草稿证据仍保留原统计。
 
+## 后处理账本/调用历史扩展
+
+`BeginPostHistory`以同样owner+lease hold提供六项postprocess账本和三项LLM history/stats操作，cookie、tab、CSRF、stalelease和inflightrelease隔离验证。总计35项隔离业务仍未绑定main；仅账本状态不证明LanceDB/人物/定稿外部投影已执行，LLM调用记录也不是可信generation/billing receipt。见`GO-POST-HISTORY.md`。
+
 ## 准入与生命周期前置条件
 
 源写者/检查点进程必须由上层持续排除到 stage + schema 检查 + source proof 完成。scratch parent 来自可信管理员配置，不是 RPC 参数；私有目录不允许恶意并发替换。单个 Manager 的锁与 lease 不是跨进程单写者锁，不可替代部署时的全局 flock。
