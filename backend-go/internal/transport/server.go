@@ -14,6 +14,7 @@ import (
  "time"
 
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
+ "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/publicresponse"
  novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 )
@@ -25,6 +26,7 @@ type Server struct {
  sessions *security.Sessions
  origins security.Origins
  registry *policy.Registry
+ public *publicresponse.Sanitizer
  generation string
  mu sync.Mutex
  clients map[string]*client
@@ -33,7 +35,7 @@ type Server struct {
 }
 func(s *Server)clock()time.Time{if s.now!=nil{return s.now()};return time.Now()}
 func New(registry *policy.Registry,origins security.Origins,generation string)*Server{
- return &Server{sessions:security.NewSessions(),origins:origins,registry:registry,generation:generation,clients:make(map[string]*client),handlers:make(map[string]Operation)}
+ return &Server{sessions:security.NewSessions(),origins:origins,registry:registry,public:publicresponse.New(),generation:generation,clients:make(map[string]*client),handlers:make(map[string]Operation)}
 }
 // Bind registers only inventoried operations. The domain handler must additionally
 // enforce project/capability ownership and domain admission; routing is not auth.
@@ -58,7 +60,7 @@ func(s *Server)getClient(sessionID,token string)(*client,error){
 }
 func(s *Server)unpin(current *client){s.mu.Lock();defer s.mu.Unlock();current.pinned--;current.touched=s.clock()}
 func(s *Server)ServeHTTP(w http.ResponseWriter,r *http.Request){
- if err:=s.serve(w,r);err!=nil{_ = security.WriteError(w,err)}
+ if err:=s.serve(w,r);err!=nil{_ = s.writePublicError(w,err)}
 }
 func(s *Server)serve(w http.ResponseWriter,r *http.Request)error{
  if r.URL.Path=="/healthz"{return security.WriteJSON(w,200,map[string]any{"ok":true,"runtime":"go","electron":false,"migrationComplete":false})}
@@ -84,7 +86,7 @@ func(s *Server)serve(w http.ResponseWriter,r *http.Request)error{
   if handler==nil{s.mu.Unlock();return security.NewHTTPError(501,"GO_OPERATION_NOT_MIGRATED")}
   s.mu.Unlock()
   result,err:=handler(r.Context(),Caller{Principal:principal,SessionID:session.ID(),ClientID:token},args);if err!=nil{return err}
-  return security.WriteJSON(w,200,map[string]any{"result":result})
+  return security.WriteJSON(w,200,s.public.Sanitize(map[string]any{"result":result}))
  }
  // Release/transfer/dialog semantics require actual domain ownership and are
  // deliberately not stubbed as success in this initial migration foundation.
@@ -107,9 +109,10 @@ func(s *Server)events(w http.ResponseWriter,r *http.Request,current *client)erro
  case<-heartbeat.C:s.mu.Lock();current.touched=s.clock();s.mu.Unlock();if err:=write([]byte(": heartbeat\n\n"));err!=nil{return nil}
  }}
 }
-// Publish requires a previously established caller tab and already-redacted
-// public payload. Never pass private model configs through this interface.
+// Publish requires a previously established caller tab. Sanitize before storing
+// history so live events and later replay share the same credential boundary.
+// Domains must still project safe DTOs, not raw private configuration objects.
 func(s *Server)Publish(caller Caller,channel string,args []any)error{
- s.mu.Lock();entry:=s.clients[caller.SessionID+":"+caller.ClientID];s.mu.Unlock();if entry==nil{return fmt.Errorf("CLIENT_NOT_FOUND")};return entry.hub.Publish(channel,args)
+ s.mu.Lock();entry:=s.clients[caller.SessionID+":"+caller.ClientID];s.mu.Unlock();if entry==nil{return fmt.Errorf("CLIENT_NOT_FOUND")};if args==nil{args=[]any{}};clean,ok:=s.public.Sanitize(args).([]any);if !ok{return errors.New("PUBLIC_EVENT_INVALID")};name,ok:=s.public.Sanitize(channel).(string);if !ok{return errors.New("PUBLIC_EVENT_INVALID")};return entry.hub.Publish(name,clean)
 }
 func(s *Server)Close(){s.mu.Lock();defer s.mu.Unlock();for key,entry:=range s.clients{entry.hub.Close();delete(s.clients,key)}}

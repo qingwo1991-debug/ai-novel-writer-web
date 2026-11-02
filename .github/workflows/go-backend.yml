@@ -33,6 +33,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  compile:
+    name: Parallel Go compile and static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend-go
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+      - name: Compile all production and test packages without executing tests
+        run: |
+          go mod download
+          gofmt -w ./cmd ./internal
+          git diff --binary -- . > /tmp/go-format.patch
+          go test -run '^$' ./...
+      - name: Static analysis independent of oracle generation
+        run: go vet ./...
+      - name: Upload formatting evidence even on compilation failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: go-compile-format-${{ github.sha }}
+          path: /tmp/go-format.patch
+          retention-days: 7
+          if-no-files-found: ignore
   verify:
     name: Go format, vet, synthetic tests, race and binary
     runs-on: ubuntu-24.04
@@ -148,6 +179,47 @@ jobs:
           printf 'GO_EMBEDDING_CONTRACT=%s\n' "$GO_EMBEDDING_CONTRACT" >> "$GITHUB_ENV"
           node ./contract/embedding-contract.mjs
           test -s "$GO_EMBEDDING_CONTRACT"
+      - name: Generate remaining-domain original synthetic contracts
+        env:
+          NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
+        run: |
+          npm install --prefix "$RUNNER_TEMP/novel-go-oracle" --no-audit --no-fund --package-lock=false esbuild@0.28.1 yauzl@2.10.0
+          export GO_GLOBAL_CONFIG_CONTRACT="$RUNNER_TEMP/novel-go-global-config/contract.json"
+          export GO_PROMPT_SKILLS_CONTRACT="$RUNNER_TEMP/novel-go-prompt-skills/contract.json"
+          export GO_MCP_CONTRACT="$RUNNER_TEMP/novel-go-mcp/contract.json"
+          export GO_ARCHIVE_FORMAT_CONTRACT="$RUNNER_TEMP/novel-go-archive-format/contract.json"
+          export GO_GENERATION_OWNER_CONTRACT="$RUNNER_TEMP/novel-go-generation-owner/contract.json"
+          export GO_IMPORT_SOURCE_CONTRACT="$RUNNER_TEMP/novel-go-import-source/contract.json"
+          export GO_WEBDAV_CONTRACT="$RUNNER_TEMP/novel-go-webdav/contract.json"
+          export GO_FINALIZATION_OUTBOX_CONTRACT="$RUNNER_TEMP/novel-go-finalization-outbox/contract.json"
+          export GO_KNOWLEDGE_LOGICAL_CONTRACT="$RUNNER_TEMP/novel-go-knowledge-logical/contract.json"
+          export GO_PUBLIC_RESPONSE_CONTRACT="$RUNNER_TEMP/novel-go-public-response/contract.json"
+          for name in GO_GLOBAL_CONFIG_CONTRACT GO_PROMPT_SKILLS_CONTRACT GO_MCP_CONTRACT GO_ARCHIVE_FORMAT_CONTRACT GO_GENERATION_OWNER_CONTRACT GO_IMPORT_SOURCE_CONTRACT GO_WEBDAV_CONTRACT GO_FINALIZATION_OUTBOX_CONTRACT GO_KNOWLEDGE_LOGICAL_CONTRACT GO_PUBLIC_RESPONSE_CONTRACT; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
+          failures=0
+          run_contract() {
+            if "$@"; then
+              printf 'PASS %s\n' "$*" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf 'FAIL %s\n' "$*" >> "$GITHUB_STEP_SUMMARY"
+              failures=$((failures + 1))
+            fi
+          }
+          run_contract node ./contract/global-config-contract.mjs
+          run_contract node ./contract/prompt-skills-contract.mjs
+          run_contract node ./contract/mcp-contract.mjs generate
+          run_contract node ./contract/archive-format-contract.mjs
+          run_contract node ./contract/generation-owner-contract.mjs generate
+          run_contract node ./contract/import-source-contract.mjs
+          run_contract node ./contract/webdav-contract.mjs generate
+          run_contract node ./contract/finalization-outbox-contract.mjs
+          run_contract node --experimental-vm-modules ./contract/knowledge-logical-contract.mjs
+          run_contract node ./contract/public-response-contract.mjs
+          test "$failures" -eq 0
+          for name in GO_GLOBAL_CONFIG_CONTRACT GO_PROMPT_SKILLS_CONTRACT GO_MCP_CONTRACT GO_ARCHIVE_FORMAT_CONTRACT GO_GENERATION_OWNER_CONTRACT GO_IMPORT_SOURCE_CONTRACT GO_WEBDAV_CONTRACT GO_FINALIZATION_OUTBOX_CONTRACT GO_KNOWLEDGE_LOGICAL_CONTRACT GO_PUBLIC_RESPONSE_CONTRACT; do
+            test -s "${!name}"
+          done
       - name: Verify pinned modules
         run: |
           go mod download
@@ -202,10 +274,25 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'X-Novel-User: synthetic-ci' http://127.0.0.1:16082/api/bootstrap)" = 200
           if NOVEL_DATA_ROOT=/tmp/not-author-data ./out/novel-server; then exit 1; fi
           if ./out/novel-server -listen 0.0.0.0:16082; then exit 1; fi
-          # No Node worker/FFI bridge is allowed in the Go server source.
-          if grep -R -nE 'os/exec|node:|worker\.mjs|dist-server' ./cmd ./internal --include='*.go' --exclude='*_test.go'; then
-            echo 'Review required: possible legacy runtime bridge'; exit 1
-          fi
+          # No legacy application worker/FFI bridge is allowed. The ONLY exec
+          # site is the separately disabled-by-default, trusted-admin MCP stdio
+          # tool transport, not an implementation of the application in Node.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          exec_sites = []
+          for root in ('cmd', 'internal'):
+              for source in Path(root).rglob('*.go'):
+                  if source.name.endswith('_test.go'):
+                      continue
+                  text = source.read_text()
+                  assert not re.search(r'node:|worker\.mjs|dist-server', text), source
+                  if '"os/exec"' in text:
+                      exec_sites.append(source.as_posix())
+                      assert source.as_posix() == 'internal/mcp/transports.go', source
+                      assert 'exec.Command(c.config.Command,c.config.Args...)' in text.replace(' ', '').replace('\t', '') or re.search(r'exec\.Command\(c\.config\.Command,\s*c\.config\.Args\.\.\.\)', text), source
+          assert exec_sites == ['internal/mcp/transports.go'], exec_sites
+          PY
       - name: Upload compiler/test evidence and formatting patch
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

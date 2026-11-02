@@ -1,0 +1,60 @@
+package generationowner
+
+import (
+ "context"
+ "net/http"
+
+ "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
+ "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
+ "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/llm"
+ "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/secrets"
+)
+
+// Executor has no ambient network, secret key, settings, or project authority.
+// SecretStorage and Egress come from explicit administrator configuration.
+// Registry.AuthorityLock is REQUIRED for actual dispatch. Current, LoadModel
+// and SourceReader must not reacquire this non-reentrant shared owner gate.
+// The gate serializes settings/project invalidation with request start through
+// response headers; body streaming runs unlocked. Active-call cancellation on
+// project close remains the embedding durable generation service's job.
+type Executor struct { Registry *Registry; SecretStorage *secrets.Storage; Egress *egress.Client }
+
+// Frozen cannot be created or edited by RPC. Projections are detached copies.
+type Frozen struct {
+ registry *Registry
+ leaseID string
+ scope Scope
+ purpose string
+ task Task
+ plan Plan
+ binding *Binding
+}
+func (f *Frozen) Plan() Plan {if f==nil{return Plan{}};return clone(f.plan)}
+func (e *Executor) Prepare(ctx context.Context,scope Scope,leaseID string,task Task,rootOutput int64,binding *Binding)(*Frozen,error){
+ if e==nil||e.Registry==nil{return nil,failure("MODEL_EXECUTION_CONFIG_REQUIRED")};record,err:=e.Registry.resolve(ctx,leaseID,scope,"generation");if err!=nil{return nil,err};task=clone(task);plan,err:=BuildPlan(record.profile,record.receipt,task,rootOutput);if err!=nil{return nil,err};if binding!=nil&&(binding.scope!=scope||binding.registry!=e.Registry||binding.modelRevision!=record.receipt.ModelRevision){return nil,failure("GENERATION_BINDING_INVALID")}
+ return &Frozen{registry:e.Registry,leaseID:leaseID,scope:scope,purpose:"generation",task:task,plan:clone(plan),binding:binding},nil
+}
+// Dispatch fits generation.Dependencies.Dispatch, but is deliberately NOT
+// installed into public handlers. Actual HTTP dispatch repeats lease identity,
+// expiry, scope, revision/credential and optional bound-source checks under the
+// REQUIRED shared revision/project gate. Exact-origin egress is the sole client.
+// reserve/mark/settle/write belong to the existing durable generation service.
+func (e *Executor) Dispatch(ctx context.Context,request any,callbacks generation.Callbacks)(generation.DispatchResult,error){
+ frozen,ok:=request.(*Frozen);if !ok||frozen==nil||e==nil||e.Registry==nil||frozen.registry!=e.Registry{return generation.DispatchResult{},failure("GENERATION_DISPATCH_AUTHORITY_INVALID")};if e.Registry.options.AuthorityLock==nil||e.Egress==nil||e.SecretStorage==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
+ dispatch:=func(req *http.Request)(*http.Response,error){
+  unlock,err:=e.Registry.options.AuthorityLock(ctx,frozen.scope);if err!=nil||unlock==nil{return nil,failure("GENERATION_EPOCH_STALE")};defer unlock()
+  checked,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return nil,err};if frozen.binding!=nil{if err:=frozen.binding.validate(ctx);err!=nil{return nil,err}}
+  // Serialize Close/RevokeScope with actual request start as well. No external
+  // injected callback runs under this registry mutex; only the owned egress.
+  e.Registry.mu.Lock();defer e.Registry.mu.Unlock()
+  if _,live:=e.Registry.records[frozen.leaseID];!live{return nil,failure("MODEL_EXECUTION_LEASE_INVALID")}
+  if e.Registry.options.Now().UnixMilli()>=checked.receipt.ExpiresAt{return nil,failure("MODEL_EXECUTION_LEASE_EXPIRED")}
+  return e.Egress.Do(req)
+ }
+ record,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return generation.DispatchResult{},err};key,err:=e.SecretStorage.DecryptString(record.profile.EncryptedCredential);if err!=nil{return generation.DispatchResult{},failure("MODEL_CREDENTIAL_UNAVAILABLE")}
+ model:=llm.Model{Provider:record.profile.Provider,ModelName:record.profile.ModelName,BaseURL:record.profile.BaseURL,APIKey:key,MaxTokens:record.profile.MaxTokens}
+ options:=clone(frozen.plan.Options);options.VisibleOnly=true
+ // Reuse the round25 native provider adapter: preserve raw Gemini candidates
+ // versus thoughts and existing terminal/error/usage normalization semantics.
+ return generation.NativeProvider(dispatch)(ctx,generation.ProviderRequest{Adapter:record.profile.Protocol,Model:model,Messages:frozen.task.Messages,Options:options},callbacks)
+}
