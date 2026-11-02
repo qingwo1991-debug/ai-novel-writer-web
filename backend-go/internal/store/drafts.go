@@ -253,20 +253,23 @@ func (r *Drafts) UpdateContentIfCurrent(ctx context.Context, id int64, content s
 			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
 		}
 	}()
-	var status sql.NullString
+	var rawStatus any
 	var contentID int64
-	var body string
+	var rawBody any
 	err = conn.QueryRowContext(ctx, `SELECT d.status, d.content_id, c.body
- FROM drafts d JOIN contents c ON c.id = d.content_id WHERE d.id = ?`, id).Scan(&status, &contentID, &body)
+ FROM drafts d JOIN contents c ON c.id = d.content_id WHERE d.id = ?`, id).Scan(&rawStatus, &contentID, &rawBody)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrDraftNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if !IsWorkingDraftStatus(status.String) || body != *expectedContent {
+	body, textBody := rawBody.(string)
+	status, textStatus := rawStatus.(string)
+	if !textBody || !textStatus || !IsWorkingDraftStatus(status) || body != *expectedContent {
 		return ErrDraftContentConflict
 	}
+	if err := rrExclusiveDraftContent(ctx, conn, id, contentID); err != nil { return err }
 	if err := updateOne(ctx, conn, "UPDATE contents SET body = ? WHERE id = ?", content, contentID); err != nil {
 		return err
 	}

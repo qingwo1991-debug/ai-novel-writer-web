@@ -108,6 +108,15 @@ func(m *Manager)BeginProjectCore(ctx context.Context,owner Owner,expected Contex
  done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
  return store.NewProjectCore(mounted.db),done,nil
 }
+// BeginReviewRevisions keeps the same project capability held until every source
+// check, content allocation, metadata write and merge receipt has finished.
+func(m *Manager)BeginReviewRevisions(ctx context.Context,owner Owner,expected Context)(*store.ReviewRevisions,func(),error){
+ if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
+ m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
+ mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
+ done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
+ return store.NewReviewRevisions(mounted.db),done,nil
+}
 func(m *Manager)Release(owner Owner,expected Context)error{
  m.mu.Lock();defer m.mu.Unlock();if m.closed{return ErrClosed};if !owner.valid(){return ErrContext}
  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}
