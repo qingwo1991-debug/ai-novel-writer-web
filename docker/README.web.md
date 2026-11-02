@@ -4,13 +4,13 @@
 
 `docker/README.md`、`Dockerfile`、`docker/compose.yaml` 和当前仓库中的 `docker/nginx-ai-novel-writer.conf` 描述的是旧桌面/VNC 部署，不应原样当作原生 Web 安装步骤。尤其旧 nginx 副本指向 **6080**，没有提供原生网关所需的已认证身份头。
 
-本文是运维步骤和已验证证据，**不是“全部功能已验收”声明**。逐项功能/验收边界见 `web/FEATURE-MATRIX.md`、`web/MIGRATION-NOTES.md`。本文编写不代表已修改生产 nginx、启动生产原生服务或完成切换。
+本文是运维步骤和已验证证据，**不是“全部功能已验收”声明**。逐项功能/验收边界见 `web/FEATURE-MATRIX.md`、`web/MIGRATION-NOTES.md`。当前现场已从GHCR拉取固定摘要并切换生产nginx/导航，原密码与证书未改，用户登录验收仍待完成；本次具体证据见 [../web/PRODUCTION-CUTOVER.md](../web/PRODUCTION-CUTOVER.md)。
 
 ## 1. 文件、端口与信任模型
 
 | 项目 | 原生配置 |
 | --- | --- |
-| 镜像/容器 | `${NOVEL_IMAGE:-ai-novel-writer-web:1.4.0}` / `ai-novel-writer-web`；GHCR 部署设置经审核的 digest |
+| 镜像/容器 | **必须显式设置** `NOVEL_IMAGE` / `ai-novel-writer-web`；GHCR 部署使用经审核的 digest，无默认latest/本地构建回退 |
 | 独立 Compose 项目 | `ai-novel-writer-native`；不要对其他 Compose 项目执行 `--remove-orphans` |
 | 后端发布 | **`127.0.0.1:6081:6081`**；容器内 `HOST=0.0.0.0` 不代表可以把宿主端口发布到 LAN |
 | 浏览器入口 | 由宿主 nginx 统一保护，例如 `http://192.168.1.15:8093`、`https://192.168.1.15:8445` |
@@ -32,13 +32,23 @@
 
 已测候选镜像约 **520 MB（496 MiB，未压缩）**，依赖闭包 **35 包 / 139,176,748 字节（132.73 MiB）**。LanceDB 二进制和约 96 MB public 资源占主要空间；构建缓存/中间层还需额外空间。构建前检查磁盘；不要盲目清理其他服务镜像、生产数据或全局 Docker 缓存。
 
-在仓库根目录运行（需管理员已授权的 Docker/文件权限）：
+在仓库根目录使用已审核的本机 `.env`（模式0600，已忽略不推送，只写 `NOVEL_IMAGE=ghcr.io/...@sha256:...`，不放密钥）。**本Compose仅拉取运行，已移除build段**；所有命令显式带 `--env-file .env`，因为 `-f docker/...` 下Compose默认可能寻找 `docker/.env` 而忽略根目录部署固定值。先 `config --images` 核对，缺少显式镜像时应拒绝，不回退本地旧标签。正常部署：
+
+```sh
+cd /root/AI/AI-Novel-Writer
+docker compose --env-file .env -f docker/compose.web.yaml config --images
+docker compose --env-file .env -f docker/compose.web.yaml pull
+# 仅维护窗口，先停止旧写入者并完成离线备份，再启动：
+docker compose --env-file .env -f docker/compose.web.yaml up -d --no-build --wait
+```
+
+下面仅为开发者保留的**可选手动本地构建**（需管理员已授权的Docker/文件权限），不是服务器部署必做步骤：
 
 ```sh
 cd /root/AI/AI-Novel-Writer
 df -h .
 docker image inspect ai-novel-writer:1.4.0 node:22-bookworm-slim >/dev/null
-docker compose -f docker/compose.web.yaml config --quiet
+docker compose --env-file .env -f docker/compose.web.yaml config --quiet
 docker build --pull=false --progress=plain -f Dockerfile.web \
   -t ai-novel-writer-web:1.4.0 \
   --build-arg BUILDER_IMAGE=ai-novel-writer:1.4.0 \
@@ -99,7 +109,7 @@ Compose 使用自己的默认 bridge 网络，不配置 host 网络，也不要�
 
 ```sh
 # 在维护窗口、配置已审核后执行；不是“现在就切换”的指令。
-docker compose -f docker/compose.web.yaml up -d --no-build
+docker compose --env-file .env -f docker/compose.web.yaml up -d --no-build
 ```
 
 隔离环境先检查端点可达（不带 API key 的 `/v1/models` 返回 200 或 401 均能说明 HTTP 已抵达；不能据此认定模型授权/生成通过）：
@@ -148,8 +158,8 @@ location / {
 1. **先构建、后停旧服务**。保留原镜像和实际 nginx 配置副本；为候选原生镜像记录 image ID，并打一个不会被后续重建覆盖的本地候选 tag。
 2. 在**独立空卷或离线复制的数据卷**验证候选。不要把与生产同一 `/data` 的两个服务同时启动，也不要用生产凭据生成公开日志。
 3. 进入维护窗口，停止旧 `ai-novel-writer` 及所有指向生产卷的测试写入者，完成第 3 节完整离线备份并核对恢复步骤。**旧桌面没有加入原生 flock**，不能依靠锁阻止它竞争。
-4. 核对 Compose 挂载、UID/GID、origin、端点策略、管理员用户名和代理；运行 `docker compose -f docker/compose.web.yaml config --quiet`。
-5. 仅启动原生服务：`docker compose -f docker/compose.web.yaml up -d --no-build`。确认原生 health、日志、库清单和单项目打开；不要删除旧容器/镜像以“省空间”而丢失回滚点。
+4. 核对 Compose 挂载、UID/GID、origin、端点策略、管理员用户名和代理；运行 `docker compose --env-file .env -f docker/compose.web.yaml config --quiet`。
+5. 仅启动原生服务：`docker compose --env-file .env -f docker/compose.web.yaml up -d --no-build`。确认原生 health、日志、库清单和单项目打开；不要删除旧容器/镜像以“省空间”而丢失回滚点。
 6. 管理员审核并切换 nginx upstream **6080 → 6081** 与可信身份头，先 `nginx -t`，成功才重载。保持后端宿主绑定 `127.0.0.1`。
 7. 用浏览器从真实 HTTPS/认证入口验证：登录、读书库、中文输入、真实上传/下载、保存后刷新/重启、SSE、取消、双标签互斥。真实模型/embedding/WebDAV/MCP 的测试独立记账；凭据缺失项不得冒称完成。
 8. 只有通过本次明确验收范围，才解除维护并记录上线 image ID、数据备份点、nginx 版本和未验证项。本文不代替这次生产验收。
@@ -163,7 +173,7 @@ location / {
 1. 恢复维护入口，停止 `ai-novel-writer-web`；确认所有原生 worker/同卷测试服务均停止。
 2. 如果原生已修改数据，先保留一份切换后的完整私有快照以便人工合并。**不要假定旧桌面可以安全读取原生迁移后的所有状态或服务器密文。**
 3. 最稳妥的桌面回滚是恢复已验证的**切换前完整数据快照**，连同原所有权/权限/密钥/隐藏文件；恢复前清楚说明新写入会回退，未经确认不能覆盖作者新增工作。不要只替换某个 SQLite 或 generation。
-4. 恢复备份的旧 nginx upstream/配置及原镜像，先启动旧桌面服务，检查旧健康；`nginx -t` 成功后重载回原入口。
+4. 恢复备份的旧 nginx upstream/配置及原镜像；切换时为防重启竞争已将旧容器设为 `--restart=no`，仅确认原生停止并恢复兼容数据后，才 `docker update --restart=unless-stopped ai-novel-writer` 和启动旧桌面，检查旧健康；`nginx -t` 成功后重载回原入口。
 5. 验证原作品与设置，记录回滚点和需人工迁移的新工作。保留原生诊断与备份但限制权限，不发布含作者内容或凭据的文件。
 
 若仅回滚到**另一个兼容的原生镜像**，也应先离线备份和确认数据格式兼容，使用已记录的不可变镜像 ID/tag，不要把正在被重建的 `1.4.0` 标签当固定版本。
@@ -181,14 +191,14 @@ location / {
 - 实际运行打包的 Python 安全文件 helper，读取能力内的真实测试文件成功；Python/flock 存在，Electron/Xvfb/x11vnc/websockify 可执行文件不存在。
 - 最小闭包 35 包，没有 Electron/sharp；测试容器和工作区测试卷均已清理，生产数据未复制/修改。
 
-上述基础候选早于最后的响应清洗等补丁整合，**不是最终生产镜像或完整安全/功能验收**。本说明不宣称已切换线上、验证全部模型/知识库/导入归档/备份/MCP，亦不把第三方服务无凭据的项目标为完成。
+上述基础候选早于最后的响应清洗等补丁整合，**不是最终生产镜像或完整安全/功能验收**；仅凭这组历史候选证据不能宣称生产切换或全部模型/知识库/导入归档/备份/MCP验收通过。后续GHCR实际镜像与正式切换另见 `web/PRODUCTION-CUTOVER.md`，用户登录和第三方服务未验证项仍明确保留。
 
 云凭据/绑定元数据已采用**每文档同步读-改-写序列化**，不是伪装成单全局 owner，也不是跨两个 JSON 的原子事务。其未知/损坏遗留锁会保守拒绝；仅在所有写入者停止并审核后处理。不要将云元数据锁与可自动随进程释放的 gateway 内核 `flock` 混淆。
 
 ## 9. 常用检查与排错
 
 ```sh
-docker compose -f docker/compose.web.yaml ps
+docker compose --env-file .env -f docker/compose.web.yaml ps
 docker logs --tail 100 ai-novel-writer-web
 curl --noproxy '*' -fsS http://127.0.0.1:6081/healthz
 # 以上 health 无需凭据；业务页面/API 必须从经过认证的 nginx 入口访问。

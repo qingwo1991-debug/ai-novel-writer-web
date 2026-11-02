@@ -30,7 +30,8 @@
 构建发布只用 `GITHUB_TOKEN`。**服务器拉取私有 GHCR 包**另需有包读取权限的 GitHub 账号及最小 `read:packages` classic PAT（组织启用 SSO 时另行授权）；不要把 token 写进仓库、Compose 或命令参数。公共包通常可匿名拉取。
 
 ```sh
-# 按提示输入用户名和只读 token；由 Docker 凭据存储保护本机登录信息。
+# 先检查是否已有可用凭据；没有时按提示输入用户名和只读token。
+# Docker原生config.json的base64不是加密：设0600，优先配置credential helper。
 docker login ghcr.io
 # 从可信 Actions 摘要复制真实 digest，替换占位值。
 IMAGE='ghcr.io/<owner>/<repo>@sha256:<digest>'
@@ -38,7 +39,7 @@ docker pull --platform linux/amd64 "$IMAGE"
 # 先隔离验收；生产使用已审核的 image digest，而不是盲跟 latest。
 ```
 
-仅拉取不启动服务。维护窗口内完成全卷离线备份、数据格式/UID 权限检查后，再按 [原生 Web 运维说明](README.web.md) 配置现有 Compose 的镜像。禁止桌面和原生服务同时写同一个数据卷；保留可回滚镜像与完整私有备份。
+仅拉取不启动服务。Compose是pull-only配置，要求显式 `NOVEL_IMAGE`，无build段；仓库根目录的本机 `.env` 固定摘要（0600、已忽略、不含token），命令必须带 `docker compose --env-file .env -f docker/compose.web.yaml ...`，先用 `config --images` 验证，缺配置应拒绝而不是回退旧本地镜像。维护窗口内完成全卷离线备份、数据格式/UID权限检查后，再按 [原生 Web 运维说明](README.web.md) 启动。禁止桌面和原生服务同时写同一个数据卷；保留可回滚镜像与完整私有备份。
 
 ## 外网部署必须有认证反向代理
 

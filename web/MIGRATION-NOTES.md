@@ -6,7 +6,7 @@
 
 来源基线为上游 `59153ceb`；本仓库是独立原生 Web 修改版，保留 GPL-3.0 与上游归属。原有 Linux 安全文件 helper/部署文件等相关工作保留，没有重置无关改动。独立 GitHub Actions/GHCR 构建说明见 [../docker/README.github.md](../docker/README.github.md)；源码推送不等于生产入口已切换。
 
-**当前不是“全部功能已验收/已上线”声明。** 官方8093/8445仍是原桌面入口，原作者卷未用于并行原生测试。逐项责任与证据以 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) 为准；维护、备份、切换和回滚步骤见 [../docker/README.web.md](../docker/README.web.md)。源码已推送独立私有仓库 `qingwo1991-debug/ai-novel-writer-web`，原始 `EthanYoQ/AI-Novel-Writer` 保留为 upstream；首次GitHub干净构建/65项测试/镜像冒烟/GHCR发布已成功，镜像digest见 [GITHUB-IMAGE-ACCEPTANCE.md](GITHUB-IMAGE-ACCEPTANCE.md)。云端构建不自动部署生产。
+**当前不是“全部功能已验收”声明。** 官方8093/8445已切为原生Web，导航优先HTTPS；原密码/证书保留，旧writer停止且禁自动重启，原作者卷完整离线备份与恢复核对通过后才供单个原生writer使用。已从GHCR拉取固定digest，实际image ID核对通过；用户登录验收仍待完成。见 [PRODUCTION-CUTOVER.md](PRODUCTION-CUTOVER.md)。逐项责任与证据以 [FEATURE-MATRIX.md](FEATURE-MATRIX.md) 为准；维护、备份、切换和回滚步骤见 [../docker/README.web.md](../docker/README.web.md)。源码已推送独立私有仓库 `qingwo1991-debug/ai-novel-writer-web`，原始 `EthanYoQ/AI-Novel-Writer` 保留为 upstream；首次GitHub干净构建/65项测试/镜像冒烟/GHCR发布已成功，镜像digest见 [GITHUB-IMAGE-ACCEPTANCE.md](GITHUB-IMAGE-ACCEPTANCE.md)。云端构建不自动部署生产。
 
 ## 已实现的运行结构
 
@@ -66,7 +66,7 @@
 1. 真实下载/归档上传恢复、副本重开/两个作品独立并发编辑和刷新已通过；保留已经通过的严格AI导入证据。LAN HTTP验收发现UUID和SHA256安全上下文兼容性，使用getRandomValues和标准SHA256兼容实现保持证明强度，127项相关回归通过；页面离开用CSRF keepalive提示，仅空闲/已断开时释放，不取消在途请求或刷新重连。最终本地镜像453已捕获这些修正并通过凭据canary456；实际页面离开/重开与主流程的剩余验收分别记录，不冒称全链路已通过。
 2. 真实GPT规划/蓝图→Gemini正文→GPT审稿/修稿→作者合并→显式定稿已分段完成，13次成功生成派发，全部四项定稿后处理成功，刷新/新标签无新增派发。初次驱动错误等待“不需要”的复查超时；只读权威周期确认后，单独一次定稿跟进完成，不重放已有付费步骤。见 [PLANNING-ACCEPTANCE.md](PLANNING-ACCEPTANCE.md)。必须复查的真实分支、批量/失败/陈旧来源等仍按功能矩阵保留验收。
 3. 最终453不可变镜像canary456已通过33个HTTP JSON响应、7个SSE事件/重放、6个实际隔离假提供方派发，证明内部key/私有JSON/SQLite未改写；前次439也通过同范围。见[CREDENTIAL-BOUNDARY-ACCEPTANCE.md](CREDENTIAL-BOUNDARY-ACCEPTANCE.md)。
-4. 全部实际阻断消除后停止旧桌面写入者，离线完整备份数据/私钥、仅启动原生容器，再审核nginx切换6081与导航卡。内核锁只协调原生网关，不能阻止旧桌面竞争，**永不删除锁文件解锁**。
+4. 已停止旧桌面并禁自动重启，完成全卷/私钥离线私有备份和实际恢复校验；仅启动GHCR固定digest的原生容器，nginx已切6081与可信身份头，导航改HTTPS和新容器。官方HTTP/HTTPS首页与bootstrap未登录/伪造身份均401；原密码/证书逐字节未改。Compose现为必须显式镜像的pull-only配置，所有命令带 `--env-file .env`。内核锁只协调原生网关，不能阻止旧桌面竞争，**永不删除锁文件解锁**。
 5. 从真实受密码保护入口由用户登录验收，记录镜像、备份点和仍需外部服务配置的事项。没有用户密码，不能把绕过入口的测试当作已代用户登录验收。
 
 交付报告必须区分源码实现、确定性回归、真实浏览器、真实模型与外部未验证项。首页、截图、操作数量、类型检查或成功镜像构建都不能单独证明全面完成。
