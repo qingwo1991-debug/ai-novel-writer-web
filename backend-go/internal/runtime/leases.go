@@ -21,7 +21,7 @@ type Lease struct {
  LeaseID string `json:"leaseId"`
  Owner string `json:"-"`
 }
-type leaseState struct { lease Lease; active int }
+type leaseState struct { lease Lease; active int; committed bool }
 
 // Leases is per-server, never package global. Owner must include both session
 // identity and browser tab identity, not merely the upstream login username.
@@ -31,7 +31,10 @@ func token() (string,error) { var bytes [32]byte; if _,err:=rand.Read(bytes[:]);
 
 // Acquire must only be called with a validated canonical physical project root
 // and manifest identity. A refresh by the existing owner retains its lease.
-// Open/persistence failures must RollbackAcquire only if fresh=true.
+// Every successful open/persistence must CommitAcquire before reporting success,
+// including a same-owner refresh. Open failures must RollbackAcquire with the
+// returned fresh flag. A failed commit means the acquisition was revoked while
+// opening: the caller must clean up and must not report a successful open.
 func (m *Leases) Acquire(root,projectID,owner string) (lease Lease,fresh bool,err error) {
  if root=="" || projectID=="" || owner=="" { return Lease{},false,ErrNotOwned }
  m.mu.Lock(); defer m.mu.Unlock()
@@ -61,4 +64,22 @@ func (m *Leases) Release(expected Lease) error {
  if state.active>0 { return ErrBusy }
  delete(m.projects,expected.ProjectPath); return nil
 }
-func (m *Leases) RollbackAcquire(lease Lease,fresh bool) error { if !fresh { return nil }; return m.Release(lease) }
+// CommitAcquire adopts the exact acquisition after a successful open. Adoption
+// is idempotent and prevents a concurrent failed opener from rolling it back.
+// It does not bypass the active-operation fence used by explicit Release.
+func (m *Leases) CommitAcquire(expected Lease) error {
+ m.mu.Lock(); defer m.mu.Unlock(); state:=m.projects[expected.ProjectPath]
+ if state==nil || !sameLease(state.lease,expected) { return ErrNotOwned }
+ state.committed=true; return nil
+}
+// RollbackAcquire only removes a fresh, uncommitted acquisition. A successful
+// same-owner opener may already have committed the shared lease; its ownership
+// must survive another opener's failure. The check and deletion are atomic.
+func (m *Leases) RollbackAcquire(expected Lease,fresh bool) error {
+ if !fresh { return nil }
+ m.mu.Lock(); defer m.mu.Unlock(); state:=m.projects[expected.ProjectPath]
+ if state==nil || !sameLease(state.lease,expected) { return ErrNotOwned }
+ if state.committed { return nil }
+ if state.active>0 { return ErrBusy }
+ delete(m.projects,expected.ProjectPath); return nil
+}

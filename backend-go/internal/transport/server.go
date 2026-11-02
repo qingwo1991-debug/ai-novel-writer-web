@@ -20,7 +20,7 @@ import (
 
 type Caller struct { Principal string; SessionID string; ClientID string }
 type Operation func(context.Context,Caller,[]any)(any,error)
-type client struct {hub *novelruntime.EventHub; inflight int; touched time.Time}
+type client struct {hub *novelruntime.EventHub; inflight int; pinned int; touched time.Time}
 type Server struct {
  sessions *security.Sessions
  origins security.Origins
@@ -29,7 +29,9 @@ type Server struct {
  mu sync.Mutex
  clients map[string]*client
  handlers map[string]Operation
+ now func()time.Time
 }
+func(s *Server)clock()time.Time{if s.now!=nil{return s.now()};return time.Now()}
 func New(registry *policy.Registry,origins security.Origins,generation string)*Server{
  return &Server{sessions:security.NewSessions(),origins:origins,registry:registry,generation:generation,clients:make(map[string]*client),handlers:make(map[string]Operation)}
 }
@@ -44,16 +46,17 @@ func(s *Server)Bind(operation string,handler Operation)error{
 var clientPattern=regexp.MustCompile(`^[a-zA-Z0-9_-]{16,128}$`)
 func(s *Server)getClient(sessionID,token string)(*client,error){
  if !clientPattern.MatchString(token){return nil,security.NewHTTPError(400,"CLIENT_ID_REQUIRED")}
- s.mu.Lock();defer s.mu.Unlock();now:=time.Now();prefix:=sessionID+":";count:=0
+ s.mu.Lock();defer s.mu.Unlock();now:=s.clock();prefix:=sessionID+":";count:=0
  for key,entry:=range s.clients{
-  if entry.inflight==0&&entry.hub.Connections()==0&&now.Sub(entry.touched)>2*time.Minute{entry.hub.Close();delete(s.clients,key);continue}
+  if entry.pinned==0&&entry.inflight==0&&entry.hub.Connections()==0&&now.Sub(entry.touched)>2*time.Minute{entry.hub.Close();delete(s.clients,key);continue}
   if strings.HasPrefix(key,prefix){count++}
  }
  key:=prefix+token
- if entry:=s.clients[key];entry!=nil{entry.touched=now;return entry,nil}
+ if entry:=s.clients[key];entry!=nil{entry.touched=now;entry.pinned++;return entry,nil}
  if count>=32{return nil,security.NewHTTPError(429,"TAB_LIMIT")}
- entry:=&client{hub:novelruntime.NewEventHub(),touched:now};s.clients[key]=entry;return entry,nil
+ entry:=&client{hub:novelruntime.NewEventHub(),touched:now,pinned:1};s.clients[key]=entry;return entry,nil
 }
+func(s *Server)unpin(current *client){s.mu.Lock();defer s.mu.Unlock();current.pinned--;current.touched=s.clock()}
 func(s *Server)ServeHTTP(w http.ResponseWriter,r *http.Request){
  if err:=s.serve(w,r);err!=nil{_ = security.WriteError(w,err)}
 }
@@ -65,20 +68,21 @@ func(s *Server)serve(w http.ResponseWriter,r *http.Request)error{
  token:=r.Header.Get("X-Client-Id")
  if r.URL.Path=="/api/events"&&r.Method==http.MethodGet{
   if err:=security.CheckEventOrigin(r,s.origins);err!=nil{return err};token=r.URL.Query().Get("client")
-  current,err:=s.getClient(session.ID(),token);if err!=nil{return err};return s.events(w,r,current)
+  current,err:=s.getClient(session.ID(),token);if err!=nil{return err};defer s.unpin(current);return s.events(w,r,current)
  }
  if !strings.HasPrefix(r.URL.Path,"/api/"){return security.NewHTTPError(404,"NOT_FOUND")}
- current,err:=s.getClient(session.ID(),token);if err!=nil{return err}
+ current,err:=s.getClient(session.ID(),token);if err!=nil{return err};defer s.unpin(current)
  if r.Method!=http.MethodGet{if err:=s.sessions.Verify(r,session,s.origins);err!=nil{return err}}
  if strings.HasPrefix(r.URL.Path,"/api/operations/")&&r.Method==http.MethodPost{
+  s.mu.Lock();if current.inflight>=32{s.mu.Unlock();return security.NewHTTPError(429,"REQUEST_LIMIT")};current.inflight++;s.mu.Unlock()
+  defer func(){s.mu.Lock();current.inflight--;current.touched=s.clock();s.mu.Unlock()}()
   input,err:=security.JSONBody(r,0);if err!=nil{return err};object,ok:=input.(map[string]any);if !ok{return security.NewHTTPError(400,"INVALID_ARGUMENTS")}
   if err:=security.ValidateArguments(object["args"]);err!=nil{return err};args:=object["args"].([]any)
   operation:=strings.TrimPrefix(r.URL.Path,"/api/operations/")
   if _,ok:=s.registry.Lookup(operation);!ok{return security.NewHTTPError(404,"OPERATION_NOT_EXPOSED")}
   s.mu.Lock();handler:=s.handlers[operation]
   if handler==nil{s.mu.Unlock();return security.NewHTTPError(501,"GO_OPERATION_NOT_MIGRATED")}
-  if current.inflight>=32{s.mu.Unlock();return security.NewHTTPError(429,"REQUEST_LIMIT")};current.inflight++;s.mu.Unlock()
-  defer func(){s.mu.Lock();current.inflight--;current.touched=time.Now();s.mu.Unlock()}()
+  s.mu.Unlock()
   result,err:=handler(r.Context(),Caller{Principal:principal,SessionID:session.ID(),ClientID:token},args);if err!=nil{return err}
   return security.WriteJSON(w,200,map[string]any{"result":result})
  }
@@ -99,8 +103,8 @@ func(s *Server)events(w http.ResponseWriter,r *http.Request,current *client)erro
  heartbeat:=time.NewTicker(15*time.Second);defer heartbeat.Stop()
  for{select{
  case<-r.Context().Done():return nil
- case event,ok:=<-queue:if !ok{return nil};if err:=write(event.Wire());err!=nil{return nil}
- case<-heartbeat.C:s.mu.Lock();current.touched=time.Now();s.mu.Unlock();if err:=write([]byte(": heartbeat\n\n"));err!=nil{return nil}
+ case event,ok:=<-queue:if !ok{return nil};err:=write(event.Wire());event.Done();if err!=nil{return nil}
+ case<-heartbeat.C:s.mu.Lock();current.touched=s.clock();s.mu.Unlock();if err:=write([]byte(": heartbeat\n\n"));err!=nil{return nil}
  }}
 }
 // Publish requires a previously established caller tab and already-redacted
