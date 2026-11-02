@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -50,10 +51,11 @@ func summarySupportedText(text string) bool { return utf8.ValidString(text) && l
 func summaryJSONSupported(text string) error {
 	if !summarySupportedText(text) { return ErrSummaryInputUnsupported }
 	if !json.Valid([]byte(text)) { return nil }
-	quoted := false
+	quoted, depth := false, 0
 	for i := 0; i < len(text); i++ {
 		if text[i] == '"' { quoted = !quoted; continue }
-		if !quoted || text[i] != '\\' { continue }
+		if !quoted { if text[i] == '[' || text[i] == '{' { depth++; if depth > 64 { return ErrSummaryInputUnsupported } }; if text[i] == ']' || text[i] == '}' { depth-- }; continue }
+		if text[i] != '\\' { continue }
 		i++; if text[i] != 'u' { continue }
 		unit, _ := strconv.ParseUint(text[i+1:i+5], 16, 16); i += 4
 		if unit >= 0xdc00 && unit <= 0xdfff { return ErrSummaryInputUnsupported }
@@ -62,16 +64,40 @@ func summaryJSONSupported(text string) error {
 		low, err := strconv.ParseUint(text[i+3:i+7], 16, 16)
 		if err != nil || low < 0xdc00 || low > 0xdfff { return ErrSummaryInputUnsupported }; i += 6
 	}
+	// JSON.parse uses binary64 for every number, including display-only metadata.
+	// The native wire cannot emit Infinity: reject that input domain explicitly,
+	// rather than returning an empty parser fallback or a non-JavaScript number.
+	if _, err := summaryParseNumberJSON(text); err != nil { return err }
 	return nil
 }
-func summaryParse(text string) (any, bool) {
+func summaryJSONNumbers(value any, depth int) (any, error) {
+	if depth > 64 { return nil, ErrSummaryInputUnsupported }
+	switch v := value.(type) {
+	case json.Number:
+		number, err := v.Float64()
+		if math.IsInf(number, 0) || math.IsNaN(number) { return nil, ErrSummaryInputUnsupported }
+		// Underflow is the same signed zero that JavaScript JSON.parse produces.
+		if err != nil && number != 0 { return nil, ErrSummaryInputUnsupported }
+		return number, nil
+	case []any:
+		for i, item := range v { normalized, err := summaryJSONNumbers(item, depth+1); if err != nil { return nil, err }; v[i] = normalized }; return v, nil
+	case map[string]any:
+		for key, item := range v { normalized, err := summaryJSONNumbers(item, depth+1); if err != nil { return nil, err }; v[key] = normalized }; return v, nil
+	}
+	return value, nil
+}
+func summaryParseNumberJSON(text string) (any, error) {
 	var value any
 	decoder := json.NewDecoder(strings.NewReader(text))
 	decoder.UseNumber()
-	if decoder.Decode(&value) != nil { return nil, false }
+	if err := decoder.Decode(&value); err != nil { return nil, err }
 	var tail any
-	if decoder.Decode(&tail) != io.EOF { return nil, false }
-	return value, true
+	if decoder.Decode(&tail) != io.EOF { return nil, ErrSummaryInputUnsupported }
+	return summaryJSONNumbers(value, 0)
+}
+func summaryParse(text string) (any, bool) {
+	value, err := summaryParseNumberJSON(text)
+	return value, err == nil
 }
 // String(...) is used by the original category/field validators, including
 // Array.toString coercion. It is NOT used to authorize SQL/source identities.
@@ -81,6 +107,7 @@ func summaryJSString(value any) string {
 	case string: return v
 	case bool: if v { return "true" }; return "false"
 	case json.Number: f, err := v.Float64(); if err != nil { return v.String() }; return phNumberString(f)
+	case float64: return phNumberString(v)
 	case []any:
 		parts := make([]string, len(v)); for i, item := range v { if item != nil { parts[i] = summaryJSString(item) } }; return strings.Join(parts, ",")
 	case map[string]any: return "[object Object]"

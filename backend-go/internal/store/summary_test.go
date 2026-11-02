@@ -169,7 +169,7 @@ func TestSummaryFactsAndCandidateParserOriginalQuirks(t *testing.T) {
 	if len(candidates) != 2 || candidates[0]["value"] != "trim" || candidates[1]["value"] != "  bound  " { t.Fatal(candidates) }
 	if value, exists := candidates[0]["rawValue"]; !exists || value != nil { t.Fatal(candidates) }
 	if _, exists := candidates[0]["evidence"]; exists { t.Fatal(candidates) }
-	if candidates[1]["rawValue"].(map[string]any)["n"] != json.Number("1.25") { t.Fatal(candidates) }
+	if candidates[1]["rawValue"].(map[string]any)["n"] != float64(1.25) { t.Fatal(candidates) }
 	for _, raw := range []string{`[] trailing`, `{"version":1,"pending":[{}]}`, `null`} { if out := summaryCandidates(raw); out == nil || len(out) != 0 { t.Fatal(out) } }
 }
 func TestSummaryNativeJSONUnicodeBoundary(t *testing.T) {
@@ -188,6 +188,27 @@ func TestSummaryNativeJSONUnicodeBoundary(t *testing.T) {
 	mustExec(t, db, "UPDATE contents SET body=? WHERE id=880401", string([]byte{255}))
 	row, err := s.ReadFinalizedSource(context.Background(), 880401)
 	if row != nil || !errors.Is(err, ErrSummaryInputUnsupported) { t.Fatalf("bad UTF-8 source %v %v", row, err) }
+}
+func TestSummaryNativeJSONNumberBoundary(t *testing.T) {
+	const raw = `[{"characterName":"甲","field":"location","value":"x","rawValue":{"rounded":9007199254740993,"decimal":1.0000000000000001,"tiny":-1e-400,"nested":[1.25]}}]`
+	summaryWant(t, summaryJSONSupported(raw), nil)
+	candidates := summaryCandidates(raw)
+	if len(candidates) != 1 { t.Fatal(candidates) }
+	value := candidates[0]["rawValue"].(map[string]any)
+	if value["rounded"] != float64(9007199254740992) || value["decimal"] != float64(1) || value["tiny"] != float64(0) || !math.Signbit(value["tiny"].(float64)) || value["nested"].([]any)[0] != float64(1.25) { t.Fatalf("not JavaScript binary64 numbers: %v", value) }
+	for _, text := range []string{`{"n":1e400}`, `{"n":-1e400}`, strings.Repeat("[",65)+"0"+strings.Repeat("]",65)} { summaryWant(t, summaryJSONSupported(text), ErrSummaryInputUnsupported) }
+	summaryWant(t, summaryJSONSupported(strings.Repeat("[",64)+"0"+strings.Repeat("]",64)), nil)
+	db, s, _ := summaryFixture(t)
+	source := summarySeed(t, db, 880501, 880501, 1, "finalized", "正文", true); summaryProjection(t, db, source, true)
+	mustExec(t, db, "UPDATE summary_snapshots SET character_state_candidates=? WHERE draft_id=880501", raw)
+	rows, err := s.ListBefore(context.Background(), 990000)
+	if err != nil || len(rows) != 1 || rows[0]["characterStateCandidates"].([]map[string]any)[0]["rawValue"].(map[string]any)["rounded"] != float64(9007199254740992) { t.Fatalf("rounded projection %v %v", rows, err) }
+	for _, field := range []string{"character_state_candidates","continuity_facts"} {
+		mustExec(t, db, "UPDATE summary_snapshots SET "+field+"=? WHERE draft_id=880501", `[{"characterName":"甲","field":"location","value":"x","rawValue":1e400}]`)
+		rows, err := s.ListBefore(context.Background(), 990000)
+		if rows != nil || !errors.Is(err, ErrSummaryInputUnsupported) { t.Fatalf("overflow must fail whole projection: %v %v", rows, err) }
+		mustExec(t, db, "UPDATE summary_snapshots SET "+field+"='[]' WHERE draft_id=880501")
+	}
 }
 func TestSummaryFrozenIdentityValidationAndReadOnlyBytes(t *testing.T) {
 	db, s, path := summaryFixture(t); ctx := context.Background(); db.SetMaxOpenConns(1)

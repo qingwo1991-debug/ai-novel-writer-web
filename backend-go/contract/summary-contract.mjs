@@ -178,6 +178,11 @@ for (const [label, value] of [['invalid-json', '{bad'], ['object', '{}'], ['null
 for (const [label, value] of [['invalid-json', '{bad'], ['null', 'null'], ['object', '{}'], ['wrong-version', JSON.stringify({ version: 1, pending: [candidate()] })], ['trim-legacy', JSON.stringify([candidate()])], ['invalid-filter-preserves-valid', JSON.stringify([null, 1, candidate({ field: 'unknown' }), candidate()])], ['partial-bound-rejected', JSON.stringify([candidate({ candidateKey: 'only-one-bound-key' })])], ['metadata-preserved', JSON.stringify([candidate({ characterId: 'char-lin', evidence: { start: 0, end: 3, text: 'Lin' }, selectionKey: '', displayName: UNICODE, rawValue: { created_at: 'author-original', nested: { created_at: 'keep', values: [null, true, UNICODE, 1.25] } }, reason: 'author-protected' })])], ['v2-pending-only', JSON.stringify({ version: 2, pending: [candidate()], receipts: [{ ignored: true }] })]]) {
   list(`candidates-${label}`, db => one(db, { character_state_candidates: value }))
 }
+// Keep numeric lexemes as raw database JSON: constructing a JS object first
+// would pre-round n and underflow tiny before the actual repository parses it.
+list('candidates-raw-value-number-rounding-underflow', db => one(db, {
+  character_state_candidates: '[{"characterName":" Lin ","field":"keyItems","value":" silver key ","rawValue":{"n":9007199254740993,"tiny":1e-999}}]',
+}))
 list('candidates-bound-preserve-value-and-source', db => {
   const record = draft(db)
   summary(db, record, { character_state_candidates: JSON.stringify([candidate({ characterId: 'char-lin', value: ' \uFEFF bound value \n', candidateKey: 'opaque-key', source: { ...record.source, extra: UNICODE }, expectedFieldRevision: 7, expectedFieldValueHash: hash('previous value'), reason: 'legacy-protected', rawValue: null, evidence: 'truthy-evidence-preserved' })]) })
