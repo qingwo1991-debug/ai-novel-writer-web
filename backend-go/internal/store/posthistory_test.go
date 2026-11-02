@@ -434,7 +434,7 @@ func TestPostHistoryLegacyNumericSourceAndJSChapterText(t *testing.T) {
 
 func TestPostHistoryTypedInputAndCallerCannotChooseID(t *testing.T) {
 	db, p, _ := phFixture(t); ctx := context.Background()
-	for _, test := range []struct { key string; value any }{{"triggerSourceType", false}, {"triggerSourceId", 19}, {"sourceLabel", nil}, {"steps", nil}, {"steps", []any{nil}}, {"steps", []any{map[string]any{"key": "x", "label": "x", "critical": 1}}}} {
+	for _, test := range []struct { key string; value any }{{"triggerSourceType", false}, {"triggerSourceId", 19}, {"sourceLabel", false}, {"steps", nil}, {"steps", []any{nil}}, {"steps", []any{map[string]any{"key": "x", "label": "x", "critical": 1}}}} {
 		input := phInput(); input[test.key] = test.value
 		if _, err := p.CreateRun(ctx, input); !errors.Is(err, ErrPostHistoryInvalidInput) { t.Fatalf("create %s: %v", test.key, err) }
 	}
