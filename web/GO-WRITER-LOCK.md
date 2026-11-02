@@ -9,7 +9,11 @@
 
 ## 重要：未接到作者数据
 
-当前仅模块+合成进程测试，不创建正式authorroot里的lock，不启动/停止任何现有容器。上层仍需决定全局key/config generation、SQLite、LanceDB、library/recoverypublication如何共享同一writer scope，并按现生产lock约定避免两个实现使用不同lockname假互斥。不能仅添加新文件名就认为可与旧Node/桌面进程协作。
+第十四轮新增`AcquireLegacy(directory)`固定使用现entrypoint的`.native-web.gateway.lock`，兼容empty regular/euid/nlink1的0600或0644旧inode，新增仍0600；不修改/删除/重建现存entry。`Lock.Verify()`持mutex核对全部pinned parent、正确命名entry/inode与ctime/mtime/权限，closed或观察到替换拒绝；此检查不是连续监控，仍不防恶意sameUID/admin。
+
+`internal/projectaccess.Preflight`在同一legacy锁内stage→私有SQLite验证→原源未变→marker/asset复核→清理，只返回无写能力报告；真实util-linux flock/Go测试子进程双向竞争验证的是同名持久inode，不是两个名字假互斥。详见`GO-AUTHOR-PREFLIGHT.md`。原Acquire的`.novel-writer.lock`仍完全独立，不能冒充gateway排他；desktop不合作须外部停止。
+
+没有创建正式authorroot里的lock、不启动/停止任何现有容器。main未绑定预检或durable opener；上层仍需全局key/config generation、SQLite、LanceDB、library/recovery publication的共享scope与shutdown/recovery生命周期。
 
 现在projectsession只管隔离scratchcopy，不能以本模块存在宣称已获准持久作者库打开。正式迁移前需要明确shutdown顺序、全局/项目锁顺序、at-most-onewriter、recoveryjournal、writer exclusion跨snapshot+verification持续持有的集成证据。
 

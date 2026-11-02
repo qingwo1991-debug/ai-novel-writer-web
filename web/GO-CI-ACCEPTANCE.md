@@ -170,6 +170,17 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 矩阵 **2完成、54进行中、225未开始**，新增8项仅隔离业务。见[GO-BLUEPRINTS.md](GO-BLUEPRINTS.md)。main未绑定、未发布作者durableDB。本机没有Go/gofmt/test/oracle/build/install，生产容器/镜像/作者数据未变。后续真实writer协调/Lance/portable权限准入排序记录在[GO-DURABLE-PREFLIGHT-NOTES.md](GO-DURABLE-PREFLIGHT-NOTES.md)，是方案而非已实现。
 
+## 隔离作者准入与legacy共享锁第十四轮
+
+源码`d5ba676f600d26ce27b71292343e4329444c1543`，[Actions 41408608534](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41408608534) **success，4m57s：316顶层PASS、3319含子用例PASS、0fail、3skip、14package**。format/vet/unit/race/原凭据oracle/build/无Node smoke全通过。精确skip为原writerlock与新增legacy两个foreign-owner子用例，以及scratch foreign-owner顶层夹具，runner非root不能chown；其余权限/祖先/type测试实跑，不能声称三个root所有权fixture已实测。
+
+- `projectaccess` **8顶层/23含子用例通过**：同legacy锁持有到完整Stage→private SQLite→source/markers/assets复核和清理；第二个预检/gateway同名竞争busy；原DB字节不变、全成功零scratch残留；预算/schema/取消/manifest/DB/lock替换、portable marker前后创建全部零报告失败；scratch改名通过pinnedroot清副本而不删陌生replacement。初次MkdirTemp后Lstat失败只可能遗留无法归属空目录，显式cleanup错误。
+- `writerlock`合计 **26顶层/79含子用例通过**（含旧测试）。真实util-linux flock/Go测试子进程**两个方向**互斥；0600/0644既有inode及bytes/mtime/ctime保全，0640/0666/symlink/hardlink/FIFO拒绝；Verify核对固定名字/完整parent/inode/ctime/mtime与Close并发。原`.novel-writer.lock`仍不同scope，不误称协调。
+- `projectfs`合计 **36顶层/242含子用例通过**（含旧测试）：四个实际portable sidecar/journal marker任何type存在拒绝；原TS源码constant+纯restore journal hash函数oracle核对ASCII/Unicode/case路径。没有解析/采信原历史authority。固定Lance/registry/copies入口metadata准入与变化拒绝，不读取正文/向量，不枚举或宣称Lance格式兼容。
+- 首次[41407717578](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41407717578) format/vet/原authority oracle及projectfs/writerlock通过，但新预检fixture失败并导致hold-handshake等待超时：Go `t.TempDir`在runner模式不保证0700，测试错把它当私有scratch；补测试显式chmod0700（不修改生产准入规则），握手加完成/超时分支防挂住；修复后全过。
+
+本轮**不升级任何operation**：矩阵仍2/54/225；无durable原库能力，main不绑定，不创建/读写正式lock/作者DB，不部署。真正native Lance版本/全文、portable权限移植、populated迁移、全局/生成lifecycle及281浏览器完整验收仍未完成。详情[GO-AUTHOR-PREFLIGHT.md](GO-AUTHOR-PREFLIGHT.md)。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

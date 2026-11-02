@@ -10,6 +10,10 @@
 
 这是**检查能力**，不授予原库可写访问，不注册 `project:open` 或 `db:*` HTTP handler，也不允许当前二进制访问正式挂载。作品打开还需要租约、全局单写者排除、版本升级、LanceDB/全局配置协调和安全失败回滚。
 
+## 第十四轮：隔离共享锁预检
+
+`internal/projectaccess.Preflight`新增legacy gateway同名inode flock持有期间的Stage→私有SQLite验证→源未变/marker/固定asset入口复核→清理；拒绝原portable runtime-freeze/transfer-authority/restore reservation+目标journal。主程序仍不调用、不开放原库，报告不授予持久写能力。canonical Lance只核对三个入口的type/identity/metadata，**未读取Lance格式或递归内容，不能替代canonical全文/版本证明**。详见[GO-AUTHOR-PREFLIGHT.md](GO-AUTHOR-PREFLIGHT.md)。
+
 ## 必须由上层实现的前置条件
 
 调用者必须在整个快照、验证和最终源身份复查期间排除所有源写入者/检查点进程。采样的三遍 SHA256、inode/链接数、size/mtime/ctime、文件集比较可检测漂移，**不能替代写者排除，也不是对并发多文件 SQLite 的原子备份证明**。不可信本地进程拥有目录写权限时，还必须在部署/文件所有权层排除它；Go 路径约束不是对恶意管理员的隔离。

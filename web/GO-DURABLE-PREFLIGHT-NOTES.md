@@ -26,7 +26,11 @@ Go尚未实现`portable-runtime-freeze`与`portable-transfer-authority`。原`el
 
 portable导出是策略投影SQLite+允许原始assets+portable-knowledge-source.json，不包含原Lance/registry；restore分配新projectID、恢复canonical text但embeddingstale、安装runtime freeze，manifest-last可恢复journal。它不是含credential key、DB sidecars和原Lance/assets的整卷离线rollback备份。
 
-## 一个安全后续轮次
+## 第十四轮已实现的隔离部分
+
+以下建议现已形成`internal/projectaccess.Preflight`隔离模块：同gateway锁名、持锁元数据校验、原portable四marker拒绝、固定canonical入口metadata inventory、私有SQLite准入与源未变证明、取消与清理。**未接main、无durable写能力**；Lance子树/表/正文、populated迁移及完整portable authority依然未实现。最终CI见[GO-CI-ACCEPTANCE.md](GO-CI-ACCEPTANCE.md)，范围见[GO-AUTHOR-PREFLIGHT.md](GO-AUTHOR-PREFLIGHT.md)。
+
+## 原建议：一个安全后续轮次
 
 实现隔离AuthorAdmissionPreflight/WriterGuard capability：同legacy-gateway inode flock互斥、physical anchor证明、canonical根/资产清单、拒绝双根/未完成journal/portable markers，在持锁下StageDatabase→trusted VerifySnapshot→VerifyUnchanged，只返回准入证据，**不授予作者写能力**。
 

@@ -20,7 +20,8 @@
 - `internal/projectsession`：私有 scratch copy 的 schema 准入、cookie session+tab 所有权、冻结上下文、refresh 保留编辑、在途围栏与可重试 cleanup；非持久作者会话，见 `web/GO-PROJECT-SESSIONS.md`。
 - `internal/secrets`：旧 AES-GCM envelope 和私人 key 文件兼容模块，不自动读取默认作者 key；全局配置/provider 尚未连接，见 `web/GO-CREDENTIAL-COMPATIBILITY.md`。
 - `internal/llm`、`internal/egress`：Go原生OpenAI-compatible/Gemini非流式/流式、UTF16可见/推理隔离、finish/usage证据、取消围栏和精确origin无proxy/redirect HTTP；72个原OpenAI/154个原Gemini provider及922个原scanner合成对照已通过，**未绑定AI工作流或RPC**，见 `web/GO-AI-TRANSPORT.md`。
-- `internal/writerlock`：真实openat/NOFOLLOW+flock跨进程排他，安全persistent lock inode、多进程/exit/CLOEXEC验证；未与现生产lock约定/全局状态集成，见 `web/GO-WRITER-LOCK.md`。
+- `internal/writerlock`：真实openat/NOFOLLOW+flock跨进程排他，安全persistent lock inode、多进程/exit/CLOEXEC验证。第十四轮新增固定`AcquireLegacy`复用现gateway `.native-web.gateway.lock`及`Lock.Verify`；原Acquire不同名不互代。未接main/全局状态/正式生命周期，见 `web/GO-WRITER-LOCK.md`。
+- `internal/projectaccess`：锁内只读作者预检，拒绝portable历史authority/restore markers，三个canonical Lance入口metadata inventory，私有完整副本SQLite准入+source未变证明与cleanup；不返回源DB/repository/写能力、不计operation实现；Lance子树/格式/全文兼容仍未证明，见 `web/GO-AUTHOR-PREFLIGHT.md`。
 - `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 
 完整操作清单和迁移门见 `web/GO-MIGRATION-MATRIX.md`、`web/GO-MIGRATION-PLAN.md`。AI 生成、定稿及后处理、知识库、归档和其他全部业务仍需要逐项迁移并验证。
