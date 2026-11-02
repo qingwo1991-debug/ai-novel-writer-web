@@ -22,21 +22,29 @@ func glTestAttempt(id string) map[string]any {
 
 func glTestBinding() map[string]any {
 	fingerprint := map[string]any{}
-	for _, key := range []string{"chapterBriefHash", "authorGuidanceHash", "dependencyHash", "contextSnapshotHash", "templateHash", "skillSnapshotHash", "modelLeaseRevision", "policyHash", "outputContractHash"} { fingerprint[key] = strings.Repeat("b", 64) }
+	for _, key := range []string{"chapterBriefHash", "authorGuidanceHash", "dependencyHash", "contextSnapshotHash", "templateHash", "skillSnapshotHash", "modelLeaseRevision", "policyHash", "outputContractHash"} {
+		fingerprint[key] = strings.Repeat("b", 64)
+	}
 	return map[string]any{"projectId": "project", "epoch": "epoch", "fingerprint": fingerprint, "contextSnapshotId": "snapshot", "sourceManifest": map[string]any{"authorText": "原文\r\n😀e\u0301 <>&\u2028"}, "sourceRefs": []any{map[string]any{"projectId": "project", "epoch": "epoch", "sourceId": "source", "contentHash": strings.Repeat("c", 64), "revision": 0}}, "operation": "ignored"}
 }
 
 func glTestCode(t *testing.T, err error, want string) {
 	t.Helper()
 	actual := ""
-	if err != nil { actual = err.Error() }
-	if actual != want { t.Fatalf("error = %q; want %q", actual, want) }
+	if err != nil {
+		actual = err.Error()
+	}
+	if actual != want {
+		t.Fatalf("error = %q; want %q", actual, want)
+	}
 }
 
 func glTestJSON(t *testing.T, value any) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return string(encoded)
 }
 
@@ -48,12 +56,18 @@ func TestGLRootKeyUnicodeAndExcludedIdentity(t *testing.T) {
 	key, err := GLRootKey(root)
 	glTestCode(t, err, "")
 	want := "[\"\ufeff项目😀<>&\u2028\u2029\u00a0\",\" write \",\"nonce\",\"" + strings.Repeat("a", 64) + "\"]"
-	if key != want { t.Fatalf("key = %q; want %q", key, want) }
-	if glTestJSON(t, root) != before { t.Fatal("root mutated") }
+	if key != want {
+		t.Fatalf("key = %q; want %q", key, want)
+	}
+	if glTestJSON(t, root) != before {
+		t.Fatal("root mutated")
+	}
 	root["rootActionId"], root["epoch"] = "reopened", "later-epoch"
 	again, err := GLRootKey(root)
 	glTestCode(t, err, "")
-	if again != key { t.Fatal("epoch/rootActionId incorrectly included in key") }
+	if again != key {
+		t.Fatal("epoch/rootActionId incorrectly included in key")
+	}
 	root["epoch"] = "\ufeff\u00a0\u2028\u3000"
 	_, err = GLRootKey(root)
 	glTestCode(t, err, "INVALID_ROOT_ACTION")
@@ -63,7 +77,9 @@ func TestGLRootKeyUnicodeAndExcludedIdentity(t *testing.T) {
 	root["frozenInputHash"] = []any{strings.Repeat("a", 64)}
 	key, err = GLRootKey(root)
 	glTestCode(t, err, "")
-	if !strings.Contains(key, ",[\"") { t.Fatal("regex coercion accepted array but key lost original value") }
+	if !strings.Contains(key, ",[\"") {
+		t.Fatal("regex coercion accepted array but key lost original value")
+	}
 	root["operation"] = true
 	_, err = GLRootKey(root)
 	glTestCode(t, err, "GL_UNSUPPORTED_INPUT")
@@ -80,7 +96,9 @@ func TestGLReservationSafeNumbersAndPrecedence(t *testing.T) {
 		})
 	}
 	policy, next := glTestPolicy(), glTestAttempt("next")
-	for _, key := range []string{"maxPhysicalRequests", "maxTokenLiability", "maxOutputPerRequest", "maxActiveElapsedMs"} { policy[key] = json.Number("9007199254740991") }
+	for _, key := range []string{"maxPhysicalRequests", "maxTokenLiability", "maxOutputPerRequest", "maxActiveElapsedMs"} {
+		policy[key] = json.Number("9007199254740991")
+	}
 	next["reservedTokens"], next["requestedOutputTokens"] = json.Number("9007199254740991"), json.Number("9007199254740991")
 	glTestCode(t, GLAssertReservation(glTestRoot(), policy, nil, next, math.Copysign(0, -1)), "")
 	glTestCode(t, GLAssertReservation(glTestRoot(), policy, nil, next, true), "INVALID_BUDGET")
@@ -101,7 +119,9 @@ func TestGLReservationBudgetIsNotTokenCapAndNoMutation(t *testing.T) {
 	attempts := []map[string]any{settled, cancelled}
 	before := glTestJSON(t, []any{root, policy, attempts, next})
 	glTestCode(t, GLAssertReservation(root, policy, attempts, next, 99), "")
-	if glTestJSON(t, []any{root, policy, attempts, next}) != before { t.Fatal("reservation mutated input") }
+	if glTestJSON(t, []any{root, policy, attempts, next}) != before {
+		t.Fatal("reservation mutated input")
+	}
 	glTestCode(t, GLAssertReservation(root, policy, attempts, next, 100), "ROOT_BUDGET_EXHAUSTED")
 	cancelled["status"] = "unknown"
 	glTestCode(t, GLAssertReservation(root, policy, attempts, next, 0), "ROOT_BUDGET_EXHAUSTED")
@@ -145,14 +165,21 @@ func TestGLAttemptTransitionFiniteDomain(t *testing.T) {
 	for _, before := range statuses {
 		for _, after := range statuses {
 			want := "INVALID_ATTEMPT_TRANSITION"
-			if before == "reserved" && (after == "dispatch-marked" || after == "cancelled-before-dispatch") || before == "dispatch-marked" && (after == "settled" || after == "unknown") { want = "" }
+			if before == "reserved" && (after == "dispatch-marked" || after == "cancelled-before-dispatch") || before == "dispatch-marked" && (after == "settled" || after == "unknown") {
+				want = ""
+			}
 			glTestCode(t, GLAssertAttemptTransition(before, after), want)
 		}
 	}
 }
 
 func TestGLTokenLiabilityIsRawSelector(t *testing.T) {
-	cases := []struct { name string; attempt map[string]any; want any; code string }{
+	cases := []struct {
+		name    string
+		attempt map[string]any
+		want    any
+		code    string
+	}{
 		{"cancelled", map[string]any{"status": "cancelled-before-dispatch", "actualTokens": "not numeric"}, 0, ""},
 		{"actual over estimate", map[string]any{"status": "settled", "reservedTokens": 10, "actualTokens": 1000}, 1000, ""},
 		{"zero actual", map[string]any{"status": "settled", "reservedTokens": 10, "actualTokens": 0}, 0, ""},
@@ -164,13 +191,19 @@ func TestGLTokenLiabilityIsRawSelector(t *testing.T) {
 		{"invalid status not validated", map[string]any{"status": "arbitrary", "reservedTokens": "raw"}, "raw", ""},
 		{"undefined boundary", map[string]any{"status": "settled"}, nil, "GL_UNSUPPORTED_INPUT"},
 	}
-	for _, item := range cases { t.Run(item.name, func(t *testing.T) {
-		before := glTestJSON(t, item.attempt)
-		got, err := GLTokenLiability(item.attempt)
-		glTestCode(t, err, item.code)
-		if !reflect.DeepEqual(got, item.want) { t.Fatalf("liability = %#v; want %#v", got, item.want) }
-		if glTestJSON(t, item.attempt) != before { t.Fatal("token selector mutated input") }
-	}) }
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			before := glTestJSON(t, item.attempt)
+			got, err := GLTokenLiability(item.attempt)
+			glTestCode(t, err, item.code)
+			if !reflect.DeepEqual(got, item.want) {
+				t.Fatalf("liability = %#v; want %#v", got, item.want)
+			}
+			if glTestJSON(t, item.attempt) != before {
+				t.Fatal("token selector mutated input")
+			}
+		})
+	}
 }
 
 func TestGLBindingSnapshotAndOriginalValidationOnly(t *testing.T) {
@@ -186,42 +219,65 @@ func TestGLBindingSnapshotAndOriginalValidationOnly(t *testing.T) {
 	before := glTestJSON(t, request)
 	result, err := GLBinding(request)
 	glTestCode(t, err, "")
-	if len(result) != 6 || result["operation"] != nil { t.Fatal("binding field projection differs") }
+	if len(result) != 6 || result["operation"] != nil {
+		t.Fatal("binding field projection differs")
+	}
 	manifest := result["sourceManifest"].(map[string]any)
-	if math.Signbit(manifest["negativeZero"].(float64)) || manifest["roundedNumber"] != float64(9007199254740992) { t.Fatal("binding snapshot did not use JS Number/stringify semantics") }
-	if glTestJSON(t, request) != before { t.Fatal("binding mutated input") }
+	if math.Signbit(manifest["negativeZero"].(float64)) || manifest["roundedNumber"] != float64(9007199254740992) {
+		t.Fatal("binding snapshot did not use JS Number/stringify semantics")
+	}
+	if glTestJSON(t, request) != before {
+		t.Fatal("binding mutated input")
+	}
 	copiedRef := result["sourceRefs"].([]any)[0].(map[string]any)
-	if copiedRef["revision"] != float64(0) || copiedRef["arbitrary"] != "retained" { t.Fatal("ref revision zero / extra fields not retained") }
+	if copiedRef["revision"] != float64(0) || copiedRef["arbitrary"] != "retained" {
+		t.Fatal("ref revision zero / extra fields not retained")
+	}
 	copiedRef["span"].(map[string]any)["start"] = 100
 	result["sourceManifest"].(map[string]any)["authorText"] = "changed"
 	result["fingerprint"].(map[string]any)["modelLeaseRevision"].([]any)[0].([]any)[0] = "changed"
-	if glTestJSON(t, request) != before { t.Fatal("binding output aliases input") }
+	if glTestJSON(t, request) != before {
+		t.Fatal("binding output aliases input")
+	}
 }
 
 func TestGLBindingRejectionsAndEmptyRefs(t *testing.T) {
-	cases := []struct { name string; change func(map[string]any) }{
+	cases := []struct {
+		name   string
+		change func(map[string]any)
+	}{
 		{"empty manifest", func(r map[string]any) { r["sourceManifest"] = map[string]any{} }},
 		{"array manifest", func(r map[string]any) { r["sourceManifest"] = []any{true} }},
 		{"falsy project", func(r map[string]any) { r["projectId"] = 0 }},
 		{"falsy epoch", func(r map[string]any) { r["epoch"] = false }},
 		{"falsy context", func(r map[string]any) { r["contextSnapshotId"] = "" }},
 		{"fingerprint extra field", func(r map[string]any) { r["fingerprint"].(map[string]any)["extra"] = true }},
-		{"fingerprint wrong key", func(r map[string]any) { fp := r["fingerprint"].(map[string]any); delete(fp, "chapterBriefHash"); fp["extra"] = strings.Repeat("b", 64) }},
+		{"fingerprint wrong key", func(r map[string]any) {
+			fp := r["fingerprint"].(map[string]any)
+			delete(fp, "chapterBriefHash")
+			fp["extra"] = strings.Repeat("b", 64)
+		}},
 		{"uppercase hash", func(r map[string]any) { r["fingerprint"].(map[string]any)["policyHash"] = strings.Repeat("A", 64) }},
 		{"ref epoch mismatch", func(r map[string]any) { r["sourceRefs"].([]any)[0].(map[string]any)["epoch"] = "other" }},
 		{"ref source false", func(r map[string]any) { r["sourceRefs"].([]any)[0].(map[string]any)["sourceId"] = false }},
 		{"ref revision bool", func(r map[string]any) { r["sourceRefs"].([]any)[0].(map[string]any)["revision"] = false }},
 		{"ref revision negative", func(r map[string]any) { r["sourceRefs"].([]any)[0].(map[string]any)["revision"] = -1 }},
-		{"ref revision unsafe", func(r map[string]any) { r["sourceRefs"].([]any)[0].(map[string]any)["revision"] = json.Number("9007199254740992") }},
+		{"ref revision unsafe", func(r map[string]any) {
+			r["sourceRefs"].([]any)[0].(map[string]any)["revision"] = json.Number("9007199254740992")
+		}},
 	}
-	for _, item := range cases { t.Run(item.name, func(t *testing.T) {
-		request := glTestBinding()
-		item.change(request)
-		before := glTestJSON(t, request)
-		_, err := GLBinding(request)
-		glTestCode(t, err, "GENERATION_BINDING_INVALID")
-		if glTestJSON(t, request) != before { t.Fatal("rejected binding mutated input") }
-	}) }
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			request := glTestBinding()
+			item.change(request)
+			before := glTestJSON(t, request)
+			_, err := GLBinding(request)
+			glTestCode(t, err, "GENERATION_BINDING_INVALID")
+			if glTestJSON(t, request) != before {
+				t.Fatal("rejected binding mutated input")
+			}
+		})
+	}
 	request := glTestBinding()
 	request["sourceRefs"] = []any{}
 	request["projectId"], request["epoch"], request["contextSnapshotId"] = " ", " ", " "

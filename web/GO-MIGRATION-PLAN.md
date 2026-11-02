@@ -20,6 +20,8 @@ Round22 uses parallel agents for summary storage, six-name transport (four actua
 
 Round23 uses four parallel implementation agents and an independent fifth reviewer for three character reads: original140case/31recursive-module oracle plus2 clearly separate Go-only missing-meta boundaries; actual scratch-session HTTP, ID/name fact hashes with nested JSON ordering/UTF16 and locale history, public identity service DTO/context-only wire, full-body/source-order/watermark-based currentDerived grants. Only three operation rows→IN PROGRESS (2/69/210); raw internal identity helpers and roster commit denials do not count. Formal author/proposal/generation writes, legacy roster DDL and portable origin authority remain absent. See [GO-CHARACTER-READS.md](GO-CHARACTER-READS.md).
 
+Round24 supplies ordinary generation root/run/attempt/artifact storage and pure shared contracts via four parallel agents, independently audited and qualified at`2d4f8a9e` [41471547497](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41471547497). Actual225cases/417steps+3 independent native-shape boundaries, wholeSQL/results/errors/UUID/mutation comparisons; full510top/5268all pass, new15top/692all. Lease borrowing does not grant source/current-owner/provider-usage authority; no handler or main binding, author saves/finalization/workflows absent. Existing private-copy unit lifecycle proves internal behavior only. **2/69/210 remains unchanged**, see [GO-GENERATION-LEDGER.md](GO-GENERATION-LEDGER.md).
+
 ## Architecture decisions
 
 | Concern | Decision / implementation requirement |

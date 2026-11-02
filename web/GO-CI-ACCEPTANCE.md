@@ -1,5 +1,15 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第二十四轮：四agent普通生成预算与可见正文账本基础
+
+首次资格源码`2d4f8a9e440732e827a61854749786b97575da0b`，[41471547497](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41471547497) **success：510顶层/5268含子用例PASS、0fail、3既有foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。新增15顶层/692含子用例全通过，无fail/skip；vet/race/原版凭据decrypt/build/noNode smoke通过。
+
+实际原版递归10模块，225案例=143pure+82ledger，417实际方法调用步骤=143pure+274ledger；另3个native TypeError形状边界只对照显式unsupported，不宣称错误等价。各步骤完整返回/错误、每个原SQL表全部后状态、精确UUID seam调用次数、输入不变与原版不改bytes场景均验证。只规范生成UUID和声明generation JSON列结构，未去掉时钟、hash、正文或作者metadata timestamps。
+
+四agent分别负责普通ledger、shared契约、原版Oracle和独立审查；父负责私有会话借用及实际scratch lifecycle、workflow、全量验收。完整source/fingerprint/context/budget nonce冲突、有序fingerprint/budget、per-run overlap+aggregate root physical/time约束、token只记账不刹车、sibling共享时钟、全文SHA256/prefix+revision CAS、terminal精确重放、unknown/cancelled中断分类均覆盖。native额外证明中途trigger失败无部分写、fxnull/freeze拒绝、复合JSON损坏identity不panic、UTF8/surrogate/cycle拒绝；父lease refresh/inflight/revoke、visible prefix保留及合成source原bytes不变。
+
+不绑定任何公开handler或main；lease不是generation owner/current epoch/source admission。可信usage校验、provider orchestration、durable author保存/定稿、planning/composition/目录恢复尚无；listCandidates缺失，resume/replace虽有源码未取得实际差分资格；mixed protected DB恢复整事务拒绝，而非声称原版skip兼容。portable sidecars必须先由projectaccess写者排除预检，scratch schema准入不替代。**矩阵维持2/69/210**，production/native Lance不变。本地无编译/测试/Oracle执行。见[GO-GENERATION-LEDGER.md](GO-GENERATION-LEDGER.md)与[evidence/go-generation-ledger-round24.json](evidence/go-generation-ledger-round24.json)。
+
 ## 第二十三轮：五agent角色卡/名册/公开身份读取
 
 最终资格源码`058f98059c943f688bb77bf267dcc0d19bd66044`，[41464730633](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41464730633) **success：495顶层/4576含子用例PASS、0fail、3既有foreign-owner测试skip、18packages**（另cmd/novel-server无testfiles package skip）。本轮新增26顶层/179含子用例全通过，无fail/skip；140实际原版case=25getAll+29Roster+9内部rawIdentity+12公开IdentityView+65CurrentDerivedFields，另2独立Go-only缺meta边界，共142契约子用例。31实际递归原模块，原完整SQL后状态、原有时间字符串与输入DB bytes不变均比较。vet/race/原凭据decrypt/build/noNode smoke通过。
