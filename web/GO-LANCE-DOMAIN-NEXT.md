@@ -1,6 +1,8 @@
-# Native Lance域准入下一关（设计，不是已实现）
+# Native Lance域准入后续门与边界
 
-第十七轮状态补充：`knowledgedomain`已实现下述schema/cell/docchunk/registry-active关系的**有界合成快照**版本，普通GitHub原Oracle22case与139领域测试通过；typed-native链也已独立GitHub通过（8native tests、10项JS全schema/rows/domain保全检查）。没有任意大库external-sort、JS精确logicalHash或copyfilename引用准入。详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。本页仍保留完整最终门设计，不将所有研究项计为实现。
+第十八轮补充：有界版本已增加document→SHA256(docId) copy文件引用与Current/Dirty/Missing/Unreferenced分类，并组合进同一legacy flock下的私有SQLite+native preflight。原marker suffix忽略；missing非fatal且不current、dirty/edited合法保留；这不是索引新鲜许可或writer authority。详见[GO-JOINT-KNOWLEDGE-PREFLIGHT.md](GO-JOINT-KNOWLEDGE-PREFLIGHT.md)。下面未完成项仍是最终验收门。
+
+第十七轮状态补充：`knowledgedomain`已实现下述schema/cell/docchunk/registry-active关系的**有界合成快照**版本，普通GitHub原Oracle22case与139领域测试通过；typed-native链也已独立GitHub通过（8native tests、10项JS全schema/rows/domain保全检查）。没有任意大库external-sort或JS精确logicalHash；copyfilename引用分类后来由第十八轮补齐。详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。本页仍保留完整最终门设计，不将所有研究项计为实现。
 
 前置已达：native0.22.3/Arrow stream双向schema/rows/reopen，Go有界完整物理assetstage、rawcopymetadata、源/副本proof和安全cleanup。下一步不能直接把此结果变成project:open。源码参考原`electron/services/vector-migration-snapshot.ts:68–139`和`electron/vector-store.ts:135–173`。
 

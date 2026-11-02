@@ -2,9 +2,13 @@
 
 `backend-go/internal/projectaccess.Preflight`只返回完整性报告；不返回源文件描述符、repository、会话或原数据库写权限，不注册RPC，不接入main。当前Go仍拒绝正式dataRoot/非loopback绑定。281矩阵不因拒绝门或基础设施测试而升级。
 
-## 第十六轮opt-in扩展
+## 第十八轮native opt-in扩展
 
-设置可信`Config.Knowledge`后，在同一legacy锁内增加知识资产完整物理复制、raw registry/copies只读结构与状态校验、源/副本完整manifest复核和descriptor安全清理；报告只增counts/digests/status。nil维持下文第十四轮固定入口metadata行为。详见[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。原生隔离reader在第十五轮已通过实际合成互操作，但`Preflight`仍未调用native，不得把metadata校验当作Lance表/domain或durable open准入。
+可信管理员`Config.Knowledge.Native=true`增加一次持续legacy排他中的copied native table/domain检查及document/copy状态分类；仅native编译有效，普通编译提前拒绝。真实合成SQLite与Lance组合在GitHub独立验收；默认nil/Native=false仍维持原inventory/metadata-only行为。missing/dirty copy保留且不声明索引新鲜，任意作者库/durable authority仍未实现。见[GO-JOINT-KNOWLEDGE-PREFLIGHT.md](GO-JOINT-KNOWLEDGE-PREFLIGHT.md)。
+
+## 第十六轮opt-in扩展（历史）
+
+设置可信`Config.Knowledge`后，在同一legacy锁内增加知识资产完整物理复制、raw registry/copies只读结构与状态校验、源/副本完整manifest复核和descriptor安全清理；报告只增counts/digests/status。nil维持下文第十四轮固定入口metadata行为。详见[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。原生隔离reader在第十五轮已通过实际合成互操作，当轮`Preflight`尚未调用native（第十八轮才显式opt-in组合），不得把metadata校验当作Lance表/domain或durable open准入。
 
 ## 与现gateway真正互斥
 

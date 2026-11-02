@@ -1,5 +1,11 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第十八轮：document/copy关联与联合持锁预检
+
+源码`edf80fb2c4e344c86c40939fce25e4d663a68a9a`，普通Go[41434132059](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41434132059) **success：378顶层/3617含子用例PASS、0fail、3foreign-owner skip、16packages**；vet/race/原凭据解密/build/noNode烟测通过。新增`TestLinks*`14顶层/32含子用例无skip通过，其中9个实际原TS copy lookup/current oracle核对managed/unmanaged/missing/dirty/marker suffix语义；非native Native配置提前拒绝。
+
+独立native联合[41434132123](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41434132123) **success**：locked Rustbuild、native Go vet/build、8facade tests与5顶层/19含子用例真实SQLite+Lance preflight tests全通过，0fail/skip。10拒绝/late-drift/cancel/rename case均零Report与安全清理；4output-cleanup case保留unknown/symlink/replacement。原JS 11项schema/rows/保全/copylinks核对通过，实际PATH=/nonexistent driver0.23s/RSS111816KiB（微型fixture，非作者库性能）。driver自身仍有SQLite占位，不作为联合证据；真正联合来自`native-preflight-tests.jsonl`中原SQLite v7+真实native fixture Preflight测试。本轮不升级operation完成数、不接main、不部署。详见[GO-JOINT-KNOWLEDGE-PREFLIGHT.md](GO-JOINT-KNOWLEDGE-PREFLIGHT.md)。
+
 ## 第十七轮：typed native snapshot与canonical领域门
 
 源码`54bc66125f52c18cfc2449b0d78dd1dd82ea989c`，普通Go[41429924274](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41429924274) **success：363顶层/3584含子用例PASS、0fail、3foreign-owner skip、16packages**；format/vet/race/原凭据解密/build/无Node烟测全过。新`knowledgedomain`12顶层/139含子用例（含真实原TS validateTables/tableHash 22case Oracle）均无skip通过。22case中一项明确记录原宽松emptyfieldtype接受而Go strictschema拒绝，不声称全输入域相同。

@@ -17,14 +17,14 @@ import (
 type KnowledgeConfig struct {
 	Copy     projectfs.KnowledgeBudget
 	Metadata knowledgecopy.Budget
-	Native bool
+	Native   bool
 }
 
 // KnowledgeEvidence contains no paths, prose, IDs, registry values or handles.
 type KnowledgeEvidence struct {
-	Physical projectfs.KnowledgeSummary `json:"physical"`
-	Metadata knowledgecopy.Summary      `json:"metadata"`
-	Native *knowledgedomain.Summary `json:"native,omitempty"`
+	Physical  projectfs.KnowledgeSummary `json:"physical"`
+	Metadata  knowledgecopy.Summary      `json:"metadata"`
+	Native    *knowledgedomain.Summary   `json:"native,omitempty"`
 	CopyLinks *knowledgecopy.LinkSummary `json:"copyLinks,omitempty"`
 }
 
@@ -77,11 +77,26 @@ func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.
 	stage.evidence = KnowledgeEvidence{Physical: stage.proof.Summary(), Metadata: metadata}
 	if config.Native {
 		snapshot, summary, inspectErr := inspectNativeKnowledge(ctx, stage, config)
-		if inspectErr != nil { return stage, inspectErr }
-		refs:=[]knowledgecopy.DocumentRef{};for _,table:=range snapshot.Tables{if table.Name=="documents"{for _,row:=range table.Records{refs=append(refs,knowledgecopy.DocumentRef{ID:row["id"].(string),FilePath:row["filePath"].(string)})}}}
-		links,linkErr:=knowledgecopy.ValidateLinks(ctx,stage.root,refs,config.Metadata);if linkErr!=nil{return stage,redact(linkErr)};stage.evidence.CopyLinks=&links
+		if inspectErr != nil {
+			return stage, inspectErr
+		}
+		refs := []knowledgecopy.DocumentRef{}
+		for _, table := range snapshot.Tables {
+			if table.Name == "documents" {
+				for _, row := range table.Records {
+					refs = append(refs, knowledgecopy.DocumentRef{ID: row["id"].(string), FilePath: row["filePath"].(string)})
+				}
+			}
+		}
+		links, linkErr := knowledgecopy.ValidateLinks(ctx, stage.root, refs, config.Metadata)
+		if linkErr != nil {
+			return stage, redact(linkErr)
+		}
+		stage.evidence.CopyLinks = &links
 		stage.evidence.Native = &summary
-		if err := stage.verify(ctx); err != nil { return stage, err }
+		if err := stage.verify(ctx); err != nil {
+			return stage, err
+		}
 	}
 	return stage, nil
 }
