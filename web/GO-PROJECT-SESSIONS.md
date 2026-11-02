@@ -21,6 +21,10 @@
 
 `BeginPostHistory`以同样owner+lease hold提供六项postprocess账本和三项LLM history/stats操作，cookie、tab、CSRF、stalelease和inflightrelease隔离验证。总计35项隔离业务仍未绑定main；仅账本状态不证明LanceDB/人物/定稿外部投影已执行，LLM调用记录也不是可信generation/billing receipt。见`GO-POST-HISTORY.md`。
 
+## 叙事线索/作者豁免扩展
+
+`BeginNarrative`同样以owner+lease hold开放六项作者线索与三项豁免RPC；证据必须匹配冻结outbox且draft现finalized，confirmation与来源/plan检查同事务。布尔身份不可被Go driver当1写入；不是授权AI直接确认的接口。总计44项隔离业务，main仍只两个导航意图；完整一致性预检/剧情树/finalization owner未迁移，见`GO-NARRATIVE.md`。
+
 ## 准入与生命周期前置条件
 
 源写者/检查点进程必须由上层持续排除到 stage + schema 检查 + source proof 完成。scratch parent 来自可信管理员配置，不是 RPC 参数；私有目录不允许恶意并发替换。单个 Manager 的锁与 lease 不是跨进程单写者锁，不可替代部署时的全局 flock。

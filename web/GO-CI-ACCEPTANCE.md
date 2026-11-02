@@ -130,6 +130,19 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 九项操作仅隔离账本/历史 **IN PROGRESS**，main未绑定，无持久作者保存；全操作矩阵2完成/35进行中/244未开始。完整runner、LanceDB既有正文、finalization publication、generation/billing owner/recovery仍未完成。本机仅source/JS syntax/git与读取远端文本证据，无Go执行、localoracle、大安装或生产数据读取。
 
+## 叙事线索与作者豁免第十一轮
+
+源码`f49dd968238829dbc277e3e48fd12b6eccbd6a80`，[Actions 41397459923](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41397459923) 首次远端执行即**success，4m50s：258顶层PASS、2353含子用例PASS，0 fail，1 skip，13 package**。skip仍为非root runner writerlock foreign-owner子用例，非本轮业务。format/vet/unit/race/凭据双向oracle/build/noNode smoke全部通过，cache restore400/save服务warning不影响冷构建通过。
+
+- **160项真实原NarrativeThread/ConsistencyExemption repository差分**：26 CreatePlan、10 UpdatePlan、5 DeletePlan、4 GetPlan、42 ConfirmEvent、18 List、24 Relevant、8 Exemptions、15 SaveExemption、8 RevokeExemption。只替换private DB getter，不修改expected去迎合Go；完整调用前DB字节给Go独立副本，返回/error+三表完整副作用一致，只排除created/updated时钟字段。
+- JS trim/UTF16中文emoji边界、FEFF/NEL区别、plan validation/range优先级、冻结outbox证据而非现编辑正文、source/evidence先于plan错误、原UNIQUE重复行为、input额外字段/响应id覆盖保留，均通过。Create/Update读回原子；confirm来源检查+plan+insert同BEGIN IMMEDIATE；FK cascade和ABORT/ROLLBACK故障后无半提交，取消/独立pool并发通过。
+- List共享读事务快照，按章号+confirmationID取状态而非时间，隐藏非finalized/无outbox event，但所有finalized（含无outbox）计最大章号；dormant/overdue、terminal、Relevant区间/substring与历史BLOB展示匹配一致。
+- 审查发现Go driver可把bool身份绑定成1，而原better-sqlite3拒绝，已在原查询优先级点拒绝并用原差分+HTTP证明没有插入；JSON number仍兼容安全decoder.UseNumber。Relevant原JS Array.join对历史BLOB的展示转换已补齐，仅匹配转换，不挪用于正文来源授权。
+- cookie/tab/CSRF/lease HTTP覆盖作者计划→冻结证据→terminal→relevant过滤、豁免save/revoke/reactivate、并发upsert、跨session/tab/stale拒绝、hold阻止Release和原源fixture字节不变。未绑定main/作者持久保存/AI确认或完整一致性预检。
+- 附加损坏flag单元测试临时关闭CHECK注入revoked=2仅验证严格1判断，不属于准入有效数据或原oracle兼容证据；非string损坏snapshot返回SOURCE_NOT_FINALIZED而非原JS TypeError，明确安全收紧，未伪称异常字句完全一致。
+
+操作矩阵 **2完成、44进行中、235未开始**。见 [GO-NARRATIVE.md](GO-NARRATIVE.md)。本机无Go/gofmt/test/oracle执行、大安装或构建；仅源码、JS syntax、gitdiff和远端文本证据，生产容器、镜像、作者数据不变。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
