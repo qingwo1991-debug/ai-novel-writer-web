@@ -25,6 +25,10 @@
 
 `BeginNarrative`同样以owner+lease hold开放六项作者线索与三项豁免RPC；证据必须匹配冻结outbox且draft现finalized，confirmation与来源/plan检查同事务。布尔身份不可被Go driver当1写入；不是授权AI直接确认的接口。总计44项隔离业务，main仍只两个导航意图；完整一致性预检/剧情树/finalization owner未迁移，见`GO-NARRATIVE.md`。
 
+## 剧情树扩展
+
+`BeginPlotTree`保持exact owner/context与lease整调用hold。聚合读取同一事务来源，损坏存储快照仅隔离，显式clear才清字段；renderer save经过真实lease检查后仍返回原`GENERATION_GRAPH_ADMISSION_REQUIRED`，无权调用事务Save原型。read/clear仅隔离验证，main未绑定，持久发布/生成owner未完成；异常文本编码完整兼容待解决，见`GO-PLOT-TREE.md`。
+
 ## 准入与生命周期前置条件
 
 源写者/检查点进程必须由上层持续排除到 stage + schema 检查 + source proof 完成。scratch parent 来自可信管理员配置，不是 RPC 参数；私有目录不允许恶意并发替换。单个 Manager 的锁与 lease 不是跨进程单写者锁，不可替代部署时的全局 flock。

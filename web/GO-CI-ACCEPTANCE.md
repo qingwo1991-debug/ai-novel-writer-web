@@ -143,6 +143,19 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 操作矩阵 **2完成、44进行中、235未开始**。见 [GO-NARRATIVE.md](GO-NARRATIVE.md)。本机无Go/gofmt/test/oracle执行、大安装或构建；仅源码、JS syntax、gitdiff和远端文本证据，生产容器、镜像、作者数据不变。
 
+## 剧情树来源/快照第十二轮
+
+源码`b0f1fb276727a3866ee7755298ba115170002fb2`，[Actions 41400535697](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41400535697) **success，4m50s：270顶层PASS、2986含子用例PASS，0 fail，1 skip，13 package**。format/vet/unit/race/凭据双向oracle/build/noNode smoke全部通过；skip仍为非root writerlock foreign-owner测试。
+
+- 原PlotTreeRepository **60项**：35Read/20Save/5Clear。完整返回/原错误/project_core完整表副作用一致，54项原始有序facts JSON+SHA256记录，BLOB/NULL/REAL指数/Unicode/SQL TRIM摘要fallback/最新定稿/线程顺序纳入hash。只替换private DB getter，原migration schema约束保留。
+- 原shared validator **271项**，float64/UseNumber各回放一次共**542 case**，加两层数值解析分组PASS=544，不能按测试名斜杠深度少算日期名含斜杠的4条。结构/角色/父子/来源状态/精确身份+章号、immutable上限vs当前来源边界、JS trim、无原不存在的数量或文本上限；所有期望由真实原shared模块产生。日期原Date.parse生成expect，不改expected迎合Go。
+- Go额外覆盖源CAS、触发器ROLLBACK、取消恢复、独立pool并发聚合一致性；HTTP cookie/CSRF/tab/lease、read损坏隔离不改原值、explicit clear不变来源hash、generation save拒绝/无副作用、整调用hold阻止释放，源fixture字节不变。
+- 首次[41400159254](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41400159254)通过60+542原差分但3个新增集成fixture缺project_core主行（空baseline UPDATE无效）；修正为显式INSERT main后全套通过，无生产代码/原预期改变，不隐去失败记录。
+- read与clear只移至IN PROGRESS；public save仍原`GENERATION_GRAPH_ADMISSION_REQUIRED`，即使有事务Save原型也不能算generation owner已迁移，矩阵save保持NOT STARTED。main未绑定，无持久发布。
+- **全量验收遗留编码边界**：无效UTF8 SQLite TEXT在Node/Go替换字符计数可能不同，孤立UTF16 surrogate JSON经Go decoder失真；尚未无损实现或显式准入拒绝，不宣称旧项目任意文本完全兼容。Date.parse只证明枚举ISO/commonlegacy域，非通用V8legacy语法。见[GO-PLOT-TREE.md](GO-PLOT-TREE.md)。
+
+操作矩阵 **2完成、46进行中、233未开始**。本机没有Go/gofmt/test/oracle/build/install；生产容器、镜像、作者数据不变。
+
 ## 不代表什么
 
 - 281 项中只有 2 项固定导航意图实现并绑定，279 项仍未迁移，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。

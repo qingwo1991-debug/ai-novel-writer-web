@@ -14,6 +14,7 @@
 - `internal/store/reviewrevision.go`、`transport/reviewrevision.go`：14项审稿/修稿RPC隔离业务，完整来源快照、事务内index分配与pending替换、作者全文CAS合并和防重放覆盖；162项原TypeScript repository差分+合成并发HTTP通过。绑定cycle/generation/recovery拒绝，未绑定main、无持久保存。合并与普通draft CAS拒绝共享content_id误覆盖，原始BLOB不强转string，见 `web/GO-REVIEW-REVISION.md`。
 - `internal/store/posthistory.go`、`transport/posthistory.go`：后处理run/step账本与LLM历史/nullable统计的9项隔离RPC；定稿source身份、原子汇总、随机UUID与诊断不泄露。不是实际后处理执行器或billing authority，main不绑定，见 `web/GO-POST-HISTORY.md`；GitHub资格记录见 `web/GO-CI-ACCEPTANCE.md`。
 - `internal/store/narrative.go`、`transport/narrative.go`：作者叙事计划/冻结定稿证据确认/活跃线索与一致性豁免9项隔离RPC，JS trim/UTF16、原状态/超期/区间外匹配与豁免upsert；不是完整一致性预检或AI工作流，见 `web/GO-NARRATIVE.md`。main未绑定。
+- `internal/store/plottree*.go`、`transport/plottree.go`：剧情树完整来源聚合、原JSON.stringify顺序SHA256、历史/当前来源双快照校验与事务Save原型；公开save仍拒绝`GENERATION_GRAPH_ADMISSION_REQUIRED`。read/clear仅隔离HTTP，生成权限图未迁移，旧异常UTF8/孤立surrogate与未枚举Date.parse格式待全量验收，见 `web/GO-PLOT-TREE.md`。
 - `internal/projectfs`、`internal/admission`、`internal/projectdata`：只读物理路径/项目身份与 SQLite v7 准入检查；连接私有完整 DB/WAL 副本而非原库，保留写者排除前置条件。新增固定 128 KiB buffer 流式快照，检查流程不再使用旧 64 MiB 内存快照；opt-in 行级内容证明已用私有外部排序并通过>64MiB总行量验证（单行限制/内存峰值/磁盘预算仍见专文），部分 manifest 日期格式有兼容差异，v4→v5、v5→v6、v6→v7 仅空历史限定私有副本 lane 已验证，其余旧版本升级待移植。详见 `web/GO-DATA-ADMISSION.md`。
 - `internal/projectsession`：私有 scratch copy 的 schema 准入、cookie session+tab 所有权、冻结上下文、refresh 保留编辑、在途围栏与可重试 cleanup；非持久作者会话，见 `web/GO-PROJECT-SESSIONS.md`。
 - `internal/secrets`：旧 AES-GCM envelope 和私人 key 文件兼容模块，不自动读取默认作者 key；全局配置/provider 尚未连接，见 `web/GO-CREDENTIAL-COMPATIBILITY.md`。
