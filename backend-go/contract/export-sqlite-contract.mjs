@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, copyFileSync, constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { CURRENT_DESKTOP_SCHEMA_VERSION, getDesktopMigrationRegistry } from '../../electron/migrations/desktop-registry.ts'
@@ -31,9 +31,16 @@ for (const [name, donor, version] of [
   const file = name + '.db'
   const filename = path.join(directory, file)
   assert(!existsSync(filename), 'never open an existing database')
+  // Expected upgrades start from the EXACT closed v6 bytes, not a separately
+  // initialized database whose metadata timestamps/default rows may differ.
+  const upgraded = name.includes('-upgraded-')
+  if (upgraded) copyFileSync(path.join(directory, name.replace('-v6-upgraded-v7', '-v6') + '.db'), filename, constants.COPYFILE_EXCL)
   const db = new Database(filename)
   try {
     db.pragma('foreign_keys=ON')
+    if (upgraded) {
+      migrateSchema(new SqliteSchemaAdapter(db), registry, 7)
+    } else {
     // Pass an explicit public synthetic key. No application credentials or
     // source identity key from the host can be loaded by baseline backfills.
     db.transaction(() => initializeLegacyBaselineSchema(db, Buffer.alloc(32, 0x23)))()
@@ -48,7 +55,7 @@ for (const [name, donor, version] of [
     }
     migrateSchema(new SqliteSchemaAdapter(db), registry, name.includes('-upgraded-') ? 6 : version)
     db.prepare('INSERT INTO contents(body,created_at) VALUES(?,?)').run('Go 合成兼容样例 😀 <&>\u2028\u2029', '2026-01-01 00:00:00')
-    if (name.includes('-upgraded-')) migrateSchema(new SqliteSchemaAdapter(db), registry, 7)
+    }
     verifySchema(new SqliteSchemaAdapter(db), registry, version)
     fixtures.push({ name, file, version, fingerprint: sqliteSchemaFingerprint(db) })
   } finally { db.close() }

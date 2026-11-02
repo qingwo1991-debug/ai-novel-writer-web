@@ -200,7 +200,8 @@ func TestUpgradeV6RejectsUnsafeCopiesBeforeMutation(t *testing.T) {
 
 func TestUpgradeV6MissingCanceledAndInvalidContractNeverCreateDB(t *testing.T) {
 	oracle := loadUpgradeOracle(t)
-	missing := filepath.Join(t.TempDir(), "missing.db")
+	directory:=t.TempDir();if err:=os.Chmod(directory,0700);err!=nil{t.Fatal(err)}
+	missing := filepath.Join(directory, "missing.db")
 	_, err := UpgradeSnapshotV6(context.Background(), missing, oracle.contract)
 	requireCode(t, err, CodeMissingSnapshot)
 	ctx, cancel := context.WithCancel(context.Background())

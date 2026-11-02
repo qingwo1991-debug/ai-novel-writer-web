@@ -64,7 +64,7 @@ func (m *Leases) Release(expected Lease) error {
  if state.active>0 { return ErrBusy }
  delete(m.projects,expected.ProjectPath); return nil
 }
-// ReleaseAll atomically closes this lease set only when all operations are idle.
+// ReleaseAll atomically clears this lease set only when all operations are idle.
 // The owner of the complete Leases instance may use it for orderly shutdown;
 // this is never a browser-callable force release or ownership transfer.
 func(m *Leases)ReleaseAll()error{

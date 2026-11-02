@@ -41,9 +41,9 @@ func ParseContext(value any)(Context,error){
  return Context{ProjectID:id,LeaseID:lease,ProjectPath:path},nil
 }
 func(l Context) lease(o Owner)novelruntime.Lease{return novelruntime.Lease{ProjectID:l.ProjectID,LeaseID:l.LeaseID,ProjectPath:l.ProjectPath,Owner:o.key()}}
-type mounted struct {lease novelruntime.Lease;db *sql.DB;directory string}
-type Manager struct {mu sync.Mutex;leases *novelruntime.Leases;mounts map[string]*mounted;closed bool}
-func New()*Manager{return &Manager{leases:novelruntime.NewLeases(),mounts:make(map[string]*mounted)}}
+type mounted struct {lease novelruntime.Lease;db *sql.DB;directory string;identity projectfs.Identity}
+type Manager struct {mu sync.Mutex;leases *novelruntime.Leases;mounts map[string]*mounted;pending map[string]*mounted;closed bool;removeAll func(string)error}
+func New()*Manager{return &Manager{leases:novelruntime.NewLeases(),mounts:make(map[string]*mounted),pending:make(map[string]*mounted),removeAll:os.RemoveAll}}
 
 // OpenScratchCopy requires caller exclusion of source writers/checkpointers for
 // its entire duration, plus a trusted private scratch parent. No source SQLite
@@ -60,6 +60,7 @@ func(m *Manager)OpenScratchCopy(ctx context.Context,owner Owner,project *project
  if mounted:=m.mounts[root];mounted!=nil{
   if mounted.lease.Owner!=owner.key(){return Context{},novelruntime.ErrOwned}
   if mounted.lease.ProjectID!=id{return Context{},novelruntime.ErrNotOwned}
+  if !mounted.identity.Same(project.Identity()){return Context{},projectfs.ErrChanged}
   // Validate the supplied capability still names the same physical project.
   // Never read source SQLite merely to refresh an already-mounted scratch copy.
   manifest,err:=project.OpenFileRead(projectfs.ManifestName);if err!=nil{return Context{},err};if err:=manifest.Close();err!=nil{return Context{},err}
@@ -82,7 +83,7 @@ func(m *Manager)OpenScratchCopy(ctx context.Context,owner Owner,project *project
  if err:=db.PingContext(ctx);err!=nil{return Context{},err}
  if err:=ctx.Err();err!=nil{return Context{},err}
  if err:=m.leases.CommitAcquire(lease);err!=nil{return Context{},err}
- m.mounts[root]=&mounted{lease:lease,db:db,directory:directory}
+ m.mounts[root]=&mounted{lease:lease,db:db,directory:directory,identity:project.Identity()}
  committed=true;owned=true;keep=true
  return fromLease(lease),nil
 }
@@ -103,16 +104,28 @@ func(m *Manager)Release(owner Owner,expected Context)error{
  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}
  if err:=m.leases.Release(expected.lease(owner));err!=nil{return err}
  delete(m.mounts,expected.ProjectPath)
- return errors.Join(mounted.db.Close(),os.RemoveAll(mounted.directory))
+ m.pending[mounted.directory]=mounted
+ return m.cleanupLocked()
+}
+// Cleanup retries private-file removal failures after release/shutdown. Revoked
+// mounts are never returned to callers, even when filesystem cleanup needs retry.
+func(m *Manager)Cleanup()error{m.mu.Lock();defer m.mu.Unlock();return m.cleanupLocked()}
+func(m *Manager)cleanupLocked()error{
+ var joined error
+ for directory,mounted:=range m.pending{
+  if mounted.db!=nil{if err:=mounted.db.Close();err!=nil{joined=errors.Join(joined,err);continue};mounted.db=nil}
+  if err:=m.removeAll(directory);err!=nil{joined=errors.Join(joined,err);continue}
+  delete(m.pending,directory)
+ }
+ return joined
 }
 // Close refuses atomically if ANY operation is active. It cannot revoke or close
 // a DB underneath an in-flight repository operation. Retry only after holds end.
 func(m *Manager)Close()error{
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil}
- // Probe all active states without destructive releases. Acquiring an additional
- // hold cannot reveal activity, so use the lease manager's non-destructive gate.
+ m.mu.Lock();defer m.mu.Unlock();if m.closed{return m.cleanupLocked()}
+ // All-or-nothing active-operation probe before revoking any project.
  if err:=m.leases.ReleaseAll();err!=nil{return err}
- m.closed=true;var joined error
- for root,mounted:=range m.mounts{joined=errors.Join(joined,mounted.db.Close(),os.RemoveAll(mounted.directory));delete(m.mounts,root)}
- return joined
+ m.closed=true
+ for root,mounted:=range m.mounts{m.pending[mounted.directory]=mounted;delete(m.mounts,root)}
+ return m.cleanupLocked()
 }
