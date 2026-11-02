@@ -1,0 +1,119 @@
+name: Native Lance compatibility spike
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend-go/native-lance/**'
+      - 'backend-go/internal/lancenative/**'
+      - 'backend-go/cmd/lance-interop/**'
+      - 'backend-go/contract/lance-native-contract.mjs'
+      - '.github/workflows/go-lance-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: native-lance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  synthetic-interop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      GO_LANCE_CONTRACTROOT: ${{ runner.temp }}/novel-lance-interop
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_DEV_INCREMENTAL: 'false'
+      RUSTFLAGS: '-C debuginfo=0 -C linker=clang -C link-arg=-fuse-ld=lld'
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version-file: backend-go/go.mod
+          cache-dependency-path: backend-go/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Generate original synthetic Lance 0.22.3 and stream IPC
+        run: |
+          npm install --prefix "$RUNNER_TEMP/oracle" --no-audit --no-fund --package-lock=false @lancedb/lancedb@0.22.3 apache-arrow@18.1.0
+          node backend-go/contract/lance-native-contract.mjs generate
+      - name: Prepare isolated native build resources
+        run: |
+          # GitHub ephemeral runner only; never author data or the deployment host.
+          df -h .
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends protobuf-compiler libssl-dev pkg-config clang lld
+          rustup toolchain install 1.90.0 --profile minimal
+          rustc +1.90.0 --version
+          df -h .
+      - name: Resolve exact native dependency lock
+        working-directory: backend-go/native-lance
+        run: |
+          if test -s Cargo.lock; then
+            cargo +1.90.0 metadata --locked --format-version 1 > "$RUNNER_TEMP/native-metadata.json"
+          else
+            curl --fail --location --silent --show-error https://raw.githubusercontent.com/lancedb/lancedb/e1906a328d25c74fe182b5b13a112a77b992180a/Cargo.lock > Cargo.lock
+            cp Cargo.lock "$RUNNER_TEMP/upstream-native-Cargo.lock"
+            # Preserve upstream compatible resolutions while adding this shim root.
+            cargo +1.90.0 metadata --format-version 1 > "$RUNNER_TEMP/native-metadata.json"
+          fi
+          cp Cargo.lock "$RUNNER_TEMP/native-Cargo.lock"
+          cargo +1.90.0 tree --locked -p lancedb > "$RUNNER_TEMP/native-dependency-tree.txt"
+          python3 - <<'PY'
+          import pathlib,tomllib
+          p=tomllib.loads(pathlib.Path('Cargo.lock').read_text())['package']
+          for name,version in [('lancedb','0.22.3'),('lance','0.39.0'),('arrow-array','56.2.0'),('arrow-ipc','56.2.0'),('arrow-schema','56.2.0')]:
+              found={x['version'] for x in p if x['name']==name}
+              assert found == {version}, (name,found,version)
+          PY
+      - name: Compile Rust static library on GitHub only
+        working-directory: backend-go/native-lance
+        run: |
+          set -o pipefail
+          /usr/bin/time -v cargo +1.90.0 build --locked 2>&1 | tee "$RUNNER_TEMP/native-build.log"
+          du -sh target
+          ls -lh target/debug/libnovel_lance.a
+      - name: Compile and test Go in-process native facade
+        working-directory: backend-go
+        run: |
+          export CGO_LDFLAGS="$PWD/native-lance/target/debug/libnovel_lance.a -ldl -lpthread -lm -lstdc++ -lssl -lcrypto"
+          gofmt -w ./internal/lancenative ./cmd/lance-interop
+          git diff --binary -- ./internal/lancenative ./cmd/lance-interop > "$RUNNER_TEMP/native-go-format.patch"
+          go vet -tags lance_native ./internal/lancenative ./cmd/lance-interop
+          set -o pipefail
+          go test -tags lance_native -count=1 -timeout=5m -json ./internal/lancenative | tee "$RUNNER_TEMP/native-go-tests.jsonl"
+          go build -tags lance_native -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/native-lance-check" ./cmd/lance-interop
+          ls -lh "$RUNNER_TEMP/native-lance-check"
+          ldd "$RUNNER_TEMP/native-lance-check" | tee "$RUNNER_TEMP/native-runtime-dependencies.txt"
+      - name: Run native artifact without Node or Python PATH
+        run: |
+          PATH=/nonexistent /usr/bin/time -v "$RUNNER_TEMP/native-lance-check" "$GO_LANCE_CONTRACTROOT" 2> "$RUNNER_TEMP/native-runtime-metrics.txt"
+      - name: Original Node verifies Arrow streams and restored native tables
+        run: node backend-go/contract/lance-native-contract.mjs verify
+      - name: Upload bounded synthetic evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-lance-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/native-Cargo.lock
+            ${{ runner.temp }}/native-metadata.json
+            ${{ runner.temp }}/native-dependency-tree.txt
+            ${{ runner.temp }}/native-build.log
+            ${{ runner.temp }}/native-go-tests.jsonl
+            ${{ runner.temp }}/native-go-format.patch
+            ${{ runner.temp }}/native-runtime-dependencies.txt
+            ${{ runner.temp }}/native-runtime-metrics.txt
+            ${{ runner.temp }}/novel-lance-interop/summary.json
+            ${{ runner.temp }}/novel-lance-interop/contract.json
+            ${{ runner.temp }}/novel-lance-interop/native-export.json
+            ${{ runner.temp }}/novel-lance-interop/native-import.json
+            ${{ runner.temp }}/novel-lance-interop/native-restored-export.json
+          retention-days: 7
+          if-no-files-found: ignore

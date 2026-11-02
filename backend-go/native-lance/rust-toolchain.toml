@@ -1,0 +1,4 @@
+# Matches the upstream LanceDB v0.22.3 toolchain.
+[toolchain]
+channel = "1.90.0"
+profile = "minimal"
