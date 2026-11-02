@@ -52,7 +52,7 @@ func (s *Server) BindRecovery(provider RecoveryProvider) error {
 					return map[string]any{"success": false, "error": "Error: " + code}, nil
 				}
 				var public *security.HTTPError
-				if errors.As(err, &public) && code == public.Code {
+				if errors.As(err, &public) && public != nil && code == public.Code {
 					// Never forward a provider's arbitrary public message.
 					return nil, security.NewHTTPError(public.Status, code)
 				}
@@ -266,6 +266,9 @@ func recoveryCode(err error) string {
 	code := ""
 	var public *security.HTTPError
 	if errors.As(err, &public) {
+		if public == nil {
+			return "RECOVERY_CANDIDATE_OPERATION_FAILED"
+		}
 		code = public.Code
 	} else if err != nil {
 		code = err.Error()

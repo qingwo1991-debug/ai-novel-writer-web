@@ -253,7 +253,9 @@ func TestRecoveryHTTPAuthOwnershipAndStaleSource(t *testing.T) {
 
 func TestRecoveryProviderErrorsReleaseAndRedact(t *testing.T) {
 	expected := draftContext("project", "lease", "/synthetic/recovery")
+	var nilPublic *security.HTTPError
 	for _, failure := range []error{
+		nilPublic,
 		errors.New("private /author/book.sqlite SQL token"),
 		errors.New("RECOVERY_CANDIDATE_PRIVATE_SECRET"),
 		&security.HTTPError{Status: 409, Code: "RECOVERY_CANDIDATE_PRIVATE_SECRET", Message: "private provider message"},
