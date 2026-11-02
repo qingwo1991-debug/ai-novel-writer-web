@@ -28,6 +28,12 @@ GitHub Actions：[Go backend migration / 41373886340](https://github.com/qingwo1
 
 GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞态、编译和 smoke 通过。固定 SHA 的 Actions 存在旧 Node20 声明的弃用警告，runner 强制 Node24 执行；这是 CI action 的构建依赖，不是 Go 二进制的运行依赖声明。
 
+## 并发基础层第二轮
+
+源码 `0350a13cff8eb86bab89dd5af1529d3423d7dea8`，[Actions 41374819804](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41374819804) **success**：52 顶层 / 115 含子用例、0 fail，vet、race、build、无 Node smoke 均通过。
+
+新增回归覆盖：读取慢请求 body 前即固定标签身份并占用并发配额；SSE 每连接待写/在写 payload 有 8 MiB 字节预算且完成后释放；同标签并发打开成功采纳租约后，不被另一路失败回滚删除。编译/测试仍全部在 GitHub；本机仅下载小型 JSON/格式化证据。
+
 ## 不代表什么
 
 - 281 项公开业务操作仍未绑定为 Go HTTP 业务实现，详见 [GO-MIGRATION-MATRIX.md](GO-MIGRATION-MATRIX.md)。安全/租约/传输与草稿仓储模块通过，不等于用户业务端到端可用。
