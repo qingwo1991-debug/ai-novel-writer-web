@@ -92,6 +92,8 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 
 ## Gemini与主台账业务第八轮
 
+最终源码 `1eaff49c47400637a688ed75362ee68bfab16cc9`（包含最后两项option-presence/HTTP-error回归）已在 [Actions 41389284798](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41389284798) **完整success，4m41s：209顶层PASS /1766含子用例PASS，0 fail，1 skipped子用例，13 package通过**。vet/race/credential oracle/build/noNode smoke全绿。以下6d5f2f71为此前首次全绿证据，不替代最终源码验收。最后test文件与父agent并发staging存在时间差，发现未提交项后单独提交并重新GitHub验证，没有以先前green冒充最终tree。
+
 源码 `6d5f2f7190b6240128f04cd5ed8dca9cc25b99ec`，[Actions 41388270772](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41388270772) **success**，job4m26s：**207 顶层PASS /1764含子用例PASS、0 fail、1 skipped子用例、13测试package通过**。该skip仍为非root runner不能chown的writerlock foreign-owner，未被隐藏；vet/race/build/credentials双向oracle/无Node smoke均通过。
 
 - **154 Gemini原provider differential cases**（实际计数，不使用最初估算170）：请求、visible/legacy精确LF framing、rawusage/规范化/thoughts、finish、EOF、空与非法payload、HTTPcontext、null/omitted选项。Go仅将原JSON.parse engine-dependent SyntaxError安全固定为`Error: LLM_STREAM_INVALID`，测试对此prefix做显式局部转换，其余字段原样比较；该差异不伪装为完全字节一致。原OpenAI72/scanner922继续通过。
