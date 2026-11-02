@@ -180,6 +180,8 @@ jobs:
           node ./contract/embedding-contract.mjs
           test -s "$GO_EMBEDDING_CONTRACT"
       - name: Generate remaining-domain original synthetic contracts
+        id: remaining-contracts
+        continue-on-error: true
         env:
           NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
         run: |
@@ -234,15 +236,28 @@ jobs:
             printf 'Go source formatting patch is available as an artifact.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Static analysis
+        if: ${{ !cancelled() }}
         run: go vet ./...
       - name: Synthetic-data unit and HTTP contract tests
+        id: unit-tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
         run: |
           set -o pipefail
           go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl
       - name: Race detector (synthetic temporary databases only)
+        id: race-tests
+        if: ${{ !cancelled() && steps.unit-tests.outcome == 'success' && steps.remaining-contracts.outcome == 'success' }}
+        continue-on-error: true
         env:
           CGO_ENABLED: '1'
         run: go test -race -count=1 -timeout=5m ./...
+      - name: Enforce collected contract and test failures
+        if: ${{ !cancelled() }}
+        run: |
+          test '${{ steps.remaining-contracts.outcome }}' = success
+          test '${{ steps.unit-tests.outcome }}' = success
+          test '${{ steps.race-tests.outcome }}' = success
       - name: Original TypeScript decrypts Go-generated credential envelopes
         run: node --import ./contract/register-typescript.mjs ./contract/secret-contract.mjs verify
       - name: Build Go-only migration binary

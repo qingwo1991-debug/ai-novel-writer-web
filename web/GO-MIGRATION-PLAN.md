@@ -26,6 +26,19 @@ Round23 uses four parallel implementation agents and an independent fifth review
 
 Round24 supplies ordinary generation root/run/attempt/artifact storage and pure shared contracts via four parallel agents, independently audited and qualified at`2d4f8a9e` [41471547497](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41471547497). Actual225cases/417steps+3 independent native-shape boundaries, wholeSQL/results/errors/UUID/mutation comparisons; full510top/5268all pass, new15top/692all. Lease borrowing does not grant source/current-owner/provider-usage authority; no handler or main binding, author saves/finalization/workflows absent. Existing private-copy unit lifecycle proves internal behavior only. **2/69/210 remains unchanged**, see [GO-GENERATION-LEDGER.md](GO-GENERATION-LEDGER.md).
 
+## Execution reset: batch qualification and vertical delivery
+
+The user explicitly requested faster execution: parallel agents, implement first, and consolidate regression rather than repeatedly expanding small isolated rounds. This replaces the prior fine-grained execution cadence, **not** the security or final production acceptance gates.
+
+1. **Freeze the current remaining-domain batch.** Ten implementation lanes plus independent review are consolidated at `b2a87295`; do not start more optional pure-helper packages while integration waits. Configuration/startup, prompt/installed-skill transport and public HTTP/error/SSE credential boundaries are included. These remain unqualified until actual CI results; no matrix promotion follows a source commit.
+2. **Run compilation independently of the oracle lane.** GitHub now compiles all production and test packages and runs vet in a parallel job, so one TypeScript fixture failure cannot hide compile failures in the other packages. New-domain oracle generation collects all ten script failures in one run instead of stopping at the first. Unit/race/build/legacy-runtime smoke gates remain required. All compilation/testing stays remote; production/data are untouched.
+3. **Repair by failure ownership.** Return concrete compiler/oracle/race failures to their package owners concurrently, then push one grouped repair. Avoid repeated full checks for source-only changes without new risk. Download text evidence/format patches only, not binaries.
+4. **Next delivery gate is durable author editing, not another helper count:** trusted global admission + retained project writer/anchor + project open/library/session lifecycle + existing full-body-CAS editor/save handlers + close/reopen persistence, tested end-to-end using synthetic real projects. Scratch copies must never be relabeled as durable projects; unsupported populated legacy migrations still block those schemas.
+5. **Then integrate complete business chains:** generation→candidate→safe save/review/finalization, followed by source-owned import and archive/cloud backup/restore. Use a small number of clear file owners for implementation, integration and independent review; judge progress by completed user flows.
+6. **Final deployment is unchanged:** full 281-operation/browser/data/credential acceptance, backup, digest-pinned complete Go image pull and local cutover with rollback. A green foundation batch is not deployment approval.
+
+Centralized batch qualification: [GitHub Actions 41547742793](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41547742793), source `b2a87295889095104420c62a28bf6bf501ee71f8`; status pending when recorded. No pass counts or completion date are asserted.
+
 ## Architecture decisions
 
 | Concern | Decision / implementation requirement |

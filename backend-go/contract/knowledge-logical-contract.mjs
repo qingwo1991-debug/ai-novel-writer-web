@@ -34,7 +34,16 @@ async function load(identifier){
  cache.set(identifier,result)
  return result
 }
-async function link(specifier,referencing){if(specifier.startsWith('.')){const url=new URL(specifier,referencing.identifier);if(!path.extname(url.pathname))url.pathname+='.ts';return load(url.href)}return load(specifier)}
+async function link(specifier,referencing){
+ if(!specifier.startsWith('.'))return load(specifier)
+ const url=new URL(specifier,referencing.identifier)
+ if(path.extname(url.pathname))return load(url.href)
+ // Match the actual project's file-or-directory TS resolution, e.g.
+ // '../platform' is electron/platform/index.ts, not electron/platform.ts.
+ const resolved=[new URL(url.href+'.ts'),new URL(url.href.replace(/\/$/,'')+'/index.ts')].find(candidate=>fs.existsSync(fileURLToPath(candidate))&&fs.statSync(fileURLToPath(candidate)).isFile())
+ assert(resolved,`unresolved actual original import ${specifier} from ${referencing.identifier}`)
+ return load(resolved.href)
+}
 const migration=await load(new URL('../../electron/services/vector-migration-snapshot.ts',import.meta.url).href)
 await migration.link(link)
 await migration.evaluate()

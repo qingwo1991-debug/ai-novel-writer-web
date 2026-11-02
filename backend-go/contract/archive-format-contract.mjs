@@ -2,7 +2,8 @@
 // recursive TS imports. Only loader/transpilation and disposable fixtures are
 // seams. No checks, schemas, filesystem guards or imports are rewritten.
 import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
+import { createRequire, registerHooks } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
@@ -16,7 +17,16 @@ const root = path.dirname(target)
 mkdirSync(root, { recursive: true, mode: 0o700 })
 // TS imports JSON without import attributes (the desktop bundler normally
 // handles that). Preserve original JSON value with an ordinary ESM loader.
-registerHooks({ load(url, context, next) {
+// The runner installs original dependencies outside the checkout. CommonJS
+// resolves NODE_PATH, but ESM bare imports do not; bridge resolution only.
+const require = createRequire(import.meta.url)
+const yauzlURL = pathToFileURL(require.resolve('yauzl')).href
+registerHooks({
+ resolve(specifier, context, next) {
+   if (specifier === 'yauzl') return { url: yauzlURL, shortCircuit: true }
+   return next(specifier, context)
+ },
+ load(url, context, next) {
   if (url.endsWith('/portable-project-field-policy.json')) return {
     format: 'module', source: `export default ${JSON.stringify(JSON.parse(readFileSync(new URL(url), 'utf8')))}`, shortCircuit: true,
   }

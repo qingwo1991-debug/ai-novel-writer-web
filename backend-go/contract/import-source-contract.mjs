@@ -57,8 +57,8 @@ const built = await build({
   bundle: true, write: false, platform: 'node', format: 'esm', banner: { js: "import {createRequire as __createRequire} from 'node:module'; const require=__createRequire(import.meta.url);" },
   plugins: [{ name: 'actual-import-boundaries', setup(api) {
     api.onResolve({ filter: /^node:fs$/ }, args => args.importer === controller ? { path: 'captured-stat', namespace: 'seam' } : undefined)
-    api.onResolve({ filter: /^node:crypto$/u }, args => args.namespace === 'file' ? { path: 'deterministic-crypto', namespace: 'seam' } : undefined)
-    api.onResolve({ filter: /^\./u }, args => {
+    api.onResolve({ filter: /^node:crypto$/ }, args => args.namespace === 'file' ? { path: 'deterministic-crypto', namespace: 'seam' } : undefined)
+    api.onResolve({ filter: /^\./ }, args => {
       if (args.importer && !allowed.has(args.importer) && !args.importer.endsWith('import-source-entry.mjs')) return undefined
       const filename = path.resolve(args.resolveDir, args.path.endsWith('.ts') ? args.path : args.path + '.ts')
       const relative = path.relative(root, filename).split(path.sep).join('/')
