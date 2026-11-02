@@ -1,0 +1,17 @@
+package store
+
+import(
+ "bytes"
+ "context"
+ "database/sql"
+ "encoding/json"
+ "os"
+ "path/filepath"
+ "reflect"
+ "strconv"
+ "testing"
+)
+type recoveryOracle struct{Format int;Cases []struct{Name,Method,ID,Text,Status,Error string;Input map[string]any;Result any;After []map[string]any};OriginalModules []string}
+func recoveryNormalizeOracle(value any,ids map[string]string)any{switch v:=value.(type){case map[string]any:out:=map[string]any{};for key,item:=range v{switch key{case"createdAt","resolvedAt","created_at","resolved_at":continue};out[key]=recoveryNormalizeOracle(item,ids)};return out;case []map[string]any:out:=make([]any,len(v));for i,item:=range v{out[i]=recoveryNormalizeOracle(item,ids)};return out;case []any:out:=make([]any,len(v));for i,item:=range v{out[i]=recoveryNormalizeOracle(item,ids)};return out;case string:if label,ok:=ids[v];ok{return label};return v;default:return v}}
+func recoveryContractWire(t *testing.T,value any)any{t.Helper();raw,err:=json.Marshal(value);if err!=nil{t.Fatal(err)};var out any;if err:=json.Unmarshal(raw,&out);err!=nil{t.Fatal(err)};return out}
+func TestOriginalRecoveryCandidateRepositoryContract(t *testing.T){path:=os.Getenv("GO_RECOVERY_CONTRACT");if path==""{if os.Getenv("GITHUB_ACTIONS")=="true"{t.Fatal("original recovery contract mandatory")};t.Skip("GitHub original recovery fixture required")};file,err:=os.Open(path);if err!=nil{t.Fatal(err)};decoder:=json.NewDecoder(file);decoder.UseNumber();var oracle recoveryOracle;err=decoder.Decode(&oracle);file.Close();if err!=nil||oracle.Format!=1||len(oracle.Cases)<50||len(oracle.OriginalModules)<3{t.Fatal("incomplete original recovery oracle",err,len(oracle.Cases),oracle.OriginalModules)};for _,test:=range oracle.Cases{t.Run(test.Name,func(t *testing.T){input,err:=os.ReadFile(filepath.Join(filepath.Dir(path),test.Name+"-before.db"));if err!=nil{t.Fatal(err)};target:=filepath.Join(t.TempDir(),"private.db");if err:=os.WriteFile(target,input,0600);err!=nil{t.Fatal(err)};dsn,err:=ExistingDSN(target);if err!=nil{t.Fatal(err)};db,err:=sql.Open("sqlite3",dsn);if err!=nil{t.Fatal(err)};defer db.Close();db.SetMaxOpenConns(1);repository:=NewRecovery(db);var result any;switch test.Method{case"Record":result,err=repository.Record(context.Background(),test.Input);case"List":result,err=repository.ListPending(context.Background());case"Update":result,err=repository.UpdatePending(context.Background(),test.ID,test.Text);case"Resolve":err=repository.Resolve(context.Background(),test.ID,test.Status);default:t.Fatal(test.Method)};if test.Error!=""{if err==nil||err.Error()!=test.Error{t.Fatal("original error differs",err,test.Error)}}else if err!=nil{t.Fatal(err)};rows,err:=rrMaps(context.Background(),db,"SELECT * FROM recovery_candidates ORDER BY rowid");if err!=nil{t.Fatal(err)};ids:=map[string]string{};for i,row:=range rows{ids[row["candidate_id"].(string)]="candidate-"+strconv.Itoa(i)};gotAfter:=recoveryContractWire(t,recoveryNormalizeOracle(rows,ids));wantAfter:=recoveryContractWire(t,test.After);if !reflect.DeepEqual(gotAfter,wantAfter){t.Fatal("raw post-state differs",gotAfter,wantAfter)};if test.Error==""{got:=recoveryContractWire(t,recoveryNormalizeOracle(result,ids));want:=recoveryContractWire(t,test.Result);if !reflect.DeepEqual(got,want){t.Fatal("result differs",got,want)}};if test.Method=="List"||test.Error!=""{after,err:=os.ReadFile(target);if err!=nil{t.Fatal(err)};if !bytes.Equal(input,after){t.Fatal("read/error changed copied baseline bytes")}}})}}

@@ -150,6 +150,15 @@ func(m *Manager)BeginBlueprints(ctx context.Context,owner Owner,expected Context
  done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
  return store.NewBlueprints(mounted.db),done,nil
 }
+// BeginRecovery lends candidate storage under the same exact scratch lease.
+// Candidate continuation metadata is not proof of an AI generation or draft commit.
+func(m *Manager)BeginRecovery(ctx context.Context,owner Owner,expected Context)(*store.Recovery,func(),error){
+ if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
+ m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
+ mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
+ done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
+ return store.NewRecovery(mounted.db),done,nil
+}
 func(m *Manager)Release(owner Owner,expected Context)error{
  m.mu.Lock();defer m.mu.Unlock();if m.closed{return ErrClosed};if !owner.valid(){return ErrContext}
  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}
