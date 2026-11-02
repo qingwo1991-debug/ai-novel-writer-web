@@ -233,7 +233,14 @@ func preflight(ctx context.Context, config Config, afterStage stageHook) (report
 }
 func redact(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		code:=error(context.Canceled);if errors.Is(err,context.DeadlineExceeded){code=context.DeadlineExceeded};if errors.Is(err,projectfs.ErrKnowledgeCleanup){return errors.Join(code,ErrCleanup)};return code
+		code := error(context.Canceled)
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = context.DeadlineExceeded
+		}
+		if errors.Is(err, projectfs.ErrKnowledgeCleanup) {
+			return errors.Join(code, ErrCleanup)
+		}
+		return code
 	}
 	for _, code := range []error{projectfs.ErrChanged, projectfs.ErrManifestChanged} {
 		if errors.Is(err, code) {

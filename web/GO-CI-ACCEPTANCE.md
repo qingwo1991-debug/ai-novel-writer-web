@@ -1,5 +1,13 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第十六轮：知识资产stage与只读元数据（新增）
+
+首轮源码`2b1f5dbd423472f904c0fedf39da3d5bc16f249e`，普通Go[41424195056](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195056) **success**：350顶层/3444含子用例PASS，0fail、3明确foreign-owner权限skip，15packages；vet/race/build/无Node烟测全部成功。新原TypeScript copy reader/current函数oracle7例实际通过，涵盖Unicode、edited-current、dirty、hashmismatch、empty和unknownrawfields。
+
+独立native[41424195098](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195098) **success**：原Rust/Go锁定build+5native tests全部过；真实Go物理stage 49entries/29322bytes，metadata4spaces/3copies，native扫描同一副本6表/14行，由JS核对全部schema/rows，源/copy完整proof和自有文件cleanup通过。真实PATH=/nonexistent执行0.17s/RSS96764KiB（微型fixture不外推）。额外表domain/copy引用语义未实现。
+
+只读审查发现取消+cleanup混合PathError可泄漏复制文件名；`04330543`规范化context sentinel、保留符号cleanup并新增确定性回归，普通Go[41425792641](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41425792641) **success（351顶层/3445含子用例PASS、0fail、3skip、15packages）**，native[41425792583](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41425792583) **success（5native test，0fail/skip，8项互操作与保全检查全通过）**。源码精确为`04330543876d169b2624f06878d9e33b506eb139`；最终format/documentation-only提交不另冒充编译过新SHA。详情：[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。不升级操作完成数，不接main，不部署。
+
 ## 实际执行
 
 源码提交：`a8ae8711cd52c5ce30ce7f830b937294f151428b`。

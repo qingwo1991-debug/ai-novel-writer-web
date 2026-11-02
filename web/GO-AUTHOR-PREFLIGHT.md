@@ -2,6 +2,10 @@
 
 `backend-go/internal/projectaccess.Preflight`只返回完整性报告；不返回源文件描述符、repository、会话或原数据库写权限，不注册RPC，不接入main。当前Go仍拒绝正式dataRoot/非loopback绑定。281矩阵不因拒绝门或基础设施测试而升级。
 
+## 第十六轮opt-in扩展
+
+设置可信`Config.Knowledge`后，在同一legacy锁内增加知识资产完整物理复制、raw registry/copies只读结构与状态校验、源/副本完整manifest复核和descriptor安全清理；报告只增counts/digests/status。nil维持下文第十四轮固定入口metadata行为。详见[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。原生隔离reader在第十五轮已通过实际合成互操作，但`Preflight`仍未调用native，不得把metadata校验当作Lance表/domain或durable open准入。
+
 ## 与现gateway真正互斥
 
 旧`docker/web-entrypoint.sh`29–30使用`$NOVEL_DATA_ROOT/.native-web.gateway.lock`。新增`writerlock.AcquireLegacy`固定复用这个名字，不再把不同的`.novel-writer.lock`误当互斥证明。原Acquire仍保留旧名与严格0600行为，两个命名空间互不代替。

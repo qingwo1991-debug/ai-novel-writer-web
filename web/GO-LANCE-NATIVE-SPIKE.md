@@ -1,5 +1,9 @@
 # 原生Lance兼容试验（隔离合成数据互操作已通过，非生产能力）
 
+## 第十六轮组合补充
+
+`2b1f5dbd` [41424195098](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195098)已success：Go完整物理知识assetstage→副本metadata校验→native扫描→原JS全schema/rows核对→source/copy proof→attempt-owned cleanup。49entries/29322bytes、4spaces/3copies、6表/14行；原方向互操作和5项native测试仍通过。驱动project.db为opaque合成占位，不声称SQLite/Lance联合语义准入。元数据validator不替代table-domain/copy引用关系、原logicalHash；详见[GO-KNOWLEDGE-COPY-PREFLIGHT.md](GO-KNOWLEDGE-COPY-PREFLIGHT.md)。新门设计见[GO-LANCE-DOMAIN-NEXT.md](GO-LANCE-DOMAIN-NEXT.md)。
+
 ## 第十五轮执行状态
 
 - 源码起点`d1ac97b5`，最终通过远程原生试验源码`bc14231b`；`backend-go/native-lance/`为精确0.22.3 Rust staticlib，Go/CGO进程内调用，只有`lance_native && cgo`显式构建标签可用，没有接入main/RPC/作者预检。

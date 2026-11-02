@@ -1,0 +1,68 @@
+{
+  "round": 16,
+  "implementationSha": "2b1f5dbd423472f904c0fedf39da3d5bc16f249e",
+  "auditedFixSha": "04330543876d169b2624f06878d9e33b506eb139",
+  "ordinary": {
+    "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41425792641",
+    "status": "success",
+    "topLevelPass": 351,
+    "includingSubtestsPass": 3445,
+    "fail": 0,
+    "skipEvents": 3,
+    "topLevelSkip": 1,
+    "passingPackages": 15,
+    "vet": true,
+    "race": true,
+    "originalCopyPredicateOracleCases": 7,
+    "originalCopyPredicateRuntime": "CI-only extracted unmodified original TypeScript reader and current predicate",
+    "binaryBuildAndNoNodeSmoke": true
+  },
+  "nativeFirst": {
+    "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41424195098",
+    "status": "success",
+    "nativeTestsPass": 5,
+    "nativeTestsFail": 0,
+    "nativeTestsSkip": 0,
+    "tables": 6,
+    "rows": 14,
+    "stagedPhysicalBytes": 29322,
+    "stagedPhysicalEntries": 49,
+    "spaces": 4,
+    "copies": 3,
+    "currentCopies": 3,
+    "registryRawSHA256": "5369174addb3bc47303b618eab0b714c25e947619c1ed62d8accbe21fb73ced8",
+    "goStageNativeReadFullSchemaRowsAndCleanup": true,
+    "sourceAndCopyPhysicalAndMetadataUnchanged": true,
+    "runtimePATH": "/nonexistent",
+    "tinyFixtureRuntimeSeconds": 0.17,
+    "tinyFixtureMaxRSSKiB": 96764
+  },
+  "nativeFinal": {
+    "run": "https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41425792583",
+    "status": "success",
+    "nativeTestsPass": 5,
+    "nativeTestsFail": 0,
+    "nativeTestsSkip": 0,
+    "allEightInteroperationInvariantChecks": true,
+    "stagedBytes": 29322,
+    "stagedEntries": 49,
+    "spaces": 4,
+    "copies": 3
+  },
+  "review": {
+    "readOnly": true,
+    "criticalHighMedium": 0,
+    "lowFound": 1,
+    "lowFixed": "Mixed cancellation and cleanup PathError now normalize to context sentinel and optional symbolic cleanup code; deterministic regression passed."
+  },
+  "limits": [
+    "Synthetic fixtures only; no author paths, original database, keys or production service accessed.",
+    "No local Go/Rust compilation, gofmt, unit/race execution, dependency installation or original oracle execution.",
+    "Source quiescence and external writer exclusion remain prerequisites; filesystem sampling is not a cross-table transaction or malicious same-user race defense.",
+    "Physical stage ceilings are 1TiB/10000entries/64depth; retained inode pins may approach entry-budget file-descriptor usage.",
+    "Copied raw JSON ceilings 64MiB/100000copies/depth128 are not decoded-RSS or instantaneous cancellation bounds.",
+    "Metadata validation is not Lance table/document/copy crosslink admission or TypeScript logicalHash compatibility.",
+    "Native fixture driver uses fake opaque SQLite bytes; combined author SQLite/Lance semantic admission remains unimplemented.",
+    "No durable project authority or production deployment; matrix remains 2 implemented /54 in progress /225 not started."
+  ]
+}
