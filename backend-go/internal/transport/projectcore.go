@@ -3,6 +3,7 @@ package transport
 import (
  "context"
  "errors"
+ "math"
  "net/http"
 
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -57,6 +58,6 @@ func validateSynopsisRequest(data map[string]any)error{
  if _,ok:=data["synopsis"].(string);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
  expected,ok:=data["expected"].(map[string]any);if !ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
  for _,key:=range []string{"synopsis","premise","charactersArch","worldbuilding","genre","writingLanguage","plotStructure","narrativePov","globalGuidance"}{value,exists:=expected[key];if !exists{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")};if value==nil{continue};if _,ok:=value.(string);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
- for _,key:=range []string{"totalChapters","wordsPerChapter"}{value,exists:=expected[key];if !exists{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")};if value==nil{continue};if _,ok:=draftSafeInteger(value,-9007199254740991);!ok{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
+ for _,key:=range []string{"totalChapters","wordsPerChapter"}{value,exists:=expected[key];if !exists{return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")};if value==nil{continue};number,ok:=value.(float64);if !ok||math.IsInf(number,0)||math.IsNaN(number){return security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}}
  return nil
 }
