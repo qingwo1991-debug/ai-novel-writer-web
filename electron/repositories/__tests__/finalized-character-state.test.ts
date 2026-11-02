@@ -23,7 +23,7 @@ function draft(db: Db, id = 1, chapter = 1, content = prose, version = 1) {
   db.prepare('INSERT OR IGNORE INTO blueprints(chapter_number,title) VALUES(?,?)').run(chapter, '合成章节')
   db.prepare('INSERT INTO contents(id,body) VALUES(?,?)').run(id, '尚未定稿')
   db.prepare("INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(?,?,?,'draft',?,0)").run(id, chapter, version, id)
-  return { finalizationId: `finalization-${id}`, draftId: id, chapterNumber: chapter, chapterTitle: '合成章节', content,
+  return { finalizationId: `finalization-${id}`, draftId: id, chapterNumber: chapter, chapterTitle: '合成章节', content, expectedContent: '尚未定稿',
     contentHash: hash(content), contentRevision: 1, targetFileName: `${chapter}.txt` }
 }
 

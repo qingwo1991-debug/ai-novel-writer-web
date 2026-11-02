@@ -37,7 +37,7 @@ function fixture(dispatch?: GenerationRunServiceDependencies['dispatch'], option
   db.exec("INSERT INTO project_core(id,project_name) VALUES('main','合成定稿'); INSERT INTO blueprints(chapter_number,title) VALUES(1,'北塔'); INSERT INTO contents(id,body) VALUES(1,'旧稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(1,1,1,'draft',1,2)")
   if (options.writingLanguage) db.prepare("UPDATE project_core SET writing_language=? WHERE id='main'").run(options.writingLanguage)
   FinalizationRepository.commit({ finalizationId: 'finalized-1', draftId: 1, chapterNumber: 1, chapterTitle: '北塔',
-    content, contentHash: textHash(content), contentRevision: 1, targetFileName: '第一章.txt' })
+    content, expectedContent: '旧稿', contentHash: textHash(content), contentRevision: 1, targetFileName: '第一章.txt' })
   const characterId = db.prepare("SELECT character_id FROM characters WHERE name='林岚'").pluck().get() as string
   options.seed?.(db)
   const model: ModelProfile = { id: 'synthetic', name: '合成模型', provider: 'openai', protocol: 'openai', modelName: 'gpt-4.1',
@@ -212,7 +212,7 @@ it('#484 生成期间字段被改：界面重试沿用冻结上下文仍拒写�
  expect(()=>f.owner.commitFinalizationGeneration({handle:retry.view.handle,artifact:f.artifactOf(replay)})).toThrow('FINALIZED_CHARACTER_FIELD_CONFLICT')
  expect(f.db.prepare('SELECT cs_location FROM characters WHERE character_id=?').pluck().get(f.characterId)).toBe('作者新地点')
  f.db.exec("INSERT INTO contents(id,body) VALUES(2,'新稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(2,1,2,'draft',2,2)")
- FinalizationRepository.commit({finalizationId:'finalized-2',draftId:2,chapterNumber:1,chapterTitle:'北塔',content:prose,contentHash:textHash(prose),contentRevision:2,targetFileName:'第一章.txt'})
+ FinalizationRepository.commit({finalizationId:'finalized-2',draftId:2,chapterNumber:1,chapterTitle:'北塔',content:prose,expectedContent:'新稿',contentHash:textHash(prose),contentRevision:2,targetFileName:'第一章.txt'})
  const source=f.owner.readFinalizedCharacterContext(2).context.source
  const notes=f.owner.beginFinalizationGeneration({slot:{source,stepKey:'chapter_notes'},modelId:'synthetic'})
  f.owner.commitFinalizationGeneration({handle:notes.view.handle,artifact:f.artifactOf(await f.owner.executeFinalizationGeneration({handle:notes.view.handle}))})

@@ -40,7 +40,8 @@ jobs:
           node --version
           node --import ./web/browser/register-typescript.mjs --test \
             web/security.test.mjs web/public-response.test.mjs \
-            web/client-departure.test.mjs web/browser/browser-transport.test.mjs
+            web/client-departure.test.mjs web/browser/browser-transport.test.mjs \
+            web/library-visibility.test.mjs
 
   verify:
     name: Unpublished image (PR or non-main dispatch)

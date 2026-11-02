@@ -44,7 +44,7 @@ function finalizeChapter(draftId: number, chapterNumber: number, body: string, v
   db.prepare("INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(?,?,?,'draft',?,0)")
     .run(draftId, chapterNumber, version, draftId)
   FinalizationRepository.commit({ finalizationId: `finalization-${randomUUID()}`, draftId, chapterNumber,
-    chapterTitle: `第${chapterNumber}章`, content: body, contentHash: sha256(body), contentRevision: 1,
+    chapterTitle: `第${chapterNumber}章`, content: body, expectedContent: '尚未定稿', contentHash: sha256(body), contentRevision: 1,
     targetFileName: `${chapterNumber}-${draftId}.md` })
 }
 
@@ -117,7 +117,7 @@ describe('备份恢复的项目替换一章定稿', { timeout: 60_000 }, () => {
     const restored = await exportAndRestore(base, source, 'older-version')
 
     FinalizationRepository.commit({ finalizationId: `finalization-${randomUUID()}`, draftId: 3, chapterNumber: 1,
-      chapterTitle: '第1章', content: olderBody, contentHash: sha256(olderBody), contentRevision: 1, targetFileName: '1-3.md' })
+      chapterTitle: '第1章', content: olderBody, expectedContent: olderBody, contentHash: sha256(olderBody), contentRevision: 1, targetFileName: '1-3.md' })
 
     expect(getProjectDb()!.prepare('SELECT id, status FROM drafts WHERE chapter_number = 1 ORDER BY id').all())
       .toEqual([{ id: 3, status: 'finalized' }, { id: 4, status: 'superseded' }])

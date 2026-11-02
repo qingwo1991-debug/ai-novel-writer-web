@@ -2561,7 +2561,7 @@ describe('main draft persistence and batch lineage', () => {
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request), revised = '林岚确认信封中的线索后，走向城门。'
     FinalizationRepository.commit({ finalizationId: 'revised-finalization', draftId: saved.id, chapterNumber: 1,
-      chapterTitle: '第一章', content: revised, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
+      chapterTitle: '第一章', content: revised, expectedContent: saved.content, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
     FinalizationRepository.markPublished('revised-finalization')
     const post = PostProcessRepository.createRun({ triggerSourceType: 'chapter_finalize', triggerSourceId: '1', sourceLabel: '第一章',
       finalizedSource: { finalizationId: 'revised-finalization', draftId: saved.id, chapterNumber: 1, contentHash: textHash(revised) },
@@ -2587,12 +2587,12 @@ describe('main draft persistence and batch lineage', () => {
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request)
     FinalizationRepository.commit({ finalizationId: 'batch-final', draftId: saved.id, chapterNumber: 1,
-      chapterTitle: '第一章', content: saved.content, contentHash: textHash(saved.content), contentRevision: 1, targetFileName: '第一章.txt' })
+      chapterTitle: '第一章', content: saved.content, expectedContent: saved.content, contentHash: textHash(saved.content), contentRevision: 1, targetFileName: '第一章.txt' })
     const older = '作者更早写下的第一章。'
     f.db.prepare('INSERT INTO contents(id,body) VALUES(9001,?)').run(older)
     f.db.prepare("INSERT INTO drafts(id,chapter_number,version,status,source,content_id,word_count) VALUES(9001,1,0,'draft','write',9001,10)").run()
     FinalizationRepository.commit({ finalizationId: 'older-final', draftId: 9001, chapterNumber: 1,
-      chapterTitle: '第一章', content: older, contentHash: textHash(older), contentRevision: 1, targetFileName: '第一章 旧.txt' })
+      chapterTitle: '第一章', content: older, expectedContent: older, contentHash: textHash(older), contentRevision: 1, targetFileName: '第一章 旧.txt' })
 
     const reopened = f.reopen()
     expect(DraftRepository.getMeta(saved.id)?.status).toBe('superseded')
@@ -2606,11 +2606,11 @@ describe('main draft persistence and batch lineage', () => {
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request), revised = '林岚确认信封中的线索后，走向城门。'
     FinalizationRepository.commit({ finalizationId: 'revised-finalization', draftId: saved.id, chapterNumber: 1,
-      chapterTitle: '第一章', content: revised, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
+      chapterTitle: '第一章', content: revised, expectedContent: saved.content, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
     const rewrite = '林岚在城门口停下，回头看了一眼灯塔。'
     const replacement = DraftRepository.create({ chapterNumber: 1, source: 'write', content: rewrite, wordCount: 18 })
     FinalizationRepository.commit({ finalizationId: 'replacing-finalization', draftId: replacement, chapterNumber: 1,
-      chapterTitle: '第一章', content: rewrite, contentHash: textHash(rewrite), contentRevision: 1, targetFileName: '第一章 新.txt' })
+      chapterTitle: '第一章', content: rewrite, expectedContent: rewrite, contentHash: textHash(rewrite), contentRevision: 1, targetFileName: '第一章 新.txt' })
 
     const reopened = f.reopen()
     expect(DraftRepository.getMeta(saved.id)?.status).toBe('superseded')
@@ -2624,7 +2624,7 @@ describe('main draft persistence and batch lineage', () => {
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request), revised = '修订后的定稿正文。'
     FinalizationRepository.commit({ finalizationId: 'revised-finalization', draftId: saved.id, chapterNumber: 1,
-      chapterTitle: '第一章', content: revised, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
+      chapterTitle: '第一章', content: revised, expectedContent: saved.content, contentHash: textHash(revised), contentRevision: 1, targetFileName: '第一章.txt' })
     if (corruption === 'hash') f.db.exec("UPDATE finalization_outbox SET content_hash='invalid'")
     if (corruption === 'unrelated snapshot') f.db.prepare('UPDATE finalization_outbox SET content_snapshot=?,content_hash=?')
       .run('无关但哈希自洽的正文。', textHash('无关但哈希自洽的正文。'))
@@ -2933,7 +2933,7 @@ describe('main draft persistence and batch lineage', () => {
       uiActionNonce: 'batch', modelId: f.model.id, authorInputs, promptKeys: f.begin.promptKeys, skillStages: [] })
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request)
-    FinalizationRepository.commit({ finalizationId: 'finalization-one', draftId: saved.id, chapterNumber: 1, chapterTitle: '第一章', content: saved.content,
+    FinalizationRepository.commit({ finalizationId: 'finalization-one', draftId: saved.id, chapterNumber: 1, chapterTitle: '第一章', content: saved.content, expectedContent: saved.content,
       contentHash: saved.contentHash, contentRevision: 1, targetFileName: '第一章.txt' })
     expect(f.owner.readBatch(batch.batchId)).toMatchObject({ nextChapterNumber: 1, completedChapters: [{ pendingFinalizationId: 'finalization-one' }] })
     FinalizationRepository.markPublished('finalization-one')
@@ -2955,7 +2955,7 @@ describe('main draft persistence and batch lineage', () => {
     const generated = await generate(f, { ...f.begin, authorInputs, batchId: batch.batchId, parentRootActionId: batch.rootHandle.rootActionId })
     const saved = f.owner.commitDraft(generated.request)
     const finalizedSource = { finalizationId: 'finalization-characters', draftId: saved.id, chapterNumber: 1, contentHash: saved.contentHash }
-    FinalizationRepository.commit({ ...finalizedSource, chapterTitle: '第一章', content: saved.content,
+    FinalizationRepository.commit({ ...finalizedSource, chapterTitle: '第一章', content: saved.content, expectedContent: saved.content,
       contentRevision: 1, targetFileName: '第一章.txt' })
     FinalizationRepository.markPublished(finalizedSource.finalizationId)
     const post = PostProcessRepository.createRun({ triggerSourceType: 'chapter_finalize', triggerSourceId: '1', sourceLabel: '第一章',
@@ -3175,7 +3175,7 @@ describe('next chapter after editing a reviewed batch draft (#438)', () => {
     const f = fixture(dispatch)
     f.db.exec("INSERT INTO blueprints(chapter_number,title) VALUES(2,'第二章'),(3,'第三章')")
     const finalize = (draftId: number, chapterNumber: number, content: string) => FinalizationRepository.commit({
-      finalizationId: `finalization-${chapterNumber}`, draftId, chapterNumber, chapterTitle: `第${chapterNumber}章`, content,
+      finalizationId: `finalization-${chapterNumber}`, draftId, chapterNumber, chapterTitle: `第${chapterNumber}章`, content, expectedContent: content,
       contentHash: textHash(content), contentRevision: 1, targetFileName: `chapter-${chapterNumber}.md` })
     // 「留作草稿，等我审稿」批次：第 2 章以第 1 章候选稿为前驱。
     const first = DraftRepository.create({ chapterNumber: 1, source: 'write', content: '第一章原稿。', wordCount: 6 })

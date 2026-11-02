@@ -215,6 +215,7 @@ describe('FinalizeChapterCommand blueprint character fallback', () => {
         chapterNumber: 3,
         chapterTitle: '钟楼真相',
         content: '韩峥被洪水卷入排水井，当场死亡。',
+        expectedContent: '原始已保存正文',
         contentRevision: 5,
       }),
     })

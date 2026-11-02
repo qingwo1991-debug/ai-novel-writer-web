@@ -35,7 +35,7 @@ function replaceChapter(chapterNumber: number, content: string): number {
   const draftId = DraftRepository.create({ chapterNumber, source: 'rewrite', content, wordCount: countDraftUnits(content) })
   FinalizationRepository.commit({
     finalizationId: randomUUID(), draftId, chapterNumber, chapterTitle: `第${chapterNumber}章`,
-    content, contentHash: sha256(content), contentRevision: 1, targetFileName: `第${chapterNumber}章-新.txt`,
+    content, expectedContent: content, contentHash: sha256(content), contentRevision: 1, targetFileName: `第${chapterNumber}章-新.txt`,
   })
   return draftId
 }

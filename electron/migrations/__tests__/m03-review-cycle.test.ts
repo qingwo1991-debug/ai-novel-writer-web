@@ -359,7 +359,7 @@ describe('M03 review cycle migration', () => {
       vi.mocked(getProjectDb).mockReturnValue(db)
       const finalized = `${merged} 作者定稿。`
       FinalizationRepository.commit({ finalizationId: 'finalized-cycle-1', draftId: seeded.draftId,
-        chapterNumber: 1, chapterTitle: '第一章', content: finalized, contentHash: hash(finalized),
+        chapterNumber: 1, chapterTitle: '第一章', content: finalized, expectedContent: merged, contentHash: hash(finalized),
         contentRevision: 1, targetFileName: '第一章.txt' })
       expect(db.prepare('SELECT status FROM drafts WHERE id=?').pluck().get(seeded.draftId)).toBe('finalized')
       expect(verifyM03ReviewCycle(db)).toBe(true)

@@ -368,6 +368,7 @@ describe('workflow mutation failure boundaries', () => {
         chapterNumber: 1,
         chapterTitle: '第一章',
         content: '编辑器冻结正文',
+        expectedContent: '之前已保存正文',
         contentRevision: 8,
       }),
     })
@@ -440,6 +441,7 @@ describe('workflow mutation failure boundaries', () => {
         chapterNumber: 1,
         chapterTitle: '第一章',
         content: '编辑器冻结正文',
+        expectedContent: '之前已保存正文',
         contentRevision: 8,
       }),
     })

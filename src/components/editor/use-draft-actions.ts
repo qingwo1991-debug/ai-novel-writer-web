@@ -81,6 +81,9 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
   const [saving, setSaving] = useState(false)
   const [saveOutcome, setSaveOutcome] = useState<SaveOutcome>('idle')
   const currentBodyRef = useRef(content)
+  // One in-flight save per rendered draft. The server independently checks the
+  // last persisted baseline, so delayed clients/AI merges cannot silently win.
+  const saveInFlight = useRef(false)
 
   const reload = useCallback(() => setReloadKey(key => key + 1), [])
   // 打开修稿合并要先读修订与源稿；读的过程中作者关掉了合并或已合并完，晚到的结果不再摆出来。
@@ -162,10 +165,25 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
       || (targetTab.draftStatus && DRAFT_STATUS_INFO[targetTab.draftStatus].readOnly)
       || DRAFT_STATUS_INFO[status].readOnly
     ) return
+    if (saveInFlight.current) {
+      const message = text('正在保存，请稍后再试；新输入的文字会继续保留。', 'A save is in progress. Try again shortly; your newer text is kept.')
+      if (propagateFailure) throw new Error(message)
+      toast.warning(message)
+      return
+    }
+    if (typeof targetTab.savedContent !== 'string') {
+      const message = text('缺少正文保存基准，未覆盖服务器内容。请先复制当前修改，再重新打开这一稿。', 'The saved baseline is missing; server text was not overwritten. Copy your changes before reopening this draft.')
+      setSaveOutcome('failed')
+      toast.error(message)
+      if (propagateFailure) throw new Error(message)
+      return
+    }
+    const expectedContent = targetTab.savedContent
     const saveSnapshot = {
       content: targetTab.content ?? draftContent,
       contentRevision: targetTab.contentRevision ?? 0,
     }
+    saveInFlight.current = true
     setSaving(true)
     setSaveOutcome('idle')
     try {
@@ -178,8 +196,15 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
         saveSnapshot.content,
         countDraftUnits(saveSnapshot.content),
         projectSession.projectPath,
+        expectedContent,
       )
-      if (!result.success) throw new Error(result.error || text('草稿保存失败', 'Could not save the draft'))
+      if (!result.success) {
+        if (result.errorCode === 'DRAFT_CONTENT_CONFLICT') throw new Error(text(
+          '保存冲突：服务器正文已被修改或已变为只读。你的修改仍保留在当前标签中；请先复制备份，再重新打开并比较，未覆盖服务器内容。',
+          'Save conflict: server text changed or became read-only. Your edits remain in this tab. Copy them before reopening and comparing; server text was not overwritten.',
+        ))
+        throw new Error(result.error || text('草稿保存失败', 'Could not save the draft'))
+      }
       if (!isProjectSessionCurrent(projectSession)) return
       const currentTab = useEditorStore.getState().tabs.find(
         tab => tab.id === tabId && tab.projectKey === projectKey,
@@ -198,6 +223,7 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
       }
       if (propagateFailure) throw error
     } finally {
+      saveInFlight.current = false
       if (isProjectSessionCurrent(projectSession)) setSaving(false)
     }
   }

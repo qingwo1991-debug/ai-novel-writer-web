@@ -37,6 +37,7 @@ function finalize(draftId: number, title = '雾钟') {
     chapterNumber: draft.chapterNumber,
     chapterTitle: title,
     content: draft.content,
+    expectedContent: draft.content,
     contentHash: sha256(draft.content),
     contentRevision: 1,
     targetFileName: `第${draft.chapterNumber}章 ${title}.txt`,

@@ -22,7 +22,7 @@ function finalize(content = '门闩牢固，守塔人拿起灯。', version = 1)
   const draftId = Number(db.prepare("INSERT INTO drafts(chapter_number,version,status,content_id,word_count) VALUES(1,?,'draft',?,?)")
     .run(version, contentId, content.length).lastInsertRowid)
   const finalizationId = `finalization-${version}`
-  FinalizationRepository.commit({ draftId, finalizationId, chapterNumber: 1, chapterTitle: '灯塔', content,
+  FinalizationRepository.commit({ draftId, finalizationId, chapterNumber: 1, chapterTitle: '灯塔', content, expectedContent: content,
     contentHash: hash(content), contentRevision: version, targetFileName: `chapter-1-v${version}.txt` })
   return { draftId, finalizationId, chapterNumber: 1, contentHash: hash(content) }
 }

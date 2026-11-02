@@ -130,7 +130,7 @@ it('当前投影提供预检事实，失效或 legacy 投影只保留同一原�
   f.db.exec("INSERT INTO characters(character_id,name) VALUES('lin','林岚'); INSERT INTO contents(id,body) VALUES(2,'待定稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id) VALUES(2,1,1,'draft',2)")
   f.db.prepare('INSERT INTO blueprints(chapter_number,title,characters,key_events) VALUES(2,?,?,?)').run('归来', JSON.stringify(['林岚']), '林岚归来')
   FinalizationRepository.commit({ finalizationId: 'context-final', draftId: 2, chapterNumber: 1,
-    chapterTitle: '告别', content: prose, contentHash: textHash(prose), contentRevision: 1, targetFileName: '1.txt' })
+    chapterTitle: '告别', content: prose, expectedContent: '待定稿', contentHash: textHash(prose), contentRevision: 1, targetFileName: '1.txt' })
   const generation = f.db.prepare("SELECT generation FROM continuity_projection_meta WHERE id='main'").pluck().get() as number
   SummaryRepository.saveFinalizedContinuity({ draftId: 2, chapterNumber: 1, chapterNotes: '告别',
     projectionGeneration: generation, source: { draftId: 2, chapterNumber: 1, finalizationId: 'context-final', contentHash: textHash(prose) },

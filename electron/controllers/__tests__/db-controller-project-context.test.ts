@@ -180,6 +180,7 @@ vi.mock('../../repositories/draft-repository', () => ({
     getNextVersion: vi.fn(() => 1),
     updateStatus: vi.fn(),
     updateContent: mocks.draftUpdateContent,
+    updateContentIfCurrent: mocks.draftUpdateContent,
     delete: mocks.draftDelete,
   },
 }))

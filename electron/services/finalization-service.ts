@@ -19,6 +19,8 @@ export interface FinalizationRequest {
   chapterNumber: number
   chapterTitle: string
   content: string
+  /** Persisted body when the renderer froze this request; required for new commits. */
+  expectedContent: string
   contentRevision: number
 }
 
@@ -128,6 +130,7 @@ export class FinalizationService {
         chapterNumber: request.chapterNumber,
         chapterTitle: request.chapterTitle,
         content: request.content,
+        expectedContent: request.expectedContent,
         contentHash,
         contentRevision: request.contentRevision,
         targetFileName: target.fileName,

@@ -98,6 +98,41 @@ describe('DraftRepository finalized immutability guard', () => {
       .toEqual({ word_count: 6 })
   })
 
+  it('compares the exact saved body before an atomic author edit', () => {
+    db.prepare("UPDATE drafts SET status = 'draft' WHERE id = 1").run()
+    DraftRepository.updateContentIfCurrent(1, '先到的新正文', 6, '定稿快照正文')
+
+    expect(() => DraftRepository.updateContentIfCurrent(1, '迟到的旧编辑', 99, '定稿快照正文'))
+      .toThrow('DRAFT_CONTENT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 1').get()).toEqual({ body: '先到的新正文' })
+    expect(db.prepare('SELECT word_count FROM drafts WHERE id = 1').get()).toEqual({ word_count: 6 })
+  })
+
+  it('rolls back the body if the accompanying draft metadata update fails', () => {
+    db.prepare("UPDATE drafts SET status = 'draft' WHERE id = 1").run()
+    db.exec(`CREATE TRIGGER reject_draft_metadata BEFORE UPDATE OF word_count ON drafts
+      BEGIN SELECT RAISE(ABORT, 'test metadata failure'); END;`)
+
+    expect(() => DraftRepository.updateContentIfCurrent(1, '不得半提交', 99, '定稿快照正文'))
+      .toThrow('test metadata failure')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 1').get()).toEqual({ body: '定稿快照正文' })
+    expect(db.prepare('SELECT word_count FROM drafts WHERE id = 1').get()).toEqual({ word_count: 6 })
+  })
+
+  it.each(['finalized', 'superseded', 'archived', 'unknown-status'])('refuses author saves in read-only or unknown status %s', status => {
+    db.prepare('UPDATE drafts SET status = ? WHERE id = 1').run(status)
+    expect(() => DraftRepository.updateContentIfCurrent(1, '禁止覆盖', 99, '定稿快照正文'))
+      .toThrow('DRAFT_CONTENT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 1').get()).toEqual({ body: '定稿快照正文' })
+  })
+
+  it('fails closed when a repository author edit has no expected body', () => {
+    db.prepare("UPDATE drafts SET status = 'draft' WHERE id = 1").run()
+    expect(() => DraftRepository.updateContentIfCurrent(1, '无基线覆盖', 99, undefined as unknown as string))
+      .toThrow('DRAFT_CONTENT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 1').get()).toEqual({ body: '定稿快照正文' })
+  })
+
   it('does not allow a generic status update to reopen finalized fact', () => {
     expect(() => DraftRepository.updateStatus(1, 'draft'))
       .toThrow('DRAFT_FINALIZED_READ_ONLY')

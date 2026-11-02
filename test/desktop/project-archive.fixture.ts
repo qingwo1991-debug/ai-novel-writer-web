@@ -463,6 +463,7 @@ export async function createProjectArchiveRoundtripFixture(): Promise<ProjectArc
           chapterNumber: 20,
           chapterTitle: '第20章新定稿',
           content: body,
+          expectedContent: body,
           contentHash: sha256(body),
           contentRevision: 1,
           targetFileName: 'chapter-20-replacement.md',

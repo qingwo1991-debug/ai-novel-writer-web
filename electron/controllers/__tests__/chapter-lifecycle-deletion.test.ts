@@ -60,6 +60,7 @@ describe('chapter lifecycle deletion IPC', () => {
       chapterNumber: 1,
       chapterTitle: '同名',
       content: '目标章节独有关键字',
+      expectedContent: '目标章节独有关键字',
       contentHash: 'target-hash',
       contentRevision: 1,
       targetFileName: '第1章 同名.txt',

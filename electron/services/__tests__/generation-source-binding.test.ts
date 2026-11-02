@@ -154,7 +154,7 @@ describe('main rebuilt generation sources', () => {
             db.prepare(`INSERT INTO drafts(id,chapter_number,version,status,source,content_id,word_count,source_dependencies)
           VALUES(119,19,2,'draft','rewrite',119,?,'[]')`).run(Buffer.from(body).length);
             FinalizationRepository.commit({ finalizationId: 'finalization-19-replacement', draftId: 119, chapterNumber: 19,
-                chapterTitle: '第19章新定稿', content: body, contentHash: hash(body), contentRevision: 1,
+                chapterTitle: '第19章新定稿', content: body, expectedContent: body, contentHash: hash(body), contentRevision: 1,
                 targetFileName: 'chapter-19-replacement.md' });
             const generation = db.prepare("SELECT generation FROM continuity_projection_meta WHERE id='main'").pluck().get() as number;
             const provenance = JSON.parse(db.prepare('SELECT cs_provenance FROM characters WHERE character_id=?')

@@ -312,6 +312,8 @@ function syncFinalizedDraftTab(payload: EventPayloadMap['FINALIZE_COMPLETE']): v
     chapterNumber: payload.chapterNumber,
     chapterTitle: payload.chapterTitle,
     content: payload.snapshotContent,
+    // Completion-only reconciliation; never submitted as a new commit request.
+    expectedContent: payload.snapshotContent,
     contentRevision: payload.contentRevision,
   }
   const completion: FinalizationCompletion = {

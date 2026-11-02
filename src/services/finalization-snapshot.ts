@@ -20,6 +20,8 @@ export interface FinalizationSnapshot {
   chapterNumber: number
   chapterTitle: string
   content: string
+  /** Persisted body observed before the author's edits; server CAS checks it. */
+  expectedContent: string
   contentRevision: number
 }
 
@@ -54,6 +56,9 @@ export function captureFinalizationSnapshot(input: {
     throw new Error(useLocaleStore.getState().text('定稿目标缺少章节身份', 'This chapter tab has no chapter number.'))
   }
 
+  if (typeof tab.savedContent !== 'string') {
+    throw new Error(useLocaleStore.getState().text('缺少已保存正文基准，未提交定稿。请先复制当前修改，再重新打开并比较。', 'The persisted baseline is missing. Copy your changes before reopening and comparing; finalization was not submitted.'))
+  }
   const frozenSession = Object.freeze({ ...projectSession })
   return Object.freeze({
     tabId: tab.id,
@@ -63,6 +68,7 @@ export function captureFinalizationSnapshot(input: {
     chapterNumber: tab.chapterNumber,
     chapterTitle,
     content: tab.content ?? '',
+    expectedContent: tab.savedContent,
     contentRevision: finalizationContentRevision(tab.contentRevision),
   })
 }

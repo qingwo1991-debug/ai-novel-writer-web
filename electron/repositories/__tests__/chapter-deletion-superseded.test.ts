@@ -38,6 +38,7 @@ function finalize(draftId: number, knowledgeDocumentId: string) {
     chapterNumber: draft.chapterNumber,
     chapterTitle: '沉船',
     content: draft.content,
+    expectedContent: draft.content,
     contentHash: sha256(draft.content),
     contentRevision: 1,
     targetFileName: `第${draft.chapterNumber}章 沉船 ${knowledgeDocumentId}.txt`,

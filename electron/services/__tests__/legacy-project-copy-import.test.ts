@@ -984,7 +984,7 @@ it('有定稿收据的旧项目复制导入后，替换那一章再写稿、导�
   db.prepare('INSERT INTO contents(id,body) VALUES(?,?)').run(40, replacement)
   db.prepare("INSERT INTO drafts(id,chapter_number,version,content_id,status) VALUES(40,8,2,40,'draft')").run()
   FinalizationRepository.commit({ finalizationId: 'replacement-finalization', draftId: 40, chapterNumber: 8,
-    chapterTitle: '第八章', content: replacement, contentHash: createHash('sha256').update(replacement).digest('hex'),
+    chapterTitle: '第八章', content: replacement, expectedContent: replacement, contentHash: createHash('sha256').update(replacement).digest('hex'),
     contentRevision: 1, targetFileName: '第八章-新.md' })
 
   expect(readPortableCurrentAuthority({ database: db, projectStorageRoot: path.join(f.target, '.ai-novel'), projectId: result.projectId }))

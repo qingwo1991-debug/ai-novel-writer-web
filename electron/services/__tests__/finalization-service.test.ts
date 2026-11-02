@@ -83,15 +83,47 @@ afterEach(() => {
 })
 
 describe('FinalizationService publication failure seam', () => {
+  it('does not publish or commit when another save changes the frozen source baseline', async () => {
+    const publish = vi.fn(async () => undefined)
+    const service = new FinalizationService({ publisher: { publish } })
+    db.prepare('UPDATE contents SET body = ? WHERE id = 11').run('先到达的人工修改')
+    const request = { projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章',
+      content: '基于旧正文冻结的定稿候选', expectedContent: '数据库中的旧正文', contentRevision: 8 }
+
+    const result = await service.finalize(request)
+    expect(result).toMatchObject({ success: false, committed: false, error: 'Error: FINALIZATION_COMMIT_CONFLICT' })
+    expect(publish).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT body FROM contents WHERE id = 11').get()).toEqual({ body: '先到达的人工修改' })
+    expect(db.prepare('SELECT status FROM drafts WHERE id = 17').get()).toEqual({ status: 'draft' })
+    expect(db.prepare('SELECT * FROM finalization_outbox').all()).toEqual([])
+    expect(request.content).toBe('基于旧正文冻结的定稿候选')
+  })
+
+  it('fails closed without a source baseline but keeps an already committed legacy retry idempotent', async () => {
+    const publish = vi.fn(async () => undefined)
+    const service = new FinalizationService({ publisher: { publish } })
+    const request = { projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章',
+      content: '冻结快照', expectedContent: '数据库中的旧正文', contentRevision: 8 }
+    const legacy = { ...request }
+    Reflect.deleteProperty(legacy, 'expectedContent')
+
+    expect(await service.finalize(legacy)).toMatchObject({ success: false, committed: false,
+      error: 'Error: FINALIZATION_COMMIT_CONFLICT' })
+    expect(publish).not.toHaveBeenCalled()
+    expect(await service.finalize(request)).toMatchObject({ success: true, committed: true })
+    expect(await service.finalize(legacy)).toMatchObject({ success: true, committed: true })
+    expect(publish).toHaveBeenCalledOnce()
+  })
+
   it('does not republish an imported historical finalization', async () => {
     const failed = new FinalizationService({ createFinalizationId: () => 'finalization-1', publisher: { publish: vi.fn(async () => { throw new Error('disk unavailable') }) } })
-    await failed.finalize({ projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章', content: '冻结定稿', contentRevision: 1 })
+    await failed.finalize({ projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章', content: '冻结定稿', expectedContent: '数据库中的旧正文', contentRevision: 1 })
     freezeFinalization('finalization-1')
     const before = db.prepare('SELECT publication_status, last_error FROM finalization_outbox').get()
     const publish = vi.fn(async () => undefined)
     const result = await new FinalizationService({ publisher: { publish } }).retry({ projectRoot, finalizationId: 'finalization-1' })
     const replay = await new FinalizationService({ createFinalizationId: () => 'unused', publisher: { publish } }).finalize({
-      projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章', content: '冻结定稿', contentRevision: 1,
+      projectRoot, draftId: 17, chapterNumber: 1, chapterTitle: '第一章', content: '冻结定稿', expectedContent: '数据库中的旧正文', contentRevision: 1,
     })
     expect(result).toMatchObject({ success: false, committed: true, error: 'PORTABLE_RUNTIME_FROZEN' })
     expect(replay).toMatchObject({ success: false, committed: true, error: 'PORTABLE_RUNTIME_FROZEN' })
@@ -114,6 +146,7 @@ describe('FinalizationService publication failure seam', () => {
       chapterNumber: 1,
       chapterTitle: '第一章',
       content: '用户看到的定稿快照',
+      expectedContent: '数据库中的旧正文',
       contentRevision: 8,
     })
 
@@ -166,6 +199,7 @@ describe('FinalizationService publication failure seam', () => {
       chapterNumber: 1,
       chapterTitle: '第一章',
       content: '同一冻结快照',
+      expectedContent: '数据库中的旧正文',
       contentRevision: 8,
     }
 
@@ -174,7 +208,7 @@ describe('FinalizationService publication failure seam', () => {
     const different = await service.finalize({
       ...request,
       content: '不是同一快照',
-      contentRevision: 9,
+      expectedContent: '数据库中的旧正文', contentRevision: 9,
     })
 
     expect(first).toMatchObject({ success: true, finalizationId: 'finalization-1' })
@@ -199,6 +233,7 @@ describe('FinalizationService publication failure seam', () => {
       chapterNumber: 1,
       chapterTitle: '第一章',
       content: '不可变正文',
+      expectedContent: '数据库中的旧正文',
       contentRevision: 8,
     })
     db.prepare('UPDATE finalization_outbox SET content_snapshot = ?').run('被篡改的快照')

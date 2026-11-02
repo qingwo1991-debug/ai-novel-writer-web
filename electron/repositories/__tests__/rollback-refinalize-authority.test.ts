@@ -37,6 +37,7 @@ function finalize(draftId: number): void {
     chapterNumber: draft.chapterNumber,
     chapterTitle: `第${draft.chapterNumber}章`,
     content: draft.content,
+    expectedContent: draft.content,
     contentHash: createHash('sha256').update(draft.content, 'utf8').digest('hex'),
     contentRevision: 1,
     targetFileName: `第${draft.chapterNumber}章.txt`,

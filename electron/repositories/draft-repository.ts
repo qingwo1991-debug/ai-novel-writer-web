@@ -9,7 +9,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import { getProjectDb } from '../database'
 import { ContentRepository } from './content-repository'
 import type { DraftSourceDependency } from '../../src/shared/draft-source-dependency'
-import { RECEIPTED_DRAFT_STATUS_SQL, isReceiptedDraftStatus, type DraftStatus } from '../../src/shared/draft-status'
+import { RECEIPTED_DRAFT_STATUS_SQL, WORKING_DRAFT_STATUSES, isReceiptedDraftStatus, type DraftStatus } from '../../src/shared/draft-status'
 
 const DRAFT_META_SELECT = `
   SELECT drafts.*, finalization_outbox.chapter_title
@@ -486,7 +486,40 @@ export class DraftRepository {
         }
     }
 
-    /** 更新草稿正文（同时更新 contents 表） */
+    /**
+     * 作者编辑保存必须以读取时的正文为基线，不允许旧标签/设备或并发保存静默覆盖。
+     * IMMEDIATE 事务使正文/只读状态检查与两表写入处于同一个 SQLite 写入锁内。
+     * expectedContent 必填；缺少基线不能降级为不受保护的旧式覆盖。
+     */
+    static updateContentIfCurrent(id: number, content: string, wordCount: number, expectedContent: string): void {
+        const conflict = () => Object.assign(
+            new Error('DRAFT_CONTENT_CONFLICT'),
+            { code: 'DRAFT_CONTENT_CONFLICT' as const },
+        )
+        if (typeof expectedContent !== 'string') throw conflict()
+        const db = getProjectDb()
+        if (!db) throw new Error('PROJECT_NOT_OPEN')
+
+        db.transaction(() => {
+            const current = db.prepare(`
+                SELECT drafts.status, drafts.content_id, contents.body
+                FROM drafts
+                JOIN contents ON contents.id = drafts.content_id
+                WHERE drafts.id = ?
+            `).get(id) as { status: string; content_id: number; body: string } | undefined
+            if (!current) throw new Error('DRAFT_NOT_FOUND')
+            if (!(WORKING_DRAFT_STATUSES as readonly string[]).includes(current.status) || current.body !== expectedContent) {
+                throw conflict()
+            }
+            db.prepare('UPDATE contents SET body = ? WHERE id = ?').run(content, current.content_id)
+            db.prepare(`
+                UPDATE drafts SET word_count = ?, updated_at = datetime('now')
+                WHERE id = ?
+            `).run(wordCount, id)
+        }).immediate()
+    }
+
+    /** 领域内部正文更新；浏览器/IPC作者保存必须走 updateContentIfCurrent。 */
     static updateContent(id: number, content: string, wordCount: number): void {
         const meta = DraftRepository.getMeta(id)
         if (!meta) return

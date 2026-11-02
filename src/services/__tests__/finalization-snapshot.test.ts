@@ -33,6 +33,10 @@ function draftTab(overrides: Partial<EditorTab> = {}): EditorTab {
 }
 
 describe('finalization editor snapshot seam', () => {
+  it('rejects a missing baseline instead of blessing a freshly reread body', () => {
+    expect(() => captureFinalizationSnapshot({ tab: draftTab({ savedContent: undefined }), projectSession: SESSION, chapterTitle: '第一章' })).toThrow()
+  })
+
   it('commits a positive source revision for a first edit and preserves a later edit', () => {
     const first = draftTab({ contentRevision: 0 })
     const snapshot = captureFinalizationSnapshot({
@@ -75,6 +79,7 @@ describe('finalization editor snapshot seam', () => {
       draftId: 17,
       chapterNumber: 1,
       content: '编辑器里尚未保存的正文',
+      expectedContent: '数据库中的旧正文',
       contentRevision: 9,
       projectSession: SESSION,
     })

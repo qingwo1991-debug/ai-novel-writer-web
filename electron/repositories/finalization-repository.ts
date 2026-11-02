@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { getCurrentProjectPath, getProjectDb } from '../database'
 import { readPortableRuntimeFreeze } from '../services/portable-runtime-freeze'
 import { countDraftUnits } from '../../src/shared/draft-units'
+import { WORKING_DRAFT_STATUSES } from '../../src/shared/draft-status'
 import type { DuplicateFinalizationRepair, RepairedDuplicateChapter } from '../../src/shared/finalization-repair'
 import { freezeFinalizedCharacterSnapshot, invalidateContinuityProjectionFrom } from './summary-repository'
 
@@ -13,6 +14,8 @@ export interface FinalizationCommitInput {
   chapterNumber: number
   chapterTitle: string
   content: string
+  /** Last acknowledged persisted body, not the new finalization snapshot. */
+  expectedContent: string
   contentHash: string
   contentRevision: number
   targetFileName: string
@@ -252,12 +255,15 @@ export class FinalizationRepository {
       }
 
       const draft = db.prepare(`
-        SELECT id, chapter_number, status, content_id FROM drafts WHERE id = ?
+        SELECT drafts.id, drafts.chapter_number, drafts.status, drafts.content_id, contents.body
+        FROM drafts JOIN contents ON contents.id = drafts.content_id
+        WHERE drafts.id = ?
       `).get(input.draftId) as {
         id: number
         chapter_number: number
         status: string
         content_id: number
+        body: string
       } | undefined
       if (!draft) throw new Error('DRAFT_NOT_FOUND')
       if (draft.chapter_number !== input.chapterNumber) {
@@ -268,6 +274,14 @@ export class FinalizationRepository {
       }
       if (draft.status === 'superseded') {
         throw new Error('FINALIZATION_COMMIT_SUPERSEDED')
+      }
+
+      // Idempotent committed retries return above, before this source fence. For
+      // a new commit a missing baseline is never permission for a blind write.
+      if (typeof input.expectedContent !== 'string'
+        || draft.body !== input.expectedContent
+        || !(WORKING_DRAFT_STATUSES as readonly string[]).includes(draft.status)) {
+        throw new Error('FINALIZATION_COMMIT_CONFLICT')
       }
 
       const replaced = db.prepare(`
@@ -317,7 +331,7 @@ export class FinalizationRepository {
         publishedAt: null,
       }
     })
-    return transaction()
+    return transaction.immediate()
   }
 
   static repairDuplicateFinalizations(): DuplicateFinalizationRepair {

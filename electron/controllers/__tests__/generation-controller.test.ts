@@ -196,7 +196,7 @@ describe('generation public IPC with actual project authority and SQLite', () =>
     const body = '林岚来到北塔。', characterId = 'character-fixture'
     getProjectDb()!.exec("INSERT INTO blueprints(chapter_number,title) VALUES(1,'北塔'); INSERT INTO characters(character_id,name) VALUES('character-fixture','林岚'); INSERT INTO contents(id,body) VALUES(1,'旧稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(1,1,1,'draft',1,2)")
     FinalizationRepository.commit({ finalizationId: 'ipc-finalized', draftId: 1, chapterNumber: 1, chapterTitle: '北塔',
-      content: body, contentHash: textHash(body), contentRevision: 1, targetFileName: '第一章.txt' })
+      content: body, expectedContent: '旧稿', contentHash: textHash(body), contentRevision: 1, targetFileName: '第一章.txt' })
     const prepared = await invoke('finalized-character:read-context', { draftId: 1 })
     const fetch = stream(JSON.stringify({ updates: [{ characterId, currentState: { location: '北塔' }, evidence: { start: 0, end: body.length, text: body } }] }))
     const selection: BeginGenerationRequest = { ...request, operation: 'finalized-character-state', chapterNumber: 1, selectedFinalizedDraftIds: [1],
@@ -229,7 +229,7 @@ describe('generation public IPC with actual project authority and SQLite', () =>
     const body = '林岚来到北塔。', characterId = 'candidate-character'
     getProjectDb()!.exec("INSERT INTO blueprints(chapter_number,title) VALUES(1,'北塔'); INSERT INTO characters(character_id,name,cs_location,cs_provenance) VALUES('candidate-character','林岚','作者地点','{\"location\":{\"kind\":\"author\",\"chapterNumber\":0,\"revision\":1}}'); INSERT INTO contents(id,body) VALUES(1,'旧稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(1,1,1,'draft',1,2)")
     FinalizationRepository.commit({ finalizationId: 'ipc-state-candidate', draftId: 1, chapterNumber: 1, chapterTitle: '北塔',
-      content: body, contentHash: textHash(body), contentRevision: 1, targetFileName: '第一章.txt' })
+      content: body, expectedContent: '旧稿', contentHash: textHash(body), contentRevision: 1, targetFileName: '第一章.txt' })
     const context = SummaryRepository.readFinalizedCharacterContext(1, { projectId: session.projectId, epoch: session.leaseId }, getProjectDb()!)
     SummaryRepository.saveFinalizedContinuity({ draftId: 1, chapterNumber: 1, chapterNotes: '定稿摘要', facts: [],
       source: context.source, projectionGeneration: context.projectionGeneration }, getProjectDb()!)

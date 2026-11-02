@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { configurePlatform, operations, type ClientSink, type InvokeEvent } from '../electron/platform'
 import { APPEARANCE_STORAGE_KEY } from '../src/shared/appearance-profile'
+import { parseCanonicalProjectManifest } from '../src/shared/project-format'
 
 /** Trusted child-process protocol. This file is never an HTTP entry point. */
 type Init = { type: 'init'; userData: string; migrationUserData: string; appData: string; canonicalTarget: string; legacySource: string;
@@ -88,25 +89,61 @@ async function init(input: Init): Promise<void> {
   const { externalFileGrants } = await import('../electron/services/external-file-grant-service')
   const { projectPeekService } = await import('../electron/services/project-peek')
   const { registerRecentProject } = await import('../electron/controllers/project-controller')
+  const { createLibraryVisibility } = await import('./library-visibility')
+  const visibility = createLibraryVisibility({ libraryRoot: input.libraryRoot, statePath: path.join(globalDataRoot!, 'web-library-hidden.json') })
+  if (!projectRoot) {
+    // A browser author cannot choose an arbitrary host folder. Mint the same
+    // caller-owned create grant directly for the configured server library.
+    operations.removeHandler('dialog:select-folder')
+    operations.handle('dialog:select-folder', async (event, purpose: string) => {
+      if (purpose !== 'project-create' && purpose !== 'project-open') throw new Error('PROJECT_DIRECTORY_GRANT_PURPOSE_INVALID')
+      let directory = input.libraryRoot
+      if (purpose === 'project-open') {
+        const { dialogHost } = await import('../electron/platform')
+        const chosen = await dialogHost.showOpenDialog({ directoryKind: 'project-open', properties: ['openDirectory'], title: '选择服务器书库中的作品' }, event)
+        if (chosen.canceled || !chosen.filePaths[0]) return null
+        directory = chosen.filePaths[0]
+      }
+      const grant = externalFileGrants.issueDirectory({ webContentsId: event.sender.id, directoryPath: directory, operations: [purpose], ttlMs: 10 * 60 * 1_000 })
+      event.sender.once('destroyed', () => externalFileGrants.revokeWebContents(event.sender.id))
+      return { grantId: grant.grantId, displayName: purpose === 'project-create' ? '服务器书库' : path.basename(directory) }
+    })
+    operations.removeHandler('project:recent-remove')
+    operations.handle('project:recent-remove', (_event, target: string) => {
+      visibility.hide(target)
+      return { success: true }
+    })
+    // Internal gateway operation: never exposed in operations.json.
+    operations.handle('web:library-show-project', (_event, target: string) => {
+      visibility.show(target)
+      const manifest = parseCanonicalProjectManifest(JSON.parse(fs.readFileSync(path.join(target, '.ai-novel', 'project.json'), 'utf8')))
+      registerRecentProject({ name: path.basename(target), path: target, projectId: manifest.projectId, updatedAt: new Date().toISOString() })
+      return { success: true }
+    })
+  }
   operations.handle('web:resolve-project-grant', (event, grantId: string) => externalFileGrants.resolveDirectoryPath({ grantId, webContentsId: event.sender.id, operation: 'project-open' }))
-  operations.handle('web:library-list', () => {
+  operations.handle('web:library-list', (_event, includeHidden = false) => {
     if (projectRoot) throw new Error('GLOBAL_OPERATION_REQUIRED')
     const output: Array<{ name: string; path: string; projectId: string; updatedAt: string; previewCapabilityId?: string }> = []
     for (const entry of fs.readdirSync(input.libraryRoot, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue
       const root = path.join(input.libraryRoot, entry.name)
+      let projectId: string, updatedAt: string
       try {
-        const manifestFile = path.join(root, '.ai-novel', 'project.json')
-        const info = fs.lstatSync(manifestFile)
-        if (!info.isFile() || info.isSymbolicLink()) continue
-        const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
-        if (typeof manifest.projectId !== 'string') continue
-        const capability = projectPeekService.issueCapability(root)
-        const updatedAt = fs.statSync(path.join(root, '.ai-novel', 'project.db')).mtime.toISOString()
-        registerRecentProject({ name: entry.name, path: root, projectId: manifest.projectId, updatedAt })
-        output.push({ name: entry.name, path: root, projectId: manifest.projectId, updatedAt,
-          ...(capability ? { previewCapabilityId: capability.capabilityId } : {}) })
-      } catch { /* An incomplete or legacy directory is not an open capability. */ }
+        const storage = path.join(root, '.ai-novel')
+        const manifestFile = path.join(storage, 'project.json')
+        const storageInfo = fs.lstatSync(storage), info = fs.lstatSync(manifestFile)
+        const databaseInfo = fs.lstatSync(path.join(storage, 'project.db'))
+        if (!storageInfo.isDirectory() || storageInfo.isSymbolicLink() || !info.isFile() || info.isSymbolicLink() || !databaseInfo.isFile() || databaseInfo.isSymbolicLink()) continue
+        projectId = parseCanonicalProjectManifest(JSON.parse(fs.readFileSync(manifestFile, 'utf8'))).projectId
+        updatedAt = databaseInfo.mtime.toISOString()
+      } catch { continue /* An incomplete or legacy directory is not an open capability. */ }
+      // Not inside the best-effort project catch: corrupt visibility state must
+      // fail closed, never re-register a hidden book on the next refresh.
+      if (!includeHidden && visibility.isHidden(root, projectId)) continue
+      const capability = projectPeekService.issueCapability(root)
+      output.push({ name: entry.name, path: root, projectId, updatedAt,
+        ...(capability ? { previewCapabilityId: capability.capabilityId } : {}) })
     }
     return output.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   })

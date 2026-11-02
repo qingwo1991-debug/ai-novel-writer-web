@@ -2,6 +2,7 @@ import { useId } from 'react'
 import { FolderOpen } from 'lucide-react'
 import { useLayoutStore } from '../../../stores/layout-store'
 import { useLocaleStore } from '../../../stores/locale-store'
+import { ipc } from '../../../services/ipc-client'
 import { useNewProjectForm } from '../../dialogs/use-new-project-form'
 import { Button } from '../../ui/Button'
 import { InkDialog } from '../InkDialog'
@@ -15,16 +16,26 @@ export default function NewWorkDialog() {
   const nameId = useId()
   const folderId = useId()
   const reasonId = useId()
+  const locationId = useId()
+  const isWeb = ipc.runtimeKind === 'web'
   const reason = form.creating ? null
-    : !form.path ? text('先选保存位置，作品会建在那个文件夹里。', 'Choose a location first; the book is created in that folder.')
-      : !form.name.trim() ? text('先起个作品名。', 'Give the book a title first.') : null
+    : form.locationLoading ? isWeb
+      ? text('正在准备服务器书库…', 'Preparing the server library…')
+      : text('正在选择文件夹…', 'Selecting a folder…')
+      : form.locationError ? form.locationError
+        : !form.path ? isWeb
+          ? text('等待服务器书库就绪后即可创建作品。', 'The book can be created once the server library is ready.')
+          : text('先选保存位置，作品会建在那个文件夹里。', 'Choose a location first; the book is created in that folder.')
+          : !form.name.trim() ? text('先起个作品名。', 'Give the book a title first.') : null
 
   return (
     <InkDialog
       open={open}
       onOpenChange={next => { if (!next) close() }}
       title={text('新建作品', 'New book')}
-      description={text('起个名字，选好保存位置。类型、篇幅这些在下一步的设定里填。', 'Give it a title and choose where to keep it. Genre, length and the rest come next, in setup.')}
+      description={isWeb
+        ? text('起个名字，作品将保存在服务器书库。类型、篇幅这些在下一步的设定里填。', 'Give it a title; the book is saved in the server library. Genre, length and the rest come next, in setup.')
+        : text('起个名字，选好保存位置。类型、篇幅这些在下一步的设定里填。', 'Give it a title and choose where to keep it. Genre, length and the rest come next, in setup.')}
       footer={(
         <>
           <Button variant="secondary" onClick={close}>{text('取消', 'Cancel')}</Button>
@@ -55,17 +66,22 @@ export default function NewWorkDialog() {
           <input
             id={folderId}
             className="pi-input"
-            value={form.path?.displayName ?? ''}
+            value={isWeb ? text('服务器书库', 'Server library') : form.path?.displayName ?? ''}
             readOnly
-            placeholder={text('选择一个文件夹，作品会建在它里面', 'Choose a folder; the book is created inside it')}
+            aria-describedby={isWeb ? locationId : undefined}
+            aria-busy={form.locationLoading}
+            placeholder={isWeb ? undefined : text('选择一个文件夹，作品会建在它里面', 'Choose a folder; the book is created inside it')}
           />
-          <Button variant="secondary" onClick={() => void form.selectFolder()}>
-            <FolderOpen size={14} aria-hidden="true" />
-            {text('选择', 'Choose')}
-          </Button>
+          {(!isWeb || form.locationError) && (
+            <Button variant="secondary" disabled={form.locationLoading} onClick={() => void form.selectFolder()}>
+              {!isWeb && <FolderOpen size={14} aria-hidden="true" />}
+              {isWeb ? text('重试', 'Retry') : text('选择', 'Choose')}
+            </Button>
+          )}
         </div>
+        {isWeb && <p id={locationId} className="stage-dialog-hint">{text('作品保存在服务器管理的书库中，无需选择本机文件夹。', 'Books are stored in the server-managed library; no local folder selection is needed.')}</p>}
       </div>
-      {reason && <p id={reasonId} className="stage-dialog-hint">{reason}</p>}
+      {reason && <p id={reasonId} className="stage-dialog-hint" role={form.locationError ? 'alert' : 'status'}>{reason}</p>}
     </InkDialog>
   )
 }

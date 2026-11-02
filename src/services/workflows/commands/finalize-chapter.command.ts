@@ -592,6 +592,9 @@ export class FinalizeChapterCommand extends BaseWorkflowCommand<void> {
       chapterNumber: this.params.chapterNumber,
       chapterTitle: this.params.chapterInfo.title,
       content: this.params.draftContent,
+      // Batch drafts are already persisted by the generation/revision commit.
+      // Never re-read a newer body as the expected baseline for stale work.
+      expectedContent: this.params.draftContent,
       contentRevision: finalizationContentRevision(undefined),
     })
   }

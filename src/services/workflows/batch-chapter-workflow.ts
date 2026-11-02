@@ -148,6 +148,7 @@ async function captureBatchFinalizationSnapshot(
       chapterNumber,
       chapterTitle,
       content: draftContent,
+      expectedContent: draftContent,
       contentRevision: finalizationContentRevision(contentRevision),
     })
   } catch {

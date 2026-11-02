@@ -151,7 +151,7 @@ describe('finalized continuity projection', () => {
     const draftId = Number(db.prepare("INSERT INTO drafts(chapter_number,version,status,content_id,word_count) VALUES(2,1,'draft',?,?)")
       .run(contentId, countDraftUnits(content)).lastInsertRowid)
     const draft = { draftId, finalizationId: 'continuity-character-candidates', contentHash: createHash('sha256').update(content).digest('hex') }
-    FinalizationRepository.commit({ ...draft, chapterNumber: 2, chapterTitle: '新港', content, contentRevision: 1, targetFileName: '第二章.txt' })
+    FinalizationRepository.commit({ ...draft, chapterNumber: 2, chapterTitle: '新港', content, expectedContent: content, contentRevision: 1, targetFileName: '第二章.txt' })
     const source = {
       draftId: draft.draftId,
       finalizationId: draft.finalizationId,

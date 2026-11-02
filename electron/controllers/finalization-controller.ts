@@ -59,6 +59,7 @@ export function registerFinalizationController(): void {
         chapterNumber: candidate.chapterNumber,
         chapterTitle: candidate.chapterTitle,
         content: candidate.content,
+        expectedContent: candidate.expectedContent,
         contentRevision: candidate.contentRevision,
       })
     } catch (error) {

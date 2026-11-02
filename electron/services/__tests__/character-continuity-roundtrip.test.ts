@@ -65,7 +65,7 @@ function finalizeChapter(project: OpenProject, draftId: number, chapterNumber: n
   db.prepare("INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(?,?,?,'draft',?,0)")
     .run(draftId, chapterNumber, version, draftId)
   FinalizationRepository.commit({ finalizationId: `finalization-${randomUUID()}`, draftId, chapterNumber,
-    chapterTitle: `第${chapterNumber}章`, content: body, contentHash: sha256(body), contentRevision: 1,
+    chapterTitle: `第${chapterNumber}章`, content: body, expectedContent: '尚未定稿', contentHash: sha256(body), contentRevision: 1,
     targetFileName: `${chapterNumber}.md` })
   const context = SummaryRepository.readFinalizedCharacterContext(draftId, { projectId: project.projectId, epoch: 'session' }, db)
   SummaryRepository.saveFinalizedContinuity({ draftId, chapterNumber, chapterNotes: `第${chapterNumber}章摘要`, facts: [],

@@ -38,7 +38,7 @@ function fixture(dispatch?: GenerationRunServiceDependencies['dispatch']) {
   migrateSchema(new SqliteSchemaAdapter(db), getDesktopMigrationRegistry(), CURRENT_DESKTOP_SCHEMA_VERSION)
   db.exec("INSERT INTO project_core(id,project_name) VALUES('main','合成定稿'); INSERT INTO blueprints(chapter_number,title) VALUES(1,'北塔'); INSERT INTO contents(id,body) VALUES(1,'旧稿'); INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count) VALUES(1,1,1,'draft',1,2)")
   FinalizationRepository.commit({ finalizationId: 'finalized-1', draftId: 1, chapterNumber: 1, chapterTitle: '北塔',
-    content: prose, contentHash: textHash(prose), contentRevision: 1, targetFileName: '第一章.txt' })
+    content: prose, expectedContent: '旧稿', contentHash: textHash(prose), contentRevision: 1, targetFileName: '第一章.txt' })
   db.transaction(() => refreshCharacterIdentityProjection(db))()
   const characterId = db.prepare("SELECT character_id FROM characters WHERE name='林岚'").pluck().get() as string
   const model: ModelProfile = { id: 'synthetic', name: '合成模型', provider: 'openai', protocol: 'openai', modelName: 'gpt-4.1',

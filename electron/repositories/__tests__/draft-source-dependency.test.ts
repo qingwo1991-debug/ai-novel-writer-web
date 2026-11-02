@@ -39,6 +39,7 @@ function finalize(draftId: number, chapterNumber: number, content: string, final
     chapterNumber,
     chapterTitle: `第${chapterNumber}章`,
     content,
+    expectedContent: content,
     contentHash: sha256(content),
     contentRevision: 1,
     targetFileName: `chapter-${chapterNumber}.md`,

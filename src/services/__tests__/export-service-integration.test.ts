@@ -10,10 +10,10 @@ const electronMocks = vi.hoisted(() => ({
   handlers: new Map<string, IpcHandler>(),
 }))
 
-vi.mock('electron', () => ({
-  app: { getLocale: () => 'zh-CN' },
-  dialog: { showOpenDialog: vi.fn() },
-  ipcMain: {
+vi.mock('../../../electron/platform', () => ({
+  appHost: { getLocale: () => 'zh-CN' },
+  dialogHost: { showOpenDialog: vi.fn() },
+  operations: {
     handle: vi.fn((channel: string, handler: IpcHandler) => {
       electronMocks.handlers.set(channel, handler)
     }),
@@ -76,6 +76,7 @@ describe('authoritative finalized export integration', () => {
         chapterNumber: fact.chapterNumber,
         chapterTitle: fact.title,
         content: fact.content,
+        expectedContent: 'old draft',
         contentHash: sha256(fact.content),
         contentRevision: 1,
         targetFileName: `第${fact.chapterNumber}章 ${fact.title}.txt`,

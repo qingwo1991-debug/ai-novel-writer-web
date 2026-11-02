@@ -918,14 +918,21 @@ export function registerDatabaseController() {
     }
   })
 
-  operations.handle('db:draft-update-content', async (_event, id: number, content: string, wordCount: number, expectedProjectPath: string) => {
+  operations.handle('db:draft-update-content', async (_event, id: number, content: string, wordCount: number, expectedProjectPath: string, expectedContent: string) => {
     try {
       assertRequiredExpectedProjectPath(getCurrentProjectPath(), expectedProjectPath)
-      const draft = DraftRepository.getMeta(id)
-      if (!draft) throw new Error('DRAFT_NOT_FOUND')
-      DraftRepository.updateContent(id, content, wordCount)
+      // Compare against the last acknowledged server body, never a renderer-only
+      // "current" flag. The repository checks body and status atomically.
+      DraftRepository.updateContentIfCurrent(id, content, wordCount, expectedContent)
       return { success: true }
     } catch (err) {
+      if (err && typeof err === 'object' && 'code' in err && err.code === 'DRAFT_CONTENT_CONFLICT') {
+        return {
+          success: false,
+          errorCode: 'DRAFT_CONTENT_CONFLICT' as const,
+          error: '草稿已被其他编辑修改或已变为只读。请保留当前编辑内容，重新载入后比较，不要直接覆盖。',
+        }
+      }
       return { success: false, error: String(err) }
     }
   })

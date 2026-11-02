@@ -33,17 +33,22 @@ function hash(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
-function commitSnapshot(contentRevision = 8): ReturnType<typeof FinalizationRepository.commit> {
-  return FinalizationRepository.commit({
+function snapshotRequest(contentRevision = 8) {
+  return {
     finalizationId: 'finalization-1',
     draftId: 17,
     chapterNumber: 1,
     chapterTitle: '第一章',
     content: 'Finalized snapshot shown to the user',
+    expectedContent: '数据库中的旧正文',
     contentHash: hash('Finalized snapshot shown to the user'),
     contentRevision,
     targetFileName: '第1章 第一章.txt',
-  })
+  }
+}
+
+function commitSnapshot(contentRevision = 8): ReturnType<typeof FinalizationRepository.commit> {
+  return FinalizationRepository.commit(snapshotRequest(contentRevision))
 }
 
 beforeEach(() => {
@@ -160,6 +165,8 @@ describe('FinalizationRepository transaction seam', () => {
       chapterNumber: 1,
       chapterTitle: '第一章',
       content: 'Finalized snapshot shown to the user',
+      // An acknowledged/legacy retry must not repeat source CAS after commit.
+      expectedContent: undefined as unknown as string,
       contentHash: hash('Finalized snapshot shown to the user'),
       contentRevision: 8,
       // 第二次调用在物理文件已经出现时可能计算出不同的碰撞候选；不能因此破坏幂等。
@@ -170,6 +177,39 @@ describe('FinalizationRepository transaction seam', () => {
     expect(retried.targetFileName).toBe('第1章 第一章.txt')
     expect(db.prepare('SELECT COUNT(*) AS count FROM finalization_outbox').get())
       .toEqual({ count: 1 })
+  })
+
+  it('rejects a stale frozen request without changing the newer manual edit or creating receipts', () => {
+    const request = snapshotRequest()
+    db.prepare('UPDATE contents SET body = ? WHERE id = 11').run('另一设备刚保存的人工正文')
+    db.prepare('UPDATE drafts SET word_count = 13 WHERE id = 17').run()
+
+    expect(() => FinalizationRepository.commit(request)).toThrow('FINALIZATION_COMMIT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 11').get()).toEqual({ body: '另一设备刚保存的人工正文' })
+    expect(db.prepare('SELECT status, word_count FROM drafts WHERE id = 17').get()).toEqual({ status: 'draft', word_count: 13 })
+    expect(db.prepare('SELECT * FROM finalization_outbox').all()).toEqual([])
+    expect(request.content).toBe('Finalized snapshot shown to the user')
+  })
+
+  it('rejects a missing expected baseline before any finalization write', () => {
+    const request = snapshotRequest()
+    Reflect.deleteProperty(request, 'expectedContent')
+    expect(() => FinalizationRepository.commit(request)).toThrow('FINALIZATION_COMMIT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 11').get()).toEqual({ body: '数据库中的旧正文' })
+    expect(db.prepare('SELECT status FROM drafts WHERE id = 17').get()).toEqual({ status: 'draft' })
+    expect(db.prepare('SELECT * FROM finalization_outbox').all()).toEqual([])
+  })
+
+  it('accepts an explicitly empty persisted baseline without normalization', () => {
+    db.prepare("UPDATE contents SET body = '' WHERE id = 11").run()
+    expect(FinalizationRepository.commit({ ...snapshotRequest(), expectedContent: '' }).publicationStatus).toBe('pending')
+  })
+
+  it.each(['archived', 'unknown-status'])('rejects finalization from non-working status %s', status => {
+    db.prepare('UPDATE drafts SET status = ? WHERE id = 17').run(status)
+    expect(() => commitSnapshot()).toThrow('FINALIZATION_COMMIT_CONFLICT')
+    expect(db.prepare('SELECT body FROM contents WHERE id = 11').get()).toEqual({ body: '数据库中的旧正文' })
+    expect(db.prepare('SELECT * FROM finalization_outbox').all()).toEqual([])
   })
 
   it('rolls back content and status when writing the outbox fails', () => {

@@ -205,9 +205,20 @@ async function openProject(client, target, requestToken) {
   }
   // Same-tab refresh/reopen retains the live client sink and its active model
   // attempts. Releasing here would cancel a request merely because UI reloaded.
+  const alreadyOwned = client.projectWorker === worker && worker.owner === client.id
   if (client.projectWorker !== worker) releaseProject(client)
   worker.owner = client.id; client.projectWorker = worker
-  return worker.invoke('project:open', [root, requestToken], client)
+  try {
+    const opened = await worker.invoke('project:open', [root, requestToken], client)
+    if (opened?.success) await globalWorker.invoke('web:library-show-project', [root], client)
+    else if (!alreadyOwned) releaseProject(client)
+    return opened
+  } catch (error) {
+    // A failed visibility/recency persistence step must not strand a newly
+    // acquired invisible owner. Same-tab refresh keeps its pre-existing sink.
+    if (!alreadyOwned) releaseProject(client)
+    throw error
+  }
 }
 function requireProject(client) {
   if (!client.projectWorker || client.projectWorker.owner !== client.id) throw new HttpError(409, 'PROJECT_SESSION_NOT_OWNED')
@@ -448,7 +459,7 @@ const server = http.createServer(async (req, res) => {
       }
       const client = getClient(req, session)
       if (req.method !== 'GET') sessions.verify(req, session, origins)
-      if (url.pathname === '/api/library' && req.method === 'GET') return json(res, 200, { projects: await globalWorker.invoke('web:library-list', [], client) })
+      if (url.pathname === '/api/library' && req.method === 'GET') return json(res, 200, { projects: await globalWorker.invoke('web:library-list', [true], client) })
       if (url.pathname.startsWith('/api/operations/') && req.method === 'POST') {
         const operation = decodeURIComponent(url.pathname.slice('/api/operations/'.length))
         const input = await jsonBody(req); validateArguments(input.args)

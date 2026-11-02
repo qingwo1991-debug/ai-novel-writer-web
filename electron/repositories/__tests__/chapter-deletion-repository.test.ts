@@ -26,7 +26,7 @@ function finalizedChapter(chapterNumber: number): number {
   const content = `第${chapterNumber}章正文`
   const draftId = DraftRepository.create({ chapterNumber, source: 'write', content, wordCount: content.length })
   FinalizationRepository.commit({ finalizationId: `finalization-${chapterNumber}`, draftId, chapterNumber,
-    chapterTitle: `第${chapterNumber}章`, content, contentHash: `hash-${chapterNumber}`, contentRevision: 1,
+    chapterTitle: `第${chapterNumber}章`, content, expectedContent: content, contentHash: `hash-${chapterNumber}`, contentRevision: 1,
     targetFileName: `第${chapterNumber}章.txt` })
   return draftId
 }
