@@ -166,6 +166,8 @@ GitHub 的缓存恢复/保存服务产生非致命警告；未影响测试、竞
 - HTTP owner/cookie/tab/CSRF/lease、UseNumber、整调用hold、原源字节不变；生成handle/authorRecovery无权通过普通commit，completed sync须真实未迁移权威证据故拒绝；clear-all/character-sync-complete不绑定，update-notes仍原finalization admission拒绝，不算完成。
 - 首次[41403128338](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41403128338)失败：parent oracle cleaner把typed nil错误变{}，已修；原better-sqlite3会展开array位置参数/将object当named-bind而非通用拒绝，补blueprint-specific arity适配。未改原expected；正常commit原hash首次即过，修复后160全过。
 
+最终加严fixture源码`81620db911f5448013e8d639c89c7ee309669c96`，[Actions 41405028511](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41405028511)再次**success，3m52s，同285/3165 PASS、0fail、1skip、13package、160原差分**；全部vet/race/credential/build/noNode通过。加严点：原第二次seedCommit会自动修补第一条sync，改为两次commit后再删除一条，使测试真正覆盖two-ledgers/one-sync缺失回填；不是改变业务或expected。
+
 矩阵 **2完成、54进行中、225未开始**，新增8项仅隔离业务。见[GO-BLUEPRINTS.md](GO-BLUEPRINTS.md)。main未绑定、未发布作者durableDB。本机没有Go/gofmt/test/oracle/build/install，生产容器/镜像/作者数据未变。后续真实writer协调/Lance/portable权限准入排序记录在[GO-DURABLE-PREFLIGHT-NOTES.md](GO-DURABLE-PREFLIGHT-NOTES.md)，是方案而非已实现。
 
 ## 不代表什么
