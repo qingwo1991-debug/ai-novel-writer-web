@@ -6,6 +6,8 @@ on:
     paths:
       - 'backend-go/native-lance/**'
       - 'backend-go/internal/lancenative/**'
+      - 'backend-go/internal/projectfs/**'
+      - 'backend-go/internal/knowledgecopy/**'
       - 'backend-go/cmd/lance-interop/**'
       - 'backend-go/contract/lance-native-contract.mjs'
       - '.github/workflows/go-lance-native.yml'
@@ -119,5 +121,7 @@ jobs:
             ${{ runner.temp }}/novel-lance-interop/native-export.json
             ${{ runner.temp }}/novel-lance-interop/native-import.json
             ${{ runner.temp }}/novel-lance-interop/native-restored-export.json
+            ${{ runner.temp }}/novel-lance-interop/native-staged-export.json
+            ${{ runner.temp }}/novel-lance-interop/native-staging-proof.json
           retention-days: 7
           if-no-files-found: ignore

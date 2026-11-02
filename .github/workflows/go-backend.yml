@@ -62,6 +62,10 @@ jobs:
           printf 'GO_AUTHORITY_CONTRACT=%s\n' "$GO_AUTHORITY_CONTRACT" >> "$GITHUB_ENV"
           command -v flock
           node ./contract/authority-contract.mjs
+          export GO_KNOWLEDGECOPY_CONTRACT="$RUNNER_TEMP/knowledgecopy-contract.json"
+          printf 'GO_KNOWLEDGECOPY_CONTRACT=%s\n' "$GO_KNOWLEDGECOPY_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/knowledgecopy-contract.mjs
+          test -s "$GO_KNOWLEDGECOPY_CONTRACT"
           test -s "$GO_AUTHORITY_CONTRACT"
           export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
           export GO_SECRET_CONTRACT="$RUNNER_TEMP/novel-go-secrets/contract.json"

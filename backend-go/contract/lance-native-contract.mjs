@@ -378,6 +378,16 @@ async function verify() {
   verifyIPC(at('oracle-ipc'), contract, contract)
   verifyIPC(at('native-ipc'), nativeExport, contract)
   verifyIPC(at('native-restored-ipc'), restoredExport, contract)
+  const stagedExport = checkedManifest(at('native-staged-export.json'), contract, originalVersions)
+  verifyIPC(at('native-staged-ipc'), stagedExport, contract)
+  const staging = readJSON(at('native-staging-proof.json'))
+  assert(staging.physical.digest && staging.physical.bytes > 0 && staging.physical.entries > 0, 'bounded Go physical-copy evidence required')
+  assert.equal(staging.metadata.Copies, 3, 'all raw copied knowledge files validated')
+  assert.equal(staging.metadata.Current, 3, 'current copies use original indexedHash semantics')
+  assert.equal(staging.metadata.RegistrySHA256, contract.registrySha256, 'registry raw bytes preserved by Go staging')
+  assert.deepEqual(fs.readdirSync(at('go-staged')), [], 'Go-owned staged author asset copies removed after native scan')
+  const stagedSource = physicalManifest(at('stage-library', 'synthetic', '.ai-novel')).filter(entry => entry.path !== 'project.json' && entry.path !== 'project.db')
+  assert.deepEqual(stagedSource, before.copy, 'Go synthetic staging source matches original copied assets byte-for-byte')
 
   // Reopen only attempt-owned restored data, never the source or physical copy.
   // Check directory existence BEFORE connect: Lance connect may create missing DBs.
@@ -411,8 +421,8 @@ async function verify() {
     format: 1, syntheticOnly: true, status: 'passed',
     dependencies: contract.dependencies,
     tables: contract.tables.map(table => ({ name: table.name, rows: table.rows, sourceVersion: table.version, restoredVersion: restoredVersions[table.name] })),
-    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true },
-    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, or TS logicalHash parity claim.'],
+    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true },
+    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, table-domain crosslink admission, or TS logicalHash parity claim.'],
   }
   writeJSON(at('summary.json'), summary)
   console.log(JSON.stringify({ mode: 'verify', status: summary.status, tables: contract.tables.length, summary: 'summary.json' }))
