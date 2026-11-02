@@ -29,11 +29,11 @@ type KnowledgeEvidence struct {
 }
 
 type stagedKnowledge struct {
-	parent   *os.Root
-	root     *os.Root
-	info     os.FileInfo
-	proof    *projectfs.KnowledgeProof
-	evidence KnowledgeEvidence
+	parent       *os.Root
+	root         *os.Root
+	info         os.FileInfo
+	proof        *projectfs.KnowledgeProof
+	evidence     KnowledgeEvidence
 	readSnapshot knowledgedomain.Snapshot
 }
 
@@ -95,7 +95,7 @@ func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.
 		}
 		stage.evidence.CopyLinks = &links
 		stage.evidence.Native = &summary
-		stage.readSnapshot=snapshot // Private bounded rows for optional immutable read capture only.
+		stage.readSnapshot = snapshot // Private bounded rows for optional immutable read capture only.
 		if err := stage.verify(ctx); err != nil {
 			return stage, err
 		}

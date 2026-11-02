@@ -1,5 +1,11 @@
 # Go 基础层：GitHub Actions 验证记录
 
+## 第十九轮：四项知识只读业务与不可变capture租约
+
+普通Go修复源码`59176ff1b813348264c63ccf2de6c345690ae071`，[41439146355](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41439146355) **success：414顶层/3739含子用例PASS、0fail、3foreign-owner测试skip、17packages**；另有cmd/novel-server无testfiles package skip不混计。knowledgequery12顶层/40含子用例含原TS14组完整列表/统计/vectorless/copy读取差分；HTTP12顶层/47含子用例、KnowledgeManager8顶层均通过。vet/race/原凭据解密/build/noNode smoke通过。
+
+首次普通[41438917975](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41438917975)在CI Oracle多行TypeScript返回类型提取阶段失败，修复提取完整函数后以上重验通过；不隐去失败，不将它计成功。native[41438917823](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41438917823)业务源码`52685005f1bfccc75be8f27dc2326e1660510621`（仅Oracle一行与修复SHA不同）**success**：Rust lockedbuild、native Go vet/build、8facade tests、7顶层/21含子用例projectaccess tests与1真实native OpenKnowledge→authenticated HTTP四读端到端test均通过，0fail/skip；11JS保全检查alltrue。capture cleanup后仍读/source无变/foreign tab拒绝/in-flight release拒绝/撤销后拒绝均实际通过。driver0.22s/maxRSS112368KiB仅微型存储driver，不当联合业务性能。四只读row→IN PROGRESS，合计**2/58/221**，main未绑定、不部署；见[GO-KNOWLEDGE-READS.md](GO-KNOWLEDGE-READS.md)。
+
 ## 第十八轮：document/copy关联与联合持锁预检
 
 源码`edf80fb2c4e344c86c40939fce25e4d663a68a9a`，普通Go[41434132059](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41434132059) **success：378顶层/3617含子用例PASS、0fail、3foreign-owner skip、16packages**；vet/race/原凭据解密/build/noNode烟测通过。新增`TestLinks*`14顶层/32含子用例无skip通过，其中9个实际原TS copy lookup/current oracle核对managed/unmanaged/missing/dirty/marker suffix语义；非native Native配置提前拒绝。

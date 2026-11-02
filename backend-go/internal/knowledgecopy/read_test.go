@@ -1,14 +1,98 @@
 package knowledgecopy
 
 import (
- "context"
- "errors"
- "os"
- "path/filepath"
- "reflect"
- "testing"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
 )
-func TestReadManagedCopiesCapturesOnlyManagedPresent(t *testing.T){path,root:=fixture(t);copiesDir(t,path);putLinkedCopy(t,path,"managed-星海🙂","captured",hashText("captured"),true,false);putLinkedCopy(t,path,"unmanaged","ignored",hashText("ignored"),false,false);putLinkedCopy(t,path,"orphan","retained",hashText("retained"),false,false);refs:=[]DocumentRef{{ID:"managed-星海🙂",FilePath:"knowledge-copy:OTHER"},{ID:"missing",FilePath:"knowledge-copy:"},{ID:"unmanaged",FilePath:"plain.txt"}};got,err:=ReadManagedCopies(context.Background(),root,refs,budget());if err!=nil||!reflect.DeepEqual(got,map[string]Copy{"managed-星海🙂":{Content:"captured",IndexedHash:hashText("captured"),Edited:true,IndexDirty:false}}){t.Fatal(got,err)};putLinkedCopy(t,path,"managed-星海🙂","changed",hashText("changed"),true,true);if got["managed-星海🙂"].Content!="captured"{t.Fatal("borrowed filesystem state")};if _,err:=os.Lstat(filepath.Join(path,"knowledge-copies",hashText("orphan")+".json"));err!=nil{t.Fatal("orphan deleted",err)}}
-func TestReadManagedCopiesAbsentDirectoryAndIndependentResults(t *testing.T){_,root:=fixture(t);got,err:=ReadManagedCopies(context.Background(),root,[]DocumentRef{{ID:"missing",FilePath:"knowledge-copy:"}},budget());if err!=nil||got==nil||len(got)!=0{t.Fatal(got,err)};got["injected"]=Copy{Content:"caller"};again,err:=ReadManagedCopies(context.Background(),root,nil,budget());if err!=nil||len(again)!=0{t.Fatal(again,err)}}
-func TestReadManagedCopiesRefMetadataAndContextFailuresNil(t *testing.T){for _,kind:=range []string{"duplicate","bad-utf8","budget","malformed-orphan","symlink","canceled","nil-context","nil-root"}{t.Run(kind,func(t *testing.T){path,root:=fixture(t);refs:=[]DocumentRef{{ID:"doc",FilePath:"knowledge-copy:"}};limits:=budget();ctx:=context.Background();switch kind{case "duplicate":refs=append(refs,refs[0]);case "bad-utf8":refs[0].ID=string([]byte{255});case "budget":limits.MaxMetadataBytes=1;case "malformed-orphan":copiesDir(t,path);put(t,path,"knowledge-copies/bad.json",[]byte("bad"));case "symlink":if err:=os.Symlink("elsewhere",filepath.Join(path,"knowledge-copies"));err!=nil{t.Fatal(err)};case "canceled":c,cancel:=context.WithCancel(ctx);cancel();ctx=c;case "nil-context":ctx=nil;case "nil-root":root=nil};got,err:=ReadManagedCopies(ctx,root,refs,limits);if err==nil||got!=nil{t.Fatal(got,err)};if kind=="canceled"&&!errors.Is(err,context.Canceled){t.Fatal(err)}})}}
-func TestReadManagedCopiesPostCaptureIdentityGuard(t *testing.T){path,root:=fixture(t);copiesDir(t,path);putLinkedCopy(t,path,"doc","before",hashText("before"),true,false);refs:=[]DocumentRef{{ID:"doc",FilePath:"knowledge-copy:"}};count:=&steppedContext{Context:context.Background(),at:1<<30};if _,err:=ReadManagedCopies(count,root,refs,budget());err!=nil{t.Fatal(err)};changed:=&steppedContext{Context:context.Background(),at:count.calls-3};changed.action=func(){putLinkedCopy(t,path,"doc","changed",hashText("changed"),true,true)};got,err:=ReadManagedCopies(changed,root,refs,budget());if got!=nil||!errors.Is(err,ErrChanged){t.Fatal(got,err)}}
+
+func TestReadManagedCopiesCapturesOnlyManagedPresent(t *testing.T) {
+	path, root := fixture(t)
+	copiesDir(t, path)
+	putLinkedCopy(t, path, "managed-星海🙂", "captured", hashText("captured"), true, false)
+	putLinkedCopy(t, path, "unmanaged", "ignored", hashText("ignored"), false, false)
+	putLinkedCopy(t, path, "orphan", "retained", hashText("retained"), false, false)
+	refs := []DocumentRef{{ID: "managed-星海🙂", FilePath: "knowledge-copy:OTHER"}, {ID: "missing", FilePath: "knowledge-copy:"}, {ID: "unmanaged", FilePath: "plain.txt"}}
+	got, err := ReadManagedCopies(context.Background(), root, refs, budget())
+	if err != nil || !reflect.DeepEqual(got, map[string]Copy{"managed-星海🙂": {Content: "captured", IndexedHash: hashText("captured"), Edited: true, IndexDirty: false}}) {
+		t.Fatal(got, err)
+	}
+	putLinkedCopy(t, path, "managed-星海🙂", "changed", hashText("changed"), true, true)
+	if got["managed-星海🙂"].Content != "captured" {
+		t.Fatal("borrowed filesystem state")
+	}
+	if _, err := os.Lstat(filepath.Join(path, "knowledge-copies", hashText("orphan")+".json")); err != nil {
+		t.Fatal("orphan deleted", err)
+	}
+}
+func TestReadManagedCopiesAbsentDirectoryAndIndependentResults(t *testing.T) {
+	_, root := fixture(t)
+	got, err := ReadManagedCopies(context.Background(), root, []DocumentRef{{ID: "missing", FilePath: "knowledge-copy:"}}, budget())
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatal(got, err)
+	}
+	got["injected"] = Copy{Content: "caller"}
+	again, err := ReadManagedCopies(context.Background(), root, nil, budget())
+	if err != nil || len(again) != 0 {
+		t.Fatal(again, err)
+	}
+}
+func TestReadManagedCopiesRefMetadataAndContextFailuresNil(t *testing.T) {
+	for _, kind := range []string{"duplicate", "bad-utf8", "budget", "malformed-orphan", "symlink", "canceled", "nil-context", "nil-root"} {
+		t.Run(kind, func(t *testing.T) {
+			path, root := fixture(t)
+			refs := []DocumentRef{{ID: "doc", FilePath: "knowledge-copy:"}}
+			limits := budget()
+			ctx := context.Background()
+			switch kind {
+			case "duplicate":
+				refs = append(refs, refs[0])
+			case "bad-utf8":
+				refs[0].ID = string([]byte{255})
+			case "budget":
+				limits.MaxMetadataBytes = 1
+			case "malformed-orphan":
+				copiesDir(t, path)
+				put(t, path, "knowledge-copies/bad.json", []byte("bad"))
+			case "symlink":
+				if err := os.Symlink("elsewhere", filepath.Join(path, "knowledge-copies")); err != nil {
+					t.Fatal(err)
+				}
+			case "canceled":
+				c, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = c
+			case "nil-context":
+				ctx = nil
+			case "nil-root":
+				root = nil
+			}
+			got, err := ReadManagedCopies(ctx, root, refs, limits)
+			if err == nil || got != nil {
+				t.Fatal(got, err)
+			}
+			if kind == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+func TestReadManagedCopiesPostCaptureIdentityGuard(t *testing.T) {
+	path, root := fixture(t)
+	copiesDir(t, path)
+	putLinkedCopy(t, path, "doc", "before", hashText("before"), true, false)
+	refs := []DocumentRef{{ID: "doc", FilePath: "knowledge-copy:"}}
+	count := &steppedContext{Context: context.Background(), at: 1 << 30}
+	if _, err := ReadManagedCopies(count, root, refs, budget()); err != nil {
+		t.Fatal(err)
+	}
+	changed := &steppedContext{Context: context.Background(), at: count.calls - 3}
+	changed.action = func() { putLinkedCopy(t, path, "doc", "changed", hashText("changed"), true, true) }
+	got, err := ReadManagedCopies(changed, root, refs, budget())
+	if got != nil || !errors.Is(err, ErrChanged) {
+		t.Fatal(got, err)
+	}
+}

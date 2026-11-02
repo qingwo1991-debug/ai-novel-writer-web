@@ -2,23 +2,131 @@
 
 package transport
 
-import(
- "context"
- "encoding/json"
- "errors"
- "os"
- "path/filepath"
- "testing"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgequery"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
- novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgequery"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
+	"os"
+	"path/filepath"
+	"testing"
 )
-func nativeKnowledgeHTTPConfig(t *testing.T)projectaccess.Config{t.Helper();oracle:=os.Getenv("GO_SQLITE_CONTRACT");lance:=os.Getenv("GO_LANCE_CONTRACTROOT");if oracle==""||lance==""{if os.Getenv("GITHUB_ACTIONS")=="true"{t.Fatal("native original fixtures mandatory")};t.Skip("GitHub native fixture required")};input,err:=os.Open(oracle);if err!=nil{t.Fatal(err)};schema,err:=admission.ParseContract(input);input.Close();if err!=nil{t.Fatal(err)};data:=t.TempDir();library:=filepath.Join(data,"projects");project:=filepath.Join(library,"synthetic-book");storage:=filepath.Join(project,".ai-novel");if err:=os.MkdirAll(storage,0700);err!=nil{t.Fatal(err)};if err:=os.CopyFS(storage,os.DirFS(filepath.Join(lance,"copy")));err!=nil{t.Fatal(err)};db,err:=os.ReadFile(filepath.Join(filepath.Dir(oracle),"baseline-v7.db"));if err!=nil{t.Fatal(err)};if err:=os.WriteFile(filepath.Join(storage,"project.db"),db,0600);err!=nil{t.Fatal(err)};manifest:=[]byte(`{"schemaVersion":1,"kind":"ai-novel-project","projectId":"8b5929e6-cda4-43e2-a15c-f232571f0036","createdAt":"2026-01-01T00:00:00.000Z","storageFormat":"ai-novel","storageVersion":1}`);if err:=os.WriteFile(filepath.Join(storage,"project.json"),manifest,0600);err!=nil{t.Fatal(err)};scratch:=t.TempDir();if err:=os.Chmod(scratch,0700);err!=nil{t.Fatal(err)};return projectaccess.Config{DataRoot:data,LibraryRoot:library,ProjectPath:project,ScratchParent:scratch,MaxDatabaseBytes:64*1024*1024,Schema:schema,Knowledge:&projectaccess.KnowledgeConfig{Copy:projectfs.KnowledgeBudget{MaxBytes:128*1024*1024,MaxEntries:10000,MaxDepth:32},Metadata:knowledgecopy.Budget{MaxMetadataBytes:8*1024*1024,MaxCopies:100},Native:true}}}
-func TestNativeKnowledgeRealCaptureSessionHTTP(t *testing.T){config:=nativeKnowledgeHTTPConfig(t);server:=fixture(t);manager:=projectsession.NewKnowledgeManager();defer manager.Close();cookie,csrf:=bootstrap(t,server);tab:="synthetic-native-kb-tab-0001";caller:=draftOwner(cookie,tab);owner:=projectsession.Owner{SessionID:caller.SessionID,ClientID:caller.ClientID};opened,err:=manager.OpenKnowledge(context.Background(),owner,config);if err!=nil{t.Fatal(err)};expected:=draftContext(opened.ProjectID,opened.LeaseID,opened.ProjectPath);provider:=KnowledgeProviderFunc(func(ctx context.Context,c Caller,raw any)(*knowledgequery.View,map[string]int64,func(),error){parsed,err:=projectsession.ParseContext(raw);if err!=nil{return nil,nil,nil,err};return manager.BeginKnowledge(ctx,projectsession.Owner{SessionID:c.SessionID,ClientID:c.ClientID},parsed)});if err:=server.BindKnowledge(provider);err!=nil{t.Fatal(err)};entries,err:=os.ReadDir(config.ScratchParent);if err!=nil||len(entries)!=0{t.Fatal("capture leaked private scratch",entries,err)};stats:=draftResult(t,draftRPC(t,server,cookie,csrf,tab,"kb:stats",config.ProjectPath,expected)).(map[string]any);if len(stats)!=3||stats["documentCount"]!=float64(3)||stats["totalChunks"]!=float64(4)||stats["vectorDimension"]!=float64(2){t.Fatal(stats)};docs:=draftResult(t,draftRPC(t,server,cookie,csrf,tab,"kb:list-documents",config.ProjectPath,expected)).([]any);if len(docs)!=3{t.Fatal(docs)};id:=docs[0].(map[string]any)["id"].(string);copy:=draftResult(t,draftRPC(t,server,cookie,csrf,tab,"kb:read-document-copy",id,config.ProjectPath,expected)).(map[string]any);if copy["available"]!=true||copy["indexStatus"]!="current"||copy["contentHash"]==""{t.Fatal(copy)};missing:=draftResult(t,draftRPC(t,server,cookie,csrf,tab,"kb:get-vectorless-count",config.ProjectPath,expected)).(map[string]any);if missing["count"]!=float64(0){t.Fatal(missing)}
- view,_,done,err:=manager.BeginKnowledge(context.Background(),owner,opened);if err!=nil||view==nil{t.Fatal(err)};if !errors.Is(manager.Release(owner,opened),novelruntime.ErrBusy){t.Fatal("active read released")};done();refresh,err:=manager.OpenKnowledge(context.Background(),owner,config);if err!=nil||refresh!=opened{t.Fatal("refresh changed immutable lease",err)};knowledgeRequireResponse(t,draftRPC(t,server,cookie,csrf,"synthetic-native-kb-other-tab","kb:stats",config.ProjectPath,expected),500,"PROJECT_SESSION_NOT_OWNED");if err:=manager.Release(owner,opened);err!=nil{t.Fatal(err)};knowledgeRequireResponse(t,draftRPC(t,server,cookie,csrf,tab,"kb:read-document-copy",id,config.ProjectPath,expected),500,"PROJECT_SESSION_NOT_OWNED"); // All expected public outputs have standard JSON and no provider details.
- if _,err:=json.Marshal(stats);err!=nil{t.Fatal(err)}
+
+func nativeKnowledgeHTTPConfig(t *testing.T) projectaccess.Config {
+	t.Helper()
+	oracle := os.Getenv("GO_SQLITE_CONTRACT")
+	lance := os.Getenv("GO_LANCE_CONTRACTROOT")
+	if oracle == "" || lance == "" {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("native original fixtures mandatory")
+		}
+		t.Skip("GitHub native fixture required")
+	}
+	input, err := os.Open(oracle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := admission.ParseContract(input)
+	input.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := t.TempDir()
+	library := filepath.Join(data, "projects")
+	project := filepath.Join(library, "synthetic-book")
+	storage := filepath.Join(project, ".ai-novel")
+	if err := os.MkdirAll(storage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(storage, os.DirFS(filepath.Join(lance, "copy"))); err != nil {
+		t.Fatal(err)
+	}
+	db, err := os.ReadFile(filepath.Join(filepath.Dir(oracle), "baseline-v7.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, "project.db"), db, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`{"schemaVersion":1,"kind":"ai-novel-project","projectId":"8b5929e6-cda4-43e2-a15c-f232571f0036","createdAt":"2026-01-01T00:00:00.000Z","storageFormat":"ai-novel","storageVersion":1}`)
+	if err := os.WriteFile(filepath.Join(storage, "project.json"), manifest, 0600); err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	if err := os.Chmod(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return projectaccess.Config{DataRoot: data, LibraryRoot: library, ProjectPath: project, ScratchParent: scratch, MaxDatabaseBytes: 64 * 1024 * 1024, Schema: schema, Knowledge: &projectaccess.KnowledgeConfig{Copy: projectfs.KnowledgeBudget{MaxBytes: 128 * 1024 * 1024, MaxEntries: 10000, MaxDepth: 32}, Metadata: knowledgecopy.Budget{MaxMetadataBytes: 8 * 1024 * 1024, MaxCopies: 100}, Native: true}}
+}
+func TestNativeKnowledgeRealCaptureSessionHTTP(t *testing.T) {
+	config := nativeKnowledgeHTTPConfig(t)
+	server := fixture(t)
+	manager := projectsession.NewKnowledgeManager()
+	defer manager.Close()
+	cookie, csrf := bootstrap(t, server)
+	tab := "synthetic-native-kb-tab-0001"
+	caller := draftOwner(cookie, tab)
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	opened, err := manager.OpenKnowledge(context.Background(), owner, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := draftContext(opened.ProjectID, opened.LeaseID, opened.ProjectPath)
+	provider := KnowledgeProviderFunc(func(ctx context.Context, c Caller, raw any) (*knowledgequery.View, map[string]int64, func(), error) {
+		parsed, err := projectsession.ParseContext(raw)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return manager.BeginKnowledge(ctx, projectsession.Owner{SessionID: c.SessionID, ClientID: c.ClientID}, parsed)
+	})
+	if err := server.BindKnowledge(provider); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(config.ScratchParent)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("capture leaked private scratch", entries, err)
+	}
+	stats := draftResult(t, draftRPC(t, server, cookie, csrf, tab, "kb:stats", config.ProjectPath, expected)).(map[string]any)
+	if len(stats) != 3 || stats["documentCount"] != float64(3) || stats["totalChunks"] != float64(4) || stats["vectorDimension"] != float64(2) {
+		t.Fatal(stats)
+	}
+	docs := draftResult(t, draftRPC(t, server, cookie, csrf, tab, "kb:list-documents", config.ProjectPath, expected)).([]any)
+	if len(docs) != 3 {
+		t.Fatal(docs)
+	}
+	id := docs[0].(map[string]any)["id"].(string)
+	copy := draftResult(t, draftRPC(t, server, cookie, csrf, tab, "kb:read-document-copy", id, config.ProjectPath, expected)).(map[string]any)
+	if copy["available"] != true || copy["indexStatus"] != "current" || copy["contentHash"] == "" {
+		t.Fatal(copy)
+	}
+	missing := draftResult(t, draftRPC(t, server, cookie, csrf, tab, "kb:get-vectorless-count", config.ProjectPath, expected)).(map[string]any)
+	if missing["count"] != float64(0) {
+		t.Fatal(missing)
+	}
+	view, _, done, err := manager.BeginKnowledge(context.Background(), owner, opened)
+	if err != nil || view == nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(manager.Release(owner, opened), novelruntime.ErrBusy) {
+		t.Fatal("active read released")
+	}
+	done()
+	refresh, err := manager.OpenKnowledge(context.Background(), owner, config)
+	if err != nil || refresh != opened {
+		t.Fatal("refresh changed immutable lease", err)
+	}
+	knowledgeRequireResponse(t, draftRPC(t, server, cookie, csrf, "synthetic-native-kb-other-tab", "kb:stats", config.ProjectPath, expected), 500, "PROJECT_SESSION_NOT_OWNED")
+	if err := manager.Release(owner, opened); err != nil {
+		t.Fatal(err)
+	}
+	knowledgeRequireResponse(t, draftRPC(t, server, cookie, csrf, tab, "kb:read-document-copy", id, config.ProjectPath, expected), 500, "PROJECT_SESSION_NOT_OWNED") // All expected public outputs have standard JSON and no provider details.
+	if _, err := json.Marshal(stats); err != nil {
+		t.Fatal(err)
+	}
 }

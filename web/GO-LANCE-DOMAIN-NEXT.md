@@ -1,5 +1,7 @@
 # Native Lance域准入后续门与边界
 
+第十九轮补充：有界domain+rawcopy捕获为无FD不可变View，可信配置InspectKnowledge cleanup成功后进入独立KnowledgeManager，四项只读KB业务/冻结租约/认证HTTP已通过原TS14组差分和独立native真实组合资格；不绑定main、不冒充durable project:open。固定snapshot刷新非current状态，search/write/embed/CAS与任意作者库仍缺。详见[GO-KNOWLEDGE-READS.md](GO-KNOWLEDGE-READS.md)。
+
 第十八轮补充：有界版本已增加document→SHA256(docId) copy文件引用与Current/Dirty/Missing/Unreferenced分类，并组合进同一legacy flock下的私有SQLite+native preflight。原marker suffix忽略；missing非fatal且不current、dirty/edited合法保留；这不是索引新鲜许可或writer authority。详见[GO-JOINT-KNOWLEDGE-PREFLIGHT.md](GO-JOINT-KNOWLEDGE-PREFLIGHT.md)。下面未完成项仍是最终验收门。
 
 第十七轮状态补充：`knowledgedomain`已实现下述schema/cell/docchunk/registry-active关系的**有界合成快照**版本，普通GitHub原Oracle22case与139领域测试通过；typed-native链也已独立GitHub通过（8native tests、10项JS全schema/rows/domain保全检查）。没有任意大库external-sort或JS精确logicalHash；copyfilename引用分类后来由第十八轮补齐。详见[GO-KNOWLEDGE-DOMAIN.md](GO-KNOWLEDGE-DOMAIN.md)。本页仍保留完整最终门设计，不将所有研究项计为实现。
