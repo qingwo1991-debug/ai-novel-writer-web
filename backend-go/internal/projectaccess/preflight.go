@@ -76,7 +76,11 @@ type stageHook func(*projectfs.Project) error
 func Preflight(ctx context.Context, config Config) (Report, error) {
 	return preflight(ctx, config, nil)
 }
-func preflight(ctx context.Context, config Config, afterStage stageHook) (report Report, err error) {
+func preflight(ctx context.Context, config Config, afterStage stageHook) (Report,error) {
+ return preflightRead(ctx,config,afterStage,nil)
+}
+func preflightRead(ctx context.Context, config Config, afterStage stageHook, capture *KnowledgeRead) (report Report, err error) {
+ defer func(){if err!=nil && capture!=nil{*capture=KnowledgeRead{}}}()
 	if ctx == nil {
 		return report, ErrConfiguration
 	}
@@ -198,6 +202,7 @@ func preflight(ctx context.Context, config Config, afterStage stageHook) (report
 	if err != nil {
 		return report, err
 	}
+	if capture!=nil{if knowledge==nil||config.Knowledge==nil||!config.Knowledge.Native{return report,ErrConfiguration};if err:=captureKnowledgeRead(ctx,knowledge,filepath.Join(temporary,"snapshot.db"),config.Knowledge.Metadata,capture);err!=nil{return report,err}}
 	if err := guard.Verify(); err != nil {
 		return report, err
 	}

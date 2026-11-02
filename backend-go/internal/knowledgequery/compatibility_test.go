@@ -1,0 +1,12 @@
+package knowledgequery
+
+import (
+ "context"
+ "encoding/json"
+ "os"
+ "path/filepath"
+ "testing"
+)
+func TestQueryMissingCorpusKindDefaultsWithoutMutation(t *testing.T){snapshot,root,_:=queryFixture(t);doc:=&snapshot.Tables[0];doc.Schema=doc.Schema[:len(doc.Schema)-1];delete(doc.Records[0],"corpusKind");view:=queryView(t,snapshot,root);docs,err:=view.Documents(context.Background());if err!=nil||docs[0]["corpusKind"]!="unknown"{t.Fatal(docs,err)};if _,exists:=doc.Records[0]["corpusKind"];exists{t.Fatal("projection migrated original caller rows")}}
+func TestQueryRegistryUsesJSBinary64NumericLexemes(t *testing.T){snapshot,root,path:=queryFixture(t);queryAddSpace(t,&snapshot,path,"active",2,true);var registry map[string]any;if err:=json.Unmarshal(snapshot.Registry,&registry);err!=nil{t.Fatal(err)};registry["version"]=json.Number("1.0");registry["activeGeneration"]=json.Number("1e0");space:=registry["spaces"].([]any)[0].(map[string]any);space["generation"]=json.Number("1.0");space["vectorDimension"]=json.Number("2e0");raw,err:=json.Marshal(registry);if err!=nil{t.Fatal(err)};snapshot.Registry=raw;if err:=os.WriteFile(filepath.Join(path,"embedding-spaces.json"),raw,0600);err!=nil{t.Fatal(err)};view:=queryView(t,snapshot,root);stats,err:=view.Stats(context.Background());count,countErr:=view.VectorlessCount(context.Background());if err!=nil||countErr!=nil||stats["vectorDimension"]!=2||count["count"]!=0{t.Fatal(stats,count,err,countErr)}}
+func TestQueryBuildingSelectionFollowsRegistryOrder(t *testing.T){snapshot,root,path:=queryFixture(t);queryAddSpace(t,&snapshot,path,"building",1,false);first:=snapshot.Tables[2];second:=first;second.Name="chunks__space_2";second.Records=nil;snapshot.Tables=append(snapshot.Tables,second);var registry map[string]any;if err:=json.Unmarshal(snapshot.Registry,&registry);err!=nil{t.Fatal(err)};spaces:=registry["spaces"].([]any);space1:=spaces[0].(map[string]any);space2:=map[string]any{};for k,v:=range space1{space2[k]=v};space2["generation"]=2;space2["tableName"]="chunks__space_2";registry["spaces"]=[]any{space2,space1};raw,err:=json.Marshal(registry);if err!=nil{t.Fatal(err)};snapshot.Registry=raw;if err:=os.WriteFile(filepath.Join(path,"embedding-spaces.json"),raw,0600);err!=nil{t.Fatal(err)};view:=queryView(t,snapshot,root);count,err:=view.VectorlessCount(context.Background());if err!=nil||count["count"]!=2{t.Fatal(count,err)};stats,_:=view.Stats(context.Background());if stats["vectorDimension"]!=0{t.Fatal("building space leaked into active dimension",stats)}}

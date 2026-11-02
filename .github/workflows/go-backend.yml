@@ -71,6 +71,10 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/novel-go-oracle" --no-audit --no-fund --package-lock=false apache-arrow@18.1.0
           node ./contract/knowledge-domain-contract.mjs
           test -s "$GO_KNOWLEDGEDOMAIN_CONTRACT"
+          export GO_KNOWLEDGEQUERY_CONTRACT="$RUNNER_TEMP/knowledge-query-contract.json"
+          printf 'GO_KNOWLEDGEQUERY_CONTRACT=%s\n' "$GO_KNOWLEDGEQUERY_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/knowledge-query-contract.mjs
+          test -s "$GO_KNOWLEDGEQUERY_CONTRACT"
           test -s "$GO_AUTHORITY_CONTRACT"
           export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
           export GO_SECRET_CONTRACT="$RUNNER_TEMP/novel-go-secrets/contract.json"

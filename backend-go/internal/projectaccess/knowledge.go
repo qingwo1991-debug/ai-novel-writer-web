@@ -34,6 +34,7 @@ type stagedKnowledge struct {
 	info     os.FileInfo
 	proof    *projectfs.KnowledgeProof
 	evidence KnowledgeEvidence
+	readSnapshot knowledgedomain.Snapshot
 }
 
 func validKnowledgeConfig(config KnowledgeConfig) bool {
@@ -94,6 +95,7 @@ func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.
 		}
 		stage.evidence.CopyLinks = &links
 		stage.evidence.Native = &summary
+		stage.readSnapshot=snapshot // Private bounded rows for optional immutable read capture only.
 		if err := stage.verify(ctx); err != nil {
 			return stage, err
 		}

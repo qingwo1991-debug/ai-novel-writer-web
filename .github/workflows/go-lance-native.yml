@@ -10,6 +10,7 @@ on:
       - 'backend-go/internal/knowledgecopy/**'
       - 'backend-go/internal/knowledgedomain/**'
       - 'backend-go/internal/projectaccess/**'
+      - 'backend-go/internal/knowledgequery/**'
       - 'backend-go/cmd/lance-interop/**'
       - 'backend-go/contract/lance-native-contract.mjs'
       - '.github/workflows/go-lance-native.yml'
@@ -101,12 +102,13 @@ jobs:
         working-directory: backend-go
         run: |
           export CGO_LDFLAGS="$PWD/native-lance/target/debug/libnovel_lance.a -ldl -lpthread -lm -lstdc++ -lssl -lcrypto"
-          gofmt -w ./internal/lancenative ./internal/projectaccess ./cmd/lance-interop
+          gofmt -w ./internal/lancenative ./internal/projectaccess ./internal/projectsession ./internal/knowledgequery ./internal/knowledgecopy ./internal/transport ./cmd/lance-interop
           git diff --binary -- ./internal/lancenative ./internal/projectaccess ./cmd/lance-interop > "$RUNNER_TEMP/native-go-format.patch"
-          go vet -tags lance_native ./internal/lancenative ./internal/projectaccess ./cmd/lance-interop
+          go vet -tags lance_native ./internal/lancenative ./internal/projectaccess ./internal/projectsession ./internal/knowledgequery ./internal/transport ./cmd/lance-interop
           set -o pipefail
           go test -tags lance_native -count=1 -timeout=5m -json ./internal/lancenative | tee "$RUNNER_TEMP/native-go-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/projectaccess | tee "$RUNNER_TEMP/native-preflight-tests.jsonl"
+          go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/transport | tee "$RUNNER_TEMP/native-knowledge-http-tests.jsonl"
           go build -tags lance_native -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/native-lance-check" ./cmd/lance-interop
           ls -lh "$RUNNER_TEMP/native-lance-check"
           ldd "$RUNNER_TEMP/native-lance-check" | tee "$RUNNER_TEMP/native-runtime-dependencies.txt"
@@ -127,6 +129,7 @@ jobs:
             ${{ runner.temp }}/native-build.log
             ${{ runner.temp }}/native-go-tests.jsonl
             ${{ runner.temp }}/native-preflight-tests.jsonl
+            ${{ runner.temp }}/native-knowledge-http-tests.jsonl
             ${{ runner.temp }}/native-go-format.patch
             ${{ runner.temp }}/native-runtime-dependencies.txt
             ${{ runner.temp }}/native-runtime-metrics.txt
