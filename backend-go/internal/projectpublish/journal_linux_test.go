@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
@@ -142,5 +143,63 @@ func TestExchangeJournalChangedOrTamperedStateNeverRestores(t *testing.T) {
 				t.Fatalf("uncertain state misclassified: %+v %v", recovery, err)
 			}
 		})
+	}
+}
+
+func TestExchangeJournalRejectsAliasedProjectParentBeforeSwitchedMarker(t *testing.T) {
+	f, snapshot, journal := preparedJournalFixture(t)
+	ctx := context.Background()
+	stagePath, err := snapshot.PrivatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spare := filepath.Join(f.dataRoot, "synthetic-old-storage")
+	for _, move := range [][2]string{{f.storage, spare}, {stagePath, f.storage}, {spare, stagePath}} {
+		if err := os.Rename(move[0], move[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detached := f.projectPath + "-detached"
+	if err := os.Rename(f.projectPath, detached); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(detached, f.projectPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.MarkSwitched(ctx); !errors.Is(err, ErrChanged) {
+		t.Fatalf("aliased project parent accepted: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(f.stageParent, journal.Name()+".switched")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SWITCHED marker created despite parent alias: %v", err)
+	}
+	_ = snapshot.parent.Close()
+}
+
+func TestExchangeJournalNormalizesRestrictiveProcessUmask(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	snapshot, err := Stage(ctx, f.lock, f.dataRoot, f.library, f.projectPath, f.stageParent, testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	plan, err := PrepareExchangePlan(ctx, snapshot, HandleDrainFunc(func(context.Context, string) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldUmask := syscall.Umask(0777)
+	defer syscall.Umask(oldUmask)
+	journal, prepareErr := PrepareExchangeJournal(ctx, plan)
+	syscall.Umask(oldUmask)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
+	info, err := os.Lstat(filepath.Join(f.stageParent, journal.Name()))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("journal mode depends on process umask: %v %+v", err, info)
+	}
+	recovery, err := RecoverExchangeJournal(ctx, f.lock, f.dataRoot, snapshot.projectID, f.projectPath, f.stageParent, journal.Name())
+	if err != nil || recovery.Class != JournalPrepared {
+		t.Fatalf("strict recovery cannot read normalized marker: %+v %v", recovery, err)
 	}
 }

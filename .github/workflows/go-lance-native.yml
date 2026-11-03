@@ -107,6 +107,7 @@ jobs:
           go vet -tags lance_native ./internal/lancenative ./internal/projectaccess ./internal/projectsession ./internal/knowledgequery ./internal/transport ./cmd/lance-interop
           set -o pipefail
           go test -tags lance_native -count=1 -timeout=5m -json ./internal/lancenative | tee "$RUNNER_TEMP/native-go-tests.jsonl"
+          go test -tags lance_native -run '^TestNativeVectorExecutor' -count=1 -timeout=5m -json ./internal/knowledgequery | tee "$RUNNER_TEMP/native-vector-execute-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/projectaccess | tee "$RUNNER_TEMP/native-preflight-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/authorruntime | tee "$RUNNER_TEMP/native-author-read-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/transport | tee "$RUNNER_TEMP/native-knowledge-http-tests.jsonl"
@@ -129,6 +130,7 @@ jobs:
             ${{ runner.temp }}/native-dependency-tree.txt
             ${{ runner.temp }}/native-build.log
             ${{ runner.temp }}/native-go-tests.jsonl
+            ${{ runner.temp }}/native-vector-execute-tests.jsonl
             ${{ runner.temp }}/native-preflight-tests.jsonl
             ${{ runner.temp }}/native-author-read-tests.jsonl
             ${{ runner.temp }}/native-knowledge-http-tests.jsonl

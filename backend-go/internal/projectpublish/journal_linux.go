@@ -18,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
@@ -105,7 +106,7 @@ type JournalRecovery struct {
 }
 
 func validJournalName(name string) bool {
-	if !strings.HasPrefix(name, "novel-exchange-") || !strings.HasSuffix(name, ".prepared.json") || len(name) != len("novel-exchange-")+32+len(".prepared.json") {
+	if !strings.HasPrefix(name, "novel-exchange-") || !strings.HasSuffix(name, ".prepared.json") || strings.ToLower(name) != name || len(name) != len("novel-exchange-")+32+len(".prepared.json") {
 		return false
 	}
 	_, err := hex.DecodeString(strings.TrimSuffix(strings.TrimPrefix(name, "novel-exchange-"), ".prepared.json"))
@@ -157,6 +158,23 @@ func writeJournalFile(root *os.Root, name string, raw []byte) error {
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
+	}
+	// O_CREATE applies the process umask. Normalize and verify the mode before
+	// acknowledging a marker; otherwise a restrictive umask could create a
+	// durable file that the strict recovery reader cannot open later.
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	created, err := file.Stat()
+	if err != nil || created.Mode().Perm() != 0600 {
+		_ = file.Close()
+		return ErrJournalInvalid
+	}
+	owner, ok := created.Sys().(*syscall.Stat_t)
+	if !ok || owner.Uid != uint32(os.Geteuid()) {
+		_ = file.Close()
+		return ErrJournalInvalid
 	}
 	writeErr := error(nil)
 	if n, err := file.Write(raw); err != nil || n != len(raw) {
@@ -221,6 +239,8 @@ func strictJournalJSON(raw []byte, target any) error {
 // PrepareExchangeJournal persists a PREPARED marker outside the source tree.
 // It repeats the plan proof, records both directory inodes and complete tree
 // digests, fsyncs the marker and its parent, and leaves all source bytes alone.
+// This is deliberately a pre-edit journal: ExchangePlan requires the private
+// tree to equal the source. It cannot authorize an edited candidate or publish.
 func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJournal, error) {
 	if ctx == nil || plan == nil || plan.snapshot == nil {
 		return nil, ErrInvalid
@@ -230,7 +250,12 @@ func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJ
 	}
 	s := plan.snapshot
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if s.closed || s.removed || s.parent == nil || s.lock == nil || s.projectPath != plan.projectPath || !os.SameFile(s.storageInfo, plan.sourceInfo) || !os.SameFile(s.stageInfo, plan.stageInfo) {
 		return nil, ErrChanged
 	}
@@ -262,7 +287,14 @@ func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJ
 		return nil, err
 	}
 	// The snapshot owns the root; journal methods must not outlive it.
-	return &ExchangeJournal{name: name, prepared: prepared, root: s.parent, lock: s.lock, rawHash: journalDigest(raw)}, nil
+	journal := &ExchangeJournal{name: name, prepared: prepared, root: s.parent, lock: s.lock, rawHash: journalDigest(raw)}
+	s.mu.Unlock()
+	locked = false
+	if err := plan.Verify(ctx); err != nil {
+		// The PREPARED marker remains for conservative restart review.
+		return nil, err
+	}
+	return journal, nil
 }
 
 func validPrepared(p journalPrepared, dataRoot, projectID, projectPath, stageParent, name string) bool {
@@ -320,7 +352,7 @@ func RecoverExchangeJournal(ctx context.Context, held *writerlock.Lock, dataRoot
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	storagePath := filepath.Join(projectPath, ".ai-novel")
+	storagePath := filepath.Join(projectPath, projectfs.StorageDirectory)
 	if stageParent == storagePath || childOf(storagePath, stageParent) || childOf(stageParent, storagePath) {
 		return zero, ErrJournalInvalid
 	}
@@ -426,9 +458,30 @@ func (j *ExchangeJournal) MarkSwitched(ctx context.Context) error {
 		return ErrJournalInvalid
 	}
 	limits := Limits{MaxFiles: prepared.MaxFiles, MaxBytes: prepared.MaxBytes, MaxDepth: prepared.MaxDepth}
-	sourceID, sourceHash, sourceErr := inspectJournalTree(ctx, filepath.Join(prepared.ProjectPath, ".ai-novel"), limits)
+	sourceID, sourceHash, sourceErr := inspectJournalTree(ctx, filepath.Join(prepared.ProjectPath, projectfs.StorageDirectory), limits)
 	stageID, stageHash, stageErr := inspectJournalTree(ctx, filepath.Join(prepared.StageParent, prepared.StageName), limits)
 	if sourceErr != nil || stageErr != nil || sourceID != prepared.Stage || stageID != prepared.Source || sourceHash != prepared.StageTreeHash || stageHash != prepared.SourceTreeHash {
+		return ErrChanged
+	}
+	// A durable marker must not get ahead of the namespace exchange. Fsync both
+	// directories whose entries would change, then recheck the observed swap.
+	// The project root is opened component by component so an alias cannot make
+	// the fsync target differ from the trusted project directory.
+	projectRoot, _, err := openPinnedDirectory(prepared.ProjectPath, nil)
+	if err != nil {
+		return ErrChanged
+	}
+	projectSyncErr := syncRoot(projectRoot)
+	projectCloseErr := projectRoot.Close()
+	if err := errors.Join(projectSyncErr, projectCloseErr); err != nil {
+		return err
+	}
+	if err := syncRoot(j.root); err != nil {
+		return err
+	}
+	sourceAfter, sourceHashAfter, sourceErr := inspectJournalTree(ctx, filepath.Join(prepared.ProjectPath, projectfs.StorageDirectory), limits)
+	stageAfter, stageHashAfter, stageErr := inspectJournalTree(ctx, filepath.Join(prepared.StageParent, prepared.StageName), limits)
+	if sourceErr != nil || stageErr != nil || sourceAfter != prepared.Stage || stageAfter != prepared.Source || sourceHashAfter != prepared.StageTreeHash || stageHashAfter != prepared.SourceTreeHash {
 		return ErrChanged
 	}
 	marker, err := json.Marshal(journalSwitched{Format: 1, PreparedHash: j.rawHash})
