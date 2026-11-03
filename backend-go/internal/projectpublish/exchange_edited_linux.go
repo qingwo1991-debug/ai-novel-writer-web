@@ -5,9 +5,22 @@ package projectpublish
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
+	"syscall"
+	"unsafe"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
+
+// ErrExchangeOutcomeUnknown means a namespace syscall was attempted. The
+// caller must classify the journal and retain both trees; it must not retry.
+var ErrExchangeOutcomeUnknown = errors.New("PROJECT_PUBLICATION_EXCHANGE_OUTCOME_UNKNOWN")
 
 // CurrentDraftFacts are server-owned inputs to the active session owner. The
 // callback must verify the exact caller, tab, lease and project generation;
@@ -38,6 +51,8 @@ func (f CurrentDraftAuthorityFunc) VerifyCurrentDraft(ctx context.Context, facts
 // journal. It deliberately has no source mutation method. The pre-edit
 // ExchangePlan cannot validate an edited stage and is never used here.
 type EditedExchangePlan struct {
+	mu        sync.Mutex
+	attempted bool
 	snapshot  *Snapshot
 	journal   *ExchangeJournal
 	evidence  DraftEditEvidence
@@ -164,3 +179,123 @@ func (p *EditedExchangePlan) verifyPhysical(ctx context.Context) error {
 // Exchange remains unavailable. A PREPARED marker and edited-stage proof do
 // not establish post-swap re-admission, rollback or unknown-outcome handling.
 func (*EditedExchangePlan) Exchange(context.Context) error { return ErrPublishUnavailable }
+
+// EditedExchangeClaim ties one physical exchange to the coordinator's live,
+// project-scoped commit fence and the exact legacy lock used by the snapshot.
+// Its fields are caller-supplied labels, not authority; VerifyCommit validates
+// them against the coordinator's private state immediately before the syscall.
+type EditedExchangeClaim struct {
+	Held     *writerlock.Lock
+	Fence    *projectsession.PublishFence
+	Owner    projectsession.Owner
+	Expected projectsession.Context
+	OldKey   string
+}
+
+// ExchangeWithFence performs only the atomic namespace exchange. It does not
+// certify durability or acknowledge a save. The caller must retain the old
+// tree, observe both inodes, persist SWITCHED, re-admit and read back the new
+// source, then clear the catalog hold before any acknowledgement. A syscall
+// attempt is one-shot even when the kernel reports an error: the result may be
+// ambiguous, so recovery must classify it from the PREPARED journal.
+func (p *EditedExchangePlan) ExchangeWithFence(ctx context.Context, claim EditedExchangeClaim) error {
+	if p == nil || ctx == nil || claim.Held == nil || claim.Fence == nil || claim.OldKey == "" {
+		return ErrInvalid
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.attempted {
+		return ErrExchangeOutcomeUnknown
+	}
+	if err := claim.Fence.VerifyCommit(ctx, claim.Held, claim.Owner, claim.Expected, claim.OldKey); err != nil {
+		return err
+	}
+	if err := p.Verify(ctx); err != nil {
+		return err
+	}
+	if err := claim.Fence.VerifyCommit(ctx, claim.Held, claim.Owner, claim.Expected, claim.OldKey); err != nil {
+		return err
+	}
+	s := p.snapshot
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.removed || s.parent == nil || s.lock != claim.Held ||
+		s.projectID != claim.Expected.ProjectID || s.projectPath != claim.Expected.ProjectPath ||
+		!s.journalOwned || p.journal.lock != claim.Held {
+		return ErrChanged
+	}
+	if err := verifyExchangeRootsPrivate(s); err != nil {
+		return err
+	}
+	sourceParent, sourceParentInfo, err := openPinnedDirectory(s.projectPath, s.stageInfo)
+	if err != nil {
+		return err
+	}
+	defer sourceParent.Close()
+	if !os.SameFile(sourceParentInfo, s.projectRootInfo) {
+		return ErrChanged
+	}
+	sourceNow, sourceErr := sourceParent.Lstat(projectfs.StorageDirectory)
+	stageNow, stageErr := s.parent.Lstat(s.stageName)
+	if sourceErr != nil || stageErr != nil || !os.SameFile(sourceNow, s.storageInfo) ||
+		!os.SameFile(stageNow, s.stageInfo) {
+		return ErrChanged
+	}
+	journalRaw, err := readJournalFile(p.journal.root, p.journal.name)
+	if err != nil || journalDigest(journalRaw) != p.journal.rawHash {
+		return ErrJournalInvalid
+	}
+	var prepared journalPrepared
+	if err := strictJournalJSON(journalRaw, &prepared); err != nil || prepared != p.journal.prepared {
+		return ErrJournalInvalid
+	}
+	sourceFD, err := sourceParent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer sourceFD.Close()
+	stageFD, err := s.parent.Open(".")
+	if err != nil {
+		return err
+	}
+	defer stageFD.Close()
+	callNumber, ok := renameat2SyscallNumber()
+	if !ok {
+		return ErrPublishUnavailable
+	}
+	sourceName, err := syscall.BytePtrFromString(projectfs.StorageDirectory)
+	if err != nil {
+		return ErrInvalid
+	}
+	stageName, err := syscall.BytePtrFromString(s.stageName)
+	if err != nil {
+		return ErrInvalid
+	}
+	if err := claim.Fence.VerifyCommit(ctx, claim.Held, claim.Owner, claim.Expected, claim.OldKey); err != nil {
+		return err
+	}
+	// Nothing that may return an error is permitted between this assignment
+	// and the syscall. The journal owns the stage even on an uncertain result.
+	p.attempted = true
+	const renameExchange = 2
+	_, _, callErr := syscall.RawSyscall6(callNumber,
+		sourceFD.Fd(), uintptr(unsafe.Pointer(sourceName)),
+		stageFD.Fd(), uintptr(unsafe.Pointer(stageName)), renameExchange, 0)
+	runtime.KeepAlive(sourceName)
+	runtime.KeepAlive(stageName)
+	if callErr != 0 {
+		return errors.Join(ErrExchangeOutcomeUnknown, callErr)
+	}
+	return nil
+}
+
+func renameat2SyscallNumber() (uintptr, bool) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return 316, true
+	case "arm64":
+		return 276, true
+	default:
+		return 0, false
+	}
+}
