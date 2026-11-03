@@ -61,7 +61,7 @@ func TestAdmitAuthorFailsOnWrongProject(t *testing.T) {
 
 func TestAdmitAuthorRequiresHeldLock(t *testing.T) {
 	config, project, _ := admittedAuthorFixture(t)
-	if _, err := AdmitAuthor(context.Background(), config, project, nil); !errors.Is(err, writerlock.ErrUnsafe) {
+	if _, err := AdmitAuthor(context.Background(), config, project, nil); !errors.Is(err, ErrConfiguration) {
 		t.Fatalf("nil lock admitted: %v", err)
 	}
 }

@@ -19,11 +19,15 @@ func testOwner() projectsession.Owner {
 func durableLifecycle(t *testing.T) (*ReadLifecycle, string, projectsession.Context, string, string) {
 	t.Helper()
 	catalog, key, config, _, _ := readFixture(t)
+	// The lifecycle resolves the exact project per open from the catalog key;
+	// its baseline config must carry no ProjectPath.
+	lifecycleConfig := config
+	lifecycleConfig.ProjectPath = ""
 	held, err := writerlock.AcquireLegacy(config.DataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle, err := NewReadLifecycleWithHeldLock(catalog, config, held)
+	lifecycle, err := NewReadLifecycleWithHeldLock(catalog, lifecycleConfig, held)
 	if err != nil {
 		_ = held.Close()
 		t.Fatal(err)
