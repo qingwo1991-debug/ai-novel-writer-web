@@ -249,6 +249,18 @@ jobs:
           printf 'GO_REVIEW_CONSISTENCY_MERGE_CONTRACT=%s\n' "$GO_REVIEW_CONSISTENCY_MERGE_CONTRACT" >> "$GITHUB_ENV"
           node --import ./contract/register-typescript.mjs ./contract/review-consistency-merge-contract.mjs
           test -s "$GO_REVIEW_CONSISTENCY_MERGE_CONTRACT"
+      - name: Generate original complete review-report fixtures
+        run: |
+          export GO_REVIEW_BUILDER_CONTRACT="$RUNNER_TEMP/novel-go-review-builder/contract.json"
+          printf 'GO_REVIEW_BUILDER_CONTRACT=%s\n' "$GO_REVIEW_BUILDER_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/review-builder-contract.mjs
+          test -s "$GO_REVIEW_BUILDER_CONTRACT"
+      - name: Generate original review-recheck report fixtures
+        run: |
+          export GO_REVIEW_RECHECK_CONTRACT="$RUNNER_TEMP/novel-go-review-recheck/contract.json"
+          printf 'GO_REVIEW_RECHECK_CONTRACT=%s\n' "$GO_REVIEW_RECHECK_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/review-recheck-contract.mjs
+          test -s "$GO_REVIEW_RECHECK_CONTRACT"
       - name: Upload original review-report component oracles
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -257,6 +269,8 @@ jobs:
             ${{ runner.temp }}/novel-go-review-report-parser/contract.json
             ${{ runner.temp }}/novel-go-review-goals/contract.json
             ${{ runner.temp }}/novel-go-review-consistency-merge/contract.json
+            ${{ runner.temp }}/novel-go-review-builder/contract.json
+            ${{ runner.temp }}/novel-go-review-recheck/contract.json
           retention-days: 7
           if-no-files-found: error
       - name: Extract original recognized schemas for later pinning
