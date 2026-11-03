@@ -63,6 +63,10 @@ type Snapshot struct {
 	entries         []entry
 	limits          Limits
 	removed         bool
+	// journalOwned retains the stage once a PREPARED marker write has begun.
+	// Even an error may leave a durable marker, so ordinary Close cannot delete
+	// the directory referenced by recovery evidence.
+	journalOwned bool
 	// switched means the original source now occupies stageName. Close must
 	// retain it for journal recovery rather than treating it as a disposable copy.
 	switched bool
@@ -784,8 +788,9 @@ func (s *Snapshot) PrivatePath() (string, error) {
 
 func (s *Snapshot) PublicationAuthority(context.Context) error { return ErrPublishUnavailable }
 
-// Close removes an unswitched private copy. After RetainSwitched, it only
-// closes this capability and leaves the old source at stageName for recovery.
+// Close removes an unjournaled, unswitched private copy. Once PREPARED marker
+// creation has begun or RetainSwitched has observed an exchange, Close only
+// closes this capability and leaves the stage for recovery.
 // Any caller-created handles must have been closed before Close is called.
 func (s *Snapshot) Close() error {
 	if s == nil {
@@ -799,7 +804,7 @@ func (s *Snapshot) Close() error {
 	if !canonical(s.stage) || !strings.HasPrefix(s.stageName, "novel-private-publish-") || s.parent == nil {
 		return ErrInvalid
 	}
-	if !s.removed && !s.switched {
+	if !s.removed && !s.switched && !s.journalOwned {
 		current, err := s.parent.Lstat(s.stageName)
 		if err != nil || !os.SameFile(s.stageInfo, current) {
 			return ErrChanged

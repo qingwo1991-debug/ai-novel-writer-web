@@ -23,6 +23,38 @@ func editedProof() EditedDraftCASProof {
 	return EditedDraftCASProof{DraftID: 7, OperationHash: hex.EncodeToString(op[:]), ReadbackHash: hex.EncodeToString(readback[:])}
 }
 
+func TestEditedPreparedJournalRetainsStageOnClose(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	snapshot, err := Stage(ctx, f.lock, f.dataRoot, f.library, f.projectPath, f.stageParent, testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagePath, err := snapshot.PrivatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagePath, projectfs.DatabaseName), []byte("edited private DB"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := PrepareEditedExchangeJournal(ctx, snapshot,
+		HandleDrainFunc(func(context.Context, string) error { return nil }),
+		EditedDraftCASVerifierFunc(func(context.Context, EditedStageFacts) (EditedDraftCASProof, error) { return editedProof(), nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stagePath); err != nil {
+		t.Fatalf("Close removed edited PREPARED stage: %v", err)
+	}
+	recovery, err := RecoverExchangeJournal(ctx, f.lock, f.dataRoot, snapshot.projectID, f.projectPath, f.stageParent, journal.Name())
+	if err != nil || recovery.Class != JournalPrepared || recovery.EditedProofHash != editedProof().ReadbackHash {
+		t.Fatalf("Close invalidated edited PREPARED recovery: %+v %v", recovery, err)
+	}
+}
+
 func TestEditedJournalBindsOnlySQLiteStageAndTrustedProof(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

@@ -331,7 +331,7 @@ func PrepareEditedExchangeJournal(ctx context.Context, snapshot *Snapshot, drain
 			s.mu.Unlock()
 		}
 	}()
-	if s.closed || s.removed || s.parent == nil || s.lock == nil || s.projectID != facts.ProjectID || s.projectPath != facts.ProjectPath ||
+	if s.closed || s.removed || s.journalOwned || s.parent == nil || s.lock == nil || s.projectID != facts.ProjectID || s.projectPath != facts.ProjectPath ||
 		!os.SameFile(s.stageInfo, durable.inode) || hashTreeEntries(s.entries) != facts.SourceTreeHash ||
 		!sameDevice(s.storageInfo, s.stageInfo) || !sameDevice(s.storageInfo, s.parentInfo) {
 		return nil, ErrChanged
@@ -362,6 +362,10 @@ func PrepareEditedExchangeJournal(ctx context.Context, snapshot *Snapshot, drain
 		return nil, err
 	}
 	name := "novel-exchange-" + id + ".prepared.json"
+	// A failed write may still leave a durable marker. Transfer cleanup
+	// ownership before attempting it, so a deferred Snapshot.Close cannot
+	// destroy the stage referenced by restart recovery.
+	s.journalOwned = true
 	if err := writeJournalFile(s.parent, name, raw); err != nil {
 		return nil, err
 	}

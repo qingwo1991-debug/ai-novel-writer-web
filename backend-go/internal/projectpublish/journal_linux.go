@@ -262,7 +262,7 @@ func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJ
 			s.mu.Unlock()
 		}
 	}()
-	if s.closed || s.removed || s.parent == nil || s.lock == nil || s.projectPath != plan.projectPath || !os.SameFile(s.storageInfo, plan.sourceInfo) || !os.SameFile(s.stageInfo, plan.stageInfo) {
+	if s.closed || s.removed || s.journalOwned || s.parent == nil || s.lock == nil || s.projectPath != plan.projectPath || !os.SameFile(s.storageInfo, plan.sourceInfo) || !os.SameFile(s.stageInfo, plan.stageInfo) {
 		return nil, ErrChanged
 	}
 	source, sourceOK := inodeOf(s.storageInfo)
@@ -289,6 +289,10 @@ func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJ
 		return nil, err
 	}
 	name := "novel-exchange-" + id + ".prepared.json"
+	// A failed write may still leave a durable marker. Transfer cleanup
+	// ownership before attempting it, so a deferred Snapshot.Close cannot
+	// destroy the stage referenced by restart recovery.
+	s.journalOwned = true
 	if err := writeJournalFile(s.parent, name, raw); err != nil {
 		return nil, err
 	}

@@ -35,6 +35,28 @@ func preparedJournalFixture(t *testing.T) (fixture, *Snapshot, *ExchangeJournal)
 	return f, snapshot, journal
 }
 
+func TestPreparedJournalTransfersStageCleanupOwnership(t *testing.T) {
+	f, snapshot, journal := preparedJournalFixture(t)
+	plan, err := PrepareExchangePlan(context.Background(), snapshot, HandleDrainFunc(func(context.Context, string) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate, err := PrepareExchangeJournal(context.Background(), plan); duplicate != nil || !errors.Is(err, ErrChanged) {
+		t.Fatalf("second PREPARED marker accepted: %+v %v", duplicate, err)
+	}
+	stagePath := snapshot.stage
+	if err := snapshot.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stagePath); err != nil {
+		t.Fatalf("Close removed PREPARED stage: %v", err)
+	}
+	recovery, err := RecoverExchangeJournal(context.Background(), f.lock, f.dataRoot, snapshot.projectID, f.projectPath, f.stageParent, journal.Name())
+	if err != nil || recovery.Class != JournalPrepared {
+		t.Fatalf("Close invalidated PREPARED recovery: %+v %v", recovery, err)
+	}
+}
+
 func TestExchangeJournalPreparedAndSwitchedAreOnlyClassifications(t *testing.T) {
 	f, snapshot, journal := preparedJournalFixture(t)
 	ctx := context.Background()
