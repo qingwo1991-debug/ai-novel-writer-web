@@ -303,7 +303,7 @@ jobs:
                   if source.name.endswith('_test.go'):
                       continue
                   text = source.read_text()
-                  assert not re.search(r'node:|worker\.mjs|dist-server', text), source
+                  assert not re.search(r'(?<![A-Za-z0-9_])node:|worker\.mjs|dist-server', text), source
                   if '"os/exec"' in text:
                       exec_sites.append(source.as_posix())
                       assert source.as_posix() == 'internal/mcp/transports.go', source
