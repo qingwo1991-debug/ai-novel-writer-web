@@ -169,6 +169,12 @@ func TestMigrationGatewayUploadRequiresExplicitPrivateTempRoot(t *testing.T) {
 
 func TestSyntheticGlobalConfigUsesSharedSessionAndSafeProjections(t *testing.T) {
 	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if !privateSyntheticGlobalRoot(root) {
+		t.Fatal("private synthetic fixture was not admitted")
+	}
 	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte(`{"theme":"dark","defaultModelId":null,"proxy":{"password":"private-proxy-secret"},"privateExtension":"private-extension-secret"}`), 0600); err != nil {
 		t.Fatal(err)
 	}

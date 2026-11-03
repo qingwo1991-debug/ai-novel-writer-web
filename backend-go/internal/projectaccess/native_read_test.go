@@ -15,13 +15,18 @@ func TestNativeKnowledgeImmutableReadCaptureSurvivesCleanup(t *testing.T) {
 	c := nativeAccessFixture(t)
 	before := nativeSourceManifest(t, c)
 	read, report, err := InspectKnowledge(context.Background(), c)
-	if err != nil || read == nil || read.View() == nil || report.Knowledge == nil {
+	if err != nil || read == nil || read.View() == nil || read.Search() == nil || report.Knowledge == nil {
 		t.Fatal(report, err)
 	}
 	if !reflect.DeepEqual(before, nativeSourceManifest(t, c)) {
 		t.Fatal("original source changed")
 	}
 	accessClean(t, c)
+	search := read.Search()
+	beforeSearch, err := search.SearchFTS(context.Background(), "", 5, nil, nil)
+	if err != nil || len(beforeSearch) == 0 {
+		t.Fatal("missing admitted search projection", err)
+	}
 	view := read.View()
 	documents, err := view.Documents(context.Background())
 	if err != nil || len(documents) != 3 {
@@ -55,6 +60,10 @@ func TestNativeKnowledgeImmutableReadCaptureSurvivesCleanup(t *testing.T) {
 	first, err := view.ReadCopy(context.Background(), documents[0]["id"].(string))
 	if err != nil || first["available"] != true {
 		t.Fatal("view retained deleted scratch/source dependency", err)
+	}
+	afterSearch, err := search.SearchFTS(context.Background(), "", 5, nil, nil)
+	if err != nil || !reflect.DeepEqual(beforeSearch, afterSearch) {
+		t.Fatal("search retained deleted source dependency", err)
 	}
 }
 func TestNativeKnowledgeReadCaptureZeroOnFailureAndOrdinaryOptInRequired(t *testing.T) {

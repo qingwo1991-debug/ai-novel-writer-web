@@ -33,6 +33,7 @@ type mountedKnowledge struct {
 	lease     novelruntime.Lease
 	capture   *projectaccess.KnowledgeRead
 	view      *knowledgequery.View
+	search    *knowledgequery.SearchCapture
 	finalized map[string]int64
 }
 
@@ -78,7 +79,7 @@ func (m *KnowledgeManager) OpenKnowledge(ctx context.Context, owner Owner, confi
 	if err != nil {
 		return Context{}, err
 	}
-	if capture == nil || capture.View() == nil {
+	if capture == nil || capture.View() == nil || capture.Search() == nil {
 		return Context{}, ErrContext
 	}
 	if err := ctx.Err(); err != nil {
@@ -89,6 +90,7 @@ func (m *KnowledgeManager) OpenKnowledge(ctx context.Context, owner Owner, confi
 		return Context{}, err
 	}
 	m.mounts[config.ProjectPath].capture = capture
+	m.mounts[config.ProjectPath].search = capture.Search()
 	return adopted, nil
 }
 
@@ -197,6 +199,40 @@ func (m *KnowledgeManager) BeginKnowledge(ctx context.Context, owner Owner, expe
 		return nil, nil, nil, err
 	}
 	return mounted.view, finalized, done, nil
+}
+
+// BeginKnowledgeSearch lends only the FTS projection captured during the same
+// native inspection as BeginKnowledge's view. The exact cookie/tab/lease fence
+// stays held through ranking and response construction; no source is reopened.
+func (m *KnowledgeManager) BeginKnowledgeSearch(ctx context.Context, owner Owner, expected Context) (*knowledgequery.SearchCapture, func(), error) {
+	if err := knowledgeInputs(ctx, owner, expected.ProjectPath); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	if mounted.search == nil {
+		done()
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		done()
+		return nil, nil, err
+	}
+	return mounted.search, done, nil
 }
 func (m *KnowledgeManager) Release(owner Owner, expected Context) error {
 	if !owner.valid() {

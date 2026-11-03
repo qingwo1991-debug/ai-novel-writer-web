@@ -16,6 +16,7 @@ import (
 // Later author changes are NOT reflected; no current-author-state claim is made.
 type KnowledgeRead struct {
 	view      *knowledgequery.View
+	search    *knowledgequery.SearchCapture
 	finalized map[string]int64
 }
 
@@ -24,6 +25,12 @@ func (r *KnowledgeRead) View() *knowledgequery.View {
 		return nil
 	}
 	return r.view
+}
+func (r *KnowledgeRead) Search() *knowledgequery.SearchCapture {
+	if r == nil {
+		return nil
+	}
+	return r.search
 }
 func (r *KnowledgeRead) FinalizedChapters() map[string]int64 {
 	result := map[string]int64{}
@@ -56,6 +63,10 @@ func captureKnowledgeRead(ctx context.Context, stage *stagedKnowledge, databaseP
 		}
 	}()
 	view, err := knowledgequery.New(ctx, stage.readSnapshot, stage.root, budget)
+	if err != nil {
+		return redact(err)
+	}
+	search, err := knowledgequery.NewSearchCapture(ctx, stage.readSnapshot, stage.root, budget)
 	if err != nil {
 		return redact(err)
 	}
@@ -118,6 +129,6 @@ func captureKnowledgeRead(ctx context.Context, stage *stagedKnowledge, databaseP
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	*result = KnowledgeRead{view: view, finalized: chapters}
+	*result = KnowledgeRead{view: view, search: search, finalized: chapters}
 	return nil
 }

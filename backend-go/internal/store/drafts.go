@@ -269,7 +269,22 @@ func (r *Drafts) UpdateContentIfCurrent(ctx context.Context, id int64, content s
 	if !textBody || !textStatus || !IsWorkingDraftStatus(status) || body != *expectedContent {
 		return ErrDraftContentConflict
 	}
-	if err := rrExclusiveDraftContent(ctx, conn, id, contentID); err != nil { return err }
+	// A committed finalization receipt wins even if a stale or malformed
+	// draft row still advertises a working status. This read shares the
+	// BEGIN IMMEDIATE connection with the CAS and both updates, so another
+	// writer cannot add a receipt between the check and the save.
+	var receipted int
+	err = conn.QueryRowContext(ctx, "SELECT 1 FROM finalization_outbox WHERE draft_id = ? LIMIT 1", id).Scan(&receipted)
+	if err == nil {
+		return ErrDraftContentConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		// An unknown or damaged receipt schema must never authorize a write.
+		return err
+	}
+	if err := rrExclusiveDraftContent(ctx, conn, id, contentID); err != nil {
+		return err
+	}
 	if err := updateOne(ctx, conn, "UPDATE contents SET body = ? WHERE id = ?", content, contentID); err != nil {
 		return err
 	}
