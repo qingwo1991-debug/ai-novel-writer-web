@@ -50,7 +50,7 @@ func TestActualTypeScriptDifferential(t *testing.T) {
  if _,err=db.Exec(`CREATE TABLE import_source_aliases(alias_digest TEXT PRIMARY KEY,alias_kind TEXT NOT NULL,source_id TEXT NOT NULL)`); err!=nil { t.Fatal(err) }
  idMap:=map[string]string{}
  for _,tc:=range fixture.ResolverCases { t.Run("resolver/"+tc.Name,func(t *testing.T){
-  encoded:=make([]EncodedIdentity,0,len(tc.Encoded)); for _,s:=range tc.Encoded { encoded=append(encoded,EncodedIdentity{s.LocationAliasDigest,s.FileAliasDigest}) }
+  encoded:=make([]EncodedIdentity,0,len(tc.Encoded)); for _,s:=range tc.Encoded { encoded=append(encoded,EncodedIdentity{LocationAliasDigest:s.LocationAliasDigest,FileAliasDigest:s.FileAliasDigest}) }
   tx,err:=db.BeginTx(context.Background(),nil); if err!=nil { t.Fatal(err) }
   result,err:=ResolveEncodedSources(context.Background(),tx,encoded,tc.Purpose,key); if err!=nil { _=tx.Rollback(); t.Fatal(err) }; if err=tx.Commit(); err!=nil { t.Fatal(err) }
   if len(result.SourceIDs)!=len(tc.Result.SourceIDs) { t.Fatal("source count") }
