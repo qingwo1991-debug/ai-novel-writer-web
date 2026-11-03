@@ -333,6 +333,9 @@ func copyTree(ctx context.Context, source, target *os.Root, prefix string, depth
 		if err != nil {
 			return err
 		}
+		if before.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+			return ErrInvalid
+		}
 		path := name
 		if prefix != "" {
 			path = prefix + "/" + name
@@ -359,6 +362,18 @@ func copyTree(ctx context.Context, source, target *os.Root, prefix string, depth
 				return err
 			}
 			err = copyTree(ctx, nextSource, nextTarget, path, depth+1, limits, files, bytes)
+			if err == nil {
+				directory, openErr := nextTarget.Open(".")
+				if openErr != nil {
+					err = openErr
+				} else {
+					err = directory.Chmod(before.Mode().Perm())
+					if err == nil {
+						err = directory.Sync()
+					}
+					err = errors.Join(err, directory.Close())
+				}
+			}
 			closeTarget := nextTarget.Close()
 			closeSource := nextSource.Close()
 			if err != nil {
@@ -366,9 +381,6 @@ func copyTree(ctx context.Context, source, target *os.Root, prefix string, depth
 			}
 			if closeTarget != nil || closeSource != nil {
 				return ErrChanged
-			}
-			if err := syncRootChild(target, name); err != nil {
-				return err
 			}
 		case before.Mode().IsRegular() && before.Mode()&os.ModeSymlink == 0:
 			if !oneLink(before) || before.Size() < 0 || before.Size() > limits.MaxBytes-*bytes {
@@ -393,6 +405,9 @@ func copyTree(ctx context.Context, source, target *os.Root, prefix string, depth
 			extraN, extraErr := input.Read(extra[:])
 			if copyErr == nil && (n != before.Size() || extraN != 0 || extraErr != io.EOF) {
 				copyErr = ErrChanged
+			}
+			if copyErr == nil {
+				copyErr = output.Chmod(before.Mode().Perm())
 			}
 			if copyErr == nil {
 				copyErr = output.Sync()
@@ -527,15 +542,6 @@ func sameVersion(a, b fs.FileInfo) bool {
 	return aok && bok && as.Ctim == bs.Ctim && as.Nlink == bs.Nlink
 }
 
-func syncRootChild(root *os.Root, name string) error {
-	dir, err := root.Open(name)
-	if err != nil {
-		return err
-	}
-	err = dir.Sync()
-	return errors.Join(err, dir.Close())
-}
-
 func scan(ctx context.Context, root *os.Root, limits Limits) ([]entry, error) {
 	result := make([]entry, 0)
 	var bytes int64
@@ -559,6 +565,9 @@ func scan(ctx context.Context, root *os.Root, limits Limits) ([]entry, error) {
 			info, err := current.Lstat(name)
 			if err != nil {
 				return err
+			}
+			if info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+				return ErrInvalid
 			}
 			path := name
 			if prefix != "" {
@@ -633,7 +642,7 @@ func sameEntries(a, b []entry) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].path != b[i].path || a[i].size != b[i].size || a[i].hash != b[i].hash || a[i].mode.Type() != b[i].mode.Type() {
+		if a[i].path != b[i].path || a[i].size != b[i].size || a[i].hash != b[i].hash || a[i].mode.Type() != b[i].mode.Type() || a[i].mode.Perm() != b[i].mode.Perm() {
 			return false
 		}
 	}
@@ -731,8 +740,9 @@ func (s *Snapshot) VerifyPrivateCopy(ctx context.Context) error {
 
 // PrivatePath is the private snapshot location. It is suitable for disposable
 // tests and isolated parsing, not for source replacement or restoration.
-// Copied file permissions are normalized to 0600 and directories to 0700;
-// this snapshot is not a publish-ready fidelity copy.
+// Ordinary permission bits are copied exactly inside a private 0700 parent.
+// This snapshot is still not publish-ready: no transaction, journal, or
+// namespace exchange authority is provided.
 func (s *Snapshot) PrivatePath() (string, error) {
 	if s == nil {
 		return "", ErrInvalid

@@ -78,7 +78,10 @@ func testLimits() Limits { return Limits{MaxFiles: 100, MaxBytes: 1 << 20, MaxDe
 
 func TestStageCopiesCompleteStorageAndDeniesPublication(t *testing.T) {
 	f := newFixture(t)
-	if err := os.Chmod(filepath.Join(f.storage, "unknown-author-file.bin"), 0640); err != nil {
+	if err := os.Chmod(filepath.Join(f.storage, "unknown-author-file.bin"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(f.storage, "avatars"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := Stage(context.Background(), f.lock, f.dataRoot, f.library, f.projectPath, f.stageParent, testLimits())
@@ -102,9 +105,19 @@ func TestStageCopiesCompleteStorageAndDeniesPublication(t *testing.T) {
 			t.Fatalf("%s: %q %v", path, got, err)
 		}
 	}
-	mode, err := os.Stat(filepath.Join(stage, "unknown-author-file.bin"))
-	if err != nil || mode.Mode().Perm() != 0600 {
-		t.Fatalf("private permission normalization missing: %v, %v", mode, err)
+	for path, want := range map[string]os.FileMode{
+		"unknown-author-file.bin": 0644,
+		"avatars":                 0755,
+		".":                       0700,
+	} {
+		mode, err := os.Stat(filepath.Join(stage, path))
+		if err != nil || mode.Mode().Perm() != want {
+			t.Fatalf("permission mismatch for %s: %v, %v", path, mode, err)
+		}
+	}
+	parentMode, err := os.Stat(f.stageParent)
+	if err != nil || parentMode.Mode().Perm() != 0700 {
+		t.Fatalf("staging parent became public: %v, %v", parentMode, err)
 	}
 	if err := snapshot.VerifySource(context.Background()); err != nil {
 		t.Fatal(err)
@@ -152,7 +165,7 @@ func TestStageDetectsSourceAndCopyChange(t *testing.T) {
 }
 
 func TestStageRejectsLinkSpecialBudgetAndUntrustedParent(t *testing.T) {
-	for _, kind := range []string{"symlink", "hardlink", "special", "budget", "file-count", "public-stage", "source-stage", "ancestor-alias"} {
+	for _, kind := range []string{"symlink", "hardlink", "special", "setuid", "budget", "file-count", "public-stage", "source-stage", "ancestor-alias"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t)
 			limits := testLimits()
@@ -168,6 +181,10 @@ func TestStageRejectsLinkSpecialBudgetAndUntrustedParent(t *testing.T) {
 				}
 			case "special":
 				if err := syscall.Mkfifo(filepath.Join(f.storage, "pipe"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "setuid":
+				if err := os.Chmod(filepath.Join(f.storage, "unknown-author-file.bin"), os.ModeSetuid|0600); err != nil {
 					t.Fatal(err)
 				}
 			case "budget":

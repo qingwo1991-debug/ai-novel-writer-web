@@ -136,6 +136,24 @@ func (s *syntheticReadOpen) ReadCharactersJSON(ctx context.Context, caller trans
 	return s.lifecycle.ReadCharactersJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
 }
 
+// ReadDraftJSON keeps serialization inside the same admitted private-copy
+// lifecycle and exact cookie/tab/project lease used for project:open.
+func (s *syntheticReadOpen) ReadDraftJSON(ctx context.Context, caller transport.Caller, raw any, operation string, number int64) (json.RawMessage, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	return s.lifecycle.ReadDraftJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, number)
+}
+
 func (s *syntheticReadOpen) Close() error {
 	if s == nil {
 		return nil
