@@ -90,6 +90,19 @@ func PreflightUnderLock(ctx context.Context, config Config, held *writerlock.Loc
 	return preflightReadWithLock(ctx, config, nil, nil, held)
 }
 
+// PreflightUnderLockWithKnowledge performs the same read-only admission while
+// the caller retains the exact legacy gateway lock, and additionally captures
+// the mandatory native knowledge preflight so the caller can prove the exact
+// absence or presence of knowledge assets at admission time. The caller must
+// keep the lock open, exclude non-cooperating writers, and close all database
+// handles before releasing it. This does not grant a write capability.
+func PreflightUnderLockWithKnowledge(ctx context.Context, config Config, held *writerlock.Lock, capture *KnowledgeRead) (Report, error) {
+	if held == nil {
+		return Report{}, writerlock.ErrUnsafe
+	}
+	return preflightReadWithLock(ctx, config, nil, capture, held)
+}
+
 func preflight(ctx context.Context, config Config, afterStage stageHook) (Report, error) {
 	return preflightRead(ctx, config, afterStage, nil)
 }

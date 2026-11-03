@@ -276,6 +276,19 @@ func snapshotPath(path string) (string, error) {
 	return absolute, nil
 }
 
+// ContentIdentityOf hashes the main database and its committed WAL on disk,
+// mirroring snapshotIdentity's checks: the main file must be a real SQLite
+// header, every present member must be a regular single-link file, and the
+// entry must not change while it is being read. It is used to re-prove that an
+// author database opened for writing still matches the admission-time digest.
+func ContentIdentityOf(ctx context.Context, path string) (ContentIdentity, error) {
+	identity, err := snapshotIdentity(ctx, path)
+	if err != nil {
+		return ContentIdentity{}, err
+	}
+	return ContentIdentity{Database: identity.database, WAL: identity.wal}, nil
+}
+
 func snapshotIdentity(ctx context.Context, path string) (physicalIdentity, error) {
 	var identity physicalIdentity
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
