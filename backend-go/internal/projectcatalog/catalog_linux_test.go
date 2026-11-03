@@ -44,6 +44,103 @@ func TestRecoveryFailureRetainsOriginalCause(t *testing.T) {
 	}
 }
 
+func TestKeyForPinnedProjectNeverReissuesOrRevokesReaderKey(t *testing.T) {
+	library, project, path, metadata := fixture(t)
+	blocked := false
+	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {
+		if gotPath != path || gotID != project.ProjectID() {
+			return ErrCatalogInvalid
+		}
+		if blocked {
+			return ErrCatalogRecoveryPending
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key, err := store.KeyForPinnedProject(project); key != "" || !errors.Is(err, ErrCatalogKey) {
+		t.Fatalf("unregistered project received key: %q, %v", key, err)
+	}
+	registered, err := store.Register(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(metadata, fileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		key, err := store.KeyForPinnedProject(project)
+		if err != nil || key != registered.Key {
+			t.Fatalf("pinned key changed: %q, %v", key, err)
+		}
+	}
+	after, err := os.ReadFile(filepath.Join(metadata, fileName))
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("key lookup rewrote recent metadata: %v", err)
+	}
+	blocked = true
+	if key, err := store.KeyForPinnedProject(project); key != "" || !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("unresolved recovery returned key: %q, %v", key, err)
+	}
+	blocked = false
+	if err := store.HoldRecovery(path, project.ProjectID()); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := store.KeyForPinnedProject(project); key != "" || !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("held recovery returned key: %q, %v", key, err)
+	}
+	if store.byPath[path] != registered.Key {
+		t.Fatal("failed lookup revoked healthy key")
+	}
+	if err := store.ReleaseAfterVerifiedRecovery(project); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := store.KeyForPinnedProject(project); key != "" || !errors.Is(err, ErrCatalogKey) {
+		t.Fatalf("revoked key survived verified release: %q, %v", key, err)
+	}
+}
+
+func TestKeyForPinnedProjectRejectsReplacementWithoutRevokingKey(t *testing.T) {
+	library, project, path, metadata := fixture(t)
+	store, err := Open(library, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := store.Register(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path, path+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	storage := filepath.Join(path, projectfs.StorageDirectory)
+	if err := os.MkdirAll(storage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.ManifestName), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.DatabaseName), []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := library.OpenProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if key, err := store.KeyForPinnedProject(project); key != "" || !errors.Is(err, projectfs.ErrChanged) {
+		t.Fatalf("stale project returned key: %q, %v", key, err)
+	}
+	if key, err := store.KeyForPinnedProject(replacement); key != "" || !errors.Is(err, ErrCatalogKey) {
+		t.Fatalf("replacement inherited key: %q, %v", key, err)
+	}
+	if store.byPath[path] != registered.Key {
+		t.Fatal("failed lookup mutated catalog key")
+	}
+}
+
 func TestPromoteVerifiedRecoveryWithBindingPublishesAfterBinder(t *testing.T) {
 	library, project, path, metadata := fixture(t)
 	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {

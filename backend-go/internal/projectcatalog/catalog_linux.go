@@ -462,6 +462,49 @@ func (s *Store) Register(project *projectfs.Project) (Recent, error) {
 	return Recent{Key: key, Name: entry.Name, Path: entry.Path, ProjectID: entry.ProjectID, UpdatedAt: entry.UpdatedAt}, nil
 }
 
+// KeyForPinnedProject returns only an existing process-local key for this
+// exact project. A grant-based opener can use it without Register's durable
+// metadata rewrite and key revocation. A missing or stale key is not repaired
+// here: a separate admission/publisher must establish a new reader and key.
+func (s *Store) KeyForPinnedProject(project *projectfs.Project) (string, error) {
+	if s == nil || project == nil {
+		return "", ErrCatalogInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, projectID, identity := project.Path(), project.ProjectID(), project.Identity()
+	key := s.byPath[path]
+	cap, ok := s.keys[key]
+	if key == "" || !ok || cap.path != path || cap.id != projectID || !cap.identity.Same(identity) {
+		return "", ErrCatalogKey
+	}
+	current := false
+	for _, entry := range s.recent {
+		if entry.Path == path && entry.ProjectID == projectID {
+			current = true
+			break
+		}
+	}
+	if !current {
+		return "", ErrCatalogKey
+	}
+	if err := s.checkRecoveryLocked(path, projectID); err != nil {
+		return "", err
+	}
+	fresh, err := s.library.OpenProject(path)
+	if err != nil {
+		return "", err
+	}
+	if fresh.ProjectID() != projectID || !fresh.Identity().Same(identity) {
+		_ = fresh.Close()
+		return "", projectfs.ErrChanged
+	}
+	if err := fresh.Close(); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
 func (s *Store) revokeLocked(path string) {
 	if key := s.byPath[path]; key != "" {
 		delete(s.keys, key)
