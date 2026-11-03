@@ -194,7 +194,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Match original TypeScript schemas to pinned Go contract
-        run: cmp -- ./contract/recognized-schemas-v7.json "$RUNNER_TEMP/novel-go-contract/recognized-only.json"
+        run: cmp -- ./internal/admission/recognized-schemas-v7.json "$RUNNER_TEMP/novel-go-contract/recognized-only.json"
       - name: Generate original visible and OpenAI synthetic protocol contracts
         run: |
           export GO_VISIBLE_CONTRACT="$RUNNER_TEMP/novel-go-visible/visible-contract.json"

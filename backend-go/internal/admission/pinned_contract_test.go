@@ -10,7 +10,7 @@ import (
 // Actions run 41598056831 (source f3e485a05658dbf031d13e6e76a7b43ef3a9a2b3).
 // CI also compares those bytes with a fresh export on every Go change.
 func TestPinnedRecognizedSchemaContract(t *testing.T) {
-	pinned, err := os.Open("../../contract/recognized-schemas-v7.json")
+	pinned, err := os.Open("recognized-schemas-v7.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,6 +18,17 @@ func TestPinnedRecognizedSchemaContract(t *testing.T) {
 	contract, err := ParseContract(pinned)
 	if err != nil {
 		t.Fatal(err)
+	}
+	embedded, err := PinnedSchemaContract()
+	if err != nil || !reflect.DeepEqual(contract, embedded) {
+		t.Fatalf("embedded contract differs from pinned bytes: %v", err)
+	}
+	if len(embedded) > 0 && len(embedded[0].Fingerprints) > 0 {
+		embedded[0].Fingerprints[0] = "caller-changed"
+		independent, err := PinnedSchemaContract()
+		if err != nil || !reflect.DeepEqual(contract, independent) {
+			t.Fatalf("caller changed embedded schema authority: %v", err)
+		}
 	}
 	if len(contract) != CurrentSchemaVersion+1 {
 		t.Fatalf("pinned contract covers %d versions, want %d", len(contract), CurrentSchemaVersion+1)
