@@ -164,6 +164,19 @@ jobs:
           test -s "$GO_PROJECTCORE_CONTRACT"
           test -s "$GO_SQLITE_CONTRACT"
           test -s "$GO_SECRET_CONTRACT"
+      - name: Generate original global migration receipt fixtures
+        run: |
+          export GO_GLOBAL_MIGRATION_CONTRACT="$RUNNER_TEMP/novel-go-global-migration/contract.json"
+          printf 'GO_GLOBAL_MIGRATION_CONTRACT=%s\n' "$GO_GLOBAL_MIGRATION_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/global-migration-contract.mjs
+          test -s "$GO_GLOBAL_MIGRATION_CONTRACT"
+      - name: Upload original global migration receipt oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-global-migration-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-global-migration/contract.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Extract original recognized schemas for later pinning
         run: |
           node --input-type=module -e '
