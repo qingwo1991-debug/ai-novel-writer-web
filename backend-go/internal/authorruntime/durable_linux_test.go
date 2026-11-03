@@ -142,8 +142,10 @@ func TestDurableRequiresCatalogAndPermission(t *testing.T) {
 	if result, _ := lifecycle.OpenProjectDurable(context.Background(), testOwner(), "no-such-catalog-key", "bad-token"); result.Success || result.Error == "" {
 		t.Fatalf("unregistered key accepted: %+v", result)
 	}
-	if result, _ := lifecycle.OpenProjectDurable(context.Background(), projectsession.Owner{}, "no-such-catalog-key", "token"); result.Success || result.Error == "" {
-		t.Fatalf("invalid owner accepted: %+v", result)
+	// An invalid owner fails before any project is staged; the coordinator
+	// rejects it as a hard error rather than a recoverable open DTO.
+	if _, err := lifecycle.OpenProjectDurable(context.Background(), projectsession.Owner{}, "no-such-catalog-key", "token"); err == nil {
+		t.Fatal("invalid owner accepted")
 	}
 }
 

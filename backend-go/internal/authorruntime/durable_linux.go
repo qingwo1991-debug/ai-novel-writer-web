@@ -260,10 +260,13 @@ func (l *ReadLifecycle) SaveCore(ctx context.Context, owner projectsession.Owner
 	if err := author.core.Update(ctx, patch); err != nil {
 		return nil, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	// The commit changed the database content, so adopt the new committed
+	// content identity before re-proving the handle, otherwise the post-write
+	// verify would treat our own write as a stale replacement.
+	if err := author.permit.Refresh(ctx); err != nil {
 		return nil, err
 	}
-	if err := author.permit.Refresh(ctx); err != nil {
+	if err := author.handle.Verify(ctx); err != nil {
 		return nil, err
 	}
 	return author.core.Get(ctx)
