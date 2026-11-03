@@ -23,11 +23,36 @@ import (
 // Policy and dispatch errors contain fixed symbols only. In particular, native
 // http.Client errors are not exposed: their *url.Error includes the full URL.
 var (
-	ErrPolicyInvalid = errors.New("WEB_ENDPOINT_POLICY_INVALID")
-	ErrNotAllowed = errors.New("WEB_ENDPOINT_NOT_ALLOWED")
+	ErrPolicyInvalid     = errors.New("WEB_ENDPOINT_POLICY_INVALID")
+	ErrNotAllowed        = errors.New("WEB_ENDPOINT_NOT_ALLOWED")
+	ErrBaseURLInvalid    = errors.New("WEB_ENDPOINT_INVALID")
 	ErrRedirectForbidden = errors.New("WEB_ENDPOINT_REDIRECT_FORBIDDEN")
-	ErrRequestFailed = errors.New("WEB_ENDPOINT_REQUEST_FAILED")
+	ErrRequestFailed     = errors.New("WEB_ENDPOINT_REQUEST_FAILED")
 )
+
+// CheckBaseURL validates a saved provider base URL against the same immutable
+// origin policy used by Do. It does no DNS lookup or network request. Dispatch
+// must still pass through Do so resolved request URLs are checked again.
+func (c *Client) CheckBaseURL(value string) error {
+	if c == nil || len(c.origins) == 0 {
+		return ErrPolicyInvalid
+	}
+	if value == "" || strings.ContainsAny(value, "?#") {
+		return ErrBaseURLInvalid
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ErrBaseURLInvalid
+	}
+	origin, ok := normalizeURL(parsed)
+	if !ok {
+		return ErrBaseURLInvalid
+	}
+	if _, admitted := c.origins[origin]; !admitted {
+		return ErrNotAllowed
+	}
+	return nil
+}
 
 // Client owns its immutable policy, native HTTP client, and private transport.
 // Use New; a zero Client fails closed. It is safe for concurrent Do calls, but, as
@@ -35,9 +60,9 @@ var (
 // Request bodies are streams and are not copied. Close closes idle connections,
 // not in-flight requests or response bodies, which remain the caller's property.
 type Client struct {
-	origins map[string]struct{}
+	origins   map[string]struct{}
 	transport *http.Transport
-	native *http.Client
+	native    *http.Client
 }
 
 // New accepts only explicit HTTP(S) origins (an optional root slash is allowed).
@@ -66,16 +91,16 @@ func New(origins []string) (*Client, error) {
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: time.Second,
-		IdleConnTimeout: 90 * time.Second,
-		MaxIdleConns: 100,
-		ForceAttemptHTTP2: true,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		ForceAttemptHTTP2:     true,
 	}
 	client := &Client{origins: allowed, transport: transport}
 	client.native = &http.Client{

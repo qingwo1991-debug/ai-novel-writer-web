@@ -19,6 +19,10 @@ const modelFile = "models.json"
 var ErrModelCorrupt = errors.New("LLM_MODEL_CONFIG_CORRUPT")
 var ErrModelInvalid = errors.New("LLM_MODEL_INVALID")
 var ErrCredentialEndpointChanged = errors.New("CREDENTIAL_ENDPOINT_CHANGED")
+var ErrModelReferenced = errors.New("LLM_MODEL_REFERENCED")
+var ErrModelNotFound = errors.New("LLM_MODEL_NOT_FOUND")
+var ErrModelDeleteConfigCorrupt = errors.New("LLM_GLOBAL_CONFIG_CORRUPT")
+var ErrModelDeleteConfigChanged = errors.New("LLM_GLOBAL_CONFIG_CHANGED")
 
 // ModelRecord is a private persisted profile. apiKey is plaintext in the
 // original models.json; callers must keep records inside the server and use the
@@ -180,6 +184,95 @@ func (s *Service) SaveModel(candidate ModelRecord) error {
 		}
 		return writeModels(fd, encoded)
 	})
+}
+
+// DeleteUnreferencedModel removes only a model with no references anywhere in
+// the private global config. A referenced model requires a journaled cross-file
+// transaction before it can be deleted safely; this method deliberately does
+// not implement the public llm:delete-model operation. The recursive check is
+// conservative about unknown future config fields so a new reference cannot
+// silently become dangling. Caller admission and exclusion of legacy writers
+// remain the responsibility of the trusted runtime.
+func (s *Service) DeleteUnreferencedModel(id string) error {
+	if id == "" || len(id) > 512 || strings.ContainsRune(id, 0) {
+		return ErrModelInvalid
+	}
+	return s.locked(func(fd int) error {
+		models, err := readModels(fd)
+		if err != nil {
+			return err
+		}
+		index := -1
+		for i, model := range models {
+			if model["id"] == id {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			return ErrModelNotFound
+		}
+		configBefore, missing, err := readConfig(fd)
+		if err != nil {
+			return err
+		}
+		if !missing {
+			var value any
+			value, err = decode(configBefore)
+			if err != nil {
+				return ErrModelDeleteConfigCorrupt
+			}
+			if _, ok := value.(map[string]any); !ok {
+				return ErrModelDeleteConfigCorrupt
+			}
+			if referencesModel(value, id) {
+				return ErrModelReferenced
+			}
+		}
+		// Recheck the whole config document immediately before replacing models.
+		// The root flock excludes other Go services; this also detects accidental
+		// writes from a process that does not participate in that flock.
+		configNow, missingNow, err := readConfig(fd)
+		if err != nil {
+			return err
+		}
+		if missing != missingNow || !bytes.Equal(configBefore, configNow) {
+			return ErrModelDeleteConfigChanged
+		}
+		next := append(append([]ModelRecord(nil), models[:index]...), models[index+1:]...)
+		var output bytes.Buffer
+		encoder := json.NewEncoder(&output)
+		encoder.SetEscapeHTML(false)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(next); err != nil {
+			return ErrModelInvalid
+		}
+		encoded := bytes.TrimSuffix(output.Bytes(), []byte("\n"))
+		if len(encoded) > MaxConfigBytes {
+			return ErrTooLarge
+		}
+		return writeModels(fd, encoded)
+	})
+}
+
+func referencesModel(value any, id string) bool {
+	switch current := value.(type) {
+	case string:
+		return current == id
+	case map[string]any:
+		for _, child := range current {
+			if referencesModel(child, id) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range current {
+			if referencesModel(child, id) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func writeModels(fd int, data []byte) error {
