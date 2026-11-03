@@ -109,6 +109,12 @@ type JournalRecovery struct {
 	EditedDraftID       int64
 	EditedOperationHash string
 	EditedProofHash     string
+	// These observations are populated only for a fully verified SWITCHED
+	// classification. The visible source tree is the former private stage.
+	// A PREPARED marker or switched marker alone never supplies these facts.
+	VerifiedNewSourceTreeHash string
+	NewSourceDevice           uint64
+	NewSourceInode            uint64
 }
 
 func validJournalName(name string) bool {
@@ -373,6 +379,11 @@ func RecoverExchangeJournal(ctx context.Context, held *writerlock.Lock, dataRoot
 	if stageParent == storagePath || childOf(storagePath, stageParent) || childOf(stageParent, storagePath) {
 		return zero, ErrJournalInvalid
 	}
+	projectRoot, projectRootInfo, err := openPinnedDirectory(projectPath, nil)
+	if err != nil {
+		return zero, ErrJournalInvalid
+	}
+	defer projectRoot.Close()
 	parentInfo, err := privateDirectory(stageParent)
 	if err != nil {
 		return zero, ErrJournalInvalid
@@ -441,13 +452,96 @@ func RecoverExchangeJournal(ctx context.Context, held *writerlock.Lock, dataRoot
 		case switched && !marked:
 			result.Class = JournalSwitchedUnconfirmed
 		case switched && marked:
+			// A classification observed during the first scans is not enough to
+			// expose recovery readback facts. Revisit the pinned journal, its
+			// pathname, and both complete trees immediately before returning.
+			finalID, finalHash, verifyErr := recheckSwitchedRecovery(ctx, held, root, pinnedInfo, projectRootInfo, prepared, name, raw, markerRaw)
+			if verifyErr != nil {
+				return zero, verifyErr
+			}
 			result.Class = JournalSwitched
+			result.VerifiedNewSourceTreeHash = finalHash
+			result.NewSourceDevice = finalID.Device
+			result.NewSourceInode = finalID.Number
 		}
 	}
 	if err := held.VerifyLegacy(dataRoot); err != nil {
 		return zero, err
 	}
 	return result, nil
+}
+
+func recheckSwitchedRecovery(ctx context.Context, held *writerlock.Lock, root *os.Root, pinnedParent, pinnedProject fs.FileInfo,
+	prepared journalPrepared, name string, preparedRaw, markerRaw []byte) (journalInode, string, error) {
+	var zero journalInode
+	if ctx == nil || held == nil || root == nil || pinnedParent == nil || pinnedProject == nil || len(preparedRaw) == 0 || len(markerRaw) == 0 {
+		return zero, "", ErrJournalInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, "", err
+	}
+	if err := held.VerifyLegacy(prepared.DataRoot); err != nil {
+		return zero, "", err
+	}
+	parentNow, err := privateDirectory(prepared.StageParent)
+	if err != nil || !os.SameFile(parentNow, pinnedParent) {
+		return zero, "", ErrChanged
+	}
+	if !samePinnedJournalProject(prepared.ProjectPath, pinnedProject) {
+		return zero, "", ErrChanged
+	}
+	currentPrepared, err := readJournalFile(root, name)
+	if err != nil || !bytes.Equal(currentPrepared, preparedRaw) {
+		return zero, "", ErrChanged
+	}
+	currentMarker, err := readJournalFile(root, name+".switched")
+	if err != nil || !bytes.Equal(currentMarker, markerRaw) {
+		return zero, "", ErrChanged
+	}
+	limits := Limits{MaxFiles: prepared.MaxFiles, MaxBytes: prepared.MaxBytes, MaxDepth: prepared.MaxDepth}
+	sourcePath := filepath.Join(prepared.ProjectPath, projectfs.StorageDirectory)
+	stagePath := filepath.Join(prepared.StageParent, prepared.StageName)
+	sourceID, sourceHash, sourceErr := inspectJournalTree(ctx, sourcePath, limits)
+	stageID, stageHash, stageErr := inspectJournalTree(ctx, stagePath, limits)
+	if sourceErr != nil || stageErr != nil || sourceID != prepared.Stage || stageID != prepared.Source ||
+		sourceHash != prepared.StageTreeHash || stageHash != prepared.SourceTreeHash {
+		if err := ctx.Err(); err != nil {
+			return zero, "", err
+		}
+		return zero, "", ErrChanged
+	}
+	// The second scans use pinned directory handles. Check that their public
+	// paths, the stage parent path, and both marker bytes still name those
+	// observations after the scans complete.
+	parentFinal, parentErr := privateDirectory(prepared.StageParent)
+	sourceFinal, sourcePathErr := os.Lstat(sourcePath)
+	stageFinal, stagePathErr := os.Lstat(stagePath)
+	sourceFinalID, sourceOK := inodeOf(sourceFinal)
+	stageFinalID, stageOK := inodeOf(stageFinal)
+	finalPrepared, preparedErr := readJournalFile(root, name)
+	finalMarker, markerErr := readJournalFile(root, name+".switched")
+	if parentErr != nil || !os.SameFile(parentFinal, pinnedParent) ||
+		!samePinnedJournalProject(prepared.ProjectPath, pinnedProject) || sourcePathErr != nil || stagePathErr != nil ||
+		!sourceOK || !stageOK || sourceFinalID != sourceID || stageFinalID != stageID ||
+		preparedErr != nil || markerErr != nil || !bytes.Equal(finalPrepared, preparedRaw) || !bytes.Equal(finalMarker, markerRaw) {
+		return zero, "", ErrChanged
+	}
+	if err := held.VerifyLegacy(prepared.DataRoot); err != nil {
+		return zero, "", err
+	}
+	return sourceID, sourceHash, nil
+}
+
+func samePinnedJournalProject(path string, pinned fs.FileInfo) bool {
+	if pinned == nil {
+		return false
+	}
+	root, info, err := openPinnedDirectory(path, nil)
+	if err != nil {
+		return false
+	}
+	closeErr := root.Close()
+	return closeErr == nil && os.SameFile(info, pinned)
 }
 
 // MarkSwitched durably records an observed switch after a future exchange.

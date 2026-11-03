@@ -73,6 +73,9 @@ func TestExchangeJournalPreparedAndSwitchedAreOnlyClassifications(t *testing.T) 
 	if err != nil || recovery.Class != JournalPrepared || !recovery.PreparedMarked || recovery.SwitchedMarked {
 		t.Fatalf("unexpected PREPARED observation: %+v %v", recovery, err)
 	}
+	if recovery.VerifiedNewSourceTreeHash != "" || recovery.NewSourceDevice != 0 || recovery.NewSourceInode != 0 {
+		t.Fatalf("PREPARED exposed unverified switched source facts: %+v", recovery)
+	}
 	if err := journal.MarkSwitched(ctx); !errors.Is(err, ErrChanged) {
 		t.Fatalf("SWITCHED marker accepted before any exchange: %v", err)
 	}
@@ -100,12 +103,57 @@ func TestExchangeJournalPreparedAndSwitchedAreOnlyClassifications(t *testing.T) 
 	if err != nil || recovery.Class != JournalSwitchedUnconfirmed || recovery.SwitchedMarked {
 		t.Fatalf("switched but unmarked state misclassified: %+v %v", recovery, err)
 	}
+	if recovery.VerifiedNewSourceTreeHash != "" || recovery.NewSourceDevice != 0 || recovery.NewSourceInode != 0 {
+		t.Fatalf("unconfirmed exchange exposed switched source facts: %+v", recovery)
+	}
 	if err := journal.MarkSwitched(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recovery, err = RecoverExchangeJournal(ctx, f.lock, f.dataRoot, snapshot.projectID, f.projectPath, f.stageParent, journal.Name())
 	if err != nil || recovery.Class != JournalSwitched || !recovery.SwitchedMarked {
 		t.Fatalf("SWITCHED state misclassified: %+v %v", recovery, err)
+	}
+	if recovery.VerifiedNewSourceTreeHash != journal.prepared.StageTreeHash ||
+		recovery.NewSourceDevice != journal.prepared.Stage.Device ||
+		recovery.NewSourceInode != journal.prepared.Stage.Number {
+		t.Fatalf("SWITCHED omitted verified new-source facts: %+v", recovery)
+	}
+	preparedRaw, err := readJournalFile(journal.root, journal.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerRaw, err := readJournalFile(journal.root, journal.Name()+".switched")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detachedParent := f.stageParent + "-detached"
+	if err := os.Rename(f.stageParent, detachedParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.stageParent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := recheckSwitchedRecovery(ctx, f.lock, journal.root, snapshot.parentInfo, snapshot.projectRootInfo,
+		journal.prepared, journal.Name(), preparedRaw, markerRaw); !errors.Is(err, ErrChanged) {
+		t.Fatalf("replaced stage-parent path passed final recheck: %v", err)
+	}
+	if err := os.Remove(f.stageParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(detachedParent, f.stageParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.storage, "changed-after-switch.bin"), []byte("invalidates digest"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := recheckSwitchedRecovery(ctx, f.lock, journal.root, snapshot.parentInfo, snapshot.projectRootInfo,
+		journal.prepared, journal.Name(), preparedRaw, markerRaw); !errors.Is(err, ErrChanged) {
+		t.Fatalf("changed new-source tree passed final recheck: %v", err)
+	}
+	recovery, err = RecoverExchangeJournal(ctx, f.lock, f.dataRoot, snapshot.projectID, f.projectPath, f.stageParent, journal.Name())
+	if err != nil || recovery.Class != JournalUnknown || recovery.VerifiedNewSourceTreeHash != "" ||
+		recovery.NewSourceDevice != 0 || recovery.NewSourceInode != 0 {
+		t.Fatalf("changed SWITCHED source retained verified facts: %+v %v", recovery, err)
 	}
 	if err := snapshot.parent.Close(); err != nil {
 		t.Fatal(err)
@@ -163,6 +211,9 @@ func TestExchangeJournalChangedOrTamperedStateNeverRestores(t *testing.T) {
 			}
 			if err != nil || recovery.Class != JournalUnknown {
 				t.Fatalf("uncertain state misclassified: %+v %v", recovery, err)
+			}
+			if recovery.VerifiedNewSourceTreeHash != "" || recovery.NewSourceDevice != 0 || recovery.NewSourceInode != 0 {
+				t.Fatalf("uncertain state exposed switched source facts: %+v", recovery)
 			}
 		})
 	}
