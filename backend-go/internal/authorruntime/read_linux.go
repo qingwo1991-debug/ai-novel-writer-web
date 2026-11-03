@@ -77,6 +77,18 @@ func OpenReadOnlyUnderLock(ctx context.Context, held *writerlock.Lock, catalog *
 	return openReadOnlyWithLock(ctx, catalog, key, config, held, false)
 }
 
+// openReadOnlyPinnedProjectUnderLock admits a caller-owned, already pinned
+// project without issuing a catalog key. It is for recovery readback while the
+// catalog is still fenced by an unresolved exchange journal. Ownership of
+// project transfers on call, including when admission fails. This reader must
+// be closed before recovery clearance or the held legacy lock is released.
+func openReadOnlyPinnedProjectUnderLock(ctx context.Context, held *writerlock.Lock, project *projectfs.Project, config projectaccess.Config) (*Reader, error) {
+	if held == nil || project == nil {
+		return nil, ErrInvalid
+	}
+	return openReadOnlyPinnedProject(ctx, nil, "", config, held, false, project)
+}
+
 func openReadOnlyWithLock(ctx context.Context, catalog *projectcatalog.Store, key string, config projectaccess.Config, lock *writerlock.Lock, ownsLock bool) (reader *Reader, err error) {
 	if ctx == nil || catalog == nil || key == "" || config.DataRoot == "" {
 		return nil, ErrInvalid
@@ -93,13 +105,23 @@ func openReadOnlyWithLock(ctx context.Context, catalog *projectcatalog.Store, ke
 	if err != nil {
 		return nil, err
 	}
+	return openReadOnlyPinnedProject(ctx, catalog, key, config, lock, ownsLock, project)
+}
+
+func openReadOnlyPinnedProject(ctx context.Context, catalog *projectcatalog.Store, key string, config projectaccess.Config, lock *writerlock.Lock, ownsLock bool, project *projectfs.Project) (reader *Reader, err error) {
+	if project == nil {
+		return nil, ErrInvalid
+	}
 	defer func() {
 		if err != nil {
 			_ = project.Close()
 		}
 	}()
-	if project.Path() != config.ProjectPath {
+	if ctx == nil || lock == nil || project.Path() != config.ProjectPath || filepath.Dir(project.Path()) != config.LibraryRoot {
 		return nil, ErrInvalid
+	}
+	if err := lock.VerifyLegacy(config.DataRoot); err != nil {
+		return nil, err
 	}
 	report, err := projectaccess.PreflightUnderLock(ctx, config, lock)
 	if err != nil {
@@ -207,14 +229,16 @@ func (reader *Reader) verifyLocked(ctx context.Context) error {
 	if err := reader.lock.VerifyLegacy(reader.dataRoot); err != nil {
 		return err
 	}
-	current, err := reader.catalog.Resolve(reader.key)
-	if err != nil {
-		return ErrChanged
-	}
-	identity := current.Identity().Same(reader.project.Identity()) && current.ProjectID() == reader.report.ProjectID
-	closeErr := current.Close()
-	if !identity || closeErr != nil {
-		return ErrChanged
+	if reader.catalog != nil {
+		current, err := reader.catalog.Resolve(reader.key)
+		if err != nil {
+			return ErrChanged
+		}
+		identity := current.Identity().Same(reader.project.Identity()) && current.ProjectID() == reader.report.ProjectID
+		closeErr := current.Close()
+		if !identity || closeErr != nil {
+			return ErrChanged
+		}
 	}
 	if err := reader.project.VerifyNoPortableAuthority(ctx); err != nil {
 		return ErrChanged
