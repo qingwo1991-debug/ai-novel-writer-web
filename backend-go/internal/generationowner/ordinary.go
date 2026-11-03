@@ -86,8 +86,11 @@ func verifyOrdinaryRun(result any, frozen *Frozen) error {
 }
 
 type OrdinaryCallbacks struct {
-	OnSnapshot  func(generation.Snapshot)
-	OnReasoning func(generation.ReasoningEvent)
+	OnSnapshot       func(generation.Snapshot)
+	OnReasoning      func(generation.ReasoningEvent)
+	// ValidateRecovery authorizes generation:resume. When nil the service
+	// remains default-deny, so a durable lane that wants resume must supply it.
+	ValidateRecovery func(context.Context, map[string]any, map[string]any) (bool, error)
 }
 
 // NewOrdinaryService always installs the owner's native dispatch. The caller
@@ -98,6 +101,7 @@ func (e *Executor) NewOrdinaryService(ledger generation.Ledger, callbacks Ordina
 	}
 	return &OrdinaryService{executor: e, service: generation.New(generation.Dependencies{
 		Ledger: ordinaryLedger{inner: ledger}, Dispatch: e.Dispatch, OnSnapshot: callbacks.OnSnapshot, OnReasoning: callbacks.OnReasoning,
+		ValidateRecovery: callbacks.ValidateRecovery,
 	})}, nil
 }
 
@@ -158,4 +162,52 @@ func (s *OrdinaryService) SuspendForProjectClose(ctx context.Context) ([]map[str
 		return nil, failure("MODEL_EXECUTION_CONFIG_REQUIRED")
 	}
 	return s.service.SuspendForProjectClose(ctx)
+}
+
+// The accessors below expose the ordinary service to the durable generation
+// lane (slice S1). They are deliberately thin: no caller-supplied root, run or
+// attempt identity is ever accepted; the embedding owner still owns admission,
+// binding verification and the whole-call lease.
+
+// Pause parks an admitted root's active dispatch without cancelling it.
+func (s *OrdinaryService) Pause(ctx context.Context, rootID string) (map[string]any, error) {
+	if s == nil || s.service == nil {
+		return nil, failure("MODEL_EXECUTION_CONFIG_REQUIRED")
+	}
+	return s.service.Pause(ctx, rootID)
+}
+
+// Cancel stops an admitted root and marks it cancelled.
+func (s *OrdinaryService) Cancel(ctx context.Context, rootID string) (map[string]any, error) {
+	if s == nil || s.service == nil {
+		return nil, failure("MODEL_EXECUTION_CONFIG_REQUIRED")
+	}
+	return s.service.Cancel(ctx, rootID)
+}
+
+// Resume continues a paused admitted run with the owner-rebuilt next binding.
+// Default-deny without a ValidateRecovery callback on this service.
+func (s *OrdinaryService) Resume(ctx context.Context, runID string, next json.RawMessage) (map[string]any, error) {
+	if s == nil || s.service == nil {
+		return nil, failure("MODEL_EXECUTION_CONFIG_REQUIRED")
+	}
+	return s.service.Resume(ctx, runID, next)
+}
+
+// DiscardCandidate acknowledges one admitted candidate artifact, including its
+// retained in-memory tail.
+func (s *OrdinaryService) DiscardCandidate(ctx context.Context, artifactID string) (map[string]any, error) {
+	if s == nil || s.service == nil {
+		return nil, failure("MODEL_EXECUTION_CONFIG_REQUIRED")
+	}
+	return s.service.DiscardCandidate(ctx, artifactID)
+}
+
+// ReadUnsavedTails reports retained candidate tails that a refused project
+// close could not flush; the view projection filters them by attempt identity.
+func (s *OrdinaryService) ReadUnsavedTails() []generation.UnsavedTail {
+	if s == nil || s.service == nil {
+		return nil
+	}
+	return s.service.ReadUnsavedTails()
 }

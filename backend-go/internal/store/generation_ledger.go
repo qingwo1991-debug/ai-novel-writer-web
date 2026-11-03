@@ -304,6 +304,61 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	return result, nil
 }
 
+// ListRuns returns identity+status summaries for every generation run recorded
+// in this captured project database, newest first. It is strictly read-only and
+// never normalizes or rewrites stored bindings. Runs whose binding cannot be
+// parsed or whose projectId differs from the requested project are skipped,
+// exactly like the original run-summary projection, so a shared database can
+// never leak another project's runs.
+func (g *GenerationLedger) ListRuns(ctx context.Context, projectID string) ([]map[string]any, error) {
+	if g == nil || g.db == nil {
+		return nil, glError("GENERATION_DATABASE_NOT_READY")
+	}
+	conn, err := g.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.ExecContext(cleanup, "ROLLBACK"); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	rows, err := rrMaps(ctx, conn, "SELECT run_id,root_action_id,binding_json,status FROM generation_runs ORDER BY rowid DESC")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		binding, err := glStored(row["binding_json"])
+		if err != nil || glText(binding["projectId"]) != projectID {
+			continue
+		}
+		summary := map[string]any{
+			"projectId":    binding["projectId"],
+			"epoch":        binding["epoch"],
+			"rootActionId": row["root_action_id"],
+			"runId":        row["run_id"],
+			"status":       row["status"],
+		}
+		if operation := glText(glMap(binding["sourceManifest"])["operation"]); operation != "" {
+			summary["operation"] = operation
+		}
+		out = append(out, summary)
+	}
+	committed = true
+	return out, nil
+}
+
 func (g *GenerationLedger) get(ctx context.Context, conn *sql.Conn, runID string) (map[string]any, error) {
 	row, err := glOne(ctx, conn, "SELECT * FROM generation_runs WHERE run_id=?", "GENERATION_RUN_MISSING", runID)
 	if err != nil {

@@ -3,12 +3,32 @@ package generationowner
 import (
  "context"
  "net/http"
+ "unicode/utf8"
 
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/llm"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/secrets"
 )
+
+// CredentialStorage is the credential seam Executor resolves through at the
+// network boundary. *secrets.Storage satisfies it for the AES-GCM lane; the
+// plaintext models.json apiKey field is served by PlaintextCredential. The key
+// is never serialized: Profile.EncryptedCredential is json:"-" everywhere.
+type CredentialStorage interface {
+ DecryptString([]byte) (string, error)
+}
+
+// PlaintextCredential adapts the legacy plaintext models.json apiKey field to
+// the credential seam. Documented shim for the durable generation lane; it
+// never logs, stores, or serializes the key beyond the transient llm.Model.
+type PlaintextCredential struct{}
+
+func (PlaintextCredential) DecryptString(value []byte) (string, error) {
+ if !utf8.Valid(value) {
+  return "", failure("MODEL_CREDENTIAL_UNAVAILABLE")
+ }
+ return string(value), nil
+}
 
 // Executor has no ambient network, secret key, settings, or project authority.
 // SecretStorage and Egress come from explicit administrator configuration.
@@ -17,7 +37,10 @@ import (
 // The gate serializes settings/project invalidation with request start through
 // response headers; body streaming runs unlocked. Active-call cancellation on
 // project close remains the embedding durable generation service's job.
-type Executor struct { Registry *Registry; SecretStorage *secrets.Storage; Egress *egress.Client }
+// DispatchFunc is a synthetic test seam only: when set it replaces the whole
+// native dispatch (authority checks, credential resolution and egress HTTP);
+// production lanes leave it nil so egress remains the sole network client.
+type Executor struct { Registry *Registry; SecretStorage CredentialStorage; Egress *egress.Client; DispatchFunc generation.Dispatch }
 
 // Frozen cannot be created or edited by RPC. Projections are detached copies.
 type Frozen struct {
@@ -40,7 +63,9 @@ func (e *Executor) Prepare(ctx context.Context,scope Scope,leaseID string,task T
 // REQUIRED shared revision/project gate. Exact-origin egress is the sole client.
 // reserve/mark/settle/write belong to the existing durable generation service.
 func (e *Executor) Dispatch(ctx context.Context,request any,callbacks generation.Callbacks)(generation.DispatchResult,error){
- frozen,ok:=request.(*Frozen);if !ok||frozen==nil||e==nil||e.Registry==nil||frozen.registry!=e.Registry{return generation.DispatchResult{},failure("GENERATION_DISPATCH_AUTHORITY_INVALID")};if e.Registry.options.AuthorityLock==nil||e.Egress==nil||e.SecretStorage==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
+ if e==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
+ if e.DispatchFunc!=nil{return e.DispatchFunc(ctx,request,callbacks)}
+ frozen,ok:=request.(*Frozen);if !ok||frozen==nil||e.Registry==nil||frozen.registry!=e.Registry{return generation.DispatchResult{},failure("GENERATION_DISPATCH_AUTHORITY_INVALID")};if e.Registry.options.AuthorityLock==nil||e.Egress==nil||e.SecretStorage==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
  dispatch:=func(req *http.Request)(*http.Response,error){
   unlock,err:=e.Registry.options.AuthorityLock(ctx,frozen.scope);if err!=nil||unlock==nil{return nil,failure("GENERATION_EPOCH_STALE")};defer unlock()
   checked,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return nil,err};if frozen.binding!=nil{if err:=frozen.binding.validate(ctx);err!=nil{return nil,err}}
