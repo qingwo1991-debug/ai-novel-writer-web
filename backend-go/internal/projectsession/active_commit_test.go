@@ -23,13 +23,13 @@ func TestCommitDrainedInstallsFreshLeaseAndRejectsOpenDuringAction(t *testing.T)
 	wrong := old.identity
 	wrong.LeaseID = "wrong"
 	called := false
-	if _, err := active.CommitDrained(context.Background(), owner, wrong, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	if _, err := active.CommitDrained(context.Background(), owner, wrong, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		called = true
 		return nil, nil, nil
 	}); !errors.Is(err, novelruntime.ErrNotOwned) || called || old.closed.Load() != 0 {
 		t.Fatalf("wrong lease entered commit: %v", err)
 	}
-	if _, err := active.CommitDrained(context.Background(), owner, old.identity, "wrong-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	if _, err := active.CommitDrained(context.Background(), owner, old.identity, "wrong-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		called = true
 		return nil, nil, nil
 	}); !errors.Is(err, novelruntime.ErrNotOwned) || called || old.closed.Load() != 0 {
@@ -37,8 +37,33 @@ func TestCommitDrainedInstallsFreshLeaseAndRejectsOpenDuringAction(t *testing.T)
 	}
 	newHandle := admitted("project", "/trusted/project")
 	newHandle.identity.LeaseID = "fresh-lease"
-	got, err := active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(ctx context.Context, held *writerlock.Lock) (Admitted, CommitClearance, error) {
+	var retainedFence *PublishFence
+	got, err := active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(ctx context.Context, held *writerlock.Lock, fence *PublishFence) (Admitted, CommitClearance, error) {
 		called = true
+		retainedFence = fence
+		if err := fence.VerifyCommit(ctx, held, owner, old.identity, "old-key"); err != nil {
+			return nil, nil, errors.Join(errors.New("commit fence invalid during action"), err)
+		}
+		fake := &PublishFence{coordinator: active, owner: owner, expected: old.identity, key: "old-key", generation: fence.generation}
+		fake.active.Store(true)
+		if err := fake.VerifyCommit(ctx, held, owner, old.identity, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return nil, nil, errors.New("synthetic fence accepted")
+		}
+		if err := fence.VerifyCommit(ctx, nil, owner, old.identity, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return nil, nil, errors.New("wrong lock accepted")
+		}
+		if err := fence.VerifyCommit(ctx, held, owner, old.identity, "wrong-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return nil, nil, errors.New("wrong catalog key accepted")
+		}
+		wrongOwner := Owner{SessionID: owner.SessionID, ClientID: "other-tab"}
+		if err := fence.VerifyCommit(ctx, held, wrongOwner, old.identity, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return nil, nil, errors.New("wrong owner accepted")
+		}
+		wrongLease := old.identity
+		wrongLease.LeaseID = "wrong"
+		if err := fence.VerifyCommit(ctx, held, owner, wrongLease, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return nil, nil, errors.New("wrong lease accepted")
+		}
 		if err := held.VerifyLegacy(active.root); err != nil || old.closed.Load() != 1 {
 			return nil, nil, errors.Join(errors.New("old handle not drained"), err)
 		}
@@ -55,6 +80,9 @@ func TestCommitDrainedInstallsFreshLeaseAndRejectsOpenDuringAction(t *testing.T)
 			return nil, nil, errors.New("Open changed generation during irreversible action")
 		}
 		return newHandle, func(context.Context, Admitted) (string, error) {
+			if err := fence.VerifyCommit(context.Background(), held, owner, old.identity, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+				return "", errors.New("commit fence survived action return")
+			}
 			active.mu.Lock()
 			installedAndFenced := active.slots[owner.key()].handle == newHandle && active.slots[owner.key()].switching && active.slots[owner.key()].committing
 			active.mu.Unlock()
@@ -66,6 +94,9 @@ func TestCommitDrainedInstallsFreshLeaseAndRejectsOpenDuringAction(t *testing.T)
 	})
 	if err != nil || !called || !sameContext(got, newHandle.identity) {
 		t.Fatalf("commit did not install fresh lease: %+v %v", got, err)
+	}
+	if err := retainedFence.VerifyCommit(context.Background(), active.lock, owner, old.identity, "old-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+		t.Fatalf("retained commit fence remained valid after action: %v", err)
 	}
 	if _, done, err := active.Begin(context.Background(), owner, old.identity); !errors.Is(err, novelruntime.ErrNotOwned) {
 		if done != nil {
@@ -94,7 +125,7 @@ func TestCommitDrainedQueuedOpenAbortsBeforeAction(t *testing.T) {
 	called := false
 	commitResult := make(chan error, 1)
 	go func() {
-		_, err := active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+		_, err := active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 			called = true
 			return nil, nil, nil
 		})
@@ -159,7 +190,7 @@ func TestCommitDrainedActionErrorPoisonsWithoutReleasingLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("marker write uncertain")
-	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		return nil, nil, failure
 	})
 	if !errors.Is(err, ErrCommitOutcomeUnknown) || !errors.Is(err, failure) || old.closed.Load() != 1 {
@@ -193,7 +224,7 @@ func TestCommitDrainedRejectsReusedLeaseAfterAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	reused := admitted("project", "/trusted/project")
-	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		return reused, func(context.Context, Admitted) (string, error) { return "new-key", nil }, nil
 	})
 	if !errors.Is(err, ErrCommitOutcomeUnknown) || reused.closed.Load() != 1 {
@@ -226,7 +257,7 @@ func TestCommitDrainedClearanceFailureRemovesInstalledCandidate(t *testing.T) {
 	candidate := admitted("project", "/trusted/project")
 	candidate.identity.LeaseID = "fresh-lease"
 	failure := errors.New("catalog clearance uncertain")
-	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	_, err = active.CommitDrained(context.Background(), owner, old.identity, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		return candidate, func(ctx context.Context, handle Admitted) (string, error) {
 			active.mu.Lock()
 			state := active.slots[owner.key()]
@@ -269,7 +300,7 @@ func TestCommitDrainedCancellationAfterClearanceIsCommitted(t *testing.T) {
 	candidate.identity.LeaseID = "fresh-lease"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	got, err := active.CommitDrained(ctx, owner, old.identity, "old-key", func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error) {
+	got, err := active.CommitDrained(ctx, owner, old.identity, "old-key", func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error) {
 		return candidate, func(context.Context, Admitted) (string, error) {
 			cancel()
 			return "new-key", nil

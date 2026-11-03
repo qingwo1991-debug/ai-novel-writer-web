@@ -3,6 +3,7 @@ package projectsession
 import (
 	"context"
 	"errors"
+	"sync"
 
 	novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
@@ -10,6 +11,69 @@ import (
 
 var ErrCommitInProgress = errors.New("PROJECT_COMMIT_IN_PROGRESS")
 var ErrCommitOutcomeUnknown = errors.New("PROJECT_COMMIT_OUTCOME_UNKNOWN")
+
+type commitFenceBinding struct {
+	coordinator *ActiveCoordinator
+	held        *writerlock.Lock
+	owner       Owner
+	expected    Context
+	key         string
+	generation  uint64
+	targets     map[*activeSlot]struct{}
+}
+
+// Pointer registration distinguishes a coordinator-issued commit fence from
+// a copied or synthetic PublishFence, including one made inside this package.
+var commitFences sync.Map // map[*PublishFence]*commitFenceBinding
+
+// VerifyCommit proves this exact action still owns the drained project and
+// continuously held legacy lock. A fence expires as soon as CommitAction
+// returns. The older PublishFence.Verify is only a read-only publication check.
+func (f *PublishFence) VerifyCommit(ctx context.Context, held *writerlock.Lock, owner Owner, expected Context, oldKey string) error {
+	if f == nil || ctx == nil || held == nil || !owner.valid() || oldKey == "" {
+		return novelruntime.ErrNotOwned
+	}
+	entry, ok := commitFences.Load(f)
+	if !ok {
+		return novelruntime.ErrNotOwned
+	}
+	binding, ok := entry.(*commitFenceBinding)
+	if !ok || binding == nil || !f.active.Load() || f.coordinator != binding.coordinator ||
+		f.owner != binding.owner || !sameContext(f.expected, binding.expected) ||
+		f.key != binding.key || f.generation != binding.generation ||
+		held != binding.held || binding.coordinator.lock != held ||
+		owner != binding.owner || !sameContext(expected, binding.expected) || oldKey != binding.key {
+		return novelruntime.ErrNotOwned
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c := binding.coordinator
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !f.active.Load() || c.closed {
+		return ErrActiveClosed
+	}
+	state := c.slots[owner.key()]
+	if state == nil || state.latest != binding.generation || state.admittedGeneration != binding.generation {
+		return ErrStaleOpen
+	}
+	for target := range binding.targets {
+		if !target.committing || !target.switching || target.handle != nil || target.key != "" ||
+			target.latest != target.admittedGeneration {
+			return novelruntime.ErrBusy
+		}
+	}
+	if _, included := binding.targets[state]; !included {
+		return novelruntime.ErrNotOwned
+	}
+	for _, other := range c.slots {
+		if other.handle != nil && other.handle.Context().ProjectPath == expected.ProjectPath {
+			return novelruntime.ErrBusy
+		}
+	}
+	return held.VerifyLegacy(c.root)
+}
 
 // CommitClearance is trusted authorruntime-only finalization. It may release
 // the catalog recovery hold and issue a real key only after the candidate is
@@ -26,7 +90,7 @@ type CommitClearance func(context.Context, Admitted) (string, error)
 // that it does not return. These callbacks are not compile-time sealed
 // publication authority; transport must never receive the held lock or call
 // CommitDrained.
-type CommitAction func(context.Context, *writerlock.Lock) (Admitted, CommitClearance, error)
+type CommitAction func(context.Context, *writerlock.Lock, *PublishFence) (Admitted, CommitClearance, error)
 
 // CommitDrained is an unbound coordinator primitive, not a browser save or an
 // exchange implementation. It closes every admitted handle for the target
@@ -152,6 +216,12 @@ func (c *ActiveCoordinator) CommitDrained(ctx context.Context, owner Owner, expe
 	for state := range targets {
 		state.committing = true
 	}
+	fence := &PublishFence{coordinator: c, owner: owner, expected: expected, key: oldKey, generation: generation}
+	commitFences.Store(fence, &commitFenceBinding{
+		coordinator: c, held: c.lock, owner: owner, expected: expected,
+		key: oldKey, generation: generation, targets: targets,
+	})
+	fence.active.Store(true)
 	c.mu.Unlock()
 	var candidate Admitted
 	complete := false
@@ -172,7 +242,13 @@ func (c *ActiveCoordinator) CommitDrained(ctx context.Context, owner Owner, expe
 
 	var clearance CommitClearance
 	var actionErr error
-	candidate, clearance, actionErr = action(ctx, c.lock)
+	candidate, clearance, actionErr = func() (Admitted, CommitClearance, error) {
+		defer func() {
+			fence.active.Store(false)
+			commitFences.Delete(fence)
+		}()
+		return action(ctx, c.lock, fence)
+	}()
 	if actionErr != nil {
 		return Context{}, errors.Join(ErrCommitOutcomeUnknown, actionErr)
 	}
