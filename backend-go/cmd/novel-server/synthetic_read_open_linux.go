@@ -48,6 +48,7 @@ type syntheticLibraryRecoveryGuard struct {
 }
 
 const syntheticStageParentName = ".go-publish-stage"
+const syntheticCatalogDirectoryName = ".go-synthetic-catalog"
 const syntheticRecoveryProbeID = "synthetic-recovery-probe"
 
 func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config syntheticReadOpenConfig) (*syntheticReadOpen, error) {
@@ -59,12 +60,7 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 		return nil, err
 	}
 	remove := func() { _ = os.RemoveAll(workspace) }
-	metadata := filepath.Join(workspace, "metadata")
 	scratch := filepath.Join(workspace, "scratch")
-	if err := os.Mkdir(metadata, 0700); err != nil {
-		remove()
-		return nil, err
-	}
 	if err := os.Mkdir(scratch, 0700); err != nil {
 		remove()
 		return nil, err
@@ -81,6 +77,14 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 			_ = held.Close()
 		}
 	}()
+	// Recent navigation records survive a clean process restart. This location
+	// is server-owned under the already private synthetic root; process-local
+	// catalog keys and reader copies still live only for this process.
+	metadata := filepath.Join(dataRoot, syntheticCatalogDirectoryName)
+	if err := ensureSyntheticCatalogDirectory(dataRoot, metadata); err != nil {
+		remove()
+		return nil, err
+	}
 	readback := func(ctx context.Context, path, id string, recovery projectpublish.JournalRecovery) error {
 		if recovery.ProjectPath != path || recovery.Class != projectpublish.JournalSwitched {
 			return authorruntime.ErrSwitchedDraftUnverified
@@ -129,6 +133,46 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 	}
 	return &syntheticReadOpen{library: library, catalog: catalog, lifecycle: lifecycle,
 		commits: commits, keys: make(map[string]string), workspace: workspace, recovery: check}, nil
+}
+
+func ensureSyntheticCatalogDirectory(dataRoot, directory string) error {
+	if !privateSyntheticGlobalRoot(dataRoot) || filepath.Dir(directory) != dataRoot {
+		return errors.New("SYNTHETIC_CATALOG_UNSAFE")
+	}
+	created := false
+	if err := os.Mkdir(directory, 0700); err == nil {
+		created = true
+	} else if !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return errors.New("SYNTHETIC_CATALOG_UNSAFE")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Geteuid()) {
+		return errors.New("SYNTHETIC_CATALOG_UNSAFE")
+	}
+	fd, err := syscall.Open(directory, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	opened := os.NewFile(uintptr(fd), directory)
+	actual, statErr := opened.Stat()
+	closeErr := opened.Close()
+	if statErr != nil || closeErr != nil || !os.SameFile(info, actual) {
+		return errors.Join(statErr, closeErr, errors.New("SYNTHETIC_CATALOG_UNSAFE"))
+	}
+	if created {
+		parent, err := os.Open(dataRoot)
+		if err != nil {
+			return err
+		}
+		syncErr := parent.Sync()
+		closeErr := parent.Close()
+		return errors.Join(syncErr, closeErr)
+	}
+	return nil
 }
 
 // The library-only synthetic route must hold the same legacy lock and check

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
@@ -88,7 +90,11 @@ func TestSyntheticDraftSaveRotatesLeaseAndReopenUsesPromotedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer cleanup()
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	bootRequest.Header.Set("X-Novel-User", "synthetic-author")
 	boot := httptest.NewRecorder()
@@ -160,5 +166,52 @@ func TestSyntheticDraftSaveRotatesLeaseAndReopenUsesPromotedKey(t *testing.T) {
 	reopened := rpc("project:open", []any{projectPath, "open-b", nil})
 	if reopened.Code != http.StatusOK || !bytes.Contains(reopened.Body.Bytes(), []byte(`"dbReady":true`)) {
 		t.Fatal("promoted catalog key cannot reopen", reopened.Code, reopened.Body.String())
+	}
+	metadata := filepath.Join(root, syntheticCatalogDirectoryName)
+	if info, err := os.Lstat(metadata); err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		t.Fatal("durable catalog directory missing or unsafe", err)
+	}
+	cleanup()
+	cleanup = nil
+	if _, err := os.Stat(filepath.Join(metadata, "recent-projects.go.json")); err != nil {
+		t.Fatal("clean shutdown removed recent projects", err)
+	}
+	handler, cleanup, err = migrationHandlerWithModelsAndReadOpen(migrationRegistry(t), "127.0.0.1:16082", "", libraryDir, "", "", nil, &syntheticReadOpenConfig{Schema: contract})
+	if err != nil {
+		t.Fatal("verified synthetic project did not restart", err)
+	}
+	boot = httptest.NewRecorder()
+	handler.ServeHTTP(boot, bootRequest)
+	if boot.Code != http.StatusOK {
+		t.Fatal("restart bootstrap failed", boot.Code, boot.Body.String())
+	}
+	if err := json.Unmarshal(boot.Body.Bytes(), &bootstrap); err != nil || bootstrap.CSRFToken == "" {
+		t.Fatal("restart bootstrap invalid", err)
+	}
+	cookie = boot.Result().Cookies()[0]
+	if response := rpc("db:draft-get-full", []any{draftID, projectPath, fresh}); response.Code == http.StatusOK {
+		t.Fatal("prior process lease survived restart", response.Body.String())
+	}
+	recent := rpc("project:recent-list", []any{})
+	if recent.Code != http.StatusOK || !bytes.Contains(recent.Body.Bytes(), []byte(projectPath)) {
+		t.Fatal("durable recent project missing after restart", recent.Code, recent.Body.String())
+	}
+	restarted := rpc("project:open", []any{projectPath, "after-restart", nil})
+	openWire.Result.Project.Lease = ""
+	if err := json.Unmarshal(restarted.Body.Bytes(), &openWire); err != nil || restarted.Code != http.StatusOK || openWire.Result.Project.Lease == "" || openWire.Result.Project.Lease == fresh["leaseId"] {
+		t.Fatal("restart did not issue independent lease", restarted.Code, restarted.Body.String(), err)
+	}
+	restartLease := map[string]any{"projectId": projectID, "projectPath": projectPath, "leaseId": openWire.Result.Project.Lease}
+	if response := rpc("db:draft-get-full", []any{draftID, projectPath, restartLease}); response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(changed)) {
+		t.Fatal("restart failed to read committed draft", response.Code, response.Body.String())
+	}
+	cleanup()
+	cleanup = nil
+	if err := os.WriteFile(filepath.Join(metadata, "recent-projects.go.json"), []byte("{not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = migrationHandlerWithModelsAndReadOpen(migrationRegistry(t), "127.0.0.1:16082", "", libraryDir, "", "", nil, &syntheticReadOpenConfig{Schema: contract})
+	if !errors.Is(err, projectcatalog.ErrCatalogInvalid) {
+		t.Fatal("corrupt durable catalog was admitted", err)
 	}
 }
