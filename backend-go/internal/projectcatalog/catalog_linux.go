@@ -182,12 +182,24 @@ func (s *Store) ReleaseAfterVerifiedRecovery(project *projectfs.Project) error {
 	return nil
 }
 
-// PromoteVerifiedRecovery publishes a replacement catalog key after the
-// coordinator has installed its reader while the catalog hold is still in
-// force. The prior Register and HoldRecovery guarantee that the navigation
-// record is already durable, so this step only changes process-local keys.
-// The caller must still own the source writer exclusion and reader fence.
+// PromoteVerifiedRecovery publishes a replacement catalog key without a
+// reader binding. Coordinators that publish a Reader must use the binding
+// variant so readers cannot observe a key before its Reader is installed.
 func (s *Store) PromoteVerifiedRecovery(ctx context.Context, project *projectfs.Project) (Recent, error) {
+	return s.PromoteVerifiedRecoveryWithBinding(ctx, project, nil)
+}
+
+// PromoteVerifiedRecoveryWithBinding binds a fenced replacement reader and
+// publishes its key in one catalog critical section. The binder receives the
+// caller's pinned project and generated key. An independently opened copy is
+// verified against that project and closed before binding. The binder must not
+// call back into this Store or close the pinned project. On success it returns
+// a no-fail unlock closure, holding its reader lock until that closure runs.
+// On error it must leave the reader fenced
+// and release any lock it acquired. The prior Register and HoldRecovery keep
+// navigation metadata durable, so promotion only changes process-local keys.
+// The caller must own source writer exclusion throughout.
+func (s *Store) PromoteVerifiedRecoveryWithBinding(ctx context.Context, project *projectfs.Project, bind func(key string, verified *projectfs.Project) (unlock func(), err error)) (Recent, error) {
 	if ctx == nil || project == nil {
 		return Recent{}, ErrCatalogInvalid
 	}
@@ -196,7 +208,7 @@ func (s *Store) PromoteVerifiedRecovery(ctx context.Context, project *projectfs.
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	path, projectID := project.Path(), project.ProjectID()
+	path, projectID, identity := project.Path(), project.ProjectID(), project.Identity()
 	if s.holds[path] != projectID || s.recovery == nil {
 		return Recent{}, ErrCatalogRecoveryPending
 	}
@@ -220,25 +232,23 @@ func (s *Store) PromoteVerifiedRecovery(ctx context.Context, project *projectfs.
 	if err != nil {
 		return Recent{}, err
 	}
-	if current.ProjectID() != projectID || !current.Identity().Same(project.Identity()) {
+	if current.ProjectID() != projectID || !current.Identity().Same(identity) {
 		current.Close()
 		return Recent{}, projectfs.ErrChanged
 	}
-	verifyErr := current.VerifyNoPortableAuthority(ctx)
-	closeErr := current.Close()
-	if verifyErr != nil {
-		return Recent{}, verifyErr
-	}
-	if closeErr != nil {
-		return Recent{}, closeErr
+	if err := current.VerifyNoPortableAuthority(ctx); err != nil {
+		current.Close()
+		return Recent{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		current.Close()
 		return Recent{}, err
 	}
 	var key string
 	for {
 		key, err = newKey()
 		if err != nil {
+			current.Close()
 			return Recent{}, err
 		}
 		if _, exists := s.keys[key]; exists {
@@ -248,12 +258,33 @@ func (s *Store) PromoteVerifiedRecovery(ctx context.Context, project *projectfs.
 			break
 		}
 	}
+	// Close and check cancellation before binding. Once a reader is bound to
+	// this key, publication must not encounter any further fallible step.
+	if err := current.Close(); err != nil {
+		return Recent{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Recent{}, err
+	}
+	var unlock func()
+	if bind != nil {
+		unlock, err = bind(key, project)
+		if err != nil {
+			return Recent{}, err
+		}
+		if unlock == nil {
+			return Recent{}, ErrCatalogInvalid
+		}
+	}
 	// No fallible operation follows. Catalog readers cannot observe an
 	// intermediate state because the Store mutex remains held throughout.
 	s.revokeLocked(path)
 	s.byPath[path] = key
-	s.keys[key] = capability{path: path, id: projectID, identity: project.Identity()}
+	s.keys[key] = capability{path: path, id: projectID, identity: identity}
 	delete(s.holds, path)
+	if unlock != nil {
+		unlock()
+	}
 	return Recent{Key: key, Name: saved.Name, Path: path, ProjectID: projectID, UpdatedAt: saved.UpdatedAt}, nil
 }
 

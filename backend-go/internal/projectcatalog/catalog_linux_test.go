@@ -13,6 +13,80 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
+func TestPromoteVerifiedRecoveryWithBindingPublishesAfterBinder(t *testing.T) {
+	library, project, path, metadata := fixture(t)
+	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {
+		if gotPath != path || gotID != project.ProjectID() {
+			return ErrCatalogRecoveryPending
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.Register(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.HoldRecovery(path, project.ProjectID()); err != nil {
+		t.Fatal(err)
+	}
+	binderFailure := errors.New("synthetic binding failure")
+	var rejectedKey string
+	if got, err := store.PromoteVerifiedRecoveryWithBinding(context.Background(), project, func(key string, verified *projectfs.Project) (func(), error) {
+		rejectedKey = key
+		if store.holds[path] != project.ProjectID() || store.byPath[path] != initial.Key {
+			t.Fatal("catalog changed before failed binder")
+		}
+		if err := verified.VerifyNoPortableAuthority(context.Background()); err != nil {
+			t.Fatalf("binder did not receive a live verified project: %v", err)
+		}
+		return nil, binderFailure
+	}); got.Key != "" || !errors.Is(err, binderFailure) {
+		t.Fatalf("failed binder published key: %#v, %v", got, err)
+	}
+	if _, ok := store.keys[rejectedKey]; ok || store.holds[path] != project.ProjectID() || store.byPath[path] != initial.Key {
+		t.Fatal("failed binder changed catalog state")
+	}
+	if _, err := store.List(); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("failed binder released hold: %v", err)
+	}
+	if got, err := store.PromoteVerifiedRecoveryWithBinding(context.Background(), project, func(string, *projectfs.Project) (func(), error) {
+		return nil, nil
+	}); got.Key != "" || !errors.Is(err, ErrCatalogInvalid) {
+		t.Fatalf("missing binder unlock published key: %#v, %v", got, err)
+	}
+	var boundKey string
+	unlocked := false
+	promoted, err := store.PromoteVerifiedRecoveryWithBinding(context.Background(), project, func(key string, verified *projectfs.Project) (func(), error) {
+		boundKey = key
+		if store.holds[path] != project.ProjectID() || store.byPath[path] != initial.Key {
+			t.Fatal("catalog published before reader binding")
+		}
+		if !verified.Identity().Same(project.Identity()) {
+			t.Fatal("binder received the wrong project identity")
+		}
+		return func() {
+			if store.holds[path] != "" || store.byPath[path] != key {
+				t.Fatal("reader unlocked before catalog publication")
+			}
+			unlocked = true
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unlocked || promoted.Key != boundKey || promoted.Key == initial.Key || promoted.Key == rejectedKey {
+		t.Fatalf("binding and promotion diverged: %#v, unlocked=%v", promoted, unlocked)
+	}
+	if opened, err := store.Resolve(initial.Key); opened != nil || !errors.Is(err, ErrCatalogKey) {
+		if opened != nil {
+			opened.Close()
+		}
+		t.Fatalf("old key survived binding: %v", err)
+	}
+}
+
 func TestPromoteVerifiedRecoveryKeepsHoldUntilNewKeyIsReady(t *testing.T) {
 	library, oldProject, path, metadata := fixture(t)
 	pending := true

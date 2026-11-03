@@ -297,6 +297,43 @@ func (reader *Reader) promoteCatalogKey(ctx context.Context, catalog *projectcat
 	return reader.verifyLocked(ctx)
 }
 
+// bindPromotedCatalogKey is the catalog promotion callback. The catalog calls
+// it while holding its own mutex and passes the freshly verified project; this
+// method must not call back into the catalog. On success the returned closure
+// releases Reader.mu only after the catalog has published key and removed its
+// recovery hold. The caller must invoke that closure exactly once.
+func (reader *Reader) bindPromotedCatalogKey(ctx context.Context, catalog *projectcatalog.Store, key string, verified *projectfs.Project) (unlock func(), err error) {
+	if reader == nil {
+		return nil, ErrInvalid
+	}
+	reader.mu.Lock()
+	success := false
+	defer func() {
+		if !success {
+			// The attempted transition is irreversible for this recovery reader:
+			// never let a failed callback retain catalog-free read authority.
+			reader.closed = true
+			reader.mu.Unlock()
+		}
+	}()
+	if reader.closed {
+		return nil, ErrClosed
+	}
+	if reader.catalog != nil || reader.key != "" || reader.ownsLock || reader.lock == nil || catalog == nil || key == "" || verified == nil {
+		return nil, ErrInvalid
+	}
+	if verified.Path() != reader.project.Path() || verified.ProjectID() != reader.report.ProjectID ||
+		!verified.Identity().Same(reader.project.Identity()) {
+		return nil, ErrChanged
+	}
+	if err := reader.verifyLocked(ctx); err != nil {
+		return nil, err
+	}
+	reader.catalog, reader.key = catalog, key
+	success = true
+	return func() { reader.mu.Unlock() }, nil
+}
+
 func (reader *Reader) Verify(ctx context.Context) error {
 	if reader == nil {
 		return ErrInvalid
