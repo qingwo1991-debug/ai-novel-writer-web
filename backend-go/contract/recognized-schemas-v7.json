@@ -1,0 +1,78 @@
+{
+  "formatVersion": 1,
+  "currentVersion": 7,
+  "recognized": [
+    {
+      "version": 0,
+      "fingerprint": "706e2e7c3f449808d55f773958b65d15fc34ad838da6dfed20b3137b0dcf575a"
+    },
+    {
+      "version": 0,
+      "fingerprint": "bf52e8f1b30a96c001bc22f890480bcff53fa382777927492b3cb01199b232e2"
+    },
+    {
+      "version": 0,
+      "fingerprint": "f4af19eeb7f0618513baa7d4e597114c94eda000796881e9806cc943e74d23b3"
+    },
+    {
+      "version": 0,
+      "fingerprint": "f4d66fbaaff073375e75de3c7a44661ed625964c2661961d6d83dc7eab8b8fc7"
+    },
+    {
+      "version": 1,
+      "fingerprint": "f4af19eeb7f0618513baa7d4e597114c94eda000796881e9806cc943e74d23b3"
+    },
+    {
+      "version": 1,
+      "fingerprint": "f4d66fbaaff073375e75de3c7a44661ed625964c2661961d6d83dc7eab8b8fc7"
+    },
+    {
+      "version": 2,
+      "fingerprint": "dead9cdfaeaed25acc48d904373ae1c1b23c0d92e6f648e1583071cbe1da2784"
+    },
+    {
+      "version": 2,
+      "fingerprint": "19ba87070c46571946cedf36cdddbeef17e98342a122dc60285d047c49d4d26b"
+    },
+    {
+      "version": 3,
+      "fingerprint": "c725287a1db818a59e2179b622b1e60d46dc2fe8f7b006c3d08e5dbff1ee8684"
+    },
+    {
+      "version": 3,
+      "fingerprint": "6c5ebf078b8c3ab7fa561bdab93e7d1046efb23c9aae4b96d56857b29bc53c3a"
+    },
+    {
+      "version": 4,
+      "fingerprint": "fe7a9222766fa411ccb76416140eb61db60b3725c71a235be745060e1e2c3478"
+    },
+    {
+      "version": 4,
+      "fingerprint": "af51f183589897a54f6a8f28a1c489fef8b44170cf59bc791cb4151f86c807f6"
+    },
+    {
+      "version": 5,
+      "fingerprint": "d5810170245f123862d9fe6f991198b15b61c10f9f6b7fad42c44e617a979ba0"
+    },
+    {
+      "version": 5,
+      "fingerprint": "b1d03fc74c0cdf6faec3127a7496f5e0903245ea32cb3ab6e416f9a204d78199"
+    },
+    {
+      "version": 6,
+      "fingerprint": "a335e6d26a144340a501ed1354e10172985151969a3ee204ae87100c2d09ffd1"
+    },
+    {
+      "version": 6,
+      "fingerprint": "eee3f749057d53e196fe03e3806c7511e4585f4bf360e25dbd00be571d69599d"
+    },
+    {
+      "version": 7,
+      "fingerprint": "3663aa737e730cf2ee4e5e8dc4c6592d79dd33a129c8de3091d71f4f821abc42"
+    },
+    {
+      "version": 7,
+      "fingerprint": "c2fa8290bba0be34d2f3bb09c32b0b1e40b3e3d7fb234cba3329b7e6e5ac8814"
+    }
+  ]
+}
