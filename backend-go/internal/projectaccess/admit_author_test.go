@@ -14,7 +14,6 @@ import (
 func admittedAuthorFixture(t *testing.T) (Config, *projectfs.Project, *writerlock.Lock) {
 	t.Helper()
 	config := accessFixture(t)
-	config.Knowledge = &KnowledgeConfig{Native: true}
 	held, err := writerlock.AcquireLegacy(config.DataRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -60,30 +59,40 @@ func TestAdmitAuthorFailsOnWrongProject(t *testing.T) {
 	}
 }
 
-func TestAdmitAuthorRequiresKnowledgePreflight(t *testing.T) {
-	config, project, held := admittedAuthorFixture(t)
-	noKnowledge := config
-	noKnowledge.Knowledge = nil
-	if _, err := AdmitAuthor(context.Background(), noKnowledge, project, held); !errors.Is(err, ErrConfiguration) {
-		t.Fatalf("missing knowledge preflight admitted: %v", err)
+func TestAdmitAuthorRequiresHeldLock(t *testing.T) {
+	config, project, _ := admittedAuthorFixture(t)
+	if _, err := AdmitAuthor(context.Background(), config, project, nil); !errors.Is(err, writerlock.ErrUnsafe) {
+		t.Fatalf("nil lock admitted: %v", err)
 	}
 }
 
-func TestAdmitAuthorVerifyDetectsStaleDatabase(t *testing.T) {
+func TestAdmitAuthorVerifyDetectsReplacedDatabase(t *testing.T) {
 	config, project, held := admittedAuthorFixture(t)
 	permit, err := AdmitAuthor(context.Background(), config, project, held)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer permit.Close()
-	// A cooperating write changes the content identity; a later verify must
-	// report stale so the caller re-admits instead of silently continuing.
 	if err := permit.Verify(context.Background(), project); err != nil {
 		t.Fatalf("pre-change verify failed: %v", err)
 	}
-	// The verify path must also fail closed once the lock is gone.
-	held.Close()
-	if err := permit.Verify(context.Background(), project); err == nil {
-		t.Fatal("verify passed without the retained lock")
+	// Replacing the database entry breaks the content identity proof.
+	replacement := make([]byte, 0)
+	if err := writeAccess(t, configProjectDB(t, config), replacement); err != nil {
+		t.Fatal(err)
 	}
+	if err := permit.Verify(context.Background(), project); !errors.Is(err, ErrAuthorStale) {
+		t.Fatalf("replaced database verified: %v", err)
+	}
+	if err := permit.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := permit.Verify(context.Background(), project); !errors.Is(err, projectfs.ErrClosed) {
+		t.Fatalf("closed permit still verifies: %v", err)
+	}
+}
+
+func configProjectDB(t *testing.T, config Config) string {
+	t.Helper()
+	return config.ProjectPath + "/.ai-novel/project.db"
 }

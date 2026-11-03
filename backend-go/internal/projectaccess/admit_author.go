@@ -40,15 +40,16 @@ type AdmittedAuthor struct {
 }
 
 // AdmitAuthor runs the complete preflight (schema fingerprint, row integrity,
-// content identity, canonical asset membership and optional native knowledge
-// capture) while the caller's legacy writer lock remains held, then requires:
+// content identity, canonical asset membership and, when the caller opts in,
+// knowledge staging) while the caller's legacy writer lock remains held, then
+// requires:
 //
 //   - the schema to be exactly the current supported version;
 //   - the legacy gateway to be excluded from cooperating writers;
-//   - the mandatory knowledge preflight to have run (config.Knowledge required);
-//   - no present LanceDB/embedding-registry/knowledge-copy asset and no legacy
-//     knowledge receipt, because a durable native writer for those is not yet
-//     proven and degrading them would destroy author data.
+//   - no present LanceDB/embedding-registry/knowledge-copy canonical asset, and
+//     when knowledge staging was configured, no legacy knowledge receipt or
+//     registry/copy footprint — a durable native writer for those is not yet
+//     proven, and degrading them would destroy author data.
 //
 // It does not open the database, write any source file, or grant a lease; those
 // are the caller's next steps through projectfs.OpenAuthorDatabase.
@@ -60,19 +61,10 @@ func AdmitAuthor(ctx context.Context, config Config, project *projectfs.Project,
 		// The permit must prove one exact project; never a mistyped wrapper.
 		return nil, ErrConfiguration
 	}
-	if config.Knowledge == nil {
-		// The write gate cannot claim knowledge is absent without running the
-		// mandatory knowledge preflight, exactly like the existing write evidence.
-		return nil, ErrConfiguration
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Run the knowledge-capturing preflight so the permit can prove knowledge
-	// assets are genuinely absent rather than merely unclaimed. The captured
-	// evidence is kept on the permit for the caller's audit.
-	var captured KnowledgeRead
-	report, err := PreflightUnderLockWithKnowledge(ctx, config, held, &captured)
+	report, err := PreflightUnderLock(ctx, config, held)
 	if err != nil {
 		return nil, err
 	}
@@ -84,16 +76,14 @@ func AdmitAuthor(ctx context.Context, config Config, project *projectfs.Project,
 		return nil, ErrAuthorSchemaUnsupported
 	}
 	assets := report.CanonicalAssets
-	knowledge := report.Knowledge
 	if assets.LanceDB || assets.EmbeddingRegistry || assets.KnowledgeCopies {
 		return nil, ErrAuthorKnowledgeUnproved
 	}
-	if knowledge == nil {
-		return nil, ErrAuthorKnowledgeUnproved
-	}
-	if knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry || knowledge.Physical.KnowledgeCopies ||
-		knowledge.Physical.LegacyReceipt || knowledge.Metadata.RegistryPresent || knowledge.Metadata.CopiesPresent {
-		return nil, ErrAuthorKnowledgeUnproved
+	if knowledge := report.Knowledge; knowledge != nil {
+		if knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry || knowledge.Physical.KnowledgeCopies ||
+			knowledge.Physical.LegacyReceipt || knowledge.Metadata.RegistryPresent || knowledge.Metadata.CopiesPresent {
+			return nil, ErrAuthorKnowledgeUnproved
+		}
 	}
 	return &AdmittedAuthor{config: config, project: project, held: held, evidence: evidence}, nil
 }
@@ -129,11 +119,43 @@ func (a *AdmittedAuthor) Verify(ctx context.Context, project *projectfs.Project)
 	}
 	identity, err := admission.ContentIdentityOf(ctx, filepath.Join(a.config.ProjectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
 	if err != nil {
-		return err
+		// A database that cannot be re-hashed (missing, replaced by junk,
+		// unsafe entry) is by definition not provably the admitted one.
+		return ErrAuthorStale
 	}
 	if identity != a.evidence.ContentIdentity {
 		return ErrAuthorStale
 	}
+	return a.held.VerifyLegacy(a.config.DataRoot)
+}
+
+// Refresh adopts the current on-disk content identity after a write that this
+// permit authorized, so later Verifies compare against the new committed state.
+// It re-checks the retained lock first and re-reads the digest; it never
+// accepts a digest change while the lock is not held.
+func (a *AdmittedAuthor) Refresh(ctx context.Context) error {
+	if a == nil {
+		return ErrConfiguration
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return projectfs.ErrClosed
+	}
+	if ctx == nil {
+		return ErrConfiguration
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := a.held.VerifyLegacy(a.config.DataRoot); err != nil {
+		return err
+	}
+	identity, err := admission.ContentIdentityOf(ctx, filepath.Join(a.config.ProjectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		return ErrAuthorStale
+	}
+	a.evidence.ContentIdentity = identity
 	return a.held.VerifyLegacy(a.config.DataRoot)
 }
 
