@@ -256,3 +256,99 @@ func TestTypedPublishFenceQueuedOpenRevokesFinalAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTypedPublishFenceRejectsQueuedOpenBeforeDraining(t *testing.T) {
+	active := activeFixture(t)
+	owner := Owner{SessionID: "cookie", ClientID: "tab"}
+	target := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), owner, "key-a", "first", stageAdmitted(target)); err != nil {
+		t.Fatal(err)
+	}
+	active.transition.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			active.transition.Unlock()
+		}
+	}()
+	queuedCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	openResult := make(chan error, 1)
+	go func() {
+		_, err := active.Open(queuedCtx, owner, "key-b", "queued", stageAdmitted(admitted("B", "/trusted/B")))
+		openResult <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		active.mu.Lock()
+		state := active.slots[owner.key()]
+		queued := state.latest != state.admittedGeneration
+		active.mu.Unlock()
+		if queued {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Open did not register while transition was held")
+		}
+		runtime.Gosched()
+	}
+	cancel()
+	callbackEntered := make(chan struct{}, 1)
+	barrierResult := make(chan error, 1)
+	go func() {
+		barrierResult <- active.WithProjectDrainedFence(context.Background(), owner, target.identity, func(context.Context, *PublishFence) error {
+			callbackEntered <- struct{}{}
+			return nil
+		})
+	}()
+	active.transition.Unlock()
+	locked = false
+	if err := <-openResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("queued Open unexpectedly installed: %v", err)
+	}
+	if err := <-barrierResult; !errors.Is(err, ErrStaleOpen) {
+		t.Fatalf("fence drained with a queued Open: %v", err)
+	}
+	select {
+	case <-callbackEntered:
+		t.Fatal("stale fence entered callback")
+	default:
+	}
+	if target.closed.Load() != 0 {
+		t.Fatal("stale fence closed the admitted handle")
+	}
+	if _, done, err := active.Begin(context.Background(), owner, target.identity); err != nil {
+		t.Fatalf("old admitted lease was misclassified: %v", err)
+	} else {
+		done()
+	}
+}
+
+func TestTypedPublishFenceAcceptsInstalledSameKeyRefresh(t *testing.T) {
+	active := activeFixture(t)
+	owner := Owner{SessionID: "cookie", ClientID: "tab"}
+	target := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), owner, "key-a", "first", stageAdmitted(target)); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := active.Open(context.Background(), owner, "key-a", "refresh", func(context.Context, *writerlock.Lock) (Admitted, error) {
+		return nil, errors.New("same-key refresh staged a replacement")
+	})
+	if err != nil || !sameContext(refreshed, target.identity) {
+		t.Fatalf("same-key refresh failed: %v, %+v", err, refreshed)
+	}
+	active.mu.Lock()
+	state := active.slots[owner.key()]
+	current := state.latest == state.admittedGeneration && state.latest == 2
+	active.mu.Unlock()
+	if !current {
+		t.Fatal("refresh did not advance admitted generation")
+	}
+	called := false
+	if err := active.WithProjectDrainedFence(context.Background(), owner, target.identity, func(ctx context.Context, fence *PublishFence) error {
+		called = true
+		return fence.Verify(ctx, owner, target.identity, "key-a")
+	}); err != nil || !called {
+		t.Fatalf("installed refresh rejected by fence: %v", err)
+	}
+}

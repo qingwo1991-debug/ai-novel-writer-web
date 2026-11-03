@@ -39,7 +39,7 @@ func (f *PublishFence) Verify(ctx context.Context, owner Owner, expected Context
 		return ErrActiveClosed
 	}
 	state := c.slots[owner.key()]
-	if state == nil || state.latest != f.generation {
+	if state == nil || state.latest != f.generation || state.admittedGeneration != f.generation {
 		return ErrStaleOpen
 	}
 	if state.handle != nil || state.key != "" {
@@ -104,8 +104,21 @@ func (c *ActiveCoordinator) withProjectDrained(ctx context.Context, owner Owner,
 		c.mu.Unlock()
 		return novelruntime.ErrNotOwned
 	}
+	if validateFinal && (anchor.admittedGeneration == 0 || anchor.latest != anchor.admittedGeneration) {
+		c.mu.Unlock()
+		return ErrStaleOpen
+	}
 	fence := &PublishFence{coordinator: c, owner: owner, expected: expected, key: anchor.key, generation: anchor.latest}
 	path := expected.ProjectPath
+	if validateFinal {
+		for _, state := range c.slots {
+			if state.handle != nil && state.handle.Context().ProjectPath == path &&
+				(state.admittedGeneration == 0 || state.latest != state.admittedGeneration) {
+				c.mu.Unlock()
+				return ErrStaleOpen
+			}
+		}
+	}
 	// Keep every target slot fenced while waiting. Open and CloseProject are
 	// serialized by transition; Begin checks switching under mu.
 	targets := make(map[string]*activeSlot)

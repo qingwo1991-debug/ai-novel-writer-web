@@ -29,12 +29,13 @@ type Admitted interface {
 type StageActive func(context.Context, *writerlock.Lock) (Admitted, error)
 
 type activeSlot struct {
-	handle    Admitted
-	key       string
-	latest    uint64
-	active    int
-	idle      chan struct{}
-	switching bool
+	handle             Admitted
+	key                string
+	latest             uint64
+	admittedGeneration uint64
+	active             int
+	idle               chan struct{}
+	switching          bool
 }
 
 // ActiveCoordinator owns one continuously held legacy writer lock. It only
@@ -125,6 +126,9 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 		}
 		c.mu.Lock()
 		stale := c.closed || state.latest != request
+		if !stale {
+			state.admittedGeneration = request
+		}
 		c.mu.Unlock()
 		if stale {
 			return Context{}, ErrStaleOpen
@@ -203,6 +207,7 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 	previous := state.handle
 	state.handle = candidate
 	state.key = key
+	state.admittedGeneration = request
 	adopted = true
 	c.mu.Unlock()
 	if previous != nil {
@@ -210,6 +215,7 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 			c.mu.Lock()
 			state.handle = nil
 			state.key = ""
+			state.admittedGeneration = 0
 			state.switching = false
 			c.closed = true
 			c.poisoned = true
