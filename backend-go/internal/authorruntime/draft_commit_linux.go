@@ -62,6 +62,12 @@ func (s *DraftCommitService) CommitDraftCAS(ctx context.Context, request DraftCo
 		request.CatalogKey == "" || request.DraftID <= 0 || request.ExpectedContent == nil {
 		return zero, ErrInvalid
 	}
+	// Reject an ordinary stale/read-only save before entering the one-shot
+	// publisher. The private staged CAS below remains the authoritative check.
+	if err := s.lifecycle.PreflightDraftCAS(ctx, request.Owner, request.Expected,
+		request.DraftID, request.Content, request.WordCount, request.ExpectedContent); err != nil {
+		return zero, err
+	}
 	expectedBody := *request.ExpectedContent
 	l := s.lifecycle
 	var readback SwitchedDraftReadback

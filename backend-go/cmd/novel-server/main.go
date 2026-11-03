@@ -106,7 +106,7 @@ func run() error {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	log.Printf("Go migration scaffold at %s; no author writes; no Node fallback; not production-ready", *address)
+	log.Printf("Go migration scaffold at %s; author saves only in private synthetic read-enabled mode; no Node fallback; not production-ready", *address)
 	select {
 	case err := <-done:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -286,6 +286,13 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				return nil, nil, err
 			}
 			if err := server.BindDraftLiveReads(readOpen); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			// Only the private-temp read-enabled synthetic lane has a trusted
+			// switched-journal readback and commit service. The default and
+			// library-only lanes keep this author mutation unbound.
+			if err := server.BindDraftLiveWrites(readOpen); err != nil {
 				cleanup()
 				return nil, nil, err
 			}

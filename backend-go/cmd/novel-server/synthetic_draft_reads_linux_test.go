@@ -206,7 +206,11 @@ func TestSyntheticDraftReadsKeepOpenedLeaseAndOriginalWire(t *testing.T) {
 	assertNotOwned("foreign tab", rpc("client_0987654321", "db:draft-get-full", []any{draftID, projectPath, expected}))
 	stale := map[string]any{"projectId": openWire.Result.Project.ID, "leaseId": "stale", "projectPath": projectPath}
 	assertNotOwned("stale lease", rpc(tab, "db:draft-get-full", []any{draftID, projectPath, stale}))
-	for _, operation := range []string{"db:draft-update-content", "db:draft-create", "finalization:commit", "generation:confirm-batch-finalization"} {
+	malformedSave := rpc(tab, "db:draft-update-content", []any{})
+	if malformedSave.Code != http.StatusOK || !bytes.Contains(malformedSave.Body.Bytes(), []byte(`"success":false`)) {
+		t.Fatal("malformed synthetic save was not rejected", malformedSave.Code, malformedSave.Body.String())
+	}
+	for _, operation := range []string{"db:draft-create", "finalization:commit", "generation:confirm-batch-finalization"} {
 		if response := rpc(tab, operation, []any{}); response.Code != http.StatusNotImplemented {
 			t.Fatal("draft write bound", operation, response.Code, response.Body.String())
 		}

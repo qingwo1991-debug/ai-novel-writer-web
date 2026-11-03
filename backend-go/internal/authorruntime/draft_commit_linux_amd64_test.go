@@ -17,6 +17,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectpublish"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
@@ -173,13 +174,41 @@ func TestDraftCommitServiceSyntheticCASAndCatalogReadback(t *testing.T) {
 	_, err = service.CommitDraftCAS(ctx, DraftCommitRequest{Owner: owner, Expected: result.Context,
 		CatalogKey: result.Key, DraftID: draftID, Content: "must not publish", WordCount: 16,
 		ExpectedContent: &stale})
-	poisoned = true
-	if !errors.Is(err, projectsession.ErrCommitOutcomeUnknown) {
+	if !errors.Is(err, store.ErrDraftContentConflict) {
 		t.Fatalf("stale CAS received a success: %v", err)
+	}
+	if err := lifecycle.Read(ctx, owner, result.Context, func(*sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("preflight conflict poisoned healthy reader: %v", err)
 	}
 	afterConflict, err := os.ReadFile(source)
 	if err != nil || !bytes.Equal(afterConflict, currentBytes) {
 		t.Fatalf("failed CAS changed the author source: %v", err)
+	}
+	// A failure after the action begins has an unknown publication outcome and
+	// must retain the writer lock. The tiny stage budget fails inside Stage.
+	failingService, err := NewDraftCommitService(lifecycle, library, stageParent,
+		projectpublish.Limits{MaxFiles: 2, MaxBytes: 1, MaxDepth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentBody := changed
+	_, err = failingService.CommitDraftCAS(ctx, DraftCommitRequest{Owner: owner, Expected: result.Context,
+		CatalogKey: result.Key, DraftID: draftID, Content: "unpublished", WordCount: 11,
+		ExpectedContent: &currentBody})
+	poisoned = true
+	if !errors.Is(err, projectsession.ErrCommitOutcomeUnknown) {
+		t.Fatalf("in-action stage failure did not seal outcome: %v", err)
+	}
+	readWasCalled := false
+	err = lifecycle.Read(ctx, owner, result.Context, func(*sql.Tx) error {
+		readWasCalled = true
+		return nil
+	})
+	if !errors.Is(err, projectsession.ErrActiveClosed) || readWasCalled {
+		t.Fatalf("uncertain commit served a fresh-lease read: %v, callback called: %t", err, readWasCalled)
+	}
+	if _, err := lifecycle.Open(ctx, owner, result.Key, "retry-after-uncertain-cas"); !errors.Is(err, projectsession.ErrActiveClosed) {
+		t.Fatalf("uncertain commit admitted a new reader: %v", err)
 	}
 	if err := held.Close(); !errors.Is(err, writerlock.ErrRetained) {
 		t.Fatalf("uncertain commit released the legacy writer lock: %v", err)

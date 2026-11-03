@@ -34,6 +34,7 @@ type syntheticReadOpen struct {
 	library   *projectfs.Library
 	catalog   *projectcatalog.Store
 	lifecycle *authorruntime.ReadLifecycle
+	commits   *authorruntime.DraftCommitService
 	keys      map[string]string
 	workspace string
 	recovery  projectcatalog.RecoveryCheck
@@ -117,8 +118,17 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 		return nil, err
 	}
 	lockOwned = false
+	commits, err := authorruntime.NewDraftCommitService(lifecycle, library,
+		filepath.Join(dataRoot, syntheticStageParentName), projectpublish.Limits{
+			MaxFiles: 4096, MaxBytes: 128 << 20, MaxDepth: 32,
+		})
+	if err != nil {
+		_ = lifecycle.Shutdown()
+		remove()
+		return nil, err
+	}
 	return &syntheticReadOpen{library: library, catalog: catalog, lifecycle: lifecycle,
-		keys: make(map[string]string), workspace: workspace, recovery: check}, nil
+		commits: commits, keys: make(map[string]string), workspace: workspace, recovery: check}, nil
 }
 
 // The library-only synthetic route must hold the same legacy lock and check
@@ -308,6 +318,53 @@ func (s *syntheticReadOpen) ReadDraftJSON(ctx context.Context, caller transport.
 		return nil, errors.New("SYNTHETIC_READ_CLOSED")
 	}
 	return s.lifecycle.ReadDraftJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, number)
+}
+
+// CommitDraftContent is available only to the private, read-enabled synthetic
+// server. The cached catalog key comes from a prior admitted project:open,
+// never from a browser path. A read-only exact-lease check rejects ordinary
+// stale saves before the drained commit begins; the private-stage CAS remains
+// the final authority once publication starts.
+func (s *syntheticReadOpen) CommitDraftContent(ctx context.Context, caller transport.Caller, request transport.DraftLiveWriteRequest) (transport.DraftLiveWriteAck, error) {
+	var zero transport.DraftLiveWriteAck
+	if s == nil || ctx == nil {
+		return zero, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(request.Expected)
+	if err != nil {
+		return zero, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.commits == nil {
+		return zero, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	key := s.keys[expected.ProjectPath]
+	if key == "" {
+		return zero, errors.New("PROJECT_NOT_OPEN")
+	}
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	baseline := request.ExpectedContent
+	committed, err := s.commits.CommitDraftCAS(ctx, authorruntime.DraftCommitRequest{
+		Owner: owner, Expected: expected, CatalogKey: key, DraftID: request.DraftID,
+		Content: request.Content, WordCount: request.WordCount, ExpectedContent: &baseline,
+	})
+	if err != nil {
+		return zero, err
+	}
+	if committed.Key == "" || committed.Key == key || committed.Context.ProjectID != expected.ProjectID ||
+		committed.Context.ProjectPath != expected.ProjectPath || committed.Context.LeaseID == "" ||
+		committed.Context.LeaseID == expected.LeaseID {
+		return zero, errors.New("SYNTHETIC_COMMIT_RESULT_INVALID")
+	}
+	// CommitDraftCAS has verified the switched source and atomically bound the
+	// fresh Reader to this key. Reopen must never reuse the revoked old key.
+	s.keys[expected.ProjectPath] = committed.Key
+	return transport.DraftLiveWriteAck{ProjectSession: map[string]any{
+		"projectId":   committed.Context.ProjectID,
+		"projectPath": committed.Context.ProjectPath,
+		"leaseId":     committed.Context.LeaseID,
+	}}, nil
 }
 
 func (s *syntheticReadOpen) ReadEditorStageJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
