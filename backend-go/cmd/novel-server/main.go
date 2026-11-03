@@ -39,6 +39,7 @@ func run() error {
 	libraryDir := flag.String("synthetic-library-dir", "", "optional disposable library for isolated migration smoke")
 	uploadDir := flag.String("synthetic-upload-dir", "", "optional private disposable upload staging for isolated migration smoke")
 	globalDir := flag.String("synthetic-global-dir", "", "optional private disposable global config for isolated migration smoke")
+	completedGlobalParent := flag.String("synthetic-completed-global-parent", "", "optional private disposable completed global migration root")
 	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
 	readSchema := flag.String("synthetic-read-schema-contract", "", "trusted SQLite contract for disposable read-only project opens")
 	flag.Parse()
@@ -62,7 +63,10 @@ func run() error {
 	if *globalDir != "" && !privateSyntheticGlobalRoot(*globalDir) {
 		return errors.New("synthetic global config must use a private canonical temporary directory")
 	}
-	if (*globalDir == "") != (*modelOrigins == "") {
+	if *completedGlobalParent != "" && (*globalDir != "" || *libraryDir != "" || *readSchema != "" || *uploadDir != "") {
+		return errors.New("completed global synthetic lane cannot share other data lanes")
+	}
+	if (*globalDir == "" && *completedGlobalParent == "") != (*modelOrigins == "") {
 		return errors.New("synthetic model config requires both a private global root and trusted origins")
 	}
 	if *readSchema != "" && (*libraryDir == "" || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
@@ -96,7 +100,13 @@ func run() error {
 		}
 		readConfig = &syntheticReadOpenConfig{Schema: contract}
 	}
-	handler, cleanup, err := migrationHandlerWithModelsAndReadOpen(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins, readConfig)
+	var handler http.Handler
+	var cleanup func()
+	if *completedGlobalParent != "" {
+		handler, cleanup, err = migrationHandlerWithCompletedGlobal(registry, *address, *staticDir, *completedGlobalParent, origins)
+	} else {
+		handler, cleanup, err = migrationHandlerWithModelsAndReadOpen(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins, readConfig)
+	}
 	if err != nil {
 		return err
 	}
@@ -116,7 +126,11 @@ func run() error {
 	case <-ctx.Done():
 		shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
-		return server.Shutdown(shutdown)
+		err := server.Shutdown(shutdown)
+		if err != nil {
+			_ = server.Close()
+		}
+		return err
 	}
 }
 
@@ -172,6 +186,10 @@ func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, l
 }
 
 func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string, readConfig *syntheticReadOpenConfig) (http.Handler, func(), error) {
+	return migrationHandlerWithModelsReadOpenAndCapture(registry, address, staticDir, libraryDir, uploadDir, globalDir, modelOrigins, readConfig, nil)
+}
+
+func migrationHandlerWithModelsReadOpenAndCapture(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string, readConfig *syntheticReadOpenConfig, capture *globalconfig.StartupCapture) (http.Handler, func(), error) {
 	if readConfig != nil && libraryDir == "" {
 		return nil, nil, errors.New("synthetic project reads require a library beneath a private temporary data root")
 	}
@@ -235,7 +253,11 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 			cleanup()
 			return nil, nil, fmt.Errorf("synthetic model origins: %w", err)
 		}
-		startup := globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "synthetic-model-config-v1"})
+		startupCapture := globalconfig.StartupCapture{Generation: "synthetic-model-config-v1"}
+		if capture != nil {
+			startupCapture = *capture
+		}
+		startup := globalconfig.NewStartup(startupCapture)
 		for _, bind := range []func() error{
 			func() error { return server.BindGlobalConfig(models, startup) },
 			func() error { return server.BindModelReads(models, startup) },

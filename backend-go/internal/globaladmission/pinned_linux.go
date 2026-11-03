@@ -235,12 +235,7 @@ func (p *PinnedReady) verifyOpenChildren() error {
 	return pinnedSame(data, p.dataFD, syscall.S_IFDIR)
 }
 
-// Verify rechecks the pinned identity and the original migration semantics.
-// It cannot replace caller-held exclusion against non-cooperative same-UID
-// processes between a check and later use of DataRoot.
-func (p *PinnedReady) Verify(ctx context.Context) (Ready, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (p *PinnedReady) verifyIdentityLocked(ctx context.Context) (Ready, error) {
 	if p.closed || ctx == nil {
 		return Ready{}, fail("GLOBAL_ROOT_UNSAFE")
 	}
@@ -253,6 +248,27 @@ func (p *PinnedReady) Verify(ctx context.Context) (Ready, error) {
 	if err := p.verifyOpenChildren(); err != nil {
 		return Ready{}, err
 	}
+	return p.ready, nil
+}
+
+// VerifyIdentity checks that the original receipt and generation still occupy
+// the same paths. It permits normal content writes inside the generation.
+// The caller retains global exclusion across this check and subsequent use.
+func (p *PinnedReady) VerifyIdentity(ctx context.Context) (Ready, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.verifyIdentityLocked(ctx)
+}
+
+// Verify rechecks pinned identity and the original migration semantics. It is
+// intended for startup or explicit full audits; writable generation content
+// can change after startup without invalidating VerifyIdentity.
+func (p *PinnedReady) Verify(ctx context.Context) (Ready, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, err := p.verifyIdentityLocked(ctx); err != nil {
+		return Ready{}, err
+	}
 	ready, err := VerifyCompleted(ctx, p.roots)
 	if err != nil {
 		return Ready{}, err
@@ -260,10 +276,7 @@ func (p *PinnedReady) Verify(ctx context.Context) (Ready, error) {
 	if ready != p.ready {
 		return Ready{}, fail("GLOBAL_RECEIPT_INVALID")
 	}
-	if err := p.verifyChain(); err != nil {
-		return Ready{}, err
-	}
-	if err := p.verifyOpenChildren(); err != nil {
+	if _, err := p.verifyIdentityLocked(ctx); err != nil {
 		return Ready{}, err
 	}
 	return p.ready, nil

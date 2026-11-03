@@ -111,6 +111,30 @@ func TestPinnedCompletedRejectsGenerationAndAncestorReplacement(t *testing.T) {
 	}
 }
 
+func TestPinnedIdentityAllowsGenerationContentWritesWhileFullAuditRejectsInvalidContent(t *testing.T) {
+	roots, _, dataRoot := pinnedFixture(t)
+	pinned, err := PinCompleted(context.Background(), roots, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+	if err := os.WriteFile(filepath.Join(dataRoot, "config.json"), []byte(`{"defaultModelId":"missing-model"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := pinned.VerifyIdentity(context.Background()); err != nil || ready.GlobalGeneration != pinnedTestGeneration {
+		t.Fatalf("content write changed pinned identity: %+v %v", ready, err)
+	}
+	if _, err := pinned.Verify(context.Background()); Code(err) != "GLOBAL_DEFAULT_MODEL_MISSING" {
+		t.Fatalf("full semantic audit accepted invalid config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataRoot, "config.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinned.Verify(context.Background()); err != nil {
+		t.Fatalf("valid content update rejected by full audit: %v", err)
+	}
+}
+
 func TestPinnedCompletedOriginalTypeScriptReadyFixtures(t *testing.T) {
 	manifest := os.Getenv("GO_GLOBAL_MIGRATION_CONTRACT")
 	if manifest == "" {
