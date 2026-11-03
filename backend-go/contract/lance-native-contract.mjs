@@ -18,6 +18,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
+import * as nodeModule from 'node:module'
+import { SourceTextModule, SyntheticModule, createContext } from 'node:vm'
+import { fileURLToPath } from 'node:url'
 
 const fail = message => { throw new Error(`LANCE_NATIVE_CONTRACT: ${message}`) }
 const byteOrder = (a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'))
@@ -253,6 +256,91 @@ function fixtures() {
   return { documents, byName, registry }
 }
 
+// Keep the original Unicode-ID fixture intact. This second, separately
+// generated source is in the proven en-US generated-ID ordering lane, so the
+// actual original migration module can provide an exact logicalHash oracle.
+function generatedIdentityFixture() {
+  const seed = fixtures()
+  const docIDs = new Map(seed.documents.map((doc, index) => [doc.id, String(index + 1).padStart(64, '0')]))
+  const chunkIDs = new Map(seed.byName.chunks.map((row, index) => [row.id, String(index + 11).padStart(64, '0')]))
+  const convert = (name, row) => {
+    const value = { ...row }
+    if (name === 'documents') {
+      value.id = docIDs.get(row.id)
+      value.filePath = `knowledge-copy:${value.id}`
+    } else {
+      value.id = chunkIDs.get(row.id)
+      value.docId = docIDs.get(row.docId)
+    }
+    assert(value.id && (name === 'documents' || value.docId))
+    return value
+  }
+  const byName = Object.fromEntries(tableNames.map(name => [name, seed.byName[name].map(row => convert(name, row))]))
+  return { documents: byName.documents, byName, registry: seed.registry }
+}
+
+async function actualOriginalLogicalSnapshot(storageRoot, originalSourceRoot) {
+  const context = createContext({ Buffer, process, console, TextEncoder, TextDecoder, setTimeout, clearTimeout, URL, Uint8Array, ArrayBuffer })
+  const cache = new Map()
+  const namespace = (value, key) => {
+    const names = Object.keys(value)
+    if (!names.includes('default')) names.push('default')
+    return new SyntheticModule(names, function () {
+      for (const name of names) this.setExport(name, name === 'default' && !(name in value) ? value : value[name])
+    }, { context, identifier: key })
+  }
+  const load = async identifier => {
+    if (cache.has(identifier)) return cache.get(identifier)
+    let result
+    if (identifier === '@lancedb/lancedb') result = namespace(lance, identifier)
+    else if (identifier === 'node:module') result = namespace({ ...nodeModule, createRequire: () => requireOracle }, identifier)
+    else if (identifier.startsWith('node:')) result = namespace(await import(identifier), identifier)
+    else {
+      assert(identifier.startsWith('file:'))
+      const source = fs.readFileSync(fileURLToPath(identifier), 'utf8')
+      result = new SourceTextModule(nodeModule.stripTypeScriptTypes(source, { mode: 'transform' }), { context, identifier, initializeImportMeta(meta) { meta.url = identifier } })
+    }
+    cache.set(identifier, result)
+    return result
+  }
+  const link = (specifier, referencing) => specifier.startsWith('.') ? load(new URL(specifier, referencing.identifier).href) : load(specifier)
+  const module = await load(new URL('../../electron/services/vector-migration-snapshot.ts', import.meta.url).href)
+  await module.link(link)
+  await module.evaluate()
+  return module.namespace.exportVectorStoreForMigration({ storageRoot, originalSourceRoot })
+}
+
+async function generateLogicalFixture() {
+  const seed = generatedIdentityFixture()
+  for (const dir of ['logical-source/lancedb', 'logical-source/knowledge-copies']) privateDirectory(at(dir))
+  fs.writeFileSync(at('logical-source', 'embedding-spaces.json'), `\n${JSON.stringify(seed.registry, null, 3)}\n\n`, { flag: 'wx', mode: 0o600 })
+  for (const doc of seed.documents) {
+    const content = `Synthetic ONLY: ${doc.id}\n${doc.fileName}\n'Omega' Ω🙂\n`
+    writeJSON(at('logical-source', 'knowledge-copies', `${digest(doc.id)}.json`), { content, indexedHash: digest(content), edited: false, indexDirty: false })
+  }
+  const db = await lance.connect(at('logical-source', 'lancedb'))
+  try {
+    for (const name of tableNames) {
+      const dimension = name === 'chunks__space_2' ? 3 : 2
+      const schema = name === 'documents' ? undefined : chunkSchema(name === 'chunks' ? undefined : dimension)
+      const table = name === 'chunks__space_4'
+        ? await db.createEmptyTable(name, schema)
+        : await db.createTable(name, seed.byName[name], schema ? { schema } : {})
+      table.close()
+    }
+  } finally { db.close() }
+  fs.cpSync(at('logical-source'), at('logical-copy'), { recursive: true, force: false, errorOnExist: true, dereference: false })
+  const before = physicalManifest(at('logical-source'))
+  assert.deepEqual(physicalManifest(at('logical-copy')), before)
+  const original = await actualOriginalLogicalSnapshot(at('logical-copy'), at('logical-source'))
+  assert.equal(original.summary.tableCount, tableNames.length)
+  writeJSON(at('logical-contract.json'), {
+    format: 1, oracle: 'actual-original-vector-migration-export-generated-id-lane',
+    summary: original.summary, tables: original.tables.map(table => ({ name: table.name, logicalHash: table.logicalHash })),
+    sourceManifest: before,
+  })
+}
+
 async function generate() {
   assert(!present(root), 'generate refuses any existing contract root (including an empty directory)')
   privateDirectory(root)
@@ -329,6 +417,7 @@ async function generate() {
     registrySha256: digest(fs.readFileSync(at('source', 'embedding-spaces.json'))),
     rowComparison: 'full rows sorted by UTF-8 byte id; not the TS migration logicalHash',
   })
+  await generateLogicalFixture()
   console.log(JSON.stringify({ mode: 'generate', tables: tables.length, rows: tables.reduce((sum, table) => sum + table.rows, 0), historicalTable: history.name, emptyTable: 'chunks__space_4' }))
 }
 
@@ -385,6 +474,13 @@ async function verify() {
   const copyLinks=readJSON(at('native-copy-links.json'));assert.equal(copyLinks.documents,3);assert.equal(copyLinks.managed,3);assert.equal(copyLinks.present,3);assert.equal(copyLinks.current,3);assert.equal(copyLinks.missing,0);assert.equal(copyLinks.unreferenced,0)
   const domainSummary=readJSON(at('native-domain-summary.json'))
   assert.equal(domainSummary.tableCount,6);assert.equal(domainSummary.documents,3);assert.equal(domainSummary.chunks,4);assert.equal(domainSummary.spaces,4);assert.equal(domainSummary.embeddingRows,7);assert.equal(domainSummary.activeGeneration,1)
+  const logicalContract = readJSON(at('logical-contract.json'))
+  const nativeLogical = readJSON(at('native-logical-summary.json'))
+  assert.equal(logicalContract.oracle, 'actual-original-vector-migration-export-generated-id-lane')
+  assert.deepEqual(nativeLogical.summary, logicalContract.summary, 'native typed snapshot matches original TS logical summary')
+  assert.deepEqual(nativeLogical.tables, logicalContract.tables, 'native typed table hashes match original TS')
+  assert.deepEqual(physicalManifest(at('logical-source')), logicalContract.sourceManifest, 'logical source unchanged')
+  assert.deepEqual(physicalManifest(at('logical-copy')), logicalContract.sourceManifest, 'logical copy unchanged')
   const staging = readJSON(at('native-staging-proof.json'))
   assert(staging.physical.digest && staging.physical.bytes > 0 && staging.physical.entries > 0, 'bounded Go physical-copy evidence required')
   assert.equal(staging.metadata.Copies, 3, 'all raw copied knowledge files validated')
@@ -426,8 +522,8 @@ async function verify() {
     format: 1, syntheticOnly: true, status: 'passed',
     dependencies: contract.dependencies,
     tables: contract.tables.map(table => ({ name: table.name, rows: table.rows, sourceVersion: table.version, restoredVersion: restoredVersions[table.name] })),
-    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true, nativeTypedDomainMatchesArrow: true, goCanonicalTableDomainAdmission: true, documentCopyLinksClassified: true },
-    limitations: ['No historical checkout-version override test; latest-version pin only.', 'No author data, application business behavior, durable writer authority, copy/indexed-text equality policy, or TS logicalHash parity claim.'],
+    checks: { nativeExportFullRowsAndSchemas: true, nativeRestoredIPCFullRowsAndSchemas: true, nodeReopenedNativeRestored: true, pinnedLatestVersion: true, emptySchemaBearingTable: true, sourceAndCopyBytesUnchanged: true, registryAndKnowledgeCopiesUnchanged: true, boundedGoStageNativeScanAndCleanup: true, nativeTypedDomainMatchesArrow: true, goCanonicalTableDomainAdmission: true, documentCopyLinksClassified: true, generatedIdOriginalLogicalHash: true },
+    limitations: ['No historical checkout-version override test; latest-version pin only.', 'Logical hash parity is limited to bounded generated IDs and en-US ordering; arbitrary multi-Unicode IDs still fail closed.', 'No author data, application business behavior, durable writer authority, or copy/indexed-text equality policy.'],
   }
   writeJSON(at('summary.json'), summary)
   console.log(JSON.stringify({ mode: 'verify', status: summary.status, tables: contract.tables.length, summary: 'summary.json' }))

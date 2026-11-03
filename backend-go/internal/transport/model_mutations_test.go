@@ -20,7 +20,7 @@ func TestModelSaveUsesTrustedEndpointAndPreservesOnlySameEndpointCredential(t *t
 		t.Fatal(err)
 	}
 	cookie, csrf := bootstrap(t, server)
-	newProfile := `{"args":[{"id":"writer","name":"Writer","provider":"openai","protocol":"openai","modelName":"model","baseUrl":"https://allowed.example:8443/v1","apiKey":"secret-for-writer","temperature":0.7,"maxTokens":1024,"purposes":["generation"]}]}`
+	newProfile := `{"args":[{"id":"writer","name":"Writer","provider":"openai","protocol":"openai","modelName":"model","baseUrl":"https://allowed.example:8443/v1","apiKey":"secret-for-writer","temperature":0.7,"maxTokens":1024,"purposes":["generation"],"reasoningMapping":{"adapter":"openai-thinking-budget","supportedEfforts":["off","high"],"providerValues":{"off":0,"high":1024}}}]}`
 	saved := rpc(t, server, cookie, csrf, "llm:save-model", newProfile, nil)
 	if saved.Code != 200 || !strings.Contains(saved.Body.String(), `"success":true`) || strings.Contains(saved.Body.String(), "secret-for-writer") {
 		t.Fatal(saved.Code, saved.Body.String())

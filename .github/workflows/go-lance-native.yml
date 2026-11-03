@@ -47,7 +47,7 @@ jobs:
       - name: Generate original synthetic Lance 0.22.3 and stream IPC
         run: |
           npm install --prefix "$RUNNER_TEMP/oracle" --no-audit --no-fund --package-lock=false @lancedb/lancedb@0.22.3 apache-arrow@18.1.0
-          node backend-go/contract/lance-native-contract.mjs generate
+          node --experimental-vm-modules backend-go/contract/lance-native-contract.mjs generate
       - name: Prepare isolated native build resources
         run: |
           # GitHub ephemeral runner only; never author data or the deployment host.
@@ -115,8 +115,8 @@ jobs:
       - name: Run native artifact without Node or Python PATH
         run: |
           PATH=/nonexistent /usr/bin/time -v "$RUNNER_TEMP/native-lance-check" "$GO_LANCE_CONTRACTROOT" 2> "$RUNNER_TEMP/native-runtime-metrics.txt"
-      - name: Original Node verifies Arrow streams and restored native tables
-        run: node backend-go/contract/lance-native-contract.mjs verify
+      - name: Original Node verifies Arrow streams, logical hash and restored native tables
+        run: node --experimental-vm-modules backend-go/contract/lance-native-contract.mjs verify
       - name: Upload bounded synthetic evidence only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -133,6 +133,8 @@ jobs:
             ${{ runner.temp }}/native-go-format.patch
             ${{ runner.temp }}/native-runtime-dependencies.txt
             ${{ runner.temp }}/native-runtime-metrics.txt
+            ${{ runner.temp }}/novel-lance-interop/logical-contract.json
+            ${{ runner.temp }}/novel-lance-interop/native-logical-summary.json
             ${{ runner.temp }}/novel-lance-interop/summary.json
             ${{ runner.temp }}/novel-lance-interop/contract.json
             ${{ runner.temp }}/novel-lance-interop/native-export.json

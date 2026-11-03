@@ -7,6 +7,7 @@ import (
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgelogical"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
@@ -18,6 +19,7 @@ type KnowledgeConfig struct {
 	Copy     projectfs.KnowledgeBudget
 	Metadata knowledgecopy.Budget
 	Native   bool
+	Logical  bool // opt-in original en-US logical hash; unsupported collation fails closed
 }
 
 // KnowledgeEvidence contains no paths, prose, IDs, registry values or handles.
@@ -25,6 +27,7 @@ type KnowledgeEvidence struct {
 	Physical  projectfs.KnowledgeSummary `json:"physical"`
 	Metadata  knowledgecopy.Summary      `json:"metadata"`
 	Native    *knowledgedomain.Summary   `json:"native,omitempty"`
+	Logical   *knowledgelogical.Summary  `json:"logical,omitempty"`
 	CopyLinks *knowledgecopy.LinkSummary `json:"copyLinks,omitempty"`
 }
 
@@ -38,7 +41,7 @@ type stagedKnowledge struct {
 }
 
 func validKnowledgeConfig(config KnowledgeConfig) bool {
-	return config.Copy.MaxBytes > 0 && config.Copy.MaxBytes <= 1<<40 && config.Copy.MaxEntries > 0 && config.Copy.MaxEntries <= 10000 && config.Copy.MaxDepth > 0 && config.Copy.MaxDepth <= 64 && knowledgecopy.ValidateBudget(config.Metadata) == nil && (!config.Native || nativeKnowledgeSupported())
+	return config.Copy.MaxBytes > 0 && config.Copy.MaxBytes <= 1<<40 && config.Copy.MaxEntries > 0 && config.Copy.MaxEntries <= 10000 && config.Copy.MaxDepth > 0 && config.Copy.MaxDepth <= 64 && knowledgecopy.ValidateBudget(config.Metadata) == nil && (!config.Native || nativeKnowledgeSupported()) && (!config.Logical || config.Native)
 }
 func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.Root, config KnowledgeConfig) (stage *stagedKnowledge, err error) {
 	if err := parent.Mkdir("knowledge", 0700); err != nil {
@@ -95,6 +98,13 @@ func stageKnowledge(ctx context.Context, project *projectfs.Project, parent *os.
 		}
 		stage.evidence.CopyLinks = &links
 		stage.evidence.Native = &summary
+		if config.Logical {
+			logical, logicalErr := hashNativeKnowledge(ctx, snapshot)
+			if logicalErr != nil {
+				return stage, redact(logicalErr)
+			}
+			stage.evidence.Logical = &logical
+		}
 		stage.readSnapshot = snapshot // Private bounded rows for optional immutable read capture only.
 		if err := stage.verify(ctx); err != nil {
 			return stage, err
