@@ -60,7 +60,8 @@ func inspectNativeKnowledge(ctx context.Context, stage *stagedKnowledge, config 
 			summary = knowledgedomain.Summary{}
 		}
 	}()
-	if _, nativeErr := lancenative.Export(ctx, filepath.Join(stage.root.Name(), "lancedb"), output.root.Name()); nativeErr != nil {
+	manifest, nativeErr := lancenative.Export(ctx, filepath.Join(stage.root.Name(), "lancedb"), output.root.Name())
+	if nativeErr != nil {
 		return knowledgedomain.Snapshot{}, knowledgedomain.Summary{}, redact(nativeErr)
 	}
 	raw, readErr := lancenative.ReadDomain(ctx, output.root.Name())
@@ -76,12 +77,37 @@ func inspectNativeKnowledge(ctx context.Context, stage *stagedKnowledge, config 
 	if decoder.Decode(new(any)) != io.EOF {
 		return knowledgedomain.Snapshot{}, knowledgedomain.Summary{}, ErrFilesystem
 	}
+	if err := validateNativeManifest(manifest, snapshot); err != nil {
+		return knowledgedomain.Snapshot{}, knowledgedomain.Summary{}, err
+	}
 	snapshot.Registry = registry
 	summary, err = knowledgedomain.Validate(ctx, snapshot, nativeDomainBudget())
 	if err != nil {
 		return knowledgedomain.Snapshot{}, knowledgedomain.Summary{}, redact(err)
 	}
 	return snapshot, summary, nil
+}
+
+// The export manifest and typed JSON sidecar are two observations from one
+// pinned native snapshot. Both must identify the same ordered tables, versions
+// and row counts before the JSON can be used as author knowledge evidence.
+// The native library writes these independently; accepting just one would let
+// an incomplete or stale sidecar masquerade as a complete export.
+func validateNativeManifest(manifest lancenative.Manifest, snapshot knowledgedomain.Snapshot) error {
+	if len(manifest.Tables) != len(snapshot.Tables) || len(manifest.Tables) > knowledgedomain.HardMaxTables {
+		return ErrFilesystem
+	}
+	seen := make(map[string]bool, len(manifest.Tables))
+	for i, entry := range manifest.Tables {
+		table := snapshot.Tables[i]
+		if entry.Name == "" || seen[entry.Name] || entry.Version == 0 ||
+			entry.File != entry.Name+".arrows" || entry.Name != table.Name ||
+			entry.Version != table.Version || entry.Rows != uint64(len(table.Records)) {
+			return ErrFilesystem
+		}
+		seen[entry.Name] = true
+	}
+	return nil
 }
 func nativeDomainBudget() knowledgedomain.Budget {
 	return knowledgedomain.Budget{MaxTables: 32, MaxRows: 10000, MaxCells: 200000, MaxTextBytes: 32 * 1024 * 1024}

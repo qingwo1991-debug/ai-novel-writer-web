@@ -32,6 +32,9 @@
 - `internal/knowledgedomain`：有界合成typed快照的schema/cell、document/chunk count/order/orphan、embedding空间/active完整性验证。原TS真实22case Oracle与139领域用例在GitHub通过；自身不含Go精确logicalHash或durable authority，document/copy引用分类由第十八轮`knowledgecopy.ValidateLinks`补充，native typed reader→Go领域验证组合亦已独立通过（8native tests、10项JS保全检查）；仍为有上限的合成域。见 `web/GO-KNOWLEDGE-DOMAIN.md`。
 - `internal/projectfs/knowledge*.go`、`internal/knowledgecopy`与opt-in `projectaccess.Config.Knowledge`：固定知识资产完整物理stage、缺失/legacy门、源/副本字节与identity proof、replacement-safe清理、只读registry/copy状态和rawdigest。普通Go合成回归和Go stage→native scan→原JS全schema/rows组合均已通过；默认仍是metadata-only；第十八轮显式Native opt-in追加bounded domain与copy引用分类，missing非fatal且不current，dirty合法保留，绝不意味着索引可直接用于AI；不授予作者原库写能力。详见 `web/GO-KNOWLEDGE-COPY-PREFLIGHT.md`。
 - `internal/knowledgequery`、`projectaccess.InspectKnowledge`、`projectsession.KnowledgeManager`、`transport.BindKnowledge`：第十九轮隔离有界capture的4项KB只读业务（文档列表/三字段统计/无向量计数/副本读取），samecapture finalization章号注释、精确cookie+tab+context whole-call lease、固定snapshot refresh与scratch清理后无FD依赖。原TS14组完整逻辑Oracle+独立真实native→capture→HTTP验收见 `web/GO-KNOWLEDGE-READS.md`；main不绑定，无durable作者会话/保存/reindex/search/embedding写业务。
+- `internal/projectcatalog`、`projectfs.ListCanonicalProjects`、`transport.LibraryRoute`：私有最近项目元数据、完整书库目录枚举与隔离的 `/api/library` 适配。目录键只用于导航，打开前仍须重新准入；接口尚未接主程序。
+- `internal/authorruntime`、`projectsession.ActiveCoordinator`：持续持有旧网关锁的作者库私有只读快照、来源复核、项目切换与在途围栏。`AssessSQLiteWriteCandidate` 仅返回受限写入资格证据，**不提供正式作者数据写入能力**。
+- `internal/transport.StaticAssets`：隔离的 React 静态资源处理器，复用认证会话并拒绝路径逃逸；尚未接主程序。
 - `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
 
 完整操作清单和迁移门见 `web/GO-MIGRATION-MATRIX.md`、`web/GO-MIGRATION-PLAN.md`。AI 生成、定稿及后处理、知识库、归档和其他全部业务仍需要逐项迁移并验证。
@@ -50,9 +53,10 @@
 4. 合成临时 SQLite / httptest 单元与 HTTP 契约测试；
 5. `go test -race`；
 6. 构建 Go 二进制并进行无作者数据的环回 smoke；
-7. 上传测试证据及非生产二进制，有效期 7 天。
+7. 上传测试证据及非生产二进制，有效期 7 天；
+8. 在 GitHub runner 上构建**不发布**的 Go 候选镜像，用空状态验证健康、认证与无 Node 运行时。
 
-没有使用生产卷、provider key、作者作品或部署密钥。此工作流没有 packages 写权限、不发布镜像、不修改正式容器。现有 Node 镜像发布改为手动 dispatch；当前正式服务继续固定原镜像，未切换到本目录实现。
+没有使用生产卷、provider key、作者作品或部署密钥。此工作流没有 packages 写权限、不发布镜像、不修改正式容器。现有 Node 镜像发布改为手动 dispatch；当前正式服务继续固定原镜像，未切换到本目录实现。完整 Go 功能、持久作者写入、浏览器及数据验收完成后，才具备发布 GHCR 摘要和拉取切换的条件。
 
 ## 数据与兼容硬要求
 

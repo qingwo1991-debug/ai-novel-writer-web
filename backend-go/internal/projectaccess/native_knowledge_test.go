@@ -15,9 +15,55 @@ import (
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgecopy"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/lancenative"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
+
+func TestNativeKnowledgeManifestBindsCompleteTypedSnapshot(t *testing.T) {
+	manifest := lancenative.Manifest{Tables: []lancenative.Table{
+		{Name: "chunks", Version: 2, Rows: 1, File: "chunks.arrows"},
+		{Name: "documents", Version: 4, Rows: 0, File: "documents.arrows"},
+	}}
+	snapshot := knowledgedomain.Snapshot{Tables: []knowledgedomain.Table{
+		{Name: "chunks", Version: 2, Records: []map[string]any{{"id": "synthetic"}}},
+		{Name: "documents", Version: 4, Records: []map[string]any{}},
+	}}
+	if err := validateNativeManifest(manifest, snapshot); err != nil {
+		t.Fatal("matching manifest and snapshot rejected", err)
+	}
+	for _, test := range []struct {
+		name string
+		edit func(*lancenative.Manifest, *knowledgedomain.Snapshot)
+	}{
+		{"omitted-sidecar-table", func(_ *lancenative.Manifest, s *knowledgedomain.Snapshot) { s.Tables = s.Tables[:1] }},
+		{"reordered-sidecar", func(_ *lancenative.Manifest, s *knowledgedomain.Snapshot) {
+			s.Tables[0], s.Tables[1] = s.Tables[1], s.Tables[0]
+		}},
+		{"stale-version", func(_ *lancenative.Manifest, s *knowledgedomain.Snapshot) { s.Tables[0].Version++ }},
+		{"lost-record", func(_ *lancenative.Manifest, s *knowledgedomain.Snapshot) { s.Tables[0].Records = nil }},
+		{"wrong-ipc-file", func(m *lancenative.Manifest, _ *knowledgedomain.Snapshot) { m.Tables[0].File = "documents.arrows" }},
+		{"duplicate-manifest-table", func(m *lancenative.Manifest, s *knowledgedomain.Snapshot) {
+			m.Tables[1].Name = m.Tables[0].Name
+			m.Tables[1].File = m.Tables[0].File
+			s.Tables[1].Name = s.Tables[0].Name
+		}},
+		{"zero-version", func(m *lancenative.Manifest, s *knowledgedomain.Snapshot) {
+			m.Tables[0].Version = 0
+			s.Tables[0].Version = 0
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			copyManifest := lancenative.Manifest{Tables: append([]lancenative.Table(nil), manifest.Tables...)}
+			copySnapshot := knowledgedomain.Snapshot{Tables: append([]knowledgedomain.Table(nil), snapshot.Tables...)}
+			test.edit(&copyManifest, &copySnapshot)
+			if err := validateNativeManifest(copyManifest, copySnapshot); !errors.Is(err, ErrFilesystem) {
+				t.Fatal("mismatched native evidence accepted", err)
+			}
+		})
+	}
+}
 
 func nativeAccessFixture(t *testing.T) Config {
 	t.Helper()
