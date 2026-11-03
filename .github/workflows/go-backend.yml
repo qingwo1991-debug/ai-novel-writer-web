@@ -216,6 +216,49 @@ jobs:
           path: ${{ runner.temp }}/novel-go-global-install/contract.json
           retention-days: 7
           if-no-files-found: error
+      - name: Generate original populated M03 not-generated review-cycle fixtures
+        env:
+          NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
+        run: |
+          export GO_M03_NOTGENERATED_CONTRACT="$RUNNER_TEMP/novel-go-m03-notgenerated/contract.json"
+          printf 'GO_M03_NOTGENERATED_CONTRACT=%s\n' "$GO_M03_NOTGENERATED_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/m03-notgenerated-contract.mjs
+          test -s "$GO_M03_NOTGENERATED_CONTRACT"
+      - name: Upload original populated M03 review-cycle oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-m03-notgenerated-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-m03-notgenerated/contract.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Generate original review-report parser fixtures
+        run: |
+          export GO_REVIEW_REPORT_PARSER_CONTRACT="$RUNNER_TEMP/novel-go-review-report-parser/contract.json"
+          printf 'GO_REVIEW_REPORT_PARSER_CONTRACT=%s\n' "$GO_REVIEW_REPORT_PARSER_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/review-report-parser-contract.mjs
+          test -s "$GO_REVIEW_REPORT_PARSER_CONTRACT"
+      - name: Generate original chapter-goal review fixtures
+        run: |
+          export GO_REVIEW_GOALS_CONTRACT="$RUNNER_TEMP/novel-go-review-goals/contract.json"
+          printf 'GO_REVIEW_GOALS_CONTRACT=%s\n' "$GO_REVIEW_GOALS_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/review-goals-contract.mjs
+          test -s "$GO_REVIEW_GOALS_CONTRACT"
+      - name: Generate original consistency-merge review fixtures
+        run: |
+          export GO_REVIEW_CONSISTENCY_MERGE_CONTRACT="$RUNNER_TEMP/novel-go-review-consistency-merge/contract.json"
+          printf 'GO_REVIEW_CONSISTENCY_MERGE_CONTRACT=%s\n' "$GO_REVIEW_CONSISTENCY_MERGE_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/review-consistency-merge-contract.mjs
+          test -s "$GO_REVIEW_CONSISTENCY_MERGE_CONTRACT"
+      - name: Upload original review-report component oracles
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-review-report-components-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/novel-go-review-report-parser/contract.json
+            ${{ runner.temp }}/novel-go-review-goals/contract.json
+            ${{ runner.temp }}/novel-go-review-consistency-merge/contract.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Extract original recognized schemas for later pinning
         run: |
           node --input-type=module -e '
