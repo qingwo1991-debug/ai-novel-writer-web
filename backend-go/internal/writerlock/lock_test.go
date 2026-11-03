@@ -33,6 +33,40 @@ func privateDirectory(t *testing.T) string {
 	return root
 }
 
+func TestRetainPreventsAccidentalWriterLockRelease(t *testing.T) {
+	root := privateDirectory(t)
+	held, err := AcquireLegacy(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tests alone can clear the poison so the runner does not leak a lock.
+	t.Cleanup(func() {
+		held.mu.Lock()
+		held.retained = false
+		held.mu.Unlock()
+		retainedLocks.Delete(held)
+		_ = held.Close()
+	})
+	if err := held.Retain(); err != nil {
+		t.Fatal(err)
+	}
+	if _, anchored := retainedLocks.Load(held); !anchored {
+		t.Fatal("retained lock lost its process-level reference")
+	}
+	if err := held.Close(); !errors.Is(err, ErrRetained) {
+		t.Fatalf("retained lock was released: %v", err)
+	}
+	if next, err := AcquireLegacy(root); next != nil || !errors.Is(err, ErrLocked) {
+		if next != nil {
+			_ = next.Close()
+		}
+		t.Fatalf("another writer acquired retained lock: %v", err)
+	}
+	if err := held.VerifyLegacy(root); err != nil {
+		t.Fatalf("retained lock lost its physical anchor: %v", err)
+	}
+}
+
 func TestAcquireReleasePreservesInode(t *testing.T) {
 	root := privateDirectory(t)
 	path := filepath.Join(root, lockName)
@@ -390,16 +424,16 @@ func TestLockEntrySwapsFailValidation(t *testing.T) {
 			path := filepath.Join(root, lockName)
 			switch kind {
 			case "replacement", "symlink":
-				if err := os.Rename(path, path + ".old"); err != nil {
+				if err := os.Rename(path, path+".old"); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "replacement" {
 					err = os.WriteFile(path, nil, 0o600)
 				} else {
-					err = os.Symlink(lockName + ".old", path)
+					err = os.Symlink(lockName+".old", path)
 				}
 			case "hardlink":
-				err = os.Link(path, path + ".other")
+				err = os.Link(path, path+".other")
 			case "permissions":
 				err = os.Chmod(path, 0o644)
 			case "size":
@@ -494,10 +528,10 @@ func startLockChild(t *testing.T, root string) *lockChild {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(cancel)
 	child := &lockChild{cmd: exec.CommandContext(ctx, executable, "-test.run=^TestWriterLockHelperProcess$")}
-	child.cmd.Env = append(os.Environ(), "ANW_WRITERLOCK_HELPER=1", "ANW_WRITERLOCK_ROOT=" + root)
+	child.cmd.Env = append(os.Environ(), "ANW_WRITERLOCK_HELPER=1", "ANW_WRITERLOCK_ROOT="+root)
 	child.cmd.Stderr = &child.stderr
 	child.input, err = child.cmd.StdinPipe()
 	if err != nil {

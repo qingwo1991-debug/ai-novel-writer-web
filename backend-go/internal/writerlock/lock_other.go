@@ -10,6 +10,7 @@ var (
 	ErrLocked      = errors.New("writerlock_busy")
 	ErrUnsafe      = errors.New("writerlock_unsafe")
 	ErrIO          = errors.New("writerlock_io")
+	ErrRetained    = errors.New("writerlock_retained")
 	ErrUnsupported = errors.New("writerlock_unsupported")
 )
 
@@ -40,3 +41,5 @@ func (lock *Lock) VerifyLegacy(directory string) error {
 func (lock *Lock) Close() error {
 	return nil
 }
+
+func (lock *Lock) Retain() error { return ErrUnsupported }

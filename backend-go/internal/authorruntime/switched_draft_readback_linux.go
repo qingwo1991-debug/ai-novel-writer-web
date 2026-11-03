@@ -23,8 +23,8 @@ var ErrSwitchedDraftUnverified = errors.New("AUTHOR_SWITCHED_DRAFT_UNVERIFIED")
 const switchedDraftMaxSafeInteger int64 = 9007199254740991
 
 // SwitchedReadbackCleanupError retains the unclosed private Reader so the
-// coordinator can retry Close while keeping the legacy lock. Losing this
-// handle would make it unsafe to release the lock after a failed DB close.
+// coordinator can inspect cleanup while the legacy lock is retained. Losing
+// this handle would make it unsafe to release the lock after a failed DB close.
 type SwitchedReadbackCleanupError struct {
 	Reader *Reader
 	Cause  error
@@ -110,9 +110,10 @@ func VerifySwitchedDraftUnderLock(ctx context.Context, held *writerlock.Lock,
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
+			retainErr := held.Retain()
 			result = SwitchedDraftReadback{}
 			retErr = errors.Join(retErr, ErrSwitchedDraftUnverified,
-				&SwitchedReadbackCleanupError{Reader: reader, Cause: err})
+				&SwitchedReadbackCleanupError{Reader: reader, Cause: err}, retainErr)
 		}
 	}()
 	report, err := reader.Report()

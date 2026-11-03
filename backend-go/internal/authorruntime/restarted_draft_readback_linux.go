@@ -22,8 +22,8 @@ import (
 // key: the catalog remains fenced while recovery is checked. The journal must
 // already be durably SWITCHED and both trees must still match its PREPARED
 // record. It returns only readback facts, never a save ACK or catalog clearance.
-// The caller owns library and held; any returned cleanup error retains Reader
-// and requires the caller to keep held until that Reader is closed.
+// The caller owns library and held. A cleanup failure retains the writer lock
+// and returns the Reader for diagnosis; process restart is then required.
 func VerifyRestartedSwitchedDraftUnderLock(ctx context.Context, held *writerlock.Lock,
 	library *projectfs.Library, projectID, projectPath, stageParent, journalName string,
 	config projectaccess.Config) (result SwitchedDraftReadback, retErr error) {
@@ -59,9 +59,10 @@ func VerifyRestartedSwitchedDraftUnderLock(ctx context.Context, held *writerlock
 	}
 	defer func() {
 		if err := reader.Close(); err != nil {
+			retainErr := held.Retain()
 			result = SwitchedDraftReadback{}
 			retErr = errors.Join(retErr, ErrSwitchedDraftUnverified,
-				&SwitchedReadbackCleanupError{Reader: reader, Cause: err})
+				&SwitchedReadbackCleanupError{Reader: reader, Cause: err}, retainErr)
 		}
 	}()
 	report, err := reader.Report()

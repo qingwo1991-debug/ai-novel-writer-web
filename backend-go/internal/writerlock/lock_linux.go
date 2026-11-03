@@ -31,6 +31,9 @@ var (
 	ErrUnsafe = errors.New("writerlock_unsafe")
 	// ErrIO reports an operating-system failure without exposing configured paths.
 	ErrIO = errors.New("writerlock_io")
+	// ErrRetained means an unresolved reader cleanup requires this process to
+	// keep the advisory exclusion until it exits.
+	ErrRetained = errors.New("writerlock_retained")
 	// ErrUnsupported is returned on platforms without this implementation.
 	ErrUnsupported = errors.New("writerlock_unsupported")
 )
@@ -66,7 +69,13 @@ type Lock struct {
 	policy   lockPolicy
 	identity fs.FileInfo
 	closeErr error
+	retained bool
 }
+
+// A retained lock must remain reachable even if its owner aborts startup or
+// discards the last local reference. Otherwise os.File's finalizer could close
+// its descriptor and silently release flock before process exit.
+var retainedLocks sync.Map // map[*Lock]struct{}
 
 // Acquire exclusively locks the fixed .novel-writer.lock entry without waiting.
 // It creates only a missing lock entry, with O_EXCL and mode 0600; it never
@@ -129,7 +138,7 @@ func acquirePinnedPolicy(anchor *directoryAnchor, policy lockPolicy) (*Lock, err
 	if !anchor.valid() || !sameEntryPolicy(anchor, file, identity, policy) {
 		return nil, ErrUnsafe
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX | syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return nil, ErrLocked
 		}
@@ -167,6 +176,9 @@ func (lock *Lock) Close() error {
 	}
 	lock.mu.Lock()
 	defer lock.mu.Unlock()
+	if lock.retained {
+		return ErrRetained
+	}
 	if lock.file == nil {
 		return lock.closeErr
 	}
@@ -182,6 +194,25 @@ func (lock *Lock) Close() error {
 	lock.file = nil
 	lock.anchor = nil
 	return lock.closeErr
+}
+
+// Retain permanently refuses Close after cleanup of a borrowed reader has
+// failed. The owner may still inspect the held lock, but must restart the
+// process before another writer can acquire it. The caller must own the live
+// lock through the readback; it must not race Retain against Close. It is safe
+// to call repeatedly.
+func (lock *Lock) Retain() error {
+	if lock == nil {
+		return ErrUnsafe
+	}
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+	if lock.file == nil {
+		return ErrUnsafe
+	}
+	lock.retained = true
+	retainedLocks.Store(lock, struct{}{})
+	return nil
 }
 
 type directoryPart struct {
@@ -219,7 +250,7 @@ func openDirectory(directory string) (*directoryAnchor, error) {
 	}
 	components := strings.Split(strings.TrimPrefix(directory, "/"), "/")
 	for i, name := range components {
-		final := i == len(components) - 1
+		final := i == len(components)-1
 		before, err := root.Lstat(name)
 		if err != nil || !safeDirectory(before, final) {
 			return nil, ErrUnsafe
@@ -241,7 +272,7 @@ func openDirectory(directory string) (*directoryAnchor, error) {
 	}
 	// The file descriptor is used only for real syscall.Openat below; using
 	// Root.OpenFile(name, O_NOFOLLOW) would still follow confined symlinks.
-	anchor.dir, err = root.OpenFile(".", os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW | syscall.O_CLOEXEC, 0)
+	anchor.dir, err = root.OpenFile(".", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, ErrIO
 	}
@@ -253,7 +284,7 @@ func openDirectory(directory string) (*directoryAnchor, error) {
 }
 
 func safeDirectory(info fs.FileInfo, final bool) bool {
-	if info == nil || !info.IsDir() || info.Mode() & (os.ModeSymlink | os.ModeSetuid | os.ModeSetgid) != 0 {
+	if info == nil || !info.IsDir() || info.Mode()&(os.ModeSymlink|os.ModeSetuid|os.ModeSetgid) != 0 {
 		return false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -261,9 +292,9 @@ func safeDirectory(info fs.FileInfo, final bool) bool {
 		return false
 	}
 	if final {
-		return stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm() & 0o022 == 0
+		return stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm()&0o022 == 0
 	}
-	return info.Mode().Perm() & 0o022 == 0 || (stat.Uid == 0 && info.Mode() & os.ModeSticky != 0)
+	return info.Mode().Perm()&0o022 == 0 || (stat.Uid == 0 && info.Mode()&os.ModeSticky != 0)
 }
 
 func sameDirectory(a, b fs.FileInfo, final bool) bool {
@@ -275,7 +306,7 @@ func (anchor *directoryAnchor) valid() bool {
 		return false
 	}
 	for i, part := range anchor.parts {
-		final := i == len(anchor.parts) - 1
+		final := i == len(anchor.parts)-1
 		opened, err := part.root.Stat(".")
 		if err != nil || !sameDirectory(part.identity, opened, final) {
 			return false
@@ -313,7 +344,7 @@ func safeLock(info fs.FileInfo) bool {
 }
 
 func safeLockPolicy(info fs.FileInfo, policy lockPolicy) bool {
-	if info == nil || !info.Mode().IsRegular() || info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky) != 0 || info.Size() != 0 {
+	if info == nil || !info.Mode().IsRegular() || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 || info.Size() != 0 {
 		return false
 	}
 	mode := info.Mode().Perm()
@@ -349,7 +380,7 @@ func openLockPolicy(anchor *directoryAnchor, policy lockPolicy) (*os.File, fs.Fi
 	fd := -1
 	created := false
 	if errors.Is(err, fs.ErrNotExist) {
-		fd, err = syscall.Openat(int(anchor.dir.Fd()), name, flags | syscall.O_CREAT | syscall.O_EXCL, 0o600)
+		fd, err = syscall.Openat(int(anchor.dir.Fd()), name, flags|syscall.O_CREAT|syscall.O_EXCL, 0o600)
 		if errors.Is(err, syscall.EEXIST) {
 			// A concurrent creator won. Inspect it, but never retry creation
 			// after observing an existing entry, including if it disappears.
