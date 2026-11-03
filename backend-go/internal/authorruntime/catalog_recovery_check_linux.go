@@ -25,9 +25,10 @@ var ErrCatalogRecoveryUnverified = errors.New("PROJECT_PUBLICATION_RECOVERY_UNVE
 type SwitchedReadback func(context.Context, string, string, projectpublish.JournalRecovery) error
 
 // CatalogJournalRecoveryCheck supplies a fail-closed catalog callback. The
-// private stage parent is dedicated to publication artifacts. Every entry is
-// inspected on each call; an unrelated or malformed journal blocks the whole
-// catalog rather than being guessed to belong to a different project. A
+// private stage parent is dedicated to publication artifacts. Every journal
+// is fully classified against its validated owner on each call. A malformed,
+// unowned or unknown journal blocks the whole catalog, while a valid journal
+// for another project does not block the requested project. A
 // publisher must HoldRecovery before creating or exchanging a stage in this
 // process. Neither this callback nor a switched marker performs recovery.
 func CatalogJournalRecoveryCheck(ctx context.Context, held *writerlock.Lock, dataRoot, stageParent string, readback SwitchedReadback) (projectcatalog.RecoveryCheck, error) {
@@ -79,12 +80,14 @@ func CatalogJournalRecoveryCheck(ctx context.Context, held *writerlock.Lock, dat
 		}
 		prepared := make(map[string]bool)
 		markers := make(map[string]bool)
+		initialInfo := make(map[string]fs.FileInfo, len(entries))
 		for _, entry := range entries {
 			name := entry.Name()
 			info, err := root.Lstat(name)
 			if err != nil || info.Mode()&os.ModeSymlink != 0 {
 				return ErrCatalogRecoveryUnverified
 			}
+			initialInfo[name] = info
 			switch {
 			case info.IsDir() && catalogRecoveryStageName(name) && info.Mode().Perm() == 0700:
 			case info.Mode().IsRegular() && catalogRecoveryJournalName(name):
@@ -100,13 +103,67 @@ func CatalogJournalRecoveryCheck(ctx context.Context, held *writerlock.Lock, dat
 				return ErrCatalogRecoveryUnverified
 			}
 		}
+		targets := make(map[string]projectpublish.JournalTarget, len(prepared))
+		recoveries := make(map[string]projectpublish.JournalRecovery, len(prepared))
 		for name := range prepared {
-			recovery, err := projectpublish.RecoverExchangeJournal(ctx, held, dataRoot, projectID, projectPath, stageParent, name)
-			if err != nil {
+			target, err := projectpublish.InspectPreparedJournalTarget(ctx, held, dataRoot, stageParent, name)
+			if err != nil || filepath.Dir(target.ProjectPath) != filepath.Dir(projectPath) {
 				return ErrCatalogRecoveryUnverified
+			}
+			recovery, err := projectpublish.RecoverExchangeJournal(ctx, held, dataRoot,
+				target.ProjectID, target.ProjectPath, stageParent, name)
+			if err != nil || recovery.Class == projectpublish.JournalUnknown || recovery.StagePath != target.StagePath {
+				return ErrCatalogRecoveryUnverified
+			}
+			again, err := projectpublish.InspectPreparedJournalTarget(ctx, held, dataRoot, stageParent, name)
+			if err != nil || again != target {
+				return ErrCatalogRecoveryUnverified
+			}
+			targets[name] = target
+			recoveries[name] = recovery
+			if target.ProjectID != projectID || target.ProjectPath != projectPath {
+				continue
 			}
 			if err := catalogRecoveryAcceptSwitched(ctx, projectPath, projectID, recovery, readback); err != nil {
 				return err
+			}
+		}
+		// A new marker or unknown quarantine artifact appearing during the
+		// classification must not be missed by the initial directory listing.
+		finalFile, err := root.Open(".")
+		if err != nil {
+			return ErrCatalogRecoveryUnverified
+		}
+		finalEntries, finalReadErr := finalFile.ReadDir(-1)
+		finalCloseErr := finalFile.Close()
+		if finalReadErr != nil || finalCloseErr != nil || len(finalEntries) != len(entries) {
+			return ErrCatalogRecoveryUnverified
+		}
+		initialNames := make(map[string]bool, len(entries))
+		for _, entry := range entries {
+			initialNames[entry.Name()] = true
+		}
+		for _, entry := range finalEntries {
+			name := entry.Name()
+			if !initialNames[name] {
+				return ErrCatalogRecoveryUnverified
+			}
+			info, err := root.Lstat(name)
+			before := initialInfo[name]
+			if err != nil || !os.SameFile(before, info) || before.Mode() != info.Mode() ||
+				before.Size() != info.Size() || !before.ModTime().Equal(info.ModTime()) {
+				return ErrCatalogRecoveryUnverified
+			}
+		}
+		for name, target := range targets {
+			again, err := projectpublish.InspectPreparedJournalTarget(ctx, held, dataRoot, stageParent, name)
+			if err != nil || again != target {
+				return ErrCatalogRecoveryUnverified
+			}
+			recovery, err := projectpublish.RecoverExchangeJournal(ctx, held, dataRoot,
+				target.ProjectID, target.ProjectPath, stageParent, name)
+			if err != nil || recovery != recoveries[name] {
+				return ErrCatalogRecoveryUnverified
 			}
 		}
 		last, err := catalogRecoveryPrivateDirectory(stageParent)

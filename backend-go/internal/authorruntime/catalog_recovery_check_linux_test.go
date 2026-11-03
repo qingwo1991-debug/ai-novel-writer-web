@@ -3,13 +3,16 @@
 package authorruntime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectpublish"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
@@ -149,5 +152,133 @@ func TestCatalogRecoveryRequiresSwitchedMarkerAndDraftReadback(t *testing.T) {
 	}
 	if err := catalogRecoveryAcceptSwitched(ctx, projectPath, projectID, recovery, readback); err != nil || !called {
 		t.Fatalf("verified switched readback was rejected: %v", err)
+	}
+}
+
+func TestCatalogRecoveryJournalBlocksOnlyItsValidatedProject(t *testing.T) {
+	root, stageParent, storyPath, held := catalogRecoveryFixture(t)
+	ctx := context.Background()
+	otherPath := filepath.Join(filepath.Dir(storyPath), "other")
+	const storyID = "8b5929e6-cda4-43e2-a15c-f232571f0036"
+	const otherID = "12345678-1234-4234-8234-123456789abc"
+	for path, id := range map[string]string{storyPath: storyID, otherPath: otherID} {
+		storage := filepath.Join(path, projectfs.StorageDirectory)
+		if err := os.MkdirAll(storage, 0700); err != nil {
+			t.Fatal(err)
+		}
+		manifest := strings.Replace(fixtureManifest, storyID, id, 1)
+		if err := os.WriteFile(filepath.Join(storage, projectfs.ManifestName), []byte(manifest), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(storage, projectfs.DatabaseName), []byte("synthetic private db"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	library, err := projectfs.OpenLibrary(filepath.Dir(storyPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer library.Close()
+	snapshot, err := projectpublish.Stage(ctx, held, root, library, storyPath, stageParent,
+		projectpublish.Limits{MaxFiles: 100, MaxBytes: 1 << 20, MaxDepth: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	plan, err := projectpublish.PrepareExchangePlan(ctx, snapshot,
+		projectpublish.HandleDrainFunc(func(context.Context, string) error { return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := projectpublish.PrepareExchangeJournal(ctx, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check, err := CatalogJournalRecoveryCheck(ctx, held, root, stageParent, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := check(storyPath, storyID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("PREPARED owner project was allowed: %v", err)
+	}
+	if err := check(otherPath, otherID); err != nil {
+		t.Fatalf("unrelated project blocked by validated PREPARED journal: %v", err)
+	}
+	markerPath := filepath.Join(stageParent, journal.Name())
+	originalMarker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relabelled := bytes.Replace(originalMarker, []byte(storyID), []byte(otherID), 1)
+	if bytes.Equal(relabelled, originalMarker) {
+		t.Fatal("journal did not contain the original owner ID")
+	}
+	if err := os.WriteFile(markerPath, relabelled, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(storyPath, storyID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("relabelled journal bypassed its actual owner: %v", err)
+	}
+	if err := os.WriteFile(markerPath, originalMarker, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stage, err := snapshot.PrivatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage := filepath.Join(storyPath, projectfs.StorageDirectory)
+	temporary := stage + "-moving"
+	for _, pair := range [][2]string{{storage, temporary}, {stage, storage}, {temporary, stage}} {
+		if err := os.Rename(pair[0], pair[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := journal.MarkSwitched(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(otherPath, otherID); err != nil {
+		t.Fatalf("unrelated project blocked by validated SWITCHED journal: %v", err)
+	}
+	if err := check(storyPath, storyID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("owner project cleared without readback: %v", err)
+	}
+	lateArtifact := filepath.Join(stageParent, "unknown-quarantine")
+	withReadback, err := CatalogJournalRecoveryCheck(ctx, held, root, stageParent,
+		func(context.Context, string, string, projectpublish.JournalRecovery) error {
+			return os.WriteFile(lateArtifact, []byte("late"), 0600)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withReadback(storyPath, storyID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("artifact added during readback was missed: %v", err)
+	}
+	if err := os.Remove(lateArtifact); err != nil {
+		t.Fatal(err)
+	}
+	withMarkerRewrite, err := CatalogJournalRecoveryCheck(ctx, held, root, stageParent,
+		func(context.Context, string, string, projectpublish.JournalRecovery) error {
+			return os.WriteFile(markerPath, []byte("{}"), 0600)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withMarkerRewrite(storyPath, storyID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("same-name marker rewrite during readback was missed: %v", err)
+	}
+	if err := os.WriteFile(markerPath, originalMarker, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.DatabaseName), []byte("changed new source"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(otherPath, otherID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("unknown switched journal did not block unrelated project: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stageParent, journal.Name()), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(otherPath, otherID); !errors.Is(err, ErrCatalogRecoveryUnverified) {
+		t.Fatalf("malformed journal did not block unrelated project: %v", err)
 	}
 }
