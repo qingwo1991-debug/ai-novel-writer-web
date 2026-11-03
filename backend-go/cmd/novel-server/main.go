@@ -53,8 +53,8 @@ func run() error {
 	if ip == nil || !ip.IsLoopback() {
 		return errors.New("migration scaffold may listen only on a loopback IP")
 	}
-	if *libraryDir != "" && !underTempRoot(*libraryDir) {
-		return errors.New("synthetic library must be a canonical temporary directory")
+	if *libraryDir != "" && (!underTempRoot(*libraryDir) || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
+		return errors.New("synthetic library requires a private temporary data root")
 	}
 	if *uploadDir != "" && !underTempRoot(*uploadDir) {
 		return errors.New("synthetic uploads must use a canonical temporary directory")
@@ -172,7 +172,10 @@ func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, l
 }
 
 func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string, readConfig *syntheticReadOpenConfig) (http.Handler, func(), error) {
-	if readConfig != nil && (libraryDir == "" || !underTempRoot(libraryDir) || !privateSyntheticGlobalRoot(filepath.Dir(libraryDir))) {
+	if readConfig != nil && libraryDir == "" {
+		return nil, nil, errors.New("synthetic project reads require a library beneath a private temporary data root")
+	}
+	if libraryDir != "" && (!underTempRoot(libraryDir) || !privateSyntheticGlobalRoot(filepath.Dir(libraryDir))) {
 		return nil, nil, errors.New("synthetic project reads require a library beneath a private temporary data root")
 	}
 	if uploadDir != "" && !underTempRoot(uploadDir) {
@@ -195,10 +198,14 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 	var models *globalconfig.Service
 	var endpoints *egress.Client
 	var readOpen *syntheticReadOpen
+	var libraryGuard *syntheticLibraryRecoveryGuard
 	cleanup := func() {
 		server.Close()
 		if readOpen != nil {
 			_ = readOpen.Close()
+		}
+		if libraryGuard != nil {
+			_ = libraryGuard.Close()
 		}
 		if endpoints != nil {
 			endpoints.Close()
@@ -257,7 +264,13 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 			cleanup()
 			return nil, nil, err
 		}
-		mux.Handle("/api/library", route)
+		if readConfig == nil {
+			libraryGuard, err = newSyntheticLibraryRecoveryGuard(libraryDir)
+			if err != nil {
+				cleanup()
+				return nil, nil, fmt.Errorf("synthetic library recovery: %w", err)
+			}
+		}
 		if readConfig != nil {
 			readOpen, err = newSyntheticReadOpen(library, libraryDir, *readConfig)
 			if err != nil {
@@ -309,6 +322,19 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				return nil, nil, err
 			}
 		}
+		mux.Handle("/api/library", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var recoveryErr error
+			if readOpen != nil {
+				recoveryErr = readOpen.VerifyRecovery()
+			} else {
+				recoveryErr = libraryGuard.VerifyRecovery()
+			}
+			if recoveryErr != nil {
+				http.Error(w, "PROJECT_CATALOG_RECOVERY_PENDING", http.StatusServiceUnavailable)
+				return
+			}
+			route.ServeHTTP(w, r)
+		}))
 	}
 	if uploadDir != "" {
 		var err error

@@ -31,7 +31,14 @@ func TestMigrationGatewaySharesSessionAcrossStaticBootstrapAndLibrary(t *testing
 	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("<html>synthetic Go migration</html>"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	libraryDir := t.TempDir()
+	dataRoot := t.TempDir()
+	if err := os.Chmod(dataRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	libraryDir := filepath.Join(dataRoot, "projects")
+	if err := os.Mkdir(libraryDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	handler, cleanup, err := migrationHandler(migrationRegistry(t), "127.0.0.1:16082", staticDir, libraryDir)
 	if err != nil {
 		t.Fatal(err)
