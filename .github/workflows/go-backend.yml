@@ -164,6 +164,35 @@ jobs:
           test -s "$GO_PROJECTCORE_CONTRACT"
           test -s "$GO_SQLITE_CONTRACT"
           test -s "$GO_SECRET_CONTRACT"
+      - name: Extract original recognized schemas for later pinning
+        run: |
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync, writeFileSync } from "node:fs";
+            import { join } from "node:path";
+            const source = JSON.parse(readFileSync(process.env.GO_SQLITE_CONTRACT, "utf8"));
+            assert.equal(source.formatVersion, 1);
+            assert.equal(source.currentVersion, 7);
+            assert(Array.isArray(source.recognized) && source.recognized.length > 0);
+            for (const entry of source.recognized) {
+              assert(Number.isInteger(entry.version) && entry.version >= 0 && entry.version <= 7);
+              assert.match(entry.fingerprint, /^[0-9a-f]{64}$/u);
+            }
+            const recognized = {
+              formatVersion: source.formatVersion,
+              currentVersion: source.currentVersion,
+              recognized: source.recognized,
+            };
+            writeFileSync(join(process.env.RUNNER_TEMP, "novel-go-contract", "recognized-only.json"),
+              JSON.stringify(recognized, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+          '
+      - name: Upload original recognized schemas
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-recognized-contract-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-contract/recognized-only.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Generate original visible and OpenAI synthetic protocol contracts
         run: |
           export GO_VISIBLE_CONTRACT="$RUNNER_TEMP/novel-go-visible/visible-contract.json"
