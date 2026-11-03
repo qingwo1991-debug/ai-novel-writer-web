@@ -120,7 +120,7 @@ func (s *Store) checkRecoveryLocked(path, projectID string) error {
 		return nil
 	}
 	if err := s.recovery(path, projectID); err != nil {
-		return ErrCatalogRecoveryPending
+		return errors.Join(ErrCatalogRecoveryPending, err)
 	}
 	return nil
 }
@@ -167,7 +167,7 @@ func (s *Store) ReleaseAfterVerifiedRecovery(project *projectfs.Project) error {
 		return ErrCatalogRecoveryPending
 	}
 	if err := s.recovery(path, projectID); err != nil {
-		return ErrCatalogRecoveryPending
+		return errors.Join(ErrCatalogRecoveryPending, err)
 	}
 	current, err := s.library.OpenProject(path)
 	if err != nil {
@@ -223,7 +223,7 @@ func (s *Store) PromoteVerifiedRecoveryWithBinding(ctx context.Context, project 
 		return Recent{}, ErrCatalogInvalid
 	}
 	if err := s.recovery(path, projectID); err != nil {
-		return Recent{}, ErrCatalogRecoveryPending
+		return Recent{}, errors.Join(ErrCatalogRecoveryPending, err)
 	}
 	if err := project.VerifyNoPortableAuthority(ctx); err != nil {
 		return Recent{}, err

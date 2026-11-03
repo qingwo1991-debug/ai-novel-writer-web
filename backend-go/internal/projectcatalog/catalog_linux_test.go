@@ -13,6 +13,37 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
+func TestRecoveryFailureRetainsOriginalCause(t *testing.T) {
+	library, project, path, metadata := fixture(t)
+	cause := errors.New("synthetic readback cleanup ownership")
+	blocked := false
+	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {
+		if gotPath != path || gotID != project.ProjectID() {
+			return ErrCatalogInvalid
+		}
+		if blocked {
+			return cause
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Register(project); err != nil {
+		t.Fatal(err)
+	}
+	blocked = true
+	if _, err := store.List(); !errors.Is(err, ErrCatalogRecoveryPending) || !errors.Is(err, cause) {
+		t.Fatalf("list hid recovery cause: %v", err)
+	}
+	if err := store.HoldRecovery(path, project.ProjectID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PromoteVerifiedRecovery(context.Background(), project); !errors.Is(err, ErrCatalogRecoveryPending) || !errors.Is(err, cause) {
+		t.Fatalf("promotion hid recovery cause: %v", err)
+	}
+}
+
 func TestPromoteVerifiedRecoveryWithBindingPublishesAfterBinder(t *testing.T) {
 	library, project, path, metadata := fixture(t)
 	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {
