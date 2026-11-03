@@ -84,6 +84,10 @@ const lance = requireOracle('@lancedb/lancedb')
 const arrow = requireOracle('apache-arrow')
 const { Field, Schema, FixedSizeList, Float32, Float64, Int32, Utf8, tableFromIPC, tableToIPC } = arrow
 const tableNames = ['chunks', 'chunks__space_1', 'chunks__space_2', 'chunks__space_3', 'chunks__space_4', 'documents']
+// The original migration reader's query().toArrow() drops the schema of an
+// empty Lance table. Keep that table in the interop fixture, but exclude it
+// from the separate exact-logical-hash lane until the original reader supports it.
+const logicalTableNames = tableNames.filter(name => name !== 'chunks__space_4')
 const at = (...parts) => path.join(root, ...parts)
 const writeJSON = (file, value) => fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
 const readJSON = file => { regular(file); return JSON.parse(fs.readFileSync(file, 'utf8')) }
@@ -261,6 +265,7 @@ function fixtures() {
 // actual original migration module can provide an exact logicalHash oracle.
 function generatedIdentityFixture() {
   const seed = fixtures()
+  seed.registry.spaces = seed.registry.spaces.filter(space => space.tableName !== 'chunks__space_4')
   const docIDs = new Map(seed.documents.map((doc, index) => [doc.id, String(index + 1).padStart(64, '0')]))
   const chunkIDs = new Map(seed.byName.chunks.map((row, index) => [row.id, String(index + 11).padStart(64, '0')]))
   const convert = (name, row) => {
@@ -320,12 +325,10 @@ async function generateLogicalFixture() {
   }
   const db = await lance.connect(at('logical-source', 'lancedb'))
   try {
-    for (const name of tableNames) {
+    for (const name of logicalTableNames) {
       const dimension = name === 'chunks__space_2' ? 3 : 2
       const schema = name === 'documents' ? undefined : chunkSchema(name === 'chunks' ? undefined : dimension)
-      const table = name === 'chunks__space_4'
-        ? await db.createEmptyTable(name, schema)
-        : await db.createTable(name, seed.byName[name], schema ? { schema } : {})
+      const table = await db.createTable(name, seed.byName[name], schema ? { schema } : {})
       table.close()
     }
   } finally { db.close() }
@@ -333,7 +336,7 @@ async function generateLogicalFixture() {
   const before = physicalManifest(at('logical-source'))
   assert.deepEqual(physicalManifest(at('logical-copy')), before)
   const original = await actualOriginalLogicalSnapshot(at('logical-copy'), at('logical-source'))
-  assert.equal(original.summary.tableCount, tableNames.length)
+  assert.equal(original.summary.tableCount, logicalTableNames.length)
   writeJSON(at('logical-contract.json'), {
     format: 1, oracle: 'actual-original-vector-migration-export-generated-id-lane',
     summary: original.summary, tables: original.tables.map(table => ({ name: table.name, logicalHash: table.logicalHash })),

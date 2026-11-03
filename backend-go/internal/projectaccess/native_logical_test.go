@@ -41,7 +41,7 @@ func TestNativeKnowledgeOriginalLogicalHashGeneratedIDs(t *testing.T) {
 	if err := json.Unmarshal(raw, &oracle); err != nil {
 		t.Fatal(err)
 	}
-	if oracle.Format != 1 || oracle.Oracle != "actual-original-vector-migration-export-generated-id-lane" || len(oracle.Tables) != 6 {
+	if oracle.Format != 1 || oracle.Oracle != "actual-original-vector-migration-export-generated-id-lane" || len(oracle.Tables) != 5 {
 		t.Fatal("unrecognized original logical oracle")
 	}
 	c := accessFixture(t)
