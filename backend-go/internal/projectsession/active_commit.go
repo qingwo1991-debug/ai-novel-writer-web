@@ -184,7 +184,7 @@ func (c *ActiveCoordinator) CommitDrained(ctx context.Context, owner Owner, expe
 			c.closed = true
 			c.poisoned = true
 			c.mu.Unlock()
-			return Context{}, errors.Join(ErrActiveCleanup, err)
+			return Context{}, errors.Join(ErrActiveCleanup, err, c.lock.Retain())
 		}
 		state.handle = nil
 		state.key = ""
@@ -229,6 +229,10 @@ func (c *ActiveCoordinator) CommitDrained(ctx context.Context, owner Owner, expe
 		if complete {
 			return
 		}
+		// The caller may discard the poisoned coordinator. Keep the kernel
+		// exclusion rooted in the process until restart after any uncertain
+		// action or failed candidate cleanup.
+		retErr = errors.Join(retErr, c.lock.Retain())
 		c.mu.Lock()
 		anchor.handle = nil
 		anchor.key = ""

@@ -199,6 +199,9 @@ func TestCommitDrainedActionErrorPoisonsWithoutReleasingLock(t *testing.T) {
 	if err := held.VerifyLegacy(root); err != nil {
 		t.Fatalf("uncertain result released writer lock: %v", err)
 	}
+	if err := held.Close(); !errors.Is(err, writerlock.ErrRetained) {
+		t.Fatalf("uncertain result was not process-retained: %v", err)
+	}
 	if _, err := active.Open(context.Background(), owner, "any", "retry", stageAdmitted(admitted("project", "/trusted/project"))); !errors.Is(err, ErrActiveClosed) {
 		t.Fatalf("uncertain result allowed retry: %v", err)
 	}
