@@ -153,6 +153,27 @@ func TestSyntheticEditorStageAndReviewReadsShareExactPrivateLease(t *testing.T) 
 		t.Fatal("open failed", opened.Code, opened.Body.String(), err)
 	}
 	expected := map[string]any{"projectId": openWire.Result.Project.ID, "leaseId": openWire.Result.Project.Lease, "projectPath": projectPath}
+	overview := rpc(tab, "project:overview-current", []any{expected})
+	var overviewWire struct {
+		Result struct {
+			State     string `json:"state"`
+			ProjectID string `json:"projectId"`
+			Name      string `json:"name"`
+			Revision  string `json:"revision"`
+			Excerpt   string `json:"excerpt"`
+			Stages    []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+				Count  int    `json:"count"`
+			} `json:"stages"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(overview.Body.Bytes(), &overviewWire); err != nil || overview.Code != http.StatusOK || overviewWire.Result.State != "ready" || overviewWire.Result.ProjectID != openWire.Result.Project.ID || overviewWire.Result.Name != "Stage review" || len(overviewWire.Result.Revision) != 64 || overviewWire.Result.Excerpt != "编辑原稿🙂" || len(overviewWire.Result.Stages) != 6 {
+		t.Fatal("current overview mismatch", overview.Code, overview.Body.String(), err)
+	}
+	if foreign := rpc("client_0987654321", "project:overview-current", []any{expected}); foreign.Code == http.StatusOK {
+		t.Fatal("cross-tab overview read accepted", foreign.Body.String())
+	}
 	for _, item := range []struct {
 		operation, marker string
 		args              []any
@@ -205,6 +226,16 @@ func TestSyntheticEditorStageAndReviewReadsShareExactPrivateLease(t *testing.T) 
 		if foreign := rpc("client_0987654321", item.operation, []any{item.id, projectPath, expected}); foreign.Code == http.StatusOK {
 			t.Fatalf("foreign tab read %s: %s", item.operation, foreign.Body.String())
 		}
+	}
+	cycle := rpc(tab, "db:review-cycle-get", []any{review["id"], projectPath, expected})
+	var absentCycle struct {
+		Result any `json:"result"`
+	}
+	if err := json.Unmarshal(cycle.Body.Bytes(), &absentCycle); err != nil || cycle.Code != http.StatusOK || absentCycle.Result != nil {
+		t.Fatalf("absent review cycle: HTTP %d %s, %v", cycle.Code, cycle.Body.String(), err)
+	}
+	if foreign := rpc("client_0987654321", "db:review-cycle-get", []any{review["id"], projectPath, expected}); foreign.Code == http.StatusOK {
+		t.Fatal("foreign tab read review cycle", foreign.Body.String())
 	}
 	if response := rpc(tab, "db:project-core-get", []any{filepath.Join(root, "other"), expected}); response.Code != http.StatusConflict {
 		t.Fatal("different path reached core", response.Code, response.Body.String())

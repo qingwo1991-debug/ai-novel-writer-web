@@ -284,6 +284,10 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				cleanup()
 				return nil, nil, err
 			}
+			if err := server.BindCurrentOverview(readOpen); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
 			if err := server.BindEditorCheckpoint(readOpen); err != nil {
 				cleanup()
 				return nil, nil, err
@@ -297,6 +301,10 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				return nil, nil, err
 			}
 			if err := server.BindEditorReviewFullReads(readOpen); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+			if err := server.BindEditorReviewCycleAbsentRead(readOpen); err != nil {
 				cleanup()
 				return nil, nil, err
 			}
