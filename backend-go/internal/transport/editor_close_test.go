@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
@@ -59,7 +60,15 @@ func TestProjectReadCloseNeverInventsSuccessOnUnknownOutcome(t *testing.T) {
 	}
 	cookie, csrf := bootstrap(t, server)
 	response := draftRPC(t, server, cookie, csrf, "synthetic-close-tab-0001", "db:close", "/synthetic/project-a", draftContext("project-a", "lease-a", "/synthetic/project-a"))
-	requireDraftHTTPError(t, response, http.StatusInternalServerError, "PROJECT_CLOSE_UNCONFIRMED")
+	var public struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &public); err != nil || response.Code != http.StatusInternalServerError || public.Error.Code != "PROJECT_CLOSE_UNCONFIRMED" || public.Error.Message == "" || public.Error.Message == public.Error.Code {
+		t.Fatal("unknown close outcome leaked or reported success", response.Code, response.Body.String(), err)
+	}
 	if got := draftRPC(t, server, cookie, csrf, "synthetic-close-tab-0001", "project:save"); got.Code != http.StatusNotImplemented {
 		t.Fatal("write operation bound", got.Code, got.Body.String())
 	}

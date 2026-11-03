@@ -53,23 +53,26 @@ func inodeOf(info fs.FileInfo) (journalInode, bool) {
 }
 
 type journalPrepared struct {
-	Format         int          `json:"format"`
-	ID             string       `json:"id"`
-	DataRoot       string       `json:"dataRoot"`
-	ProjectID      string       `json:"projectId"`
-	ProjectPath    string       `json:"projectPath"`
-	StageParent    string       `json:"stageParent"`
-	StageName      string       `json:"stageName"`
-	Source         journalInode `json:"source"`
-	Stage          journalInode `json:"stage"`
-	Parent         journalInode `json:"parent"`
-	SourceTreeHash string       `json:"sourceTreeHash"`
-	StageTreeHash  string       `json:"stageTreeHash"`
-	EntryCount     int          `json:"entryCount"`
-	TotalBytes     int64        `json:"totalBytes"`
-	MaxFiles       int          `json:"maxFiles"`
-	MaxBytes       int64        `json:"maxBytes"`
-	MaxDepth       int          `json:"maxDepth"`
+	Format              int          `json:"format"`
+	ID                  string       `json:"id"`
+	DataRoot            string       `json:"dataRoot"`
+	ProjectID           string       `json:"projectId"`
+	ProjectPath         string       `json:"projectPath"`
+	StageParent         string       `json:"stageParent"`
+	StageName           string       `json:"stageName"`
+	Source              journalInode `json:"source"`
+	Stage               journalInode `json:"stage"`
+	Parent              journalInode `json:"parent"`
+	SourceTreeHash      string       `json:"sourceTreeHash"`
+	StageTreeHash       string       `json:"stageTreeHash"`
+	EntryCount          int          `json:"entryCount"`
+	TotalBytes          int64        `json:"totalBytes"`
+	MaxFiles            int          `json:"maxFiles"`
+	MaxBytes            int64        `json:"maxBytes"`
+	MaxDepth            int          `json:"maxDepth"`
+	EditedDraftID       int64        `json:"editedDraftId,omitempty"`
+	EditedOperationHash string       `json:"editedOperationHash,omitempty"`
+	EditedProofHash     string       `json:"editedProofHash,omitempty"`
 }
 
 type journalSwitched struct {
@@ -97,12 +100,15 @@ func (j *ExchangeJournal) Name() string {
 // JournalRecovery only classifies visible state. A caller must retain both
 // directories and seek explicit recovery authority for every nontrivial case.
 type JournalRecovery struct {
-	Class          JournalClass
-	JournalID      string
-	ProjectPath    string
-	StagePath      string
-	PreparedMarked bool
-	SwitchedMarked bool
+	Class               JournalClass
+	JournalID           string
+	ProjectPath         string
+	StagePath           string
+	PreparedMarked      bool
+	SwitchedMarked      bool
+	EditedDraftID       int64
+	EditedOperationHash string
+	EditedProofHash     string
 }
 
 func validJournalName(name string) bool {
@@ -298,7 +304,7 @@ func PrepareExchangeJournal(ctx context.Context, plan *ExchangePlan) (*ExchangeJ
 }
 
 func validPrepared(p journalPrepared, dataRoot, projectID, projectPath, stageParent, name string) bool {
-	return p.Format == 1 && p.ID != "" && name == "novel-exchange-"+p.ID+".prepared.json" &&
+	base := p.Format == 1 && p.ID != "" && name == "novel-exchange-"+p.ID+".prepared.json" &&
 		canonical(dataRoot) && canonical(projectPath) && canonical(stageParent) &&
 		p.DataRoot == dataRoot && p.ProjectID == projectID && projectID != "" && p.ProjectPath == projectPath && p.StageParent == stageParent &&
 		strings.HasPrefix(p.StageName, "novel-private-publish-") && filepath.Base(p.StageName) == p.StageName &&
@@ -307,6 +313,13 @@ func validPrepared(p journalPrepared, dataRoot, projectID, projectPath, stagePar
 		validJournalHash(p.SourceTreeHash) && validJournalHash(p.StageTreeHash) &&
 		p.EntryCount > 0 && p.TotalBytes >= 0 && p.MaxFiles >= p.EntryCount && p.MaxFiles <= maxTreeFiles &&
 		p.MaxBytes > 0 && p.MaxBytes <= maxTreeBytes && p.MaxDepth > 0 && p.MaxDepth <= maxTreeDepth
+	if !base {
+		return false
+	}
+	if p.EditedDraftID == 0 && p.EditedOperationHash == "" && p.EditedProofHash == "" {
+		return p.SourceTreeHash == p.StageTreeHash
+	}
+	return p.EditedDraftID > 0 && validJournalHash(p.EditedOperationHash) && validJournalHash(p.EditedProofHash) && p.SourceTreeHash != p.StageTreeHash
 }
 
 func inspectJournalTree(ctx context.Context, path string, limits Limits) (journalInode, string, error) {
@@ -403,7 +416,9 @@ func RecoverExchangeJournal(ctx context.Context, held *writerlock.Lock, dataRoot
 		}
 	}
 	result := JournalRecovery{Class: JournalUnknown, JournalID: prepared.ID, ProjectPath: projectPath,
-		StagePath: filepath.Join(stageParent, prepared.StageName), PreparedMarked: true, SwitchedMarked: marked}
+		StagePath: filepath.Join(stageParent, prepared.StageName), PreparedMarked: true, SwitchedMarked: marked,
+		EditedDraftID: prepared.EditedDraftID, EditedOperationHash: prepared.EditedOperationHash,
+		EditedProofHash: prepared.EditedProofHash}
 	limits := Limits{MaxFiles: prepared.MaxFiles, MaxBytes: prepared.MaxBytes, MaxDepth: prepared.MaxDepth}
 	sourceID, sourceHash, sourceErr := inspectJournalTree(ctx, storagePath, limits)
 	stageID, stageHash, stageErr := inspectJournalTree(ctx, result.StagePath, limits)

@@ -21,6 +21,15 @@ func TestReadLifecycleEditorStageKeepsPrivateSourceAndLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The original baseline schema intentionally has no project_core/main row.
+	// Seed one here so this test exercises the non-null read DTO; a missing row
+	// remains a valid null result in the repository and transaction helper.
+	if _, err := seed.Exec("INSERT OR IGNORE INTO project_core(id, project_name) VALUES('main', 'Stage fixture')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Exec("UPDATE project_core SET project_name='Stage fixture', premise='Read-only premise' WHERE id='main'"); err != nil {
+		t.Fatal(err)
+	}
 	var chapter int64
 	if err := seed.QueryRow("SELECT COALESCE(MAX(chapter_number),0)+1 FROM blueprints").Scan(&chapter); err != nil {
 		t.Fatal(err)
@@ -53,6 +62,12 @@ func TestReadLifecycleEditorStageKeepsPrivateSourceAndLease(t *testing.T) {
 	core, err := lifecycle.ReadEditorStageJSON(context.Background(), owner, identity, "db:project-core-get")
 	if err != nil || !json.Valid(core) || bytes.Equal(core, []byte("null")) {
 		t.Fatalf("project core = %s, %v", core, err)
+	}
+	var coreDTO struct {
+		Premise string `json:"premise"`
+	}
+	if err := json.Unmarshal(core, &coreDTO); err != nil || coreDTO.Premise != "Read-only premise" {
+		t.Fatalf("project core premise = %s, %v", core, err)
 	}
 	blueprints, err := lifecycle.ReadEditorStageJSON(context.Background(), owner, identity, "db:blueprint-get-all")
 	if err != nil || !bytes.Contains(blueprints, []byte("同租约蓝图🙂")) {
