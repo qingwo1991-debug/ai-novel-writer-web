@@ -419,6 +419,8 @@ interface ProjectState {
   createProject: (config: CreateProjectConfig) => Promise<boolean>
   /** 打开项目 */
   openProject: (target: ProjectOpenTarget) => Promise<boolean>
+  /** Adopt a new lease issued by an acknowledged, fenced draft save. */
+  adoptCommittedProjectSession: (expected: ProjectSessionContext, next: ProjectSessionContext) => boolean
   importLegacyProject: (source?: ProjectDirectoryGrant) => Promise<boolean>
   /** 保存项目 */
   saveProject: (expectedProjectSession?: ProjectSessionContext) => Promise<boolean>
@@ -467,6 +469,22 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
   legacyImportNotice: '',
   legacyImportBusy: false,
   projectSessionEpoch: 0,
+
+  adoptCommittedProjectSession: (expected, next) => {
+    const current = get().currentProject
+    const currentSession = projectSessionContextFromProject(current)
+    if (!current || !sameProjectSessionContext(expected, currentSession)
+      || !next || typeof next.projectId !== 'string' || typeof next.projectPath !== 'string'
+      || typeof next.leaseId !== 'string' || !next.leaseId
+      || next.projectId !== expected.projectId
+      || !sameProjectPathKey(next.projectPath, expected.projectPath)
+      || next.leaseId === expected.leaseId) return false
+    set((state) => ({
+      currentProject: state.currentProject ? { ...state.currentProject, sessionLease: next.leaseId } : null,
+      projectSessionEpoch: state.projectSessionEpoch + 1,
+    }))
+    return true
+  },
 
   createProject: async (config) => {
     const requestSequence = ++openProjectRequestSequence

@@ -21,7 +21,7 @@ import { retryFinalizationPublication } from '../../services/finalization-client
 import { captureFinalizationSnapshot } from '../../services/finalization-snapshot'
 import { countDraftUnits } from '../../shared/draft-units'
 import { globalEventBus } from '../../shared/event-bus'
-import { sameProjectSessionContext } from '../../shared/project-session-context'
+import { sameProjectPathKey, sameProjectSessionContext } from '../../shared/project-session-context'
 import type { SaveOutcome } from './save-feedback'
 import { guardRepairPostProcess } from '../../services/workflow-guards'
 import {
@@ -186,6 +186,7 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
     saveInFlight.current = true
     setSaving(true)
     setSaveOutcome('idle')
+    let acknowledgedSession = projectSession
     try {
       const resource = parseResourceUri(filePath)
       if (!resourceWriteAllowed(filePath) || resource?.kind !== 'draft') throw new Error(text('资源只读或无效', 'This resource is read-only or invalid.'))
@@ -206,6 +207,13 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
         throw new Error(result.error || text('草稿保存失败', 'Could not save the draft'))
       }
       if (!isProjectSessionCurrent(projectSession)) return
+      if (result.projectSession) {
+        if (!useProjectStore.getState().adoptCommittedProjectSession(projectSession, result.projectSession)) {
+          throw new Error(text('保存后的项目会话无效，请重新打开项目核对正文。', 'The saved project session is invalid. Reopen the project to verify the draft.'))
+        }
+        acknowledgedSession = result.projectSession
+      }
+      if (!isProjectSessionCurrent(acknowledgedSession)) return
       const currentTab = useEditorStore.getState().tabs.find(
         tab => tab.id === tabId && tab.projectKey === projectKey,
       )
@@ -217,14 +225,15 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
       // 待合并的修稿按保存的正文判断能否合并，正文变了就要重读。
       if (pendingRevisions.length > 0) reload()
     } catch (error) {
-      if (isProjectSessionCurrent(projectSession)) {
+      if (isProjectSessionCurrent(acknowledgedSession)) {
         setSaveOutcome('failed')
         toast.error(displayedErrorMessage(useLocaleStore.getState().locale, error, text('草稿保存失败', 'Could not save the draft')))
       }
       if (propagateFailure) throw error
     } finally {
       saveInFlight.current = false
-      if (isProjectSessionCurrent(projectSession)) setSaving(false)
+      const currentPath = useProjectStore.getState().currentProject?.path
+      if (currentPath && sameProjectPathKey(currentPath, projectKey)) setSaving(false)
     }
   }
 

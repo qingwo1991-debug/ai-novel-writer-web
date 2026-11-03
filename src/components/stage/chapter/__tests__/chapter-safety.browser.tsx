@@ -9,7 +9,7 @@ import { formatResourceUri } from '../../../../shared/project-paths'
 import { toast } from '../../../ui/Toast'
 import { setActiveProjectSessionContext } from '../../../../shared/project-session-context'
 import { useDraftStore } from '../../../../stores/draft-store'
-import { useEditorStore } from '../../../../stores/editor-store'
+import { saveDirtyEditorChangesForExit, useEditorStore } from '../../../../stores/editor-store'
 import { useLLMStore } from '../../../../stores/llm-store'
 import { useLocaleStore } from '../../../../stores/locale-store'
 import { useStageStore } from '../../../../stores/navigation/stage-store'
@@ -89,6 +89,33 @@ afterEach(async () => {
 })
 
 describe('版本切换器', () => {
+  it('确认保存换发租约后，下一次正文保存使用新租约', async () => {
+    const draft = backend.addDraft({ status: 'draft', version: 1, content: REVISED })
+    const nextSession = { ...SESSION, leaseId: 'fresh-after-save' }
+    const answer = backend.invoke.getMockImplementation()!
+    let saves = 0
+    backend.invoke.mockImplementation(async (channel, ...args) => {
+      const result = await answer(channel, ...args)
+      if (channel === 'db:draft-update-content' && ++saves === 1) {
+        return { ...(result as object), projectSession: nextSession }
+      }
+      return result
+    })
+    await mount()
+    await openDraft(draft.id)
+    await type(`${REVISED}第一处修改`)
+    await act(async () => saveDirtyEditorChangesForExit(SESSION.projectPath))
+    await vi.waitFor(() => expect(useProjectStore.getState().currentProject?.sessionLease).toBe(nextSession.leaseId))
+    expect(activeTab()?.dirty).toBe(false)
+
+    await type(`${REVISED}第二处修改`)
+    await act(async () => saveDirtyEditorChangesForExit(SESSION.projectPath))
+    const calls = backend.writes('db:draft-update-content')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.[5]).toMatchObject(nextSession)
+    expect(activeTab()?.dirty).toBe(false)
+  })
+
   it('切到另一稿时有未保存修改：先问；继续编辑什么都不动，保存并切换先写入再在原位置换上那一稿', async () => {
     const v1 = backend.addDraft({ status: 'archived', version: 1 })
     const v2 = backend.addDraft({ status: 'draft', version: 2, content: REVISED })
