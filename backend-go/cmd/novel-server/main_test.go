@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
@@ -100,5 +101,68 @@ func TestSyntheticLibraryFlagRequiresTemporaryChild(t *testing.T) {
 	}
 	if !underTempRoot(t.TempDir()) {
 		t.Fatal("disposable library rejected")
+	}
+}
+
+func TestMigrationGatewayUploadStagingSharesCookieAndTab(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	handler, cleanup, err := migrationHandlerWithUploads(migrationRegistry(t), "127.0.0.1:16082", "", "", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	bootstrap := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
+	bootstrap.Header.Set("X-Novel-User", "synthetic-author")
+	bootResponse := httptest.NewRecorder()
+	handler.ServeHTTP(bootResponse, bootstrap)
+	if bootResponse.Code != http.StatusOK || len(bootResponse.Result().Cookies()) != 1 {
+		t.Fatal("bootstrap failed", bootResponse.Code, bootResponse.Body.String())
+	}
+	var boot struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.Unmarshal(bootResponse.Body.Bytes(), &boot); err != nil || boot.CSRFToken == "" {
+		t.Fatal("missing csrf", err)
+	}
+	cookie := bootResponse.Result().Cookies()[0]
+	upload := func(csrf, tab string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/upload-folders", strings.NewReader(`{}`))
+		request.Header.Set("X-Novel-User", "synthetic-author")
+		request.Header.Set("X-Client-Id", tab)
+		request.Header.Set("X-CSRF-Token", csrf)
+		request.Header.Set("Origin", "http://127.0.0.1:16082")
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	valid := upload(boot.CSRFToken, "client_1234567890")
+	if valid.Code != http.StatusCreated || !strings.Contains(valid.Body.String(), `"folderUploadId"`) || len(valid.Result().Cookies()) != 0 {
+		t.Fatal("upload did not share bootstrap cookie and tab", valid.Code, valid.Body.String())
+	}
+	wrongCSRF := upload("wrong", "client_1234567890")
+	if wrongCSRF.Code != http.StatusForbidden {
+		t.Fatal("upload bypassed csrf", wrongCSRF.Code, wrongCSRF.Body.String())
+	}
+	invalidTab := upload(boot.CSRFToken, "short")
+	if invalidTab.Code != http.StatusBadRequest {
+		t.Fatal("upload bypassed tab admission", invalidTab.Code, invalidTab.Body.String())
+	}
+}
+
+func TestMigrationGatewayUploadRequiresExplicitPrivateTempRoot(t *testing.T) {
+	if _, _, err := migrationHandlerWithUploads(migrationRegistry(t), "127.0.0.1:16082", "", "", "/root/AI/ai-novel-writer-data"); err == nil {
+		t.Fatal("author data accepted as synthetic upload root")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := migrationHandlerWithUploads(migrationRegistry(t), "127.0.0.1:16082", "", "", root); err == nil {
+		t.Fatal("public upload staging root accepted")
 	}
 }

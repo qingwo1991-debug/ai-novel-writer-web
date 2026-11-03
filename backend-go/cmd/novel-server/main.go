@@ -19,6 +19,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transferhttp"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
@@ -33,6 +34,7 @@ func run() error {
 	policyPath := flag.String("policy", "../web/operations.json", "reviewed browser operation inventory")
 	staticDir := flag.String("static-dir", "", "optional React build for isolated migration smoke")
 	libraryDir := flag.String("synthetic-library-dir", "", "optional disposable library for isolated migration smoke")
+	uploadDir := flag.String("synthetic-upload-dir", "", "optional private disposable upload staging for isolated migration smoke")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
@@ -48,6 +50,9 @@ func run() error {
 	if *libraryDir != "" && !underTempRoot(*libraryDir) {
 		return errors.New("synthetic library must be a canonical temporary directory")
 	}
+	if *uploadDir != "" && !underTempRoot(*uploadDir) {
+		return errors.New("synthetic uploads must use a canonical temporary directory")
+	}
 	file, err := os.Open(*policyPath)
 	if err != nil {
 		return err
@@ -57,7 +62,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	handler, cleanup, err := migrationHandler(registry, *address, *staticDir, *libraryDir)
+	handler, cleanup, err := migrationHandlerWithUploads(registry, *address, *staticDir, *libraryDir, *uploadDir)
 	if err != nil {
 		return err
 	}
@@ -86,13 +91,33 @@ func underTempRoot(path string) bool {
 		return false
 	}
 	rel, err := filepath.Rel(os.TempDir(), path)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	// Reject a synthetic root whose intermediate component redirects outside
+	// the temporary tree. The final root is checked again by its owner.
+	current := os.TempDir()
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // migrationHandler mounts only read-only browser routes proven by the Go
 // migration. It shares one cookie store across HTML and API responses. Unported
 // project operations retain the Server's explicit 501 response.
 func migrationHandler(registry *policy.Registry, address, staticDir, libraryDir string) (http.Handler, func(), error) {
+	return migrationHandlerWithUploads(registry, address, staticDir, libraryDir, "")
+}
+
+func migrationHandlerWithUploads(registry *policy.Registry, address, staticDir, libraryDir, uploadDir string) (http.Handler, func(), error) {
+	if uploadDir != "" && !underTempRoot(uploadDir) {
+		return nil, nil, errors.New("synthetic uploads must use a canonical temporary directory")
+	}
 	server := transport.New(registry, security.NewOrigins("http://"+address), "go-migration-uncommitted")
 	if err := server.BindNavigation(); err != nil {
 		server.Close()
@@ -100,8 +125,12 @@ func migrationHandler(registry *policy.Registry, address, staticDir, libraryDir 
 	}
 	var static *transport.StaticAssets
 	var library *projectfs.Library
+	var uploads *transferhttp.TransferStore
 	cleanup := func() {
 		server.Close()
+		if uploads != nil {
+			_ = uploads.Close()
+		}
 		if static != nil {
 			_ = static.Close()
 		}
@@ -126,6 +155,16 @@ func migrationHandler(registry *policy.Registry, address, staticDir, libraryDir 
 			return nil, nil, err
 		}
 		mux.Handle("/api/library", route)
+	}
+	if uploadDir != "" {
+		var err error
+		uploads, err = transferhttp.NewTransferStore(uploadDir, server.SessionStore(), security.NewOrigins("http://"+address), server.ResolveTransferClient)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic uploads: %w", err)
+		}
+		mux.Handle("/api/upload-folders", uploads)
+		mux.Handle("/api/uploads", uploads)
 	}
 	if staticDir != "" {
 		var err error

@@ -39,6 +39,18 @@ func New(registry *policy.Registry,origins security.Origins,generation string)*S
 }
 // SessionStore is the cookie authority shared with optional gateway routes.
 func(s *Server)SessionStore()*security.Sessions{return s.sessions}
+// ResolveTransferClient reuses the RPC gateway's cookie and 32-tab admission
+// for an independently mounted upload route. TransferStore verifies CSRF and
+// Origin after this resolver returns; no upload bypasses the shared tab cap.
+func(s *Server)ResolveTransferClient(w http.ResponseWriter,r *http.Request)(*security.Session,string,error){
+ if s==nil||r==nil{return nil,"",security.NewHTTPError(http.StatusServiceUnavailable,"UPLOAD_UNAVAILABLE")}
+ principal,err:=security.Authenticate(r);if err!=nil{return nil,"",err}
+ session,err:=s.sessions.Get(r,w,principal);if err!=nil{return nil,"",err}
+ token:=r.Header.Get("X-Client-Id")
+ current,err:=s.getClient(session.ID(),token);if err!=nil{return nil,"",err}
+ s.unpin(current)
+ return session,token,nil
+}
 // Bind registers only inventoried operations. The domain handler must additionally
 // enforce project/capability ownership and domain admission; routing is not auth.
 // Call before serving; dynamic handler replacement is deliberately unsupported.
