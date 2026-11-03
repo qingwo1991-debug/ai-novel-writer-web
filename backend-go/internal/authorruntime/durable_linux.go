@@ -38,6 +38,29 @@ var (
 	ErrDurableClosed = errors.New("AUTHOR_DURABLE_CLOSED")
 )
 
+// redactOpenError turns an admission/open failure into a client-safe symbolic
+// error code. Raw SQLite or filesystem diagnostics must never be embedded in
+// the browser Open DTO, so anything that is not an all-caps [A-Z0-9_] symbol is
+// reduced to a fixed code. Symbolic errors (PROJECT_*, AUTHOR_*, etc.) pass
+// through unchanged so the frontend can surface a meaningful failure.
+func redactOpenError(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := err.Error()
+	if len(text) >= 2 && text[0] >= 'A' && text[0] <= 'Z' {
+		symbolic := true
+		for i := 1; i < len(text) && symbolic; i++ {
+			b := text[i]
+			symbolic = (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+		}
+		if symbolic {
+			return text
+		}
+	}
+	return "PROJECT_OPEN_FAILED"
+}
+
 // admittedAuthor is one durable, write-capable admitted project. It implements
 // projectsession.Admitted so the coordinator can fence it exactly like the
 // read-only handle: the lease context is stable and Verify re-proves authority.
@@ -160,7 +183,7 @@ func (l *ReadLifecycle) OpenProjectDurable(ctx context.Context, owner projectses
 		return &admittedAuthor{context: candidate, project: project, permit: permit, handle: handle, core: store.NewProjectCore(db)}, nil
 	})
 	if err != nil {
-		result := ProjectOpenResult{RequestToken: requestToken, Error: err.Error(), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
+		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
 		current, present, currentErr := l.Current(ctx, owner)
 		if currentErr != nil {
 			return ProjectOpenResult{}, currentErr

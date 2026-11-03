@@ -149,6 +149,21 @@ func TestDurableRequiresCatalogAndPermission(t *testing.T) {
 	}
 }
 
+func TestDurableOpenErrorRedactsRawDiagnostics(t *testing.T) {
+	if got := redactOpenError(errors.New("AUTHOR_STALE")); got != "AUTHOR_STALE" {
+		t.Fatalf("symbolic error altered: %q", got)
+	}
+	if got := redactOpenError(errors.New("database disk image is malformed")); got != "PROJECT_OPEN_FAILED" {
+		t.Fatalf("raw sqlite diagnostic not redacted: %q", got)
+	}
+	if got := redactOpenError(errors.New("SQL logic error: no such table: project_core")); got != "PROJECT_OPEN_FAILED" {
+		t.Fatalf("raw sqlite diagnostic not redacted: %q", got)
+	}
+	if got := redactOpenError(nil); got != "" {
+		t.Fatalf("nil error not empty: %q", got)
+	}
+}
+
 func TestDurableLockReleasesAfterShutdown(t *testing.T) {
 	lifecycle, key, _, dataRoot, _ := durableLifecycle(t)
 	owner := testOwner()

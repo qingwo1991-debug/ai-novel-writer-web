@@ -76,7 +76,7 @@ func (l *ReadLifecycle) OpenProjectReadOnly(ctx context.Context, owner projectse
 		return &admittedRead{reader: reader, context: candidate}, nil
 	})
 	if err != nil {
-		result := ProjectOpenResult{RequestToken: requestToken, Error: err.Error(), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
+		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
 		current, present, currentErr := l.Current(ctx, owner)
 		if currentErr != nil {
 			return ProjectOpenResult{}, currentErr
