@@ -46,8 +46,8 @@ type journal struct {
 }
 
 const (
-	renameat2Trap = 316 // linux/amd64; this incomplete writer is not built on other architectures.
-	oPath         = 0x200000
+	renameat2Trap = 316      // linux/amd64; this incomplete writer is not built on other architectures.
+	oPath         = 0x200000 // Linux O_PATH permits an FD-relative nofollow existence probe.
 )
 
 type pinnedCanonical struct {
@@ -431,12 +431,27 @@ func writeJournalAt(controlFD int, value journal) error {
 }
 
 func readJournalAt(controlFD int) (journal, error) {
+	value, err := readJournalAnyAt(controlFD)
+	if err != nil {
+		return journal{}, err
+	}
+	if value.Phase != "prepared" {
+		return journal{}, fail("GLOBAL_JOURNAL_INVALID")
+	}
+	return value, nil
+}
+
+func readJournalAnyAt(controlFD int) (journal, error) {
+	return readJournalNamedAt(controlFD, "journal.json")
+}
+
+func readJournalNamedAt(controlFD int, name string) (journal, error) {
 	var zero journal
-	fd, err := syscall.Openat(controlFD, "journal.json", syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
+	fd, err := syscall.Openat(controlFD, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return zero, fail("GLOBAL_JSON_INVALID")
 	}
-	file := os.NewFile(uintptr(fd), "journal.json")
+	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 65536 {
@@ -459,7 +474,7 @@ func readJournalAt(controlFD int) (journal, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return journal{}, fail("GLOBAL_JSON_INVALID")
 	}
-	if zero.Version != 1 || len(zero.Generation) != 36 || zero.Phase != "prepared" ||
+	if zero.Version != 1 || len(zero.Generation) != 36 || (zero.Phase != "prepared" && zero.Phase != "verified") ||
 		(zero.Source != "legacy" && zero.Source != "canonical" && zero.Source != "empty") {
 		return journal{}, fail("GLOBAL_JOURNAL_INVALID")
 	}

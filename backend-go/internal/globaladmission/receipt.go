@@ -264,6 +264,10 @@ func optionalJSON(path string, missing any) (any, error) {
 	return parseJSON(path)
 }
 
+// ValidateGeneration applies the original selected-object semantic checks to a
+// private staging directory before its journal can advance to VERIFIED.
+func ValidateGeneration(root string) error { return validateGeneration(root) }
+
 func validateGeneration(root string) error {
 	names, err := selectedFiles(root)
 	if err != nil {

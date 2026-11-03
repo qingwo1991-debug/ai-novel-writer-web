@@ -190,6 +190,32 @@ jobs:
           path: ${{ runner.temp }}/novel-go-global-prepare/contract.json
           retention-days: 7
           if-no-files-found: error
+      - name: Generate original global VERIFIED migration fixtures
+        run: |
+          export GO_GLOBAL_VERIFIED_CONTRACT="$RUNNER_TEMP/novel-go-global-verified/contract.json"
+          printf 'GO_GLOBAL_VERIFIED_CONTRACT=%s\n' "$GO_GLOBAL_VERIFIED_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/global-migration-verified-contract.mjs
+          test -s "$GO_GLOBAL_VERIFIED_CONTRACT"
+      - name: Upload original global VERIFIED migration oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-global-verified-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-global-verified/contract.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Generate original global INSTALLED and receipt migration fixtures
+        run: |
+          export GO_GLOBAL_INSTALL_CONTRACT="$RUNNER_TEMP/novel-go-global-install/contract.json"
+          printf 'GO_GLOBAL_INSTALL_CONTRACT=%s\n' "$GO_GLOBAL_INSTALL_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/global-migration-install-contract.mjs
+          test -s "$GO_GLOBAL_INSTALL_CONTRACT"
+      - name: Upload original global INSTALLED and receipt migration oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-global-install-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-global-install/contract.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Extract original recognized schemas for later pinning
         run: |
           node --input-type=module -e '
