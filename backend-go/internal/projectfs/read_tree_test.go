@@ -20,10 +20,10 @@ func TestVisibleTreePinnedProjectShapeAndHiddenStorage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Mkdir(filepath.Join(path, ".vela"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(path, ".custom"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	put(t, filepath.Join(path, ".vela", "custom.json"), []byte("{}"))
+	put(t, filepath.Join(path, ".custom", "custom.json"), []byte("{}"))
 	put(t, filepath.Join(path, "02_章节", "第一章.txt"), []byte("synthetic"))
 	put(t, filepath.Join(path, "z.txt"), []byte("visible"))
 	put(t, filepath.Join(path, ".hidden"), []byte("private"))
@@ -60,7 +60,7 @@ func TestVisibleTreePinnedProjectShapeAndHiddenStorage(t *testing.T) {
 	if err != nil || len(subtree) != 1 || subtree[0].Name != "第一章.txt" {
 		t.Fatalf("subdirectory enumeration: %+v %v", subtree, err)
 	}
-	hiddenSubtree, err := project.ListVisibleTree(context.Background(), ".vela", 10, 3)
+	hiddenSubtree, err := project.ListVisibleTree(context.Background(), ".custom", 10, 3)
 	if err != nil || len(hiddenSubtree) != 1 || hiddenSubtree[0].Name != "custom.json" {
 		t.Fatalf("explicit hidden subdirectory enumeration: %+v %v", hiddenSubtree, err)
 	}

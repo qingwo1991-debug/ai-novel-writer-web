@@ -154,6 +154,38 @@ func (s *syntheticReadOpen) ReadDraftJSON(ctx context.Context, caller transport.
 	return s.lifecycle.ReadDraftJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, number)
 }
 
+func (s *syntheticReadOpen) ReadEditorStageJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	return s.lifecycle.ReadEditorStageJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
+}
+
+func (s *syntheticReadOpen) ReadReviewRevisionJSON(ctx context.Context, caller transport.Caller, raw any, operation string, baseDraftID int64) (json.RawMessage, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	return s.lifecycle.ReadReviewRevisionJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, baseDraftID)
+}
+
 func (s *syntheticReadOpen) Close() error {
 	if s == nil {
 		return nil
