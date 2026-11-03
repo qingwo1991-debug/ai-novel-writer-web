@@ -45,6 +45,8 @@ type Reader struct {
 	dataRoot      string
 	report        projectaccess.Report
 	closed        bool
+	closeDone     bool
+	closePoisoned bool
 }
 
 // OpenReadOnly accepts a process-local catalog key and trusted administrator
@@ -304,37 +306,69 @@ func (reader *Reader) Close() error {
 	}
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
-	if reader.closed {
+	if reader.closeDone {
 		return nil
 	}
-	// Keep the exclusion if database/sql cannot confirm closure. A caller can
-	// retry Close, and no second writer may start while a handle might live.
-	if err := reader.db.Close(); err != nil {
+	if reader.closePoisoned {
 		return ErrCleanup
 	}
+	// Reject further reads as soon as cleanup starts, including when a later
+	// step needs a retry. The writer lock stays held until every owned resource
+	// has been confirmed released.
 	reader.closed = true
-	var cleanup error
-	for _, name := range []string{"snapshot.db", "snapshot.db-wal", "snapshot.db-shm", "snapshot.db-journal"} {
-		if err := reader.root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			cleanup = errors.Join(cleanup, ErrCleanup)
+	// database/sql marks DB closed before closing pooled driver connections.
+	// A second Close may therefore return nil after the first returned an
+	// unconfirmed driver error. Retain the legacy lock permanently in that case.
+	if reader.db != nil {
+		if err := reader.db.Close(); err != nil {
+			reader.closePoisoned = true
+			return errors.Join(ErrCleanup, err)
 		}
+		reader.db = nil
 	}
-	if err := reader.root.Close(); err != nil {
-		cleanup = errors.Join(cleanup, ErrCleanup)
+	if reader.root != nil {
+		var cleanup error
+		for _, name := range []string{"snapshot.db", "snapshot.db-wal", "snapshot.db-shm", "snapshot.db-journal"} {
+			if err := reader.root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+				cleanup = errors.Join(cleanup, err)
+			}
+		}
+		if cleanup != nil {
+			return errors.Join(ErrCleanup, cleanup)
+		}
+		if err := reader.root.Close(); err != nil {
+			// os.Root.Close may have consumed its descriptor even when it reports
+			// an error. Reusing it or releasing the writer lock is unprovable.
+			reader.closePoisoned = true
+			return errors.Join(ErrCleanup, err)
+		}
+		reader.root = nil
 	}
-	info, err := os.Lstat(reader.directory)
-	if err != nil || !os.SameFile(info, reader.directoryInfo) {
-		cleanup = errors.Join(cleanup, ErrCleanup)
-	} else if err := os.Remove(reader.directory); err != nil {
-		cleanup = errors.Join(cleanup, ErrCleanup)
+	if reader.directory != "" {
+		info, err := os.Lstat(reader.directory)
+		if err != nil || !os.SameFile(info, reader.directoryInfo) {
+			return errors.Join(ErrCleanup, err)
+		}
+		if err := os.Remove(reader.directory); err != nil {
+			return errors.Join(ErrCleanup, err)
+		}
+		reader.directory = ""
 	}
-	if err := reader.project.Close(); err != nil {
-		cleanup = errors.Join(cleanup, ErrCleanup)
+	if reader.project != nil {
+		if err := reader.project.Close(); err != nil {
+			// Project.Close is itself one-shot. Preserve the lock after an
+			// unconfirmed close instead of treating a later no-op as success.
+			reader.closePoisoned = true
+			return errors.Join(ErrCleanup, err)
+		}
+		reader.project = nil
 	}
 	if reader.ownsLock {
 		if err := reader.lock.Close(); err != nil {
-			cleanup = errors.Join(cleanup, ErrCleanup)
+			reader.closePoisoned = true
+			return errors.Join(ErrCleanup, err)
 		}
 	}
-	return cleanup
+	reader.closeDone = true
+	return nil
 }
