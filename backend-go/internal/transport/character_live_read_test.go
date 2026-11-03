@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 )
 
@@ -86,5 +87,21 @@ func TestCharacterLiveReadBindingRejectsTypedNilAndInvalidWire(t *testing.T) {
 		return nil, nil
 	})); err == nil || err.Error() != "OPERATION_ALREADY_BOUND" {
 		t.Fatalf("duplicate binding replaced read handlers: %v", err)
+	}
+}
+
+func TestCharacterLiveReadRuntimeNotOwnedKeepsOriginalGenericStatus(t *testing.T) {
+	server := fixture(t)
+	cookie, csrf := bootstrap(t, server)
+	expected := draftContext("project-1", "lease-1", "/synthetic/project-1")
+	if err := server.BindCharacterLiveReads(CharacterLiveReadProviderFunc(func(context.Context, Caller, any, string) (json.RawMessage, error) {
+		return nil, novelruntime.ErrNotOwned
+	})); err != nil {
+		t.Fatal(err)
+	}
+	response := draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", "db:character-get-all", charactersTransportArgs("db:character-get-all", expected)...)
+	var public map[string]map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &public); err != nil || response.Code != http.StatusInternalServerError || public["error"]["code"] != "PROJECT_SESSION_NOT_OWNED" || public["error"]["message"] == "PROJECT_SESSION_NOT_OWNED" {
+		t.Fatalf("unexpected generic session denial: %d %s: %v", response.Code, response.Body.String(), err)
 	}
 }

@@ -165,13 +165,20 @@ func TestSyntheticCharacterReadsUseOpenedPrivateLeaseAndOriginalWire(t *testing.
 		}
 	}
 	foreign := rpc("client_0987654321", "db:character-get-all", []any{projectPath, expected})
-	if foreign.Code != http.StatusConflict {
-		t.Fatal("foreign tab accepted", foreign.Code, foreign.Body.String())
+	assertNotOwned := func(label string, response *httptest.ResponseRecorder) {
+		t.Helper()
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusInternalServerError || body.Error.Code != "PROJECT_SESSION_NOT_OWNED" {
+			t.Fatal(label, response.Code, response.Body.String(), err)
+		}
 	}
+	assertNotOwned("foreign tab accepted", foreign)
 	stale := map[string]any{"projectId": openWire.Result.Project.ID, "leaseId": "stale", "projectPath": projectPath}
-	if response := rpc(tab, "db:character-get-all", []any{projectPath, stale}); response.Code != http.StatusConflict {
-		t.Fatal("stale lease accepted", response.Code, response.Body.String())
-	}
+	assertNotOwned("stale lease accepted", rpc(tab, "db:character-get-all", []any{projectPath, stale}))
 	if response := rpc(tab, "db:character-roster-commit", []any{}); response.Code != http.StatusNotImplemented {
 		t.Fatal("roster write bound", response.Code, response.Body.String())
 	}
