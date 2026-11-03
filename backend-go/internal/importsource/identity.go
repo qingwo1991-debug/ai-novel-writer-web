@@ -95,6 +95,15 @@ func ResolveEncodedSources(ctx context.Context,tx *sql.Tx,sources []EncodedIdent
  if tx==nil { return out,errors.New("PROJECT_NOT_OPEN") }
  if len(sources)==0 || len(sources)>MaxSourceFiles { return out,errors.New("IMPORT_SOURCE_IDENTITY_INVALID") }
  for _,source:=range sources { if !validDigest(source.LocationAliasDigest) || source.FileAliasDigest!="" && !validDigest(source.FileAliasDigest) { return out,errors.New("IMPORT_SOURCE_IDENTITY_INVALID") } }
+ // A nonempty legacy bridge must not silently lose its old fingerprints.
+ // Explicitly fail closed until that compatibility migration is integrated.
+ var bridgeCount int
+ if err:=tx.QueryRowContext(ctx,"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'import_legacy_identity_bridge'").Scan(&bridgeCount); err!=nil { return out,err }
+ if bridgeCount>0 {
+  var rows int
+  if err:=tx.QueryRowContext(ctx,"SELECT count(*) FROM import_legacy_identity_bridge WHERE id = 'main'").Scan(&rows); err!=nil { return out,err }
+  if rows>0 { return out,errors.New("IMPORT_SOURCE_LEGACY_BRIDGE_UNSUPPORTED") }
+ }
  find:=func(alias string) (string,error) {
   if alias=="" { return "",nil }; var id string
   err:=tx.QueryRowContext(ctx,"SELECT source_id FROM import_source_aliases WHERE alias_digest = ?",alias).Scan(&id)

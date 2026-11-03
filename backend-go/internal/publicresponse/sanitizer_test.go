@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 func retained(t *testing.T, s *Sanitizer, values ...string) {
@@ -145,4 +147,49 @@ func TestConcurrentRegistryAndClones(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ { wg.Add(1); go func(i int) { defer wg.Done(); _, err := s.RegisterSecret(fmt.Sprintf("concurrent-%04d", i)); if err != nil { t.Error(err) }; for j := 0; j < 8; j++ { if s.Sanitize("first-secret") != redacted { t.Error("registered secret leaked") } } }(i) }
 	wg.Wait()
+}
+
+type promotedResponseA struct {
+	Text string `json:"text"`
+	Password string `json:"password"`
+	Collision string `json:"collision"`
+}
+type promotedResponseB struct {
+	Collision string `json:"collision"`
+}
+type promotedResponse struct {
+	promotedResponseA
+	promotedResponseB
+	Text string `json:"text"`
+	Hidden string `json:"-"`
+}
+
+func TestPromotedStructFieldsResolveBeforeCredentialFiltering(t *testing.T) {
+	s := New()
+	retained(t, s, "synthetic-secret")
+	value := promotedResponse{
+		promotedResponseA: promotedResponseA{Text: "shadowed", Password: "synthetic-secret", Collision: "first"},
+		promotedResponseB: promotedResponseB{Collision: "second"},
+		Text: "synthetic-secret",
+		Hidden: "synthetic-secret",
+	}
+	out := s.Sanitize(value).(map[string]any)
+	if out["text"] != redacted || out["password"] != "" { t.Fatalf("promoted fields leaked or lost: %#v", out) }
+	if _, exists := out["collision"]; exists { t.Fatal("ambiguous promoted field survived") }
+	if _, exists := out["Hidden"]; exists { t.Fatal("ignored field survived") }
+}
+
+func TestDraftFullKeepsFlattenedOriginalResponseShape(t *testing.T) {
+	value := store.DraftFull{
+		DraftMeta: store.DraftMeta{ID: 7, ChapterNumber: 3, Version: 2, Status: "draft", SourceDependencies: []store.DraftSourceDependency{}},
+		Content: "synthetic content",
+	}
+	out := New().Sanitize(value).(map[string]any)
+	if out["id"] != int64(7) || out["chapterNumber"] != int64(3) || out["content"] != "synthetic content" {
+		t.Fatalf("draft fields were not flattened: %#v", out)
+	}
+	if _, nested := out["DraftMeta"]; nested { t.Fatal("embedded DraftMeta escaped as a nested object") }
+	if dependencies, ok := out["sourceDependencies"].([]any); !ok || len(dependencies) != 0 {
+		t.Fatalf("empty sourceDependencies changed shape: %#v", out["sourceDependencies"])
+	}
 }

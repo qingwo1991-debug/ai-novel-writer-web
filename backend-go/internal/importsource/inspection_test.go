@@ -56,6 +56,15 @@ func TestRevocationDuringCapturedReadCannotResurrect(t *testing.T) {
  store:=newTestStore(t,StoreOptions{}); b:=Binding{"c","g",Reference}; captured:=source("n.txt","unused"); captured.Reader=&revokeReader{store:store,caller:b.Caller}
  if _,err:=store.Inspect(b,[]CapturedSource{captured}); err==nil || err.Error()!="IMPORT_INSPECTION_EXPIRED" { t.Fatal(err) }; if store.ActiveCount()!=0 { t.Fatal("resurrected") }
 }
+func TestInspectionAggregateIncludesRetainedHeading(t *testing.T) {
+	store := newTestStore(t, StoreOptions{MaxAggregateBytes: 200})
+	binding := Binding{"caller", "generation", Reference}
+	_, err := store.Inspect(binding, []CapturedSource{source("n.txt", "Chapter 1 "+strings.Repeat("A", 128)+"\nbody")})
+	if err == nil || err.Error() != "IMPORT_SOURCE_BYTES_EXCEEDED" { t.Fatalf("large retained title bypassed aggregate bound: %v", err) }
+	if store.ActiveCount() != 0 { t.Fatal("rejected inspection retained") }
+	_, err = store.Inspect(binding, []CapturedSource{source("n.txt", "Chapter 1 A\nbody")})
+	if err != nil { t.Fatalf("short title should fit aggregate bound: %v", err) }
+}
 func zipFixture(t *testing.T,files map[string]string) []byte {
  t.Helper(); var b bytes.Buffer; w:=zip.NewWriter(&b)
  for name,body:=range files { f,err:=w.Create(name); if err!=nil { t.Fatal(err) }; if _,err=f.Write([]byte(body)); err!=nil { t.Fatal(err) } }; if err:=w.Close(); err!=nil { t.Fatal(err) }; return b.Bytes()

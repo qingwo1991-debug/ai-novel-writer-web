@@ -56,6 +56,9 @@ const built = await build({
   stdin: { contents: `export {registerImportController} from './electron/controllers/import-controller.ts'; export {ImportInspectionStore} from './electron/services/import-inspection-store.ts'; export {ImportSourceIdentityRepository} from './electron/repositories/import-source-identity-repository.ts'; export {extractEpubChapters} from './electron/services/epub-extraction-service.ts'; export {storedZip} from './electron/services/__tests__/epub-test-fixture.ts'; export {countDraftUnits} from './src/shared/draft-units.ts'`, resolveDir: root, sourcefile: 'import-source-entry.mjs' },
   bundle: true, write: false, platform: 'node', format: 'esm', banner: { js: "import {createRequire as __createRequire} from 'node:module'; const require=__createRequire(import.meta.url);" },
   plugins: [{ name: 'actual-import-boundaries', setup(api) {
+    // Node's createRequire honors the parent's isolated NODE_PATH install;
+    // esbuild does not automatically inherit that resolution search path.
+    api.onResolve({ filter: /^yauzl$/ }, () => ({ path: require.resolve('yauzl') }))
     api.onResolve({ filter: /^node:fs$/ }, args => args.importer === controller ? { path: 'captured-stat', namespace: 'seam' } : undefined)
     api.onResolve({ filter: /^node:crypto$/ }, args => args.namespace === 'file' ? { path: 'deterministic-crypto', namespace: 'seam' } : undefined)
     api.onResolve({ filter: /^\./ }, args => {

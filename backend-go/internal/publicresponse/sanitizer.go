@@ -258,18 +258,7 @@ func (c *clone) visit(v reflect.Value, depth int) (any, bool) {
 		for _, key := range keys { c.put(out, key.String(), v.MapIndex(key), depth+1) }
 		return out, true
 	case reflect.Struct:
-		out := make(map[string]any)
-		for i := 0; i < v.NumField(); i++ {
-			field := v.Type().Field(i)
-			if field.PkgPath != "" { continue }
-			tag := strings.Split(field.Tag.Get("json"), ",")
-			if tag[0] == "-" { continue }
-			key := tag[0]; if key == "" { key = field.Name }
-			omit := false
-			for _, option := range tag[1:] { if option == "omitempty" && emptyValue(v.Field(i)) { omit = true }; if option == "omitzero" && v.Field(i).IsZero() { omit = true } }
-			if !omit { c.put(out, key, v.Field(i), depth+1) }
-		}
-		return out, true
+		return c.structure(v, depth), true
 	}
 	return nil, false
 }

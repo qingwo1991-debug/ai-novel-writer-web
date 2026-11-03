@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'backend-go/**'
+      - 'Dockerfile.go'
       - 'web/operations.json'
       - 'electron/migrations/**'
       - 'electron/llm/**'
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'backend-go/**'
+      - 'Dockerfile.go'
       - 'web/operations.json'
       - 'electron/migrations/**'
       - 'electron/llm/**'
@@ -329,3 +331,47 @@ jobs:
       - name: State migration and deployment limits
         run: |
           printf '### Go migration foundation\n\nGo tests, race detector, compiler and smoke ran on GitHub, not on the deployment host.\n\nThis binary is **not feature complete**: unported operations return 501. No image push or production deployment was performed.\n' >> "$GITHUB_STEP_SUMMARY"
+  image:
+    name: Unpublished Go container with disposable smoke
+    needs: [compile, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: novel-go-migration-linux-amd64-${{ github.sha }}
+          path: backend-go/out
+      - name: Confirm binary checksum from the passing Go job
+        run: |
+          cd backend-go
+          sha256sum -c out/SHA256SUMS
+          chmod +x out/novel-server
+      - name: Build local candidate image on GitHub runner
+        run: docker build --pull --file Dockerfile.go --tag novel-go:migration-ci .
+      - name: Smoke image without author data or Node
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name novel-go-migration-ci --network host --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 128 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            novel-go:migration-ci
+          trap 'docker rm -f novel-go-migration-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:16082/healthz > /tmp/go-image-health.json; then break; fi
+            test "$(docker inspect --format '{{.State.Running}}' novel-go-migration-ci)" = true
+            sleep 1
+          done
+          python3 - <<'PY'
+          import json
+          with open('/tmp/go-image-health.json') as file:
+              health = json.load(file)
+          assert health['runtime'] == 'go'
+          assert health['migrationComplete'] is False
+          PY
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:16082/api/bootstrap)" = 401
+          docker exec novel-go-migration-ci sh -c '! command -v node && ! command -v npm && ! command -v electron'
+          printf 'Go migration container passed isolated smoke. It was not published or deployed.\n' >> "$GITHUB_STEP_SUMMARY"

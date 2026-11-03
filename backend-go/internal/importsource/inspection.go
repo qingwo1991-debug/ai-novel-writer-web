@@ -64,7 +64,7 @@ type StoreOptions struct {
  Limits Limits
  WindowsIdentities bool
 }
-type storedInspection struct { binding Binding; id string; expires int64; inspection Inspection }
+type storedInspection struct { binding Binding; id string; expires int64; retainedBytes int64; inspection Inspection }
 type Store struct {
  mu sync.Mutex
  inspectMu sync.Mutex
@@ -128,13 +128,18 @@ func (s *Store) Inspect(binding Binding,captured []CapturedSource) (Summary,erro
  summary:=Summary{Purpose:binding.Purpose,SourceCount:len(inspection.Sources),SourceDisplayNames:make([]string,0,len(inspection.Sources)),ChapterCount:len(inspection.Chapters),TotalWords:words,TotalBytes:contentBytes,Preview:make([]PreviewChapter,0,8)}
  for _,source:=range inspection.Sources { summary.SourceDisplayNames=append(summary.SourceDisplayNames,source.DisplayName) }
  for i,chapter:=range inspection.Chapters { if i>=8 { break }; summary.Preview=append(summary.Preview,PreviewChapter{chapter.Number,chapter.Title,chapter.WordCount}) }
+ // Include all attacker-influenced retained strings, not just prose bodies:
+ // enormous title-only headings cannot bypass the aggregate memory budget.
+ retainedSize:=contentBytes
+ for _,chapter:=range inspection.Chapters { retainedSize+=int64(len(chapter.Title)) }
+ for _,source:=range inspection.Sources { retainedSize+=int64(len(source.DisplayName)+len(source.MediaType)+len(source.LocationAliasDigest)+len(source.FileAliasDigest)) }
  s.mu.Lock(); defer s.mu.Unlock(); s.removeExpiredLocked()
  if s.revisions[binding.Caller]!=revision { return Summary{},errors.New("IMPORT_INSPECTION_EXPIRED") }
  retainedBytes:=int64(0); retainedCount:=0
- for _,entry:=range s.entries { if entry.binding.Caller!=binding.Caller { retainedCount++; retainedBytes+=entry.inspection.Summary.TotalBytes } }
- if contentBytes>s.maxAggregateBytes-retainedBytes { return Summary{},errors.New("IMPORT_SOURCE_BYTES_EXCEEDED") }; if retainedCount>=s.maxActive { return Summary{},errors.New("IMPORT_INSPECTION_LIMIT") }
+ for _,entry:=range s.entries { if entry.binding.Caller!=binding.Caller { retainedCount++; retainedBytes+=entry.retainedBytes } }
+ if retainedSize>s.maxAggregateBytes-retainedBytes { return Summary{},errors.New("IMPORT_SOURCE_BYTES_EXCEEDED") }; if retainedCount>=s.maxActive { return Summary{},errors.New("IMPORT_INSPECTION_LIMIT") }
  for key,entry:=range s.entries { if entry.binding.Caller==binding.Caller { delete(s.entries,key) } }
- entry:=storedInspection{binding:binding,id:id,expires:s.now().Add(s.ttl).UnixMilli()}
+ entry:=storedInspection{binding:binding,id:id,expires:s.now().Add(s.ttl).UnixMilli(),retainedBytes:retainedSize}
  summary.ExpiresAt=entry.expires; summary.InspectionID=s.receipt(entry)
  // Bind CAS to all source aliases and complete chapter content, not merely the
  // truncated eight-chapter preview. Alias fields are explicitly serialized here

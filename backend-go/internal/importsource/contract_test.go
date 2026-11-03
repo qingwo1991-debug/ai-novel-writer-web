@@ -42,7 +42,8 @@ func TestActualTypeScriptDifferential(t *testing.T) {
  if filename=="" { if os.Getenv("GITHUB_ACTIONS")=="true" { t.Fatal("GO_IMPORT_SOURCE_CONTRACT required on GitHub") }; t.Skip("original TypeScript differential runs on GitHub only") }
  base:=os.Getenv("RUNNER_TEMP"); if base=="" || !filepath.IsAbs(base) || filename!=filepath.Join(base,"novel-go-import-source","contract.json") { t.Fatal("unexpected contract location") }
  raw,err:=os.ReadFile(filename); if err!=nil { t.Fatal(err) }; var fixture originalContract; if err=json.Unmarshal(raw,&fixture); err!=nil { t.Fatal(err) }
- if fixture.Format!=1 || fixture.Platform!=runtime.GOOS || len(fixture.ParseCases)<9 || len(fixture.EPUBCases)<6 || len(fixture.IdentityCases)<5 || len(fixture.ResolverCases)<6 || len(fixture.CountCases)<10 || len(fixture.ActualStoreChecks)!=5 { t.Fatal("incomplete actual contract") }
+ expectedPlatform:=runtime.GOOS; if expectedPlatform=="windows" { expectedPlatform="win32" }
+ if fixture.Format!=1 || fixture.Platform!=expectedPlatform || len(fixture.ParseCases)<9 || len(fixture.EPUBCases)<6 || len(fixture.IdentityCases)<5 || len(fixture.ResolverCases)<6 || len(fixture.CountCases)<10 || len(fixture.ActualStoreChecks)!=5 { t.Fatal("incomplete actual contract") }
  for _,required:=range []string{"electron/controllers/import-controller.ts","electron/services/import-inspection-store.ts","electron/repositories/import-source-identity-repository.ts","electron/services/epub-extraction-service.ts","src/shared/draft-units.ts"} { found:=false; for _,module:=range fixture.OriginalModules { if module==required { found=true } }; if !found { t.Fatalf("original module not executed: %s",required) } }
  key,err:=hex.DecodeString(fixture.KeyHex); if err!=nil || len(key)!=32 { t.Fatal("invalid synthetic key") }
  db,err:=sql.Open("sqlite3",":memory:"); if err!=nil { t.Fatal(err) }; defer db.Close(); db.SetMaxOpenConns(1)

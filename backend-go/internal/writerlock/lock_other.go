@@ -31,6 +31,11 @@ func (lock *Lock) Verify() error {
 	return ErrUnsupported
 }
 
+// VerifyLegacy has the same fail-closed API on unsupported platforms.
+func (lock *Lock) VerifyLegacy(directory string) error {
+	return ErrUnsupported
+}
+
 // Close is a no-op for a nil or zero unsupported-platform Lock.
 func (lock *Lock) Close() error {
 	return nil

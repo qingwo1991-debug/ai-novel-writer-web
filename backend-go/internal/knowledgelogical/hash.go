@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
 )
@@ -99,7 +100,8 @@ func cellValue(field knowledgedomain.Field, value any) (any,error) {
 // HashSnapshot first applies the existing strict typed/domain validator, then
 // hashes schema-ordered records. Registry must contain ORIGINAL exact asset
 // bytes, not a parsed/remarshaled object: even whitespace changes its hash.
-// nil Registry means absent; present JSON null has a real raw-byte hash.
+// nil Registry means absent. Present JSON null is invalid in the original
+// registry validator and is rejected here rather than confused with absence.
 // The caller must supply an immutable snapshot and establish exclusion, native
 // Arrow authority, private-copy provenance, and locale profile independently.
 // UTF-8 malformed/surrogate strings and arbitrary multi-ID collation fail closed.
@@ -108,6 +110,7 @@ func HashSnapshot(ctx context.Context, snapshot knowledgedomain.Snapshot, budget
 	if options.Locale != "en-US" { return Summary{},failure("LOCALE_UNSUPPORTED") }
 	domain, err := knowledgedomain.Validate(ctx,snapshot,budget)
 	if err != nil { return Summary{},err }
+	if snapshot.Registry != nil && (len(bytes.TrimSpace(snapshot.Registry)) == 0 || bytes.Equal(bytes.TrimSpace(snapshot.Registry),[]byte("null"))) { return Summary{},failure("REGISTRY_INVALID") }
 	out := Summary{Documents:domain.Documents,Chunks:domain.Chunks,TableCount:domain.TableCount,Tables:make([]TableHash,0,len(snapshot.Tables))}
 	// Escaping at most six bytes per input byte; numeric cells at most 32.
 	limit := budget.MaxTextBytes*6 + budget.MaxCells*32 + 65536
@@ -153,6 +156,15 @@ func HashSnapshot(ctx context.Context, snapshot knowledgedomain.Snapshot, budget
 func DecodeSnapshot(ctx context.Context, raw []byte, maxBytes int) (knowledgedomain.Snapshot,error) {
 	if err := contextOK(ctx); err != nil { return knowledgedomain.Snapshot{},err }
 	if maxBytes < 1 || maxBytes > 64<<20 || len(raw) > maxBytes { return knowledgedomain.Snapshot{},failure("INPUT_LIMIT") }
+	if !utf8.Valid(raw) { return knowledgedomain.Snapshot{},failure("TEXT_INVALID") }
+	// Go's JSON decoder replaces isolated UTF16 surrogates silently. Native
+	// Arrow JSON does not need such escapes; conservatively reject all escaped
+	// surrogate code units rather than changing authoritative text on decode.
+	for i := 0; i+5 < len(raw); i++ {
+		if raw[i] != '\\' { continue }
+		if raw[i+1] == '\\' { i++; continue }
+		if raw[i+1] == 'u' && (raw[i+2] == 'd' || raw[i+2] == 'D') && ((raw[i+3] >= '8' && raw[i+3] <= '9') || (raw[i+3] >= 'a' && raw[i+3] <= 'f') || (raw[i+3] >= 'A' && raw[i+3] <= 'F')) { return knowledgedomain.Snapshot{},failure("SURROGATE_ESCAPE_UNSUPPORTED") }
+	}
 	if !bytes.Equal(bytes.TrimSpace(raw),[]byte("null")) && len(bytes.TrimSpace(raw)) > 0 && bytes.TrimSpace(raw)[0] == '{' {
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.UseNumber()
