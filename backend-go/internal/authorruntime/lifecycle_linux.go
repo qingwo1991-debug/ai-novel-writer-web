@@ -48,9 +48,28 @@ func NewReadLifecycle(catalog *projectcatalog.Store, config projectaccess.Config
 	if err != nil {
 		return nil, err
 	}
-	active, err := projectsession.NewActiveCoordinator(config.DataRoot, held)
+	lifecycle, err := NewReadLifecycleWithHeldLock(catalog, config, held)
 	if err != nil {
 		_ = held.Close()
+		return nil, err
+	}
+	return lifecycle, nil
+}
+
+// NewReadLifecycleWithHeldLock transfers an existing, continuously held legacy
+// writer lock to the lifecycle. On success, Shutdown owns its only Close. On
+// error, ownership remains with the caller, which must close held itself.
+// This permits trusted startup to inspect recovery and construct a protected
+// catalog before installing the lifecycle without releasing the writer lock.
+func NewReadLifecycleWithHeldLock(catalog *projectcatalog.Store, config projectaccess.Config, held *writerlock.Lock) (*ReadLifecycle, error) {
+	if catalog == nil || held == nil || config.DataRoot == "" || config.LibraryRoot == "" || config.ScratchParent == "" || config.ProjectPath != "" {
+		return nil, ErrInvalid
+	}
+	if err := held.VerifyLegacy(config.DataRoot); err != nil {
+		return nil, err
+	}
+	active, err := projectsession.NewActiveCoordinator(config.DataRoot, held)
+	if err != nil {
 		return nil, err
 	}
 	return &ReadLifecycle{catalog: catalog, config: config, active: active}, nil
