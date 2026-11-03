@@ -254,6 +254,49 @@ func (reader *Reader) verifyLocked(ctx context.Context) error {
 	return reader.lock.VerifyLegacy(reader.dataRoot)
 }
 
+// promoteCatalogKey binds a recovery-only Reader to a freshly registered
+// catalog key after the protected catalog hold has been released. The caller
+// must keep the borrowed legacy lock held throughout promotion and use this
+// only once. A failed promotion revokes read authority; the caller still owns
+// cleanup through Close and must not release its lock before cleanup succeeds.
+func (reader *Reader) promoteCatalogKey(ctx context.Context, catalog *projectcatalog.Store, key string) (err error) {
+	if reader == nil {
+		return ErrInvalid
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.closed {
+		return ErrClosed
+	}
+	if reader.catalog != nil || reader.key != "" {
+		return ErrInvalid
+	}
+	defer func() {
+		if err != nil {
+			reader.closed = true
+		}
+	}()
+	if catalog == nil || key == "" {
+		return ErrInvalid
+	}
+	if err := reader.verifyLocked(ctx); err != nil {
+		return err
+	}
+	current, err := catalog.Resolve(key)
+	if err != nil {
+		return errors.Join(ErrChanged, err)
+	}
+	identity := current.Path() == reader.project.Path() &&
+		current.ProjectID() == reader.report.ProjectID &&
+		current.Identity().Same(reader.project.Identity())
+	closeErr := current.Close()
+	if !identity || closeErr != nil {
+		return errors.Join(ErrChanged, closeErr)
+	}
+	reader.catalog, reader.key = catalog, key
+	return reader.verifyLocked(ctx)
+}
+
 func (reader *Reader) Verify(ctx context.Context) error {
 	if reader == nil {
 		return ErrInvalid
