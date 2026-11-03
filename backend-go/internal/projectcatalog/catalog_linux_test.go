@@ -6,10 +6,135 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
+
+func TestRecoveryCheckBlocksRekeyResolutionAndRemovalAcrossRestart(t *testing.T) {
+	library, project, path, metadata := fixture(t)
+	var mu sync.Mutex
+	pending := false
+	check := func(gotPath, gotID string) error {
+		if gotPath != path || gotID != project.ProjectID() {
+			return ErrCatalogInvalid
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if pending {
+			return errors.New("unresolved synthetic exchange")
+		}
+		return nil
+	}
+	store, err := OpenWithRecoveryCheck(library, metadata, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.Register(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.HoldRecovery(path, project.ProjectID()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	pending = true
+	mu.Unlock()
+	if err := store.ReleaseAfterVerifiedRecovery(project); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("released hold before journal confirmation: %v", err)
+	}
+	if _, err := store.List(); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("list issued key during unresolved exchange: %v", err)
+	}
+	if opened, err := store.Resolve(initial.Key); !errors.Is(err, ErrCatalogRecoveryPending) {
+		if opened != nil {
+			opened.Close()
+		}
+		t.Fatalf("old key resolved during unresolved exchange: %v", err)
+	}
+	if _, err := store.Register(project); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("register bypassed recovery gate: %v", err)
+	}
+	if err := store.Remove(initial.Key); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("remove erased pending recovery metadata: %v", err)
+	}
+	reopened, err := OpenWithRecoveryCheck(library, metadata, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.List(); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("restart repinned unresolved project: %v", err)
+	}
+	// Simulate a confirmed swap: the project path has the same ID but fresh
+	// storage inodes. The external journal checker releases only after its own
+	// durable SWITCHED/readback checks, represented by clearing pending here.
+	if err := os.Rename(path, path+"-retained-old"); err != nil {
+		t.Fatal(err)
+	}
+	storage := filepath.Join(path, projectfs.StorageDirectory)
+	if err := os.MkdirAll(storage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.ManifestName), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.DatabaseName), []byte("confirmed synthetic fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	pending = false
+	mu.Unlock()
+	newProject, err := library.OpenProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer newProject.Close()
+	if err := store.ReleaseAfterVerifiedRecovery(project); err == nil {
+		t.Fatal("stale source capability released recovery hold")
+	}
+	if err := store.ReleaseAfterVerifiedRecovery(newProject); err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := store.Resolve(initial.Key); !errors.Is(err, ErrCatalogKey) {
+		if opened != nil {
+			opened.Close()
+		}
+		t.Fatalf("old source key survived confirmed replacement: %v", err)
+	}
+	if listed, err := store.List(); err != nil || len(listed) != 1 || listed[0].Key == initial.Key {
+		t.Fatalf("released store did not repin replacement: %#v, %v", listed, err)
+	}
+	listed, err := reopened.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Key == "" || listed[0].Key == initial.Key {
+		t.Fatalf("confirmed replacement did not receive new key: %#v", listed)
+	}
+	opened, err := reopened.Resolve(listed[0].Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.ProjectID() != project.ProjectID() {
+		t.Fatal("wrong project re-admitted")
+	}
+	opened.Close()
+}
+
+func TestGuardedCatalogConstructorRequiresRecoveryCheck(t *testing.T) {
+	library, project, _, metadata := fixture(t)
+	if store, err := OpenWithRecoveryCheck(library, metadata, nil); store != nil || !errors.Is(err, ErrCatalogInvalid) {
+		t.Fatalf("guarded constructor accepted nil checker: %#v, %v", store, err)
+	}
+	legacy, err := Open(library, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Register(project); err != nil {
+		t.Fatalf("legacy synthetic constructor stopped working: %v", err)
+	}
+}
 
 const manifest = `{"schemaVersion":1,"kind":"ai-novel-project","projectId":"12345678-1234-4234-8234-123456789abc","createdAt":"2026-01-02T03:04:05.123Z","storageFormat":"ai-novel","storageVersion":1}`
 

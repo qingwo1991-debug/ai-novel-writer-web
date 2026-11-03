@@ -29,6 +29,14 @@ const maxRecent = 20
 var ErrCatalogUnsafe = errors.New("PROJECT_CATALOG_UNSAFE")
 var ErrCatalogInvalid = errors.New("PROJECT_CATALOG_INVALID")
 var ErrCatalogKey = errors.New("PROJECT_CATALOG_KEY_INVALID")
+var ErrCatalogRecoveryPending = errors.New("PROJECT_CATALOG_RECOVERY_PENDING")
+
+// RecoveryCheck is supplied by the trusted startup/publisher integration. It
+// must reject an unresolved exchange for the exact path and project ID. It is
+// called under the Store mutex and must not call back into the Store. Returning
+// nil is appropriate only after journal classification and post-swap readback
+// have established that issuing a new capability is safe.
+type RecoveryCheck func(path, projectID string) error
 
 type Recent struct {
 	Key       string `json:"key,omitempty"`
@@ -64,11 +72,27 @@ type Store struct {
 	byPath     map[string]string
 	keys       map[string]capability
 	removeKeys map[string]string
+	recovery   RecoveryCheck
+	holds      map[string]string
 }
 
 // Open takes a trusted, private metadata directory and a trusted library.
 // A corrupt existing file fails closed; it is never silently reset.
 func Open(library *projectfs.Library, directory string) (*Store, error) {
+	return open(library, directory, nil)
+}
+
+// OpenWithRecoveryCheck fences catalog capability issuance and resolution
+// against an external, trusted exchange-recovery decision. The legacy Open
+// constructor has no recovery integration and must not be used by a publisher.
+func OpenWithRecoveryCheck(library *projectfs.Library, directory string, check RecoveryCheck) (*Store, error) {
+	if check == nil {
+		return nil, ErrCatalogInvalid
+	}
+	return open(library, directory, check)
+}
+
+func open(library *projectfs.Library, directory string, check RecoveryCheck) (*Store, error) {
 	if library == nil || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
 		return nil, ErrCatalogInvalid
 	}
@@ -84,7 +108,76 @@ func Open(library *projectfs.Library, directory string) (*Store, error) {
 			return nil, ErrCatalogInvalid
 		}
 	}
-	return &Store{library: library, directory: directory, recent: entries, byPath: make(map[string]string), keys: make(map[string]capability), removeKeys: make(map[string]string)}, nil
+	return &Store{library: library, directory: directory, recent: entries, byPath: make(map[string]string), keys: make(map[string]capability), removeKeys: make(map[string]string), recovery: check, holds: make(map[string]string)}, nil
+}
+
+func (s *Store) checkRecoveryLocked(path, projectID string) error {
+	if s.holds[path] != "" {
+		return ErrCatalogRecoveryPending
+	}
+	if s.recovery == nil {
+		return nil
+	}
+	if err := s.recovery(path, projectID); err != nil {
+		return ErrCatalogRecoveryPending
+	}
+	return nil
+}
+
+// HoldRecovery synchronizes an in-process exchange with List, Resolve and
+// Register. Once it returns, no catalog operation can issue or resolve a key
+// for this project until ReleaseAfterVerifiedRecovery succeeds. The trusted
+// publisher must acquire this hold before changing the source tree. Holds are
+// process-local; restart safety requires OpenWithRecoveryCheck to consult the
+// persisted exchange journal before any catalog operation.
+func (s *Store) HoldRecovery(path, projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if path == "" || projectID == "" || s.holds[path] != "" {
+		return ErrCatalogInvalid
+	}
+	found := false
+	for _, entry := range s.recent {
+		if entry.Path == path && entry.ProjectID == projectID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ErrCatalogInvalid
+	}
+	s.holds[path] = projectID
+	return nil
+}
+
+// ReleaseAfterVerifiedRecovery accepts a freshly opened project capability
+// only after the trusted recovery checker has confirmed a durable SWITCHED
+// marker and post-swap readback. It revokes all keys for the old inode before
+// making the new project available. A store without a checker cannot release.
+func (s *Store) ReleaseAfterVerifiedRecovery(project *projectfs.Project) error {
+	if project == nil {
+		return ErrCatalogInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, projectID := project.Path(), project.ProjectID()
+	if s.holds[path] != projectID || s.recovery == nil {
+		return ErrCatalogRecoveryPending
+	}
+	if err := s.recovery(path, projectID); err != nil {
+		return ErrCatalogRecoveryPending
+	}
+	current, err := s.library.OpenProject(path)
+	if err != nil {
+		return err
+	}
+	defer current.Close()
+	if current.ProjectID() != projectID || !current.Identity().Same(project.Identity()) {
+		return projectfs.ErrChanged
+	}
+	s.revokeLocked(path)
+	delete(s.holds, path)
+	return nil
 }
 
 func privateDirectory(path string) error {
@@ -230,6 +323,9 @@ func (s *Store) Register(project *projectfs.Project) (Recent, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkRecoveryLocked(project.Path(), project.ProjectID()); err != nil {
+		return Recent{}, err
+	}
 	current, err := s.library.OpenProject(project.Path())
 	if err != nil {
 		return Recent{}, err
@@ -313,6 +409,9 @@ func (s *Store) List() ([]Recent, error) {
 	defer s.mu.Unlock()
 	result := make([]Recent, 0, len(s.recent))
 	for _, entry := range s.recent {
+		if err := s.checkRecoveryLocked(entry.Path, entry.ProjectID); err != nil {
+			return nil, err
+		}
 		item := Recent{Name: entry.Name, Path: entry.Path, ProjectID: entry.ProjectID, UpdatedAt: entry.UpdatedAt}
 		project, err := s.library.OpenProject(entry.Path)
 		if err == nil {
@@ -355,6 +454,9 @@ func (s *Store) Resolve(key string) (*projectfs.Project, error) {
 	if !ok || key == "" {
 		return nil, ErrCatalogKey
 	}
+	if err := s.checkRecoveryLocked(cap.path, cap.id); err != nil {
+		return nil, err
+	}
 	current := false
 	for _, entry := range s.recent {
 		if entry.Path == cap.path && entry.ProjectID == cap.id {
@@ -391,6 +493,18 @@ func (s *Store) Remove(key string) error {
 	}
 	if !ok || key == "" {
 		return ErrCatalogKey
+	}
+	projectID := cap.id
+	if projectID == "" {
+		for _, entry := range s.recent {
+			if entry.Path == path {
+				projectID = entry.ProjectID
+				break
+			}
+		}
+	}
+	if err := s.checkRecoveryLocked(path, projectID); err != nil {
+		return err
 	}
 	entries := make([]record, 0, len(s.recent))
 	for _, entry := range s.recent {
