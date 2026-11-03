@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/reviewbuilder"
@@ -105,14 +106,71 @@ func TestM03ReviewEffectAgainstOriginalTypeScriptOracle(t *testing.T) {
 				pretty, err := reviewbuilder.Pretty(compact)
 				return string(pretty), err
 			}
-			err = m03ProveReviewEffect(ctx, tx, m03ReviewEffectExpected{
+			expected := m03ReviewEffectExpected{
 				RootActionID: rootID, ReviewID: reviewID, ReviewIndex: reviewIndex,
 				ContentHash: contentHash, SourceID: sourceID, Chapter: chapter,
 				Version: version, Status: status, Content: source,
-			}, build)
+			}
+			epoch, err := m03ProveReviewEffect(ctx, tx, expected, build)
 			if (err == nil) != want {
 				t.Fatalf("Go review effect differs from original TypeScript oracle: %v", err)
 			}
+			if want && epoch != "epoch" {
+				t.Fatalf("wrong review binding epoch: %q", epoch)
+			}
+			if sample.Name == "valid-not-generated" {
+				copyPath := filepath.Join(t.TempDir(), "unrelated-attempt.db")
+				if err := os.WriteFile(copyPath, fixture, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				writable, err := sql.Open("sqlite3", copyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer writable.Close()
+				writable.SetMaxOpenConns(1)
+				if _, err := writable.Exec(`INSERT INTO generation_runs(run_id,root_action_id,binding_json,status,created_at_ms,open_key)
+					VALUES('run-unrelated',?,'{"projectId":"other","epoch":"epoch"}','completed',1,'open-unrelated')`, rootID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writable.Exec(`INSERT INTO generation_attempts(attempt_id,reservation_id,run_id,root_action_id,
+					attempt_json,usage_receipt_json,invocation_nonce)
+					VALUES('attempt-unrelated','reservation-unrelated','run-unrelated',?,'{}',NULL,'nonce-unrelated')`, rootID); err != nil {
+					t.Fatal(err)
+				}
+				tamperedTx, err := writable.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tamperedTx.Rollback()
+				if _, err := m03ProveReviewEffect(ctx, tamperedTx, expected, build); err == nil {
+					t.Fatal("unrelated attempt with mismatched project binding accepted")
+				}
+			}
 		})
+	}
+}
+
+func TestM03FrozenContextRejectsNoncanonicalLexemes(t *testing.T) {
+	for _, sample := range []struct {
+		raw      string
+		accepted bool
+	}{
+		{`{"version":1,"name":"甲"}`, true},
+		{`{"version":1.0,"name":"甲"}`, false},
+		{`{"version":1e0,"name":"甲"}`, false},
+		{`{"version":-0}`, false},
+		{`{"name":"\u0061"}`, false},
+		{`{"name":"a"}`, true},
+		{`{"name":"\u2028"}`, false},
+		{"{\"name\":\"\u2028\"}", true},
+		{`{"n":9007199254740992}`, false},
+		{`{"1":"numeric key"}`, false},
+		{`{"a":1,"a":2}`, false},
+		{`{"a":1 }`, false},
+	} {
+		if actual := m03CanonicalJSJSON([]byte(sample.raw)); actual != sample.accepted {
+			t.Fatalf("canonical JS JSON mismatch for %q: %v", sample.raw, actual)
+		}
 	}
 }

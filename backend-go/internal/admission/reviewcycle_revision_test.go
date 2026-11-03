@@ -67,7 +67,19 @@ func TestM03VisibleCompositionOverlapAndJSONOrder(t *testing.T) {
 		json.RawMessage(`{"revision":1,"artifactId":"a"}`)) {
 		t.Fatal("JSON property order was lost")
 	}
+}
+
+func TestM03VisibleCompositionConservativelyRejectsSplitEmojiBoundary(t *testing.T) {
+	// The original TypeScript slice(0, 1600) keeps an isolated high
+	// surrogate here and continues. Go cannot carry that intermediate
+	// string through overlap matching without a UTF-16-specific port, so
+	// this helper must reject the case instead of accepting a wrong hash.
 	if _, err := m03UTF16Window(strings.Repeat("a", 1599)+"🙂", false, 1600); err == nil {
-		t.Fatal("UTF-16 boundary bisected surrogate")
+		t.Fatal("UTF-16 boundary bisected surrogate was admitted")
+	}
+	// A full emoji exactly before the boundary remains representable.
+	if got, err := m03UTF16Window(strings.Repeat("a", 1598)+"🙂x", false, 1600); err != nil ||
+		got != strings.Repeat("a", 1598)+"🙂" {
+		t.Fatalf("complete UTF-16 pair rejected: %q, %v", got, err)
 	}
 }

@@ -503,9 +503,12 @@ func m03SameRawJSON(left, right []byte) bool {
 	return err == nil && bytes.Equal(a, b)
 }
 
-// JS string slicing is by UTF-16 code unit. A slice that bisects a surrogate
-// is deliberately refused until an exact surrogate-preserving representation
-// exists; a false negative here never admits corrupt author data.
+// JS string slicing is by UTF-16 code unit. The original TypeScript continues
+// after a slice that bisects an emoji's surrogate pair, potentially carrying
+// an isolated surrogate into overlap matching. A Go string cannot represent
+// that intermediate JS value losslessly. Until this path has an original-TS
+// differential port, reject it; this is an explicit false-negative boundary,
+// never a claim of complete original behavior for all Unicode inputs.
 func m03UTF16Window(value string, tail bool, limit int) (string, error) {
 	units := 0
 	for _, r := range value {

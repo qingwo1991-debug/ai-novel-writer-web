@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"strconv"
 )
 
 // m03ReviewReportBuilder must reconstruct JSON.stringify(report, null, 2) from
@@ -28,46 +30,64 @@ type m03ReviewEffectExpected struct {
 // m03ProveReviewEffect proves precisely one original review effect for the
 // cycle. It is only a component of populated M03 admission: the caller still
 // has to verify the cycle, finding anchors, and status-specific constraints.
-func m03ProveReviewEffect(ctx context.Context, tx *sql.Tx, want m03ReviewEffectExpected, build m03ReviewReportBuilder) error {
+func m03ProveReviewEffect(ctx context.Context, tx *sql.Tx, want m03ReviewEffectExpected, build m03ReviewReportBuilder) (string, error) {
 	if build == nil || !m03Nonempty(want.RootActionID) || !m03SafeInteger(want.ReviewID, 1) ||
 		!m03SafeInteger(want.ReviewIndex, 1) || !m03Hash(want.ContentHash) ||
 		!m03SafeInteger(want.SourceID, 1) || !m03SafeInteger(want.Chapter, 1) ||
 		!m03SafeInteger(want.Version, 1) || !m03Nonempty(want.Status) || m03LoneSurrogateEscape(want.Content) {
-		return errors.New("M03 review effect input invalid")
+		return "", errors.New("M03 review effect input invalid")
 	}
+	var actionJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT action_json FROM generation_roots WHERE root_action_id=?`,
+		want.RootActionID).Scan(&actionJSON); err != nil {
+		return "", err
+	}
+	action, err := m03JSONObject([]byte(actionJSON))
+	if err != nil || !m03JSONIsNonemptyString(action["projectId"]) ||
+		!m03JSONIsNonemptyString(action["epoch"]) {
+		return "", errors.New("M03 root action identity invalid")
+	}
+	projectID, _ := m03JSONString(action["projectId"])
 	rows, err := tx.QueryContext(ctx, `SELECT a.attempt_id,a.run_id,a.root_action_id,r.root_action_id,
 		r.binding_json,a.attempt_json,a.usage_receipt_json
 		FROM generation_attempts a JOIN generation_runs r ON r.run_id=a.run_id
 		WHERE a.root_action_id=? ORDER BY a.rowid`, want.RootActionID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer rows.Close()
-	matched := 0
+	matched, matchedEpoch := 0, ""
 	for rows.Next() {
 		var row m03EffectAttempt
 		if err := rows.Scan(&row.attemptID, &row.runID, &row.rootActionID, &row.runRootActionID,
 			&row.bindingJSON, &row.attemptJSON, &row.usageJSON); err != nil {
-			return err
+			return "", err
+		}
+		binding, err := m03JSONObject([]byte(row.bindingJSON))
+		if err != nil || row.runRootActionID != want.RootActionID ||
+			!m03JSONEqualsString(binding["projectId"], projectID) ||
+			!m03JSONIsNonemptyString(binding["epoch"]) {
+			return "", errors.New("M03 root attempt binding invalid")
 		}
 		ok, err := m03ReviewEffectMatches(ctx, tx, row, want, build)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if ok {
 			matched++
+			matchedEpoch, _ = m03JSONString(binding["epoch"])
 		}
 		if matched > 1 {
-			return errors.New("M03 multiple matching review effects")
+			return "", errors.New("M03 multiple matching review effects")
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return "", err
 	}
 	if matched != 1 {
-		return errors.New("M03 review effect absent")
+		return "", errors.New("M03 review effect absent")
 	}
-	return nil
+	return matchedEpoch, nil
 }
 
 type m03EffectAttempt struct {
@@ -164,15 +184,10 @@ func m03ReviewEffectMatches(ctx context.Context, tx *sql.Tx, row m03EffectAttemp
 		!m03JSONEqualsString(manifest["reviewRevisionContextHash"], contextHash) {
 		return false, nil
 	}
-	// The original hashes JSON.stringify(context). Require that the frozen raw
-	// object is already that byte representation; noncanonical encodings fail
-	// closed until an ordered JS serializer is attached here.
-	if !json.Valid(frozen) || m03LoneSurrogateEscape(string(frozen)) ||
+	// The original hashes JSON.stringify(context), not the lexical JSON text.
+	// Require bytes that a conservative ordered JS serializer reproduces.
+	if !m03CanonicalJSJSON(frozen) ||
 		m03StringHash(string(frozen)) != contextHash {
-		return false, nil
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, frozen); err != nil || !bytes.Equal(compact.Bytes(), frozen) {
 		return false, nil
 	}
 	if _, err := m03JSONObject(context["config"]); err != nil {
@@ -315,3 +330,104 @@ func m03OneOf(raw []byte, values ...string) bool {
 }
 func m03JSONArray(raw []byte) bool    { return len(raw) > 0 && raw[0] == '[' && json.Valid(raw) }
 func m03JSONIsObject(raw []byte) bool { _, err := m03JSONObject(raw); return err == nil }
+
+// m03CanonicalJSJSON is deliberately narrower than all legal JavaScript
+// values. Exact binary64 rendering and array-index key reordering are not
+// needed for this admitted lane; those inputs fail closed.
+func m03CanonicalJSJSON(raw []byte) bool {
+	if len(raw) == 0 || m03LoneSurrogateEscape(string(raw)) {
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	encoded, err := m03CanonicalJSValue(decoder, 0)
+	if err != nil {
+		return false
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return false
+	}
+	return bytes.Equal(encoded, raw)
+}
+
+func m03CanonicalJSValue(decoder *json.Decoder, depth int) ([]byte, error) {
+	if depth > 128 {
+		return nil, errors.New("M03 JSON depth unsupported")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch value := token.(type) {
+	case nil:
+		return []byte("null"), nil
+	case bool:
+		if value {
+			return []byte("true"), nil
+		}
+		return []byte("false"), nil
+	case string:
+		return appendJSString(nil, value), nil
+	case json.Number:
+		integer, err := strconv.ParseInt(string(value), 10, 64)
+		if err != nil || integer < -m03MaxSafeInteger || integer > m03MaxSafeInteger {
+			return nil, errors.New("M03 noncanonical number unsupported")
+		}
+		return strconv.AppendInt(nil, integer, 10), nil
+	case json.Delim:
+		switch value {
+		case '{':
+			encoded := []byte{'{'}
+			seen := make(map[string]bool)
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				key, ok := keyToken.(string)
+				if err != nil || !ok || seen[key] || m03JSArrayIndexKey(key) {
+					return nil, errors.New("M03 object key unsupported")
+				}
+				seen[key] = true
+				child, err := m03CanonicalJSValue(decoder, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				if len(encoded) > 1 {
+					encoded = append(encoded, ',')
+				}
+				encoded = appendJSString(encoded, key)
+				encoded = append(encoded, ':')
+				encoded = append(encoded, child...)
+			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim('}') {
+				return nil, errors.New("M03 object not closed")
+			}
+			return append(encoded, '}'), nil
+		case '[':
+			encoded := []byte{'['}
+			for decoder.More() {
+				child, err := m03CanonicalJSValue(decoder, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				if len(encoded) > 1 {
+					encoded = append(encoded, ',')
+				}
+				encoded = append(encoded, child...)
+			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim(']') {
+				return nil, errors.New("M03 array not closed")
+			}
+			return append(encoded, ']'), nil
+		}
+	}
+	return nil, errors.New("M03 JSON token unsupported")
+}
+
+func m03JSArrayIndexKey(key string) bool {
+	if key == "" || len(key) > 1 && key[0] == '0' {
+		return false
+	}
+	value, err := strconv.ParseUint(key, 10, 32)
+	return err == nil && value != 4294967295 && strconv.FormatUint(value, 10) == key
+}
