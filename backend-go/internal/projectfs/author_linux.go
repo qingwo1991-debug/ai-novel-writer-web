@@ -174,33 +174,45 @@ func (a *AuthorDatabase) Verify(ctx context.Context) error {
 		a.mu.Unlock()
 		return err
 	}
+	// Re-prove admission before inspecting the project identity. This may take
+	// the project mutex itself; we do not hold it here.
 	if err := a.permit.Verify(ctx, a.project); err != nil {
 		a.mu.Unlock()
 		return err
 	}
 	p := a.project
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.library.mu.Lock()
-	defer p.library.mu.Unlock()
 	if err := p.checkIdentityLocked(); err != nil {
+		p.library.mu.Unlock()
+		p.mu.Unlock()
 		a.mu.Unlock()
 		return err
 	}
 	if err := p.checkWritableDirectoriesLocked(); err != nil {
+		p.library.mu.Unlock()
+		p.mu.Unlock()
 		a.mu.Unlock()
 		return err
 	}
 	if err := p.checkSidecarsLocked(); err != nil {
+		p.library.mu.Unlock()
+		p.mu.Unlock()
 		a.mu.Unlock()
 		return err
 	}
 	opened, err := p.storage.Lstat(DatabaseName)
 	if err != nil || !ownedWriteFile(opened) || !os.SameFile(a.identity, opened) {
+		p.library.mu.Unlock()
+		p.mu.Unlock()
 		a.mu.Unlock()
 		return ErrChanged
 	}
+	p.library.mu.Unlock()
+	p.mu.Unlock()
 	a.mu.Unlock()
+	// Final permit re-check runs with the project/library and handle mutexes all
+	// released, so the permit may lock the project itself without deadlocking.
 	return a.permit.Verify(ctx, p)
 }
 
