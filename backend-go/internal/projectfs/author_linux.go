@@ -23,6 +23,8 @@ import (
 // Verify must re-check the full admission state (retained lock, project and
 // storage identity, supported schema, portable-authority absence) against the
 // exact Project passed in, and must fail closed for anything it cannot prove.
+// It must be called WITHOUT the project or library mutex held: portable-authority
+// verification locks the project itself, so a concurrent call would self-deadlock.
 type AuthorPermit interface {
 	Verify(context.Context, *Project) error
 }
@@ -64,9 +66,30 @@ func (p *Project) OpenAuthorDatabase(ctx context.Context, permit AuthorPermit) (
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Admission first, before taking the project mutex: the permit Verify
+	// (portable authority + content identity) locks the project itself.
 	if err := permit.Verify(ctx, p); err != nil {
 		return nil, err
 	}
+	handle, err := p.openAuthorDatabaseLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	handle.permit = permit
+	// Re-prove admission after the open. openAuthorDatabaseLocked has released
+	// the project/library mutexes, so the permit may lock them again.
+	if err := permit.Verify(ctx, p); err != nil {
+		_ = handle.Close()
+		return nil, err
+	}
+	return handle, nil
+}
+
+// openAuthorDatabaseLocked performs the identity-checked open while holding the
+// project and library mutexes, then releases them before returning so the caller
+// can re-prove admission without self-deadlocking. On error it closes any db it
+// opened.
+func (p *Project) openAuthorDatabaseLocked(ctx context.Context) (*AuthorDatabase, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.library.mu.Lock()
@@ -120,11 +143,7 @@ func (p *Project) OpenAuthorDatabase(ctx context.Context, permit AuthorPermit) (
 		db.Close()
 		return nil, err
 	}
-	if err := permit.Verify(ctx, p); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &AuthorDatabase{project: p, permit: permit, db: db, path: path, identity: opened}, nil
+	return &AuthorDatabase{project: p, db: db, path: path, identity: opened}, nil
 }
 
 // DB returns the single-connection handle. Callers must not close it and must
@@ -139,20 +158,24 @@ func (a *AuthorDatabase) DB() *sql.DB {
 }
 
 // Verify re-proves the retained lock and admission state, the project/storage
-// identity, the database inode we opened, and the safety of any sidecars.
+// identity, the database inode we opened, and the safety of any sidecars. The
+// final permit re-check runs without the project mutex held to avoid a
+// self-deadlock, mirroring OpenAuthorDatabase.
 func (a *AuthorDatabase) Verify(ctx context.Context) error {
 	if a == nil || ctx == nil {
 		return ErrInvalidPath
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed || a.db == nil {
+		a.mu.Unlock()
 		return ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	if err := a.permit.Verify(ctx, a.project); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	p := a.project
@@ -161,18 +184,23 @@ func (a *AuthorDatabase) Verify(ctx context.Context) error {
 	p.library.mu.Lock()
 	defer p.library.mu.Unlock()
 	if err := p.checkIdentityLocked(); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	if err := p.checkWritableDirectoriesLocked(); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	if err := p.checkSidecarsLocked(); err != nil {
+		a.mu.Unlock()
 		return err
 	}
 	opened, err := p.storage.Lstat(DatabaseName)
 	if err != nil || !ownedWriteFile(opened) || !os.SameFile(a.identity, opened) {
+		a.mu.Unlock()
 		return ErrChanged
 	}
+	a.mu.Unlock()
 	return a.permit.Verify(ctx, p)
 }
 
