@@ -26,6 +26,12 @@ const fixtures = []
 const domainProofs = []
 for (const [name, donor, version] of [
   ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6], ['donor-v6', true, 6],
+  ['baseline-v0', false, 0], ['donor-v0', true, 0],
+  ['baseline-v0-upgraded-v1', false, 1], ['donor-v0-upgraded-v1', true, 1],
+  ['baseline-v1', false, 1], ['donor-v1', true, 1],
+  ['baseline-v1-upgraded-v2', false, 2], ['donor-v1-upgraded-v2', true, 2],
+  ['baseline-v2', false, 2], ['donor-v2', true, 2],
+  ['baseline-v2-upgraded-v3', false, 3], ['donor-v2-upgraded-v3', true, 3],
   ['baseline-v6-upgraded-v7', false, 7], ['donor-v6-upgraded-v7', true, 7],
   ['baseline-v3',false,3],['donor-v3',true,3],
   ['baseline-v3-upgraded-v4',false,4],['donor-v3-upgraded-v4',true,4],
@@ -68,6 +74,32 @@ for (const [name, donor, version] of [
     const evidence = probeProjectSqlite({ databasePath: filename })
     domainProofs.push({ file, domain: evidence.domain })
   }
+}
+// M02's random UUIDs preclude bytewise oracle equality. These two histories
+// prove that the installed TypeScript step retains each old character field,
+// creates an origin/alias, and carries plain legacy references as proposals.
+for (const [name, upgraded] of [
+  ['baseline-v2-history', false], ['baseline-v2-history-upgraded-v3', true],
+  ['donor-v2-history', false], ['donor-v2-history-upgraded-v3', true],
+]) {
+  const file = name + '.db'
+  const filename = path.join(directory, file)
+  const family = name.startsWith('donor') ? 'donor' : 'baseline'
+  copyFileSync(path.join(directory, upgraded ? `${family}-v2-history.db` : `${family}-v2.db`), filename, constants.COPYFILE_EXCL)
+  const db = new Database(filename)
+  try {
+    db.pragma('foreign_keys=ON')
+    if (upgraded) migrateSchema(new SqliteSchemaAdapter(db), registry, 3)
+    else {
+      db.prepare('INSERT INTO characters(name,notes,relationships) VALUES(?,?,?)')
+        .run('旧角色', '作者原值 😀 <&>', '["旧角色","未知角色"]')
+      db.prepare('INSERT INTO blueprints(chapter_number,title,characters) VALUES(?,?,?)')
+        .run(900002, '旧章节', '["旧角色","未知角色"]')
+      db.prepare('INSERT INTO contents(body) VALUES(?)').run('M02 前的正文\r\n')
+    }
+    verifySchema(new SqliteSchemaAdapter(db), registry, upgraded ? 3 : 2)
+    fixtures.push({ name, file, version: upgraded ? 3 : 2, fingerprint: sqliteSchemaFingerprint(db) })
+  } finally { db.close() }
 }
 // M03 adds empty review-cycle tables without guessing cycles from historical
 // reviews. These two files share exactly the same synthetic v3 author rows;
