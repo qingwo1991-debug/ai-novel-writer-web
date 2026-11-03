@@ -17,6 +17,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectpublish"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -79,7 +80,25 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 			_ = held.Close()
 		}
 	}()
-	check, err := syntheticRecoveryCheck(libraryDir, held)
+	readback := func(ctx context.Context, path, id string, recovery projectpublish.JournalRecovery) error {
+		if recovery.ProjectPath != path || recovery.Class != projectpublish.JournalSwitched {
+			return authorruntime.ErrSwitchedDraftUnverified
+		}
+		readConfig := projectaccess.Config{DataRoot: dataRoot, LibraryRoot: libraryDir,
+			ProjectPath: path, ScratchParent: scratch, MaxDatabaseBytes: 64 << 20, Schema: config.Schema}
+		journalName := "novel-exchange-" + recovery.JournalID + ".prepared.json"
+		facts, err := authorruntime.VerifyRestartedSwitchedDraftUnderLock(ctx, held, library,
+			id, path, filepath.Join(dataRoot, syntheticStageParentName), journalName, readConfig)
+		if err != nil {
+			return err
+		}
+		if facts.ProjectID != id || facts.ProjectPath != path || facts.DraftID != recovery.EditedDraftID ||
+			facts.EditedTreeHash != recovery.VerifiedNewSourceTreeHash {
+			return authorruntime.ErrSwitchedDraftUnverified
+		}
+		return nil
+	}
+	check, err := syntheticRecoveryCheck(libraryDir, held, readback)
 	if err != nil {
 		remove()
 		return nil, err
@@ -113,7 +132,7 @@ func newSyntheticLibraryRecoveryGuard(libraryDir string) (*syntheticLibraryRecov
 	if err != nil {
 		return nil, err
 	}
-	check, err := syntheticRecoveryCheck(libraryDir, held)
+	check, err := syntheticRecoveryCheck(libraryDir, held, nil)
 	if err != nil {
 		_ = held.Close()
 		return nil, err
@@ -135,7 +154,7 @@ func (g *syntheticLibraryRecoveryGuard) Close() error {
 	return g.held.Close()
 }
 
-func syntheticRecoveryCheck(libraryDir string, held *writerlock.Lock) (projectcatalog.RecoveryCheck, error) {
+func syntheticRecoveryCheck(libraryDir string, held *writerlock.Lock, readback authorruntime.SwitchedReadback) (projectcatalog.RecoveryCheck, error) {
 	dataRoot := filepath.Dir(libraryDir)
 	stageParent := filepath.Join(dataRoot, syntheticStageParentName)
 	if err := os.Mkdir(stageParent, 0700); err == nil {
@@ -155,7 +174,7 @@ func syntheticRecoveryCheck(libraryDir string, held *writerlock.Lock) (projectca
 	if !privateSyntheticGlobalRoot(stageParent) || !sameSyntheticFilesystem(stageParent, libraryDir) {
 		return nil, errors.New("SYNTHETIC_RECOVERY_STAGE_UNSAFE")
 	}
-	check, err := authorruntime.CatalogJournalRecoveryCheck(context.Background(), held, dataRoot, stageParent, nil)
+	check, err := authorruntime.CatalogJournalRecoveryCheck(context.Background(), held, dataRoot, stageParent, readback)
 	if err != nil {
 		return nil, err
 	}
@@ -332,10 +351,14 @@ func (s *syntheticReadOpen) Close() error {
 	if s.closed {
 		return nil
 	}
-	s.closed = true
-	err := s.lifecycle.Shutdown()
-	if removeErr := os.RemoveAll(s.workspace); err == nil {
-		err = removeErr
+	if err := s.lifecycle.Shutdown(); err != nil {
+		// An unclosed private Reader may still own files in this workspace.
+		// Leave them for process-level recovery while its writer lock stays held.
+		return err
 	}
-	return err
+	if err := os.RemoveAll(s.workspace); err != nil {
+		return err
+	}
+	s.closed = true
+	return nil
 }
