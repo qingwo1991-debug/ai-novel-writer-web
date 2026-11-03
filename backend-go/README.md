@@ -33,9 +33,10 @@
 - `internal/projectfs/knowledge*.go`、`internal/knowledgecopy`与opt-in `projectaccess.Config.Knowledge`：固定知识资产完整物理stage、缺失/legacy门、源/副本字节与identity proof、replacement-safe清理、只读registry/copy状态和rawdigest。普通Go合成回归和Go stage→native scan→原JS全schema/rows组合均已通过；默认仍是metadata-only；第十八轮显式Native opt-in追加bounded domain与copy引用分类，missing非fatal且不current，dirty合法保留，绝不意味着索引可直接用于AI；不授予作者原库写能力。详见 `web/GO-KNOWLEDGE-COPY-PREFLIGHT.md`。
 - `internal/knowledgequery`、`projectaccess.InspectKnowledge`、`projectsession.KnowledgeManager`、`transport.BindKnowledge`：第十九轮隔离有界capture的4项KB只读业务（文档列表/三字段统计/无向量计数/副本读取），samecapture finalization章号注释、精确cookie+tab+context whole-call lease、固定snapshot refresh与scratch清理后无FD依赖。原TS14组完整逻辑Oracle+独立真实native→capture→HTTP验收见 `web/GO-KNOWLEDGE-READS.md`；main不绑定，无durable作者会话/保存/reindex/search/embedding写业务。
 - `internal/projectcatalog`、`projectfs.ListCanonicalProjects`、`transport.LibraryRoute`：私有最近项目元数据、完整书库目录枚举与隔离的 `/api/library` 适配。目录键只用于导航，打开前仍须重新准入；接口尚未接主程序。
-- `internal/authorruntime`、`projectsession.ActiveCoordinator`：持续持有旧网关锁的作者库私有只读快照、来源复核、项目切换与在途围栏。`AssessSQLiteWriteCandidate` 仅返回受限写入资格证据，**不提供正式作者数据写入能力**。
+- `internal/authorruntime`、`projectsession.ActiveCoordinator`：持续持有旧网关锁的作者库私有只读快照、来源复核、项目切换与在途围栏。合成环境已接入只读 `project:open`、角色和草稿读取；项目核心、蓝图、审稿、修稿读取及关闭正在 GitHub 验证。`AssessSQLiteWriteCandidate` 仅返回受限写入资格证据，**不提供正式作者数据写入能力**。
+- `internal/projectpublish`：隔离的完整 `.ai-novel` 私有目录快照、草稿正文 CAS 回读、编辑后 PREPARED 日志、交换资格预检及重启状态分类。实际目录交换和作者源库发布仍明确拒绝；当前快照/日志接口不构成完整业务保存。
 - `internal/transport.StaticAssets`：隔离的 React 静态资源处理器，复用认证会话并拒绝路径逃逸；尚未接主程序。
-- `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开数据库、不启动 Node 子进程。已绑定两个固定浏览器导航意图；其余业务仍不支持。
+- `cmd/novel-server`：仅供合成测试的 Go 基础二进制，不打开真实作者数据库、不启动 Node 子进程。默认只绑定固定导航意图；显式提供私有临时书库与可信 schema 契约时，可打开**私有只读副本**并绑定部分项目、角色、草稿、目录读取。未迁移业务仍返回 501，生产模式和真实数据挂载仍被拒绝。
 
 完整操作清单和迁移门见 `web/GO-MIGRATION-MATRIX.md`、`web/GO-MIGRATION-PLAN.md`。AI 生成、定稿及后处理、知识库、归档和其他全部业务仍需要逐项迁移并验证。
 
