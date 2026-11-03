@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globalconfig"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
@@ -39,6 +40,7 @@ func run() error {
 	uploadDir := flag.String("synthetic-upload-dir", "", "optional private disposable upload staging for isolated migration smoke")
 	globalDir := flag.String("synthetic-global-dir", "", "optional private disposable global config for isolated migration smoke")
 	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
+	readSchema := flag.String("synthetic-read-schema-contract", "", "trusted SQLite contract for disposable read-only project opens")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
@@ -63,6 +65,9 @@ func run() error {
 	if (*globalDir == "") != (*modelOrigins == "") {
 		return errors.New("synthetic model config requires both a private global root and trusted origins")
 	}
+	if *readSchema != "" && (*libraryDir == "" || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
+		return errors.New("synthetic project reads require a library beneath a private temporary data root")
+	}
 	file, err := os.Open(*policyPath)
 	if err != nil {
 		return err
@@ -76,7 +81,22 @@ func run() error {
 	if *modelOrigins != "" {
 		origins = strings.Split(*modelOrigins, ",")
 	}
-	handler, cleanup, err := migrationHandlerWithModels(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins)
+	var readConfig *syntheticReadOpenConfig
+	if *readSchema != "" {
+		contractFile, err := os.Open(*readSchema)
+		if err != nil {
+			return err
+		}
+		contract, parseErr := admission.ParseContract(contractFile)
+		if closeErr := contractFile.Close(); parseErr == nil {
+			parseErr = closeErr
+		}
+		if parseErr != nil {
+			return fmt.Errorf("synthetic read contract: %w", parseErr)
+		}
+		readConfig = &syntheticReadOpenConfig{Schema: contract}
+	}
+	handler, cleanup, err := migrationHandlerWithModelsAndReadOpen(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins, readConfig)
 	if err != nil {
 		return err
 	}
@@ -148,6 +168,13 @@ func migrationHandlerWithUploads(registry *policy.Registry, address, staticDir, 
 // administrator supplied exact origins. This synthetic startup capture must
 // never be used as evidence that an author's real data has been migrated.
 func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string) (http.Handler, func(), error) {
+	return migrationHandlerWithModelsAndReadOpen(registry, address, staticDir, libraryDir, uploadDir, globalDir, modelOrigins, nil)
+}
+
+func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string, readConfig *syntheticReadOpenConfig) (http.Handler, func(), error) {
+	if readConfig != nil && (libraryDir == "" || !underTempRoot(libraryDir) || !privateSyntheticGlobalRoot(filepath.Dir(libraryDir))) {
+		return nil, nil, errors.New("synthetic project reads require a library beneath a private temporary data root")
+	}
 	if uploadDir != "" && !underTempRoot(uploadDir) {
 		return nil, nil, errors.New("synthetic uploads must use a canonical temporary directory")
 	}
@@ -167,8 +194,12 @@ func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, l
 	var uploads *transferhttp.TransferStore
 	var models *globalconfig.Service
 	var endpoints *egress.Client
+	var readOpen *syntheticReadOpen
 	cleanup := func() {
 		server.Close()
+		if readOpen != nil {
+			_ = readOpen.Close()
+		}
 		if endpoints != nil {
 			endpoints.Close()
 		}
@@ -227,6 +258,17 @@ func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, l
 			return nil, nil, err
 		}
 		mux.Handle("/api/library", route)
+		if readConfig != nil {
+			readOpen, err = newSyntheticReadOpen(library, libraryDir, *readConfig)
+			if err != nil {
+				cleanup()
+				return nil, nil, fmt.Errorf("synthetic project read: %w", err)
+			}
+			if err := server.BindProjectReadOpen(readOpen); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
+		}
 	}
 	if uploadDir != "" {
 		var err error

@@ -19,19 +19,50 @@ func TestDraftCASIntentPreservesLegacyBaselineAndRejectsReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	statements := []string{
-		"INSERT INTO contents(id,body) VALUES(1,''),(2,'final'),(3,'receipted'),(4,'shared')",
-		`INSERT INTO drafts(id,chapter_number,version,status,content_id) VALUES
- (1,1,1,'draft',1),(2,2,1,'finalized',2),(3,3,1,'draft',3),
- (4,4,1,'reviewed',4),(5,5,1,'draft',4)`,
-		`INSERT INTO finalization_outbox(finalization_id,draft_id,chapter_number,content_hash,content_revision,target_file_name)
- VALUES('stale-working-receipt',3,3,'synthetic-hash',1,'three.txt')`,
+	var nextChapter int64
+	if err := seed.QueryRow("SELECT COALESCE(MAX(chapter_number), 0) + 1 FROM drafts").Scan(&nextChapter); err != nil {
+		_ = seed.Close()
+		t.Fatal(err)
 	}
-	for _, statement := range statements {
-		if _, err := seed.Exec(statement); err != nil {
+	contentIDs := make([]int64, 4)
+	for i, body := range []string{"", "final", "receipted", "shared"} {
+		result, err := seed.Exec("INSERT INTO contents(body) VALUES(?)", body)
+		if err != nil {
 			_ = seed.Close()
 			t.Fatal(err)
 		}
+		contentIDs[i], err = result.LastInsertId()
+		if err != nil {
+			_ = seed.Close()
+			t.Fatal(err)
+		}
+	}
+	draftIDs := make([]int64, 5)
+	for i, row := range []struct {
+		status    string
+		contentID int64
+	}{
+		{"draft", contentIDs[0]},
+		{"finalized", contentIDs[1]},
+		{"draft", contentIDs[2]},
+		{"reviewed", contentIDs[3]},
+		{"draft", contentIDs[3]},
+	} {
+		result, err := seed.Exec("INSERT INTO drafts(chapter_number,version,status,content_id) VALUES(?,?,?,?)", nextChapter+int64(i), 1, row.status, row.contentID)
+		if err != nil {
+			_ = seed.Close()
+			t.Fatal(err)
+		}
+		draftIDs[i], err = result.LastInsertId()
+		if err != nil {
+			_ = seed.Close()
+			t.Fatal(err)
+		}
+	}
+	if _, err := seed.Exec(`INSERT INTO finalization_outbox(finalization_id,draft_id,chapter_number,content_hash,content_revision,target_file_name)
+ VALUES(?,?,?,?,?,?)`, "stale-working-receipt", draftIDs[2], nextChapter+2, "synthetic-hash", 1, "three.txt"); err != nil {
+		_ = seed.Close()
+		t.Fatal(err)
 	}
 	if err := seed.Close(); err != nil {
 		t.Fatal(err)
@@ -60,7 +91,7 @@ func TestDraftCASIntentPreservesLegacyBaselineAndRejectsReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty := ""
-	intent, err := plan.PrepareDraftCAS(context.Background(), 1, "new text", 2, &empty)
+	intent, err := plan.PrepareDraftCAS(context.Background(), draftIDs[0], "new text", 2, &empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +107,12 @@ func TestDraftCASIntentPreservesLegacyBaselineAndRejectsReceipts(t *testing.T) {
 		baseline *string
 		want     error
 	}{
-		{"missing-baseline", 1, nil, store.ErrDraftContentConflict},
-		{"stale-baseline", 1, pointerDraftBaseline("old"), store.ErrDraftContentConflict},
-		{"finalized", 2, pointerDraftBaseline("final"), store.ErrDraftContentConflict},
-		{"receipted-working", 3, pointerDraftBaseline("receipted"), store.ErrDraftContentConflict},
-		{"shared-content", 4, pointerDraftBaseline("shared"), store.ErrDraftContentConflict},
-		{"missing-draft", 99, pointerDraftBaseline(""), store.ErrDraftNotFound},
+		{"missing-baseline", draftIDs[0], nil, store.ErrDraftContentConflict},
+		{"stale-baseline", draftIDs[0], pointerDraftBaseline("old"), store.ErrDraftContentConflict},
+		{"finalized", draftIDs[1], pointerDraftBaseline("final"), store.ErrDraftContentConflict},
+		{"receipted-working", draftIDs[2], pointerDraftBaseline("receipted"), store.ErrDraftContentConflict},
+		{"shared-content", draftIDs[3], pointerDraftBaseline("shared"), store.ErrDraftContentConflict},
+		{"missing-draft", draftIDs[4] + 1000000, pointerDraftBaseline(""), store.ErrDraftNotFound},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			if _, err := plan.PrepareDraftCAS(context.Background(), check.id, "forbidden", 9, check.baseline); !errors.Is(err, check.want) {

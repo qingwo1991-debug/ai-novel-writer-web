@@ -108,6 +108,10 @@ jobs:
           printf 'GO_KNOWLEDGEQUERY_CONTRACT=%s\n' "$GO_KNOWLEDGEQUERY_CONTRACT" >> "$GITHUB_ENV"
           node ./contract/knowledge-query-contract.mjs
           test -s "$GO_KNOWLEDGEQUERY_CONTRACT"
+          export GO_IMPORTPREVIEW_CONTRACT="$RUNNER_TEMP/import-preview-contract.json"
+          printf 'GO_IMPORTPREVIEW_CONTRACT=%s\n' "$GO_IMPORTPREVIEW_CONTRACT" >> "$GITHUB_ENV"
+          node ./contract/import-preview-contract.mjs
+          test -s "$GO_IMPORTPREVIEW_CONTRACT"
           test -s "$GO_AUTHORITY_CONTRACT"
           export GO_SQLITE_CONTRACT="$RUNNER_TEMP/novel-go-contract/contract.json"
           export GO_SECRET_CONTRACT="$RUNNER_TEMP/novel-go-secrets/contract.json"
