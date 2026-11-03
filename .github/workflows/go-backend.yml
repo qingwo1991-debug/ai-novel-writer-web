@@ -350,6 +350,9 @@ jobs:
           mkdir -p out
           CGO_ENABLED=1 go build -trimpath -buildvcs=true -o out/novel-server ./cmd/novel-server
           sha256sum out/novel-server > out/SHA256SUMS
+      - name: Original TypeScript reopens Go-written disposable global generation
+        timeout-minutes: 3
+        run: node --import ./contract/register-typescript.mjs ./contract/global-go-node-rollback.mjs
       - name: Smoke binary without author data or Node
         shell: bash
         run: |
