@@ -11,6 +11,7 @@ import (
 
 var ErrStaleOpen = errors.New("PROJECT_OPEN_STALE")
 var ErrActiveClosed = errors.New("PROJECT_ACTIVE_COORDINATOR_CLOSED")
+var ErrActiveCleanup = errors.New("PROJECT_ACTIVE_CLEANUP_UNCONFIRMED")
 
 // Admitted is supplied by a future durable project opener. Its Context must
 // describe the actually admitted database; Verify checks that it is still
@@ -48,6 +49,7 @@ type ActiveCoordinator struct {
 	lock       *writerlock.Lock
 	slots      map[string]*activeSlot
 	closed     bool
+	poisoned   bool
 }
 
 // NewActiveCoordinator transfers ownership of held to the coordinator. It
@@ -140,7 +142,14 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 	adopted := false
 	defer func() {
 		if !adopted {
-			_ = candidate.Close()
+			if closeErr := candidate.Close(); closeErr != nil {
+				// An unclosed DB may still hold source authority. Never release the
+				// shared writer lock after losing track of such a candidate.
+				c.mu.Lock()
+				c.closed = true
+				c.poisoned = true
+				c.mu.Unlock()
+			}
 		}
 	}()
 	identity := candidate.Context()
@@ -202,6 +211,8 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 			state.handle = nil
 			state.key = ""
 			state.switching = false
+			c.closed = true
+			c.poisoned = true
 			c.mu.Unlock()
 			return Context{}, errors.Join(err, candidate.Close())
 		}
@@ -254,6 +265,40 @@ func (c *ActiveCoordinator) Begin(ctx context.Context, owner Owner, expected Con
 	}, nil
 }
 
+// Current reports the actually admitted handle for one exact browser owner.
+// The transition lock prevents a concurrent switch or close while Verify runs;
+// a mere slot entry is never treated as database readiness.
+func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, bool, error) {
+	if c == nil || ctx == nil || !owner.valid() {
+		return Context{}, false, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return Context{}, false, err
+	}
+	c.transition.Lock()
+	defer c.transition.Unlock()
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return Context{}, false, ErrActiveClosed
+	}
+	state := c.slots[owner.key()]
+	if state == nil || state.handle == nil {
+		c.mu.Unlock()
+		return Context{}, false, nil
+	}
+	handle := state.handle
+	current := handle.Context()
+	c.mu.Unlock()
+	if err := c.lock.VerifyLegacy(c.root); err != nil {
+		return Context{}, false, err
+	}
+	if err := handle.Verify(ctx); err != nil {
+		return Context{}, false, err
+	}
+	return current, true, nil
+}
+
 // CloseProject first fences new calls, then waits for all exact-context calls
 // to finish. Cancellation restores the old handle and its ability to serve.
 func (c *ActiveCoordinator) CloseProject(ctx context.Context, owner Owner, expected Context) error {
@@ -300,7 +345,14 @@ func (c *ActiveCoordinator) CloseProject(ctx context.Context, owner Owner, expec
 	state.switching = false
 	delete(c.slots, owner.key())
 	c.mu.Unlock()
-	return handle.Close()
+	if err := handle.Close(); err != nil {
+		c.mu.Lock()
+		c.closed = true
+		c.poisoned = true
+		c.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // Shutdown closes every admitted database before releasing the legacy lock.
@@ -309,6 +361,10 @@ func (c *ActiveCoordinator) Shutdown() error {
 	c.transition.Lock()
 	defer c.transition.Unlock()
 	c.mu.Lock()
+	if c.poisoned {
+		c.mu.Unlock()
+		return ErrActiveCleanup
+	}
 	if c.closed {
 		c.mu.Unlock()
 		return nil
@@ -326,11 +382,25 @@ func (c *ActiveCoordinator) Shutdown() error {
 			handles = append(handles, state.handle)
 		}
 	}
-	clear(c.slots)
 	c.mu.Unlock()
 	var joined error
 	for _, handle := range handles {
 		joined = errors.Join(joined, handle.Close())
 	}
-	return errors.Join(joined, c.lock.Close())
+	if joined != nil {
+		c.mu.Lock()
+		c.poisoned = true
+		c.mu.Unlock()
+		return errors.Join(ErrActiveCleanup, joined)
+	}
+	if err := c.lock.Close(); err != nil {
+		c.mu.Lock()
+		c.poisoned = true
+		c.mu.Unlock()
+		return errors.Join(ErrActiveCleanup, err)
+	}
+	c.mu.Lock()
+	clear(c.slots)
+	c.mu.Unlock()
+	return nil
 }

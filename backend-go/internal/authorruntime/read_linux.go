@@ -32,6 +32,7 @@ var ErrCleanup = errors.New("AUTHOR_READ_CLEANUP_FAILED")
 type Reader struct {
 	mu            sync.Mutex
 	lock          *writerlock.Lock
+	ownsLock      bool
 	catalog       *projectcatalog.Store
 	key           string
 	project       *projectfs.Project
@@ -62,11 +63,32 @@ func OpenReadOnly(ctx context.Context, catalog *projectcatalog.Store, key string
 	if err != nil {
 		return nil, err
 	}
+	return openReadOnlyWithLock(ctx, catalog, key, config, lock, true)
+}
+
+// OpenReadOnlyUnderLock borrows the exact live gateway exclusion from a
+// coordinator. The caller keeps ownership of held through every Reader call
+// and must close all readers before releasing the lock. Reader.Close does not
+// release a borrowed lock, including on failed admission.
+func OpenReadOnlyUnderLock(ctx context.Context, held *writerlock.Lock, catalog *projectcatalog.Store, key string, config projectaccess.Config) (*Reader, error) {
+	if held == nil {
+		return nil, ErrInvalid
+	}
+	return openReadOnlyWithLock(ctx, catalog, key, config, held, false)
+}
+
+func openReadOnlyWithLock(ctx context.Context, catalog *projectcatalog.Store, key string, config projectaccess.Config, lock *writerlock.Lock, ownsLock bool) (reader *Reader, err error) {
+	if ctx == nil || catalog == nil || key == "" || config.DataRoot == "" {
+		return nil, ErrInvalid
+	}
 	defer func() {
-		if err != nil {
+		if err != nil && ownsLock {
 			_ = lock.Close()
 		}
 	}()
+	if err := lock.VerifyLegacy(config.DataRoot); err != nil {
+		return nil, err
+	}
 	project, err := catalog.Resolve(key)
 	if err != nil {
 		return nil, err
@@ -168,7 +190,7 @@ func OpenReadOnly(ctx context.Context, catalog *projectcatalog.Store, key string
 	if err := db.PingContext(ctx); err != nil {
 		return nil, ErrInvalid
 	}
-	reader = &Reader{lock: lock, catalog: catalog, key: key, project: project, proof: proof, assets: assets, db: db, root: root, directory: directory, directoryInfo: info, dataRoot: config.DataRoot, report: report}
+	reader = &Reader{lock: lock, ownsLock: ownsLock, catalog: catalog, key: key, project: project, proof: proof, assets: assets, db: db, root: root, directory: directory, directoryInfo: info, dataRoot: config.DataRoot, report: report}
 	return reader, nil
 }
 
@@ -285,8 +307,10 @@ func (reader *Reader) Close() error {
 	if err := reader.project.Close(); err != nil {
 		cleanup = errors.Join(cleanup, ErrCleanup)
 	}
-	if err := reader.lock.Close(); err != nil {
-		cleanup = errors.Join(cleanup, ErrCleanup)
+	if reader.ownsLock {
+		if err := reader.lock.Close(); err != nil {
+			cleanup = errors.Join(cleanup, ErrCleanup)
+		}
 	}
 	return cleanup
 }

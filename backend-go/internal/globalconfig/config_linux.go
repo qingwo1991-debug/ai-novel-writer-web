@@ -101,6 +101,7 @@ func (s *Service) locked(action func(int) error) error {
 		break
 	}
 	defer syscall.Flock(fd, syscall.LOCK_UN)
+	if err := recoverModelDeletion(fd); err != nil { return err }
 	return action(fd)
 }
 

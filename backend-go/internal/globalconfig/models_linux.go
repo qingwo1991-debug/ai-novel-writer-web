@@ -29,35 +29,46 @@ var ErrModelDeleteConfigChanged = errors.New("LLM_GLOBAL_CONFIG_CHANGED")
 // public response sanitizer before returning any profile to a browser.
 type ModelRecord map[string]any
 
-func readModels(fd int) ([]ModelRecord, error) {
+func readModelsRaw(fd int) ([]byte, bool, error) {
 	fileFD, err := syscall.Openat(fd, modelFile, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err == syscall.ENOENT {
-		return []ModelRecord{}, nil
+		return nil, true, nil
 	}
 	if err == syscall.ELOOP {
-		return nil, ErrUnsafeFile
+		return nil, false, ErrUnsafeFile
 	}
 	if err != nil {
-		return nil, ErrIO
+		return nil, false, ErrIO
 	}
 	file := os.NewFile(uintptr(fileFD), "global-model-config")
 	defer file.Close()
 	var stat syscall.Stat_t
 	if syscall.Fstat(fileFD, &stat) != nil {
-		return nil, ErrIO
+		return nil, false, ErrIO
 	}
 	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG || stat.Nlink != 1 || stat.Uid != uint32(os.Geteuid()) || stat.Mode&0077 != 0 {
-		return nil, ErrUnsafeFile
+		return nil, false, ErrUnsafeFile
 	}
 	if stat.Size < 0 || stat.Size > MaxConfigBytes {
-		return nil, ErrTooLarge
+		return nil, false, ErrTooLarge
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, MaxConfigBytes+1))
 	if err != nil {
-		return nil, ErrIO
+		return nil, false, ErrIO
 	}
 	if len(raw) > MaxConfigBytes {
-		return nil, ErrTooLarge
+		return nil, false, ErrTooLarge
+	}
+	return raw, false, nil
+}
+
+func readModels(fd int) ([]ModelRecord, error) {
+	raw, missing, err := readModelsRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	if missing {
+		return []ModelRecord{}, nil
 	}
 	value, err := decode(raw)
 	if err != nil {

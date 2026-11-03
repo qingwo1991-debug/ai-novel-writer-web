@@ -224,3 +224,35 @@ func TestActiveCrossOwnerSameProjectDeniedAndCancelledCloseRetainsHandle(t *test
 		next()
 	}
 }
+
+func TestActiveFailedDatabaseCloseRetainsWriterExclusion(t *testing.T) {
+	root := t.TempDir()
+	held, err := writerlock.AcquireLegacy(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := NewActiveCoordinator(root, held)
+	if err != nil {
+		_ = held.Close()
+		t.Fatal(err)
+	}
+	defer held.Close() // Test-only cleanup after proving fail-closed behavior.
+	owner := Owner{SessionID: "browser", ClientID: "tab"}
+	handle := admitted("A", "/trusted/A")
+	handle.closeErr = errors.New("synthetic database close unconfirmed")
+	if _, err := active.Open(context.Background(), owner, "catalog-A", "first", stageAdmitted(handle)); err != nil {
+		t.Fatal(err)
+	}
+	if err := active.CloseProject(context.Background(), owner, handle.identity); !errors.Is(err, handle.closeErr) {
+		t.Fatal("close failure hidden", err)
+	}
+	if err := active.Shutdown(); !errors.Is(err, ErrActiveCleanup) {
+		t.Fatal("shutdown released unconfirmed database", err)
+	}
+	if err := held.VerifyLegacy(root); err != nil {
+		t.Fatal("gateway exclusion released after close failure", err)
+	}
+	if _, err := writerlock.AcquireLegacy(root); !errors.Is(err, writerlock.ErrLocked) {
+		t.Fatalf("competing writer entered after failed close: %v", err)
+	}
+}
