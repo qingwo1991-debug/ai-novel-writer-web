@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globalconfig"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -35,6 +37,8 @@ func run() error {
 	staticDir := flag.String("static-dir", "", "optional React build for isolated migration smoke")
 	libraryDir := flag.String("synthetic-library-dir", "", "optional disposable library for isolated migration smoke")
 	uploadDir := flag.String("synthetic-upload-dir", "", "optional private disposable upload staging for isolated migration smoke")
+	globalDir := flag.String("synthetic-global-dir", "", "optional private disposable global config for isolated migration smoke")
+	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
@@ -53,6 +57,12 @@ func run() error {
 	if *uploadDir != "" && !underTempRoot(*uploadDir) {
 		return errors.New("synthetic uploads must use a canonical temporary directory")
 	}
+	if *globalDir != "" && !underTempRoot(*globalDir) {
+		return errors.New("synthetic global config must use a canonical temporary directory")
+	}
+	if (*globalDir == "") != (*modelOrigins == "") {
+		return errors.New("synthetic model config requires both a private global root and trusted origins")
+	}
 	file, err := os.Open(*policyPath)
 	if err != nil {
 		return err
@@ -62,7 +72,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	handler, cleanup, err := migrationHandlerWithUploads(registry, *address, *staticDir, *libraryDir, *uploadDir)
+	var origins []string
+	if *modelOrigins != "" {
+		origins = strings.Split(*modelOrigins, ",")
+	}
+	handler, cleanup, err := migrationHandlerWithModels(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins)
 	if err != nil {
 		return err
 	}
@@ -107,16 +121,29 @@ func underTempRoot(path string) bool {
 	return true
 }
 
-// migrationHandler mounts only read-only browser routes proven by the Go
-// migration. It shares one cookie store across HTML and API responses. Unported
-// project operations retain the Server's explicit 501 response.
+// migrationHandler mounts only explicitly admitted migration routes. It shares
+// one cookie store across HTML and API responses. Unported operations retain
+// the Server's explicit 501 response.
 func migrationHandler(registry *policy.Registry, address, staticDir, libraryDir string) (http.Handler, func(), error) {
 	return migrationHandlerWithUploads(registry, address, staticDir, libraryDir, "")
 }
 
 func migrationHandlerWithUploads(registry *policy.Registry, address, staticDir, libraryDir, uploadDir string) (http.Handler, func(), error) {
+	return migrationHandlerWithModels(registry, address, staticDir, libraryDir, uploadDir, "", nil)
+}
+
+// migrationHandlerWithModels admits only a disposable private global root and
+// administrator supplied exact origins. This synthetic startup capture must
+// never be used as evidence that an author's real data has been migrated.
+func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, libraryDir, uploadDir, globalDir string, modelOrigins []string) (http.Handler, func(), error) {
 	if uploadDir != "" && !underTempRoot(uploadDir) {
 		return nil, nil, errors.New("synthetic uploads must use a canonical temporary directory")
+	}
+	if globalDir != "" && !underTempRoot(globalDir) {
+		return nil, nil, errors.New("synthetic global config must use a canonical temporary directory")
+	}
+	if (globalDir == "") != (len(modelOrigins) == 0) {
+		return nil, nil, errors.New("synthetic model config requires both a private global root and trusted origins")
 	}
 	server := transport.New(registry, security.NewOrigins("http://"+address), "go-migration-uncommitted")
 	if err := server.BindNavigation(); err != nil {
@@ -126,8 +153,16 @@ func migrationHandlerWithUploads(registry *policy.Registry, address, staticDir, 
 	var static *transport.StaticAssets
 	var library *projectfs.Library
 	var uploads *transferhttp.TransferStore
+	var models *globalconfig.Service
+	var endpoints *egress.Client
 	cleanup := func() {
 		server.Close()
+		if endpoints != nil {
+			endpoints.Close()
+		}
+		if models != nil {
+			_ = models.Close()
+		}
 		if uploads != nil {
 			_ = uploads.Close()
 		}
@@ -136,6 +171,31 @@ func migrationHandlerWithUploads(registry *policy.Registry, address, staticDir, 
 		}
 		if library != nil {
 			_ = library.Close()
+		}
+	}
+	if globalDir != "" {
+		var err error
+		models, err = globalconfig.New(globalDir)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic global config: %w", err)
+		}
+		endpoints, err = egress.New(modelOrigins)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic model origins: %w", err)
+		}
+		startup := globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "synthetic-model-config-v1"})
+		for _, bind := range []func() error{
+			func() error { return server.BindGlobalConfig(models, startup) },
+			func() error { return server.BindModelReads(models, startup) },
+			func() error { return server.BindModelSave(models, startup, endpoints) },
+			func() error { return server.BindModelDelete(models, startup) },
+		} {
+			if err := bind(); err != nil {
+				cleanup()
+				return nil, nil, fmt.Errorf("synthetic model binding: %w", err)
+			}
 		}
 	}
 	mux := http.NewServeMux()
