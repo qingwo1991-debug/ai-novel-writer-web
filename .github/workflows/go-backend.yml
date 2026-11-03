@@ -177,6 +177,19 @@ jobs:
           path: ${{ runner.temp }}/novel-go-global-migration/contract.json
           retention-days: 7
           if-no-files-found: error
+      - name: Generate original global PREPARED migration fixtures
+        run: |
+          export GO_GLOBAL_PREPARE_CONTRACT="$RUNNER_TEMP/novel-go-global-prepare/contract.json"
+          printf 'GO_GLOBAL_PREPARE_CONTRACT=%s\n' "$GO_GLOBAL_PREPARE_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/global-migration-prepare-contract.mjs
+          test -s "$GO_GLOBAL_PREPARE_CONTRACT"
+      - name: Upload original global PREPARED migration oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-global-prepare-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-global-prepare/contract.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Extract original recognized schemas for later pinning
         run: |
           node --input-type=module -e '
