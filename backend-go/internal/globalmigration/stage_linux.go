@@ -3,6 +3,7 @@
 package globalmigration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -609,7 +610,67 @@ func stageParity(ctx context.Context, sourceFD, stagingFD int, before map[string
 		}
 		return fail("GLOBAL_STAGING_MISMATCH")
 	}
+	for name := range source {
+		if err := stageCompareBytes(ctx, sourceFD, stagingFD, name, phase); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func stageCompareBytes(ctx context.Context, sourceFD, stagingFD int, name, phase string) error {
+	stagingMismatch := "GLOBAL_STAGING_MISMATCH"
+	if phase == "verified" {
+		stagingMismatch = "GLOBAL_VERIFIED_SOURCE_CHANGED"
+	}
+	open := func(rootFD int, mismatch string) (*os.File, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		parentFD, leaf, err := stageOpenParent(rootFD, name, false)
+		if err != nil {
+			return nil, err
+		}
+		fd, err := syscall.Openat(parentFD, leaf, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+		syscall.Close(parentFD)
+		if err != nil {
+			return nil, fail(mismatch)
+		}
+		var stat syscall.Stat_t
+		if syscall.Fstat(fd, &stat) != nil || stat.Mode&syscall.S_IFMT != syscall.S_IFREG ||
+			stat.Nlink != 1 || stat.Uid != uint32(os.Geteuid()) || stat.Mode&0022 != 0 {
+			syscall.Close(fd)
+			return nil, fail(mismatch)
+		}
+		return os.NewFile(uintptr(fd), name), nil
+	}
+	source, err := open(sourceFD, "GLOBAL_SOURCE_CHANGED")
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	staged, err := open(stagingFD, stagingMismatch)
+	if err != nil {
+		return err
+	}
+	defer staged.Close()
+	var a, b [64 << 10]byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		an, ae := io.ReadFull(source, a[:])
+		bn, be := io.ReadFull(staged, b[:])
+		if an != bn || !bytes.Equal(a[:an], b[:bn]) || (ae == io.EOF) != (be == io.EOF) ||
+			(ae == io.ErrUnexpectedEOF) != (be == io.ErrUnexpectedEOF) ||
+			(ae != nil && ae != io.EOF && ae != io.ErrUnexpectedEOF) ||
+			(be != nil && be != io.EOF && be != io.ErrUnexpectedEOF) {
+			return fail(stagingMismatch)
+		}
+		if ae == io.EOF || ae == io.ErrUnexpectedEOF {
+			return nil
+		}
+	}
 }
 
 func stageSameFiles(a, b map[string]stageDigest) bool {
