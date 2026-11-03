@@ -110,7 +110,7 @@ func TestDurableOpenSaveCloseReopenPersists(t *testing.T) {
 	if !second.Success || second.Project == nil {
 		t.Fatalf("reopen failed: %+v", second)
 	}
-	reopened, _ := second.Project["projectName"].(string)
+	reopened, _ := second.Project["name"].(string)
 	if reopened != "持久化新书名" {
 		t.Fatalf("reopen lost update: %q", reopened)
 	}
