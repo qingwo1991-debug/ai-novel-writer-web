@@ -18,7 +18,20 @@ func testOwner() projectsession.Owner {
 
 func durableLifecycle(t *testing.T) (*ReadLifecycle, string, projectsession.Context, string, string) {
 	t.Helper()
-	catalog, key, config, _, _ := readFixture(t)
+	catalog, key, config, databasePath, _ := readFixture(t)
+	// The shared oracle is a schema baseline with no project_core main row;
+	// seed this disposable copy so the durable open's core read succeeds.
+	seed, err := sql.Open("sqlite3", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Exec("INSERT INTO project_core(id, project_name, writing_language, genre, sub_genre, target_audience, total_chapters, words_per_chapter, creative_strategy, narrative_thread_dormant_threshold, plot_structure, narrative_pov, core_outline, world_setting, golden_finger, protagonist_profile, global_guidance, writing_style, reference_works, character_states, created_at, updated_at) VALUES('main', 'Synthetic novel', 'zh-CN', 'fantasy', 'x', 'adult', 120, 2000, 'consistency-first', 4, 'three_act', 'first_person', 'outline', 'world', 'gold', 'lead', 'guidance', 'plain', 'reference', '{}', '2026-01-01 00:00:00', '2026-01-02 01:02:03')"); err != nil {
+		_ = seed.Close()
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
 	// The lifecycle resolves the exact project per open from the catalog key;
 	// its baseline config must carry no ProjectPath.
 	lifecycleConfig := config
@@ -126,11 +139,11 @@ func TestDurableSaveRejectsClosedHandle(t *testing.T) {
 
 func TestDurableRequiresCatalogAndPermission(t *testing.T) {
 	lifecycle, _, _, _, _ := durableLifecycle(t)
-	if _, err := lifecycle.OpenProjectDurable(context.Background(), testOwner(), "no-such-catalog-key", "bad-token"); err == nil {
-		t.Fatal("unregistered key accepted")
+	if result, _ := lifecycle.OpenProjectDurable(context.Background(), testOwner(), "no-such-catalog-key", "bad-token"); result.Success || result.Error == "" {
+		t.Fatalf("unregistered key accepted: %+v", result)
 	}
-	if _, err := lifecycle.OpenProjectDurable(context.Background(), projectsession.Owner{}, "no-such-catalog-key", "token"); err == nil {
-		t.Fatal("invalid owner accepted")
+	if result, _ := lifecycle.OpenProjectDurable(context.Background(), projectsession.Owner{}, "no-such-catalog-key", "token"); result.Success || result.Error == "" {
+		t.Fatalf("invalid owner accepted: %+v", result)
 	}
 }
 
