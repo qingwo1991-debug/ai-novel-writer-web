@@ -108,6 +108,7 @@ jobs:
           set -o pipefail
           go test -tags lance_native -count=1 -timeout=5m -json ./internal/lancenative | tee "$RUNNER_TEMP/native-go-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/projectaccess | tee "$RUNNER_TEMP/native-preflight-tests.jsonl"
+          go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/authorruntime | tee "$RUNNER_TEMP/native-author-read-tests.jsonl"
           go test -tags lance_native -run '^TestNativeKnowledge' -count=1 -timeout=5m -json ./internal/transport | tee "$RUNNER_TEMP/native-knowledge-http-tests.jsonl"
           go build -tags lance_native -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/native-lance-check" ./cmd/lance-interop
           ls -lh "$RUNNER_TEMP/native-lance-check"
@@ -129,6 +130,7 @@ jobs:
             ${{ runner.temp }}/native-build.log
             ${{ runner.temp }}/native-go-tests.jsonl
             ${{ runner.temp }}/native-preflight-tests.jsonl
+            ${{ runner.temp }}/native-author-read-tests.jsonl
             ${{ runner.temp }}/native-knowledge-http-tests.jsonl
             ${{ runner.temp }}/native-go-format.patch
             ${{ runner.temp }}/native-runtime-dependencies.txt

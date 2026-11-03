@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"sync"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
@@ -26,8 +27,10 @@ type ReadLifecycle struct {
 }
 
 type admittedRead struct {
-	reader  *Reader
-	context projectsession.Context
+	reader      *Reader
+	context     projectsession.Context
+	knowledgeMu sync.Mutex
+	knowledge   *projectaccess.KnowledgeRead
 }
 
 func (a *admittedRead) Context() projectsession.Context  { return a.context }

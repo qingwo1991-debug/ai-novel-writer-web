@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"path/filepath"
 	"unicode/utf8"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
 // KnowledgeRead is an immutable bounded copied-state capture, NOT a source handle,
@@ -53,6 +55,25 @@ func InspectKnowledge(ctx context.Context, config Config) (*KnowledgeRead, Repor
 	report, err := preflightRead(ctx, config, nil, capture)
 	if err != nil {
 		return nil, Report{}, err
+	}
+	return capture, report, nil
+}
+
+// InspectKnowledgeUnderLock captures the same bounded immutable native view
+// while the caller retains the exact legacy gateway lock. It never acquires a
+// second lock or opens the author's database through SQLite. The caller must
+// keep held live through capture, adoption and every subsequent source check.
+func InspectKnowledgeUnderLock(ctx context.Context, config Config, held *writerlock.Lock) (*KnowledgeRead, Report, error) {
+	if held == nil || config.Knowledge == nil || !config.Knowledge.Native {
+		return nil, Report{}, ErrConfiguration
+	}
+	capture := new(KnowledgeRead)
+	report, err := preflightReadWithLock(ctx, config, nil, capture, held)
+	if err != nil {
+		return nil, Report{}, err
+	}
+	if capture.View() == nil || capture.Search() == nil || report.Knowledge == nil {
+		return nil, Report{}, ErrConfiguration
 	}
 	return capture, report, nil
 }

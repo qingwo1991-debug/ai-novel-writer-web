@@ -5,8 +5,10 @@ package authorruntime
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,5 +81,43 @@ func TestPrivateCharacterReadRejectsSubstitutedSnapshotPath(t *testing.T) {
 	actual, err := os.ReadFile(source)
 	if err != nil || !bytes.Equal(actual, original) {
 		t.Fatalf("substituted snapshot touched source: %v", err)
+	}
+}
+
+func TestPrivateCharacterDriverAllowsReadReservationButDeniesMutation(t *testing.T) {
+	catalog, key, config, source, original := readFixture(t)
+	reader, err := OpenReadOnly(context.Background(), catalog, key, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	uri := url.URL{Scheme: "file", Path: filepath.Join(reader.directory, "snapshot.db")}
+	query := url.Values{}
+	query.Set("mode", "rw")
+	uri.RawQuery = query.Encode()
+	db, err := sql.Open(privateCharacterDriver(), uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("original read reservation denied: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CREATE TABLE forbidden_character_write(x INTEGER)",
+		"PRAGMA writable_schema=ON",
+		"ATTACH DATABASE ':memory:' AS second",
+	} {
+		if _, err := db.ExecContext(context.Background(), statement); err == nil {
+			t.Fatalf("character read authorizer accepted %q", statement)
+		}
+	}
+	actual, err := os.ReadFile(source)
+	if err != nil || !bytes.Equal(actual, original) {
+		t.Fatalf("private character read changed source: %v", err)
 	}
 }

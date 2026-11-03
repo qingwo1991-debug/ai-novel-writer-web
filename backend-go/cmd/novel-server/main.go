@@ -268,6 +268,10 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				cleanup()
 				return nil, nil, err
 			}
+			if err := server.BindCharacterLiveReads(readOpen); err != nil {
+				cleanup()
+				return nil, nil, err
+			}
 		}
 	}
 	if uploadDir != "" {

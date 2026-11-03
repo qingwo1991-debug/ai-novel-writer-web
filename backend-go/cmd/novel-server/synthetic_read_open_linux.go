@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -114,6 +115,25 @@ func (s *syntheticReadOpen) OpenReadOnlyProject(ctx context.Context, caller tran
 		s.keys[browserPath] = key
 	}
 	return s.lifecycle.OpenProjectReadOnly(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, key, token)
+}
+
+// ReadCharactersJSON uses the same lifecycle and exact cookie/tab lease as
+// project:open. The runtime owns the private snapshot and finishes JSON
+// serialization before returning; this bridge never exposes a database handle.
+func (s *syntheticReadOpen) ReadCharactersJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	return s.lifecycle.ReadCharactersJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
 }
 
 func (s *syntheticReadOpen) Close() error {
