@@ -27,6 +27,10 @@ const domainProofs = []
 for (const [name, donor, version] of [
   ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6], ['donor-v6', true, 6],
   ['baseline-v0', false, 0], ['donor-v0', true, 0],
+  // Full-chain expectations must start from the same closed v0 bytes used by
+  // Go. Independently initialized v6 fixtures can contain different SQLite
+  // datetime('now') metadata even when both migrations preserve it correctly.
+  ['baseline-v0-upgraded-v7', false, 7], ['donor-v0-upgraded-v7', true, 7],
   ['baseline-v0-upgraded-v1', false, 1], ['donor-v0-upgraded-v1', true, 1],
   ['baseline-v1', false, 1], ['donor-v1', true, 1],
   ['baseline-v1-upgraded-v2', false, 2], ['donor-v1-upgraded-v2', true, 2],
