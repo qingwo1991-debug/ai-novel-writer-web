@@ -67,6 +67,40 @@ for (const [name, donor, version] of [
     domainProofs.push({ file, domain: evidence.domain })
   }
 }
+// Original installed M04 over a genuinely populated, receipt-only v4 history.
+// These are disposable synthetic copies of the recognized baseline v4 schema;
+// the expected v5 fixture is produced by the ACTUAL TypeScript migration.
+for (const [name, upgraded] of [
+  ['baseline-v4-receipts', false], ['baseline-v4-receipts-upgraded-v5', true],
+]) {
+  const file = name + '.db'
+  const filename = path.join(directory, file)
+  const source = path.join(directory, upgraded ? 'baseline-v4-receipts.db' : 'baseline-v4.db')
+  copyFileSync(source, filename, constants.COPYFILE_EXCL)
+  const db = new Database(filename)
+  try {
+    db.pragma('foreign_keys=ON')
+    if (upgraded) {
+      migrateSchema(new SqliteSchemaAdapter(db), registry, 5)
+    } else {
+      db.prepare(`INSERT INTO import_runs(
+        id,purpose,root_run_id,effect_namespace,source_fingerprint,manifest_fingerprint,locale,
+        stage,status,total_chapters,manifest_chapter_count
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+        'synthetic-m04-run','reference','synthetic-m04-run','import:reference:synthetic-m04-run',
+        'synthetic-source','synthetic-manifest','zh-CN','global','running',1,1)
+      const receipt = db.prepare(`INSERT INTO import_run_receipts(
+        run_id,effect_namespace,effect_key,stage,batch_id,kind,payload_json,payload_hash,state
+      ) VALUES(?,?,?,?,?,?,?,?,?)`)
+      for (const [batch, state] of [['committed-batch','committed'],['prepared-batch','prepared']]) {
+        receipt.run('synthetic-m04-run','import:reference:synthetic-m04-run',`synthetic-effect:${batch}`,
+          'global',batch,'project-global-facts','{}','synthetic-hash',state)
+      }
+    }
+    verifySchema(new SqliteSchemaAdapter(db), registry, upgraded ? 5 : 4)
+    fixtures.push({ name, file, version: upgraded ? 5 : 4, fingerprint: sqliteSchemaFingerprint(db) })
+  } finally { db.close() }
+}
 // Independently stress storage-class JSON and UTF-16 row sorting. This schema
 // is a test-only contract, never added to the production recognized directory.
 const valuesFile = 'domain-values.db'

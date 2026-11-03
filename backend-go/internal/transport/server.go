@@ -37,6 +37,8 @@ func(s *Server)clock()time.Time{if s.now!=nil{return s.now()};return time.Now()}
 func New(registry *policy.Registry,origins security.Origins,generation string)*Server{
  return &Server{sessions:security.NewSessions(),origins:origins,registry:registry,public:publicresponse.New(),generation:generation,clients:make(map[string]*client),handlers:make(map[string]Operation)}
 }
+// SessionStore is the cookie authority shared with optional gateway routes.
+func(s *Server)SessionStore()*security.Sessions{return s.sessions}
 // Bind registers only inventoried operations. The domain handler must additionally
 // enforce project/capability ownership and domain admission; routing is not auth.
 // Call before serving; dynamic handler replacement is deliberately unsupported.

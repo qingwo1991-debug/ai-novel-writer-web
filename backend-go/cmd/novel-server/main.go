@@ -2,39 +2,141 @@
 package main
 
 import (
- "context"
- "flag"
- "fmt"
- "log"
- "net"
- "net/http"
- "os"
- "os/signal"
- "syscall"
- "time"
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
-func main(){if err:=run();err!=nil{log.Fatal(err)}}
-func run()error{
- address:=flag.String("listen","127.0.0.1:16082","migration-only loopback address")
- policyPath:=flag.String("policy","../web/operations.json","reviewed browser operation inventory")
- flag.Parse()
- if os.Getenv("NODE_ENV")=="production"||os.Getenv("NOVEL_DATA_ROOT")!=""{return fmt.Errorf("migration scaffold refuses production mode and data mounts")}
- host,_,err:=net.SplitHostPort(*address);if err!=nil{return err};ip:=net.ParseIP(host)
- if ip==nil||!ip.IsLoopback(){return fmt.Errorf("migration scaffold may listen only on a loopback IP")}
- file,err:=os.Open(*policyPath);if err!=nil{return err};defer file.Close()
- registry,err:=policy.Load(file);if err!=nil{return err}
- handler:=transport.New(registry,security.NewOrigins("http://127.0.0.1:16082"),"go-migration-uncommitted")
- defer handler.Close()
- if err:=handler.BindNavigation();err!=nil{return err}
- // Only fixed browser-navigation intents are bound; no database is opened.
- server:=&http.Server{Addr:*address,Handler:handler,ReadHeaderTimeout:30*time.Second,ReadTimeout:16*time.Minute,IdleTimeout:90*time.Second,MaxHeaderBytes:1024*1024}
- ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
- done:=make(chan error,1);go func(){done<-server.ListenAndServe()}()
- log.Printf("Go migration scaffold at %s; no author data; no Node fallback; not production-ready",*address)
- select{case err:=<-done:if err==http.ErrServerClosed{return nil};return err
- case<-ctx.Done():handler.Close();shutdown,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel();return server.Shutdown(shutdown)}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	address := flag.String("listen", "127.0.0.1:16082", "migration-only loopback address")
+	policyPath := flag.String("policy", "../web/operations.json", "reviewed browser operation inventory")
+	staticDir := flag.String("static-dir", "", "optional React build for isolated migration smoke")
+	libraryDir := flag.String("synthetic-library-dir", "", "optional disposable library for isolated migration smoke")
+	flag.Parse()
+	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
+		return errors.New("migration scaffold refuses production mode and data mounts")
+	}
+	host, _, err := net.SplitHostPort(*address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return errors.New("migration scaffold may listen only on a loopback IP")
+	}
+	if *libraryDir != "" && !underTempRoot(*libraryDir) {
+		return errors.New("synthetic library must be a canonical temporary directory")
+	}
+	file, err := os.Open(*policyPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	registry, err := policy.Load(file)
+	if err != nil {
+		return err
+	}
+	handler, cleanup, err := migrationHandler(registry, *address, *staticDir, *libraryDir)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	server := &http.Server{Addr: *address, Handler: handler, ReadHeaderTimeout: 30 * time.Second, ReadTimeout: 16 * time.Minute, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1024 * 1024}
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- server.ListenAndServe() }()
+	log.Printf("Go migration scaffold at %s; no author writes; no Node fallback; not production-ready", *address)
+	select {
+	case err := <-done:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		return server.Shutdown(shutdown)
+	}
+}
+
+func underTempRoot(path string) bool {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false
+	}
+	rel, err := filepath.Rel(os.TempDir(), path)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// migrationHandler mounts only read-only browser routes proven by the Go
+// migration. It shares one cookie store across HTML and API responses. Unported
+// project operations retain the Server's explicit 501 response.
+func migrationHandler(registry *policy.Registry, address, staticDir, libraryDir string) (http.Handler, func(), error) {
+	server := transport.New(registry, security.NewOrigins("http://"+address), "go-migration-uncommitted")
+	if err := server.BindNavigation(); err != nil {
+		server.Close()
+		return nil, nil, err
+	}
+	var static *transport.StaticAssets
+	var library *projectfs.Library
+	cleanup := func() {
+		server.Close()
+		if static != nil {
+			_ = static.Close()
+		}
+		if library != nil {
+			_ = library.Close()
+		}
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/api/", server)
+	mux.Handle("/api", server)
+	mux.Handle("/healthz", server)
+	if libraryDir != "" {
+		var err error
+		library, err = projectfs.OpenLibrary(libraryDir)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic library: %w", err)
+		}
+		route, err := transport.NewLibraryRoute(server, library, 4096)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		mux.Handle("/api/library", route)
+	}
+	if staticDir != "" {
+		var err error
+		static, err = transport.NewStaticAssets(staticDir, server.SessionStore())
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("static assets: %w", err)
+		}
+		mux.Handle("/", static)
+	} else {
+		mux.Handle("/", server)
+	}
+	return mux, cleanup, nil
 }
