@@ -129,7 +129,7 @@ func TestRecoveryReaderBindingRejectsForeignVerifiedProject(t *testing.T) {
 	defer foreign.Close()
 	unlock, err := reader.bindPromotedCatalogKey(context.Background(), catalog, "new-key", foreign)
 	if unlock != nil || !errors.Is(err, ErrChanged) {
-		t.Fatalf("foreign verified project bound reader: %v, %v", unlock, err)
+		t.Fatalf("foreign verified project bound reader: unlock=%t, err=%v", unlock != nil, err)
 	}
 	if err := reader.Verify(context.Background()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("failed binder retained catalog-free authority: %v", err)
