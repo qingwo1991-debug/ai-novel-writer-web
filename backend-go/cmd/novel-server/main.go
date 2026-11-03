@@ -57,8 +57,8 @@ func run() error {
 	if *uploadDir != "" && !underTempRoot(*uploadDir) {
 		return errors.New("synthetic uploads must use a canonical temporary directory")
 	}
-	if *globalDir != "" && !underTempRoot(*globalDir) {
-		return errors.New("synthetic global config must use a canonical temporary directory")
+	if *globalDir != "" && !privateSyntheticGlobalRoot(*globalDir) {
+		return errors.New("synthetic global config must use a private canonical temporary directory")
 	}
 	if (*globalDir == "") != (*modelOrigins == "") {
 		return errors.New("synthetic model config requires both a private global root and trusted origins")
@@ -121,6 +121,18 @@ func underTempRoot(path string) bool {
 	return true
 }
 
+func privateSyntheticGlobalRoot(path string) bool {
+	if !underTempRoot(path) {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid())
+}
+
 // migrationHandler mounts only explicitly admitted migration routes. It shares
 // one cookie store across HTML and API responses. Unported operations retain
 // the Server's explicit 501 response.
@@ -139,8 +151,8 @@ func migrationHandlerWithModels(registry *policy.Registry, address, staticDir, l
 	if uploadDir != "" && !underTempRoot(uploadDir) {
 		return nil, nil, errors.New("synthetic uploads must use a canonical temporary directory")
 	}
-	if globalDir != "" && !underTempRoot(globalDir) {
-		return nil, nil, errors.New("synthetic global config must use a canonical temporary directory")
+	if globalDir != "" && !privateSyntheticGlobalRoot(globalDir) {
+		return nil, nil, errors.New("synthetic global config must use a private canonical temporary directory")
 	}
 	if (globalDir == "") != (len(modelOrigins) == 0) {
 		return nil, nil, errors.New("synthetic model config requires both a private global root and trusted origins")

@@ -248,13 +248,15 @@ func TestSyntheticGlobalConfigRequiresExplicitPrivateRootAndOrigins(t *testing.T
 			t.Fatalf("unsafe synthetic model configuration accepted: %q %v", row.root, row.origins)
 		}
 	}
-	publicRoot := t.TempDir()
-	if err := os.Chmod(publicRoot, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if _, cleanup, err := migrationHandlerWithModels(registry, address, "", "", "", publicRoot, []string{"https://allowed.example"}); err == nil {
-		cleanup()
-		t.Fatal("public synthetic global root accepted")
+	for _, mode := range []os.FileMode{0755, 0750} {
+		publicRoot := t.TempDir()
+		if err := os.Chmod(publicRoot, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, cleanup, err := migrationHandlerWithModels(registry, address, "", "", "", publicRoot, []string{"https://allowed.example"}); err == nil {
+			cleanup()
+			t.Fatalf("readable synthetic global root accepted: %04o", mode)
+		}
 	}
 	handler, cleanup, err := migrationHandler(registry, address, "", "")
 	if err != nil {

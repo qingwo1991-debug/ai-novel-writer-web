@@ -14,8 +14,8 @@ const code=stripTypeScriptTypes(names.map(n=>extract(vector,n)).join('\n')+'\n'+
 const temp=fs.mkdtempSync(path.join(process.env.RUNNER_TEMP,'knowledge-query-original-'))
 const hash=text=>createHash('sha256').update(text,'utf8').digest('hex')
 const field=(name,type='utf8',more={})=>({name,type,nullable:false,listSize:0,metadata:false,children:[],...more})
-const docFields=[field('id'),field('fileName'),field('importedAt'),field('chunkCount','int32'),field('filePath'),field('corpusKind')]
-const chunkFields=[field('id'),field('docId'),field('fileName'),field('text'),field('chunkIndex','int32'),field('totalChunks','int32'),field('importedAt'),field('corpusKind')]
+const docFields=Object.freeze([field('id'),field('fileName'),field('importedAt'),field('chunkCount','int32'),field('filePath'),field('corpusKind')])
+const chunkFields=Object.freeze([field('id'),field('docId'),field('fileName'),field('text'),field('chunkIndex','int32'),field('totalChunks','int32'),field('importedAt'),field('corpusKind')])
 const doc=(id,count=1,managed=true)=>({id,fileName:`${id}.txt`,importedAt:'2026-01-01',chunkCount:count,filePath:managed?'knowledge-copy:ignored-suffix':'/synthetic/file.txt',corpusKind:'reference'})
 const chunk=(document,i,total)=>({id:`${document.id}-chunk-${i}`,docId:document.id,fileName:document.fileName,text:`正文 ${i} Ω🙂\n<&>`,chunkIndex:i,totalChunks:total,importedAt:document.importedAt,corpusKind:document.corpusKind})
 const table=(name,schema,records)=>({name,version:1,metadata:false,schema,records})
@@ -27,7 +27,7 @@ for(const name of caseNames){const directory=path.join(temp,name);fs.mkdirSync(d
  if(!['empty','missing-managed'].includes(name)){const content=name==='empty-copy'?'':"副本 café e\u0301 🙂\n<&>\u2028\u2029";const copy={content,indexedHash:name==='mismatch'?'old':hash(content),edited:['edited-current','dirty-current-hash'].includes(name),indexDirty:name==='dirty-current-hash',unknown:{preserved:true}};const raw=JSON.stringify(copy);fs.writeFileSync(path.join(directory,'knowledge-copies',hash(d.id)+'.json'),raw,{flag:'wx',mode:0o600});copies.push({id:d.id,raw})}
  if(['building-partial','active-full','building-first-of-two'].includes(name)){for(let gen=1;gen<=(name==='building-first-of-two'?2:1);gen++){const status=name==='active-full'?'active':'building',space={generation:gen,tableName:`chunks__space_${gen}`,status,vectorDimension:2,modelFingerprint:'synthetic-model',createdAt:'synthetic-time',distanceMetric:'cosine'};registry.spaces.push(space);if(status==='active')registry.activeGeneration=gen;tables.push(table(space.tableName,[...chunkFields,field('vector','fixed_size_list',{listSize:2,children:[field('item','float32',{nullable:true})]})],chunks.slice(0,status==='active'?chunks.length:gen===1?1:2).map(row=>({...row,vector:[0.25,0.5]}))))}}
  if(name==='no-corpus-columns'){tables=tables.map(t=>({...t,schema:t.schema.filter(f=>f.name!=='corpusKind'),records:t.records.map(row=>{const v={...row};delete v.corpusKind;return v})}));docs=tables.find(t=>t.name==='documents').records}
- if(name==='managed-current'){const canonical=tables.find(t=>t.name==='chunks');canonical.schema.push(field('chapterNumber','int32'));canonical.records[0].text='beta';canonical.records[0].chapterNumber=1;canonical.records[1].text='alpha beta';canonical.records[1].chapterNumber=2}
+ if(name==='managed-current'){const canonical=tables.find(t=>t.name==='chunks');canonical.schema=[...canonical.schema,field('chapterNumber','int32')];canonical.records[0].text='beta';canonical.records[0].chapterNumber=1;canonical.records[1].text='alpha beta';canonical.records[1].chapterNumber=2}
  if(name==='edited-current'){const canonical=tables.find(t=>t.name==='chunks');for(const row of canonical.records)row.text='same alpha beta'}
  if(name==='no-chunks-table')tables=tables.filter(t=>t.name!=='chunks')
  if(name==='empty')tables=[]
