@@ -34,7 +34,7 @@ func durableLifecycle(t *testing.T) (*ReadLifecycle, string, projectsession.Cont
 }
 
 func TestDurableOpenSaveCloseReopenPersists(t *testing.T) {
-	lifecycle, key, frozen, dataRoot, projectPath := durableLifecycle(t)
+	lifecycle, key, _, dataRoot, projectPath := durableLifecycle(t)
 	owner := testOwner()
 	first, err := lifecycle.OpenProjectDurable(context.Background(), owner, key, "token-1")
 	if err != nil {
