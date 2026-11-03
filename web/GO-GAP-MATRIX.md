@@ -76,3 +76,40 @@ same lifecycle): `BindDraftLiveReads` (8), `BindCharacterLiveReads` (3), `BindEd
 
 `db:review-cycle-get` is bound but only the absent-cycle case; an existing cycle → 501
 (`editor_review_cycle_read.go:66-67`).
+
+## Per-domain summary (operations.json vs bound vs durable)
+
+| Domain | Total | Bound | Durable | Unbound (501) |
+|---|---:|---:|---:|---:|
+| db | 103 | 71 | 1 | 32 |
+| generation | 23 | 0 | 0 | 23 |
+| llm | 16 | 3 | 0 | 13 |
+| kb | 19 | 5 | 0 | 14 |
+| project | 13 | 8 | 4 | 5 |
+| agent-generation | 8 | 0 | 0 | 8 |
+| cloud-backup | 8 | 0 | 0 | 8 |
+| dialog | 9 | 1 | 0 | 8 |
+| mcp | 8 | 8 | 0 | 0 |
+| fs | 10 | 2 | 0 | 8 |
+| legacy-roster | 7 | 0 | 0 | 7 |
+| character-proposal | 6 | 0 | 0 | 6 |
+| graph-generation | 5 | 0 | 0 | 5 |
+| finalization-generation | 5 | 0 | 0 | 5 |
+| finalized-character | 5 | 0 | 0 | 5 |
+| chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
+| prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
+| **TOTAL** | **281** | **110** | **7** | **171** |
+
+## Runtime exists but no binder (Tier D gating)
+
+Generation (`internal/generation/service.go:282` `Execute`, `generationowner` dispatch/lease,
+`store/generation_ledger.go:242`, reachable via `projectsession.Manager.BeginGenerationLedger`),
+LLM execution (`internal/llm/*`), review/revision writes (`store/reviewrevision.go:35`),
+postprocessing (`store/posthistory.go:26`), finalization outbox (`store/finalization_outbox.go:87`),
+import inspection (`internal/importsource/`), archive export (`internal/archiveformat/export.go:98`),
+WebDAV (`internal/webdav/client.go:246`), prompts/skills (`internal/promptskills/*`),
+MCP (`internal/mcp/manager.go:57`), knowledge saves (`knowledgecopy/save.go:26`),
+vector search (`knowledgequery/vector_execute_native.go:21`).
+
+Note: `internal/importpreview/` is an **empty directory** — import-run preview runtime does not exist,
+and `store.Drafts` has **no** create/delete methods (drafts.go is read+update only).
