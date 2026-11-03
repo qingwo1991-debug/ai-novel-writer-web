@@ -52,6 +52,9 @@ func TestSyntheticEditorNavigationUsesCatalogAndExactReadLease(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(storage, projectfs.ManifestName), []byte(manifest), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(storage, "partial_arch.json"), []byte(`{"synopsis_incomplete":true,"synopsis_result":"草稿🙂"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	source := filepath.Join(storage, projectfs.DatabaseName)
 	if err := os.WriteFile(source, baseline, 0600); err != nil {
 		t.Fatal(err)
@@ -133,6 +136,25 @@ func TestSyntheticEditorNavigationUsesCatalogAndExactReadLease(t *testing.T) {
 		t.Fatal("open failed", opened.Code, opened.Body.String(), err)
 	}
 	expected := map[string]any{"projectId": openWire.Result.Project.ID, "leaseId": openWire.Result.Project.Lease, "projectPath": projectPath}
+	checkpoint := rpc(tab, "fs:read-json", []any{filepath.Join(storage, "partial_arch.json"), projectPath, expected})
+	var checkpointWire struct {
+		Result struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Incomplete bool   `json:"synopsis_incomplete"`
+				Result     string `json:"synopsis_result"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(checkpoint.Body.Bytes(), &checkpointWire); err != nil || checkpoint.Code != http.StatusOK || !checkpointWire.Result.Success || !checkpointWire.Result.Data.Incomplete || checkpointWire.Result.Data.Result != "草稿🙂" {
+		t.Fatal("checkpoint DTO mismatch", checkpoint.Code, checkpoint.Body.String(), err)
+	}
+	if response := rpc("client_0987654321", "fs:read-json", []any{filepath.Join(storage, "partial_arch.json"), projectPath, expected}); response.Code == http.StatusOK {
+		t.Fatal("foreign tab checkpoint read accepted", response.Body.String())
+	}
+	if response := rpc(tab, "fs:read-json", []any{filepath.Join(storage, projectfs.ManifestName), projectPath, expected}); response.Code != http.StatusBadRequest {
+		t.Fatal("arbitrary storage JSON accepted", response.Code, response.Body.String())
+	}
 	recent := rpc(tab, "project:recent-list", []any{})
 	var recentWire struct {
 		Result []map[string]any `json:"result"`

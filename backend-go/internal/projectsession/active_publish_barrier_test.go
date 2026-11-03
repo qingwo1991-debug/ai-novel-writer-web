@@ -180,3 +180,79 @@ func TestPublishBarrierCancellationRestoresTargetRead(t *testing.T) {
 		next()
 	}
 }
+
+func TestTypedPublishFenceBindsOwnerLeaseKeyAndLifetime(t *testing.T) {
+	active := activeFixture(t)
+	owner := Owner{SessionID: "cookie", ClientID: "tab"}
+	other := Owner{SessionID: "cookie", ClientID: "other-tab"}
+	target := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), owner, "key-a", "first", stageAdmitted(target)); err != nil {
+		t.Fatal(err)
+	}
+	var retained *PublishFence
+	err := active.WithProjectDrainedFence(context.Background(), owner, target.identity, func(ctx context.Context, fence *PublishFence) error {
+		retained = fence
+		if err := fence.Verify(ctx, owner, target.identity, "key-a"); err != nil {
+			return err
+		}
+		if err := fence.Verify(ctx, other, target.identity, "key-a"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return errors.New("other owner accepted")
+		}
+		wrongLease := target.identity
+		wrongLease.LeaseID = "wrong"
+		if err := fence.Verify(ctx, owner, wrongLease, "key-a"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return errors.New("wrong lease accepted")
+		}
+		if err := fence.Verify(ctx, owner, target.identity, "other-key"); !errors.Is(err, novelruntime.ErrNotOwned) {
+			return errors.New("wrong catalog key accepted")
+		}
+		return fence.Verify(ctx, owner, target.identity, "key-a")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := retained.Verify(context.Background(), owner, target.identity, "key-a"); !errors.Is(err, novelruntime.ErrNotOwned) {
+		t.Fatalf("retained fence remained valid: %v", err)
+	}
+}
+
+func TestTypedPublishFenceQueuedOpenRevokesFinalAuthority(t *testing.T) {
+	active := activeFixture(t)
+	owner := Owner{SessionID: "cookie", ClientID: "tab"}
+	target := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), owner, "key-a", "first", stageAdmitted(target)); err != nil {
+		t.Fatal(err)
+	}
+	readmitted := admitted("A", "/trusted/A")
+	readmitted.identity.LeaseID = "new-lease"
+	openResult := make(chan error, 1)
+	err := active.WithProjectDrainedFence(context.Background(), owner, target.identity, func(ctx context.Context, fence *PublishFence) error {
+		go func() {
+			_, openErr := active.Open(context.Background(), owner, "key-a", "queued", stageAdmitted(readmitted))
+			openResult <- openErr
+		}()
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			active.mu.Lock()
+			advanced := active.slots[owner.key()].latest != fence.generation
+			active.mu.Unlock()
+			if advanced {
+				break
+			}
+			if time.Now().After(deadline) {
+				return errors.New("queued Open did not advance request generation")
+			}
+			runtime.Gosched()
+		}
+		if err := fence.Verify(ctx, owner, target.identity, "key-a"); !errors.Is(err, ErrStaleOpen) {
+			return errors.New("queued Open did not revoke fence")
+		}
+		return nil
+	})
+	if !errors.Is(err, ErrStaleOpen) {
+		t.Fatalf("stale publisher received ACK authority: %v", err)
+	}
+	if err := <-openResult; err != nil {
+		t.Fatal(err)
+	}
+}

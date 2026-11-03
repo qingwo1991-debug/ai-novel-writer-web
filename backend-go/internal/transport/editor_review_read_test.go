@@ -25,6 +25,8 @@ func TestEditorReviewReadsBindOnlyMetadataLists(t *testing.T) {
 			return json.Marshal([]map[string]any{{"id": 11, "baseDraftId": 7, "reviewIndex": 1, "contentId": 99, "createdAt": "first"}})
 		case "db:revision-get-pending":
 			return json.Marshal([]map[string]any{{"id": 12, "baseDraftId": 7, "revisionIndex": 2, "status": "pending", "mergedToDraftId": nil}})
+		case "db:revision-list":
+			return json.Marshal([]map[string]any{{"id": 13, "baseDraftId": 7, "revisionIndex": 1, "status": "merged", "mergedToDraftId": 8}})
 		default:
 			return nil, errors.New("unexpected operation")
 		}
@@ -38,6 +40,7 @@ func TestEditorReviewReadsBindOnlyMetadataLists(t *testing.T) {
 	}{
 		{"db:review-list", 11},
 		{"db:revision-get-pending", 12},
+		{"db:revision-list", 13},
 	} {
 		got := draftResult(t, draftRPC(t, server, cookie, csrf, "synthetic-tab-0001", tc.operation, 7, path, expected))
 		rows, ok := got.([]any)

@@ -15,7 +15,7 @@ import (
 // lease, source proof and private read transaction as other editor reads.
 // Review and revision mutations remain outside this API.
 func (l *ReadLifecycle) ReadReviewRevisionJSON(ctx context.Context, owner projectsession.Owner, expected projectsession.Context, operation string, baseDraftID int64) (json.RawMessage, error) {
-	if operation != "db:review-list" && operation != "db:revision-get-pending" {
+	if operation != "db:review-list" && operation != "db:revision-get-pending" && operation != "db:revision-list" {
 		return nil, ErrInvalid
 	}
 	var wire json.RawMessage

@@ -45,24 +45,28 @@ type entry struct {
 // lock. It grants no right to replace the source tree. The owner must retain
 // the lock, library and snapshot until the copy has been discarded.
 type Snapshot struct {
-	mu          sync.Mutex
-	lock        *writerlock.Lock
-	dataRoot    string
-	library     *projectfs.Library
-	projectPath string
-	projectID   string
-	identity    projectfs.Identity
-	storageInfo fs.FileInfo
-	parent      *os.Root
-	parentPath  string
-	parentInfo  fs.FileInfo
-	stageName   string
-	stage       string
-	stageInfo   fs.FileInfo
-	entries     []entry
-	limits      Limits
-	removed     bool
-	closed      bool
+	mu              sync.Mutex
+	lock            *writerlock.Lock
+	dataRoot        string
+	library         *projectfs.Library
+	projectPath     string
+	projectID       string
+	identity        projectfs.Identity
+	projectRootInfo fs.FileInfo
+	storageInfo     fs.FileInfo
+	parent          *os.Root
+	parentPath      string
+	parentInfo      fs.FileInfo
+	stageName       string
+	stage           string
+	stageInfo       fs.FileInfo
+	entries         []entry
+	limits          Limits
+	removed         bool
+	// switched means the original source now occupies stageName. Close must
+	// retain it for journal recovery rather than treating it as a disposable copy.
+	switched bool
+	closed   bool
 }
 
 const maxTreeFiles = 100000
@@ -202,6 +206,10 @@ func Stage(ctx context.Context, held *writerlock.Lock, dataRoot string, library 
 	if err := project.VerifyNoPortableAuthority(ctx); err != nil {
 		return nil, err
 	}
+	projectRootInfo, err := os.Lstat(projectPath)
+	if err != nil || !projectRootInfo.IsDir() || projectRootInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrChanged
+	}
 	storagePath := filepath.Join(projectPath, projectfs.StorageDirectory)
 	if childOf(storagePath, stageParent) || stageParent == storagePath || childOf(stageParent, storagePath) {
 		return nil, ErrInvalid
@@ -301,12 +309,20 @@ func Stage(ctx context.Context, held *writerlock.Lock, dataRoot string, library 
 	if err != nil || !os.SameFile(storageInfo, currentStorage) {
 		return nil, ErrChanged
 	}
+	currentProjectRoot, err := os.Lstat(projectPath)
+	if err != nil || !os.SameFile(projectRootInfo, currentProjectRoot) {
+		return nil, ErrChanged
+	}
 	snapshot := &Snapshot{lock: held, dataRoot: dataRoot, library: library, projectPath: projectPath,
-		projectID: project.ProjectID(), identity: project.Identity(), storageInfo: storageInfo,
+		projectID: project.ProjectID(), identity: project.Identity(), projectRootInfo: projectRootInfo, storageInfo: storageInfo,
 		parent: parent, parentPath: stageParent, parentInfo: parentInfo,
 		stageName: stageName, stage: stage, stageInfo: stageInfo, entries: before, limits: limits}
 	if err := snapshot.VerifySource(ctx); err != nil {
 		return nil, err
+	}
+	currentProjectRoot, err = os.Lstat(projectPath)
+	if err != nil || !os.SameFile(projectRootInfo, currentProjectRoot) {
+		return nil, ErrChanged
 	}
 	cleanup = false
 	ownedParent = false
@@ -768,8 +784,9 @@ func (s *Snapshot) PrivatePath() (string, error) {
 
 func (s *Snapshot) PublicationAuthority(context.Context) error { return ErrPublishUnavailable }
 
-// Close removes the private copy. Any caller-created handles to it must have
-// been closed before Close is called.
+// Close removes an unswitched private copy. After RetainSwitched, it only
+// closes this capability and leaves the old source at stageName for recovery.
+// Any caller-created handles must have been closed before Close is called.
 func (s *Snapshot) Close() error {
 	if s == nil {
 		return nil
@@ -782,7 +799,7 @@ func (s *Snapshot) Close() error {
 	if !canonical(s.stage) || !strings.HasPrefix(s.stageName, "novel-private-publish-") || s.parent == nil {
 		return ErrInvalid
 	}
-	if !s.removed {
+	if !s.removed && !s.switched {
 		current, err := s.parent.Lstat(s.stageName)
 		if err != nil || !os.SameFile(s.stageInfo, current) {
 			return ErrChanged

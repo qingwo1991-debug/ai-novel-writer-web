@@ -161,6 +161,7 @@ func TestSyntheticEditorStageAndReviewReadsShareExactPrivateLease(t *testing.T) 
 		{"db:project-core-get", "Read-only premise", []any{projectPath, expected}, 0},
 		{"db:blueprint-get-all", "同租约蓝图🙂", []any{projectPath, expected}, 0},
 		{"db:revision-get-pending", "", []any{draftID, projectPath, expected}, revision["id"].(int64)},
+		{"db:revision-list", "", []any{draftID, projectPath, expected}, revision["id"].(int64)},
 		{"db:review-list", "", []any{draftID, projectPath, expected}, review["id"].(int64)},
 	} {
 		response := rpc(tab, item.operation, item.args)
@@ -174,6 +175,35 @@ func TestSyntheticEditorStageAndReviewReadsShareExactPrivateLease(t *testing.T) 
 			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || len(envelope.Result) != 1 || envelope.Result[0]["id"] != float64(item.wantID) || envelope.Result[0]["baseDraftId"] != float64(draftID) {
 				t.Fatal("review/revision metadata mismatch", item.operation, response.Body.String(), err)
 			}
+		}
+	}
+	for _, item := range []struct {
+		operation, content string
+		id                 int64
+	}{
+		{"db:review-get-full", "审稿意见", review["id"].(int64)},
+		{"db:revision-get-full", "修稿建议", revision["id"].(int64)},
+	} {
+		response := rpc(tab, item.operation, []any{item.id, projectPath, expected})
+		var envelope struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil || response.Code != http.StatusOK || envelope.Result["id"] != float64(item.id) || envelope.Result["baseDraftId"] != float64(draftID) || envelope.Result["content"] != item.content {
+			t.Fatalf("%s full DTO: HTTP %d %s, %v", item.operation, response.Code, response.Body.String(), err)
+		}
+		sourceDraft, ok := envelope.Result["sourceDraft"].(map[string]any)
+		if !ok || sourceDraft["id"] != float64(draftID) || sourceDraft["content"] != expectedSource["content"] {
+			t.Fatalf("%s source draft: %#v", item.operation, envelope.Result["sourceDraft"])
+		}
+		missing := rpc(tab, item.operation, []any{int64(9007199254740991), projectPath, expected})
+		var missingEnvelope struct {
+			Result any `json:"result"`
+		}
+		if err := json.Unmarshal(missing.Body.Bytes(), &missingEnvelope); err != nil || missing.Code != http.StatusOK || missingEnvelope.Result != nil {
+			t.Fatalf("%s missing row: HTTP %d %s, %v", item.operation, missing.Code, missing.Body.String(), err)
+		}
+		if foreign := rpc("client_0987654321", item.operation, []any{item.id, projectPath, expected}); foreign.Code == http.StatusOK {
+			t.Fatalf("foreign tab read %s: %s", item.operation, foreign.Body.String())
 		}
 	}
 	if response := rpc(tab, "db:project-core-get", []any{filepath.Join(root, "other"), expected}); response.Code != http.StatusConflict {

@@ -13,6 +13,13 @@ func TestReviewRevisionReadTransactionMatchesRepositoryMetadata(t *testing.T) {
 	if _, err := repository.CreateReview(ctx, rrInput()); err != nil {
 		t.Fatal(err)
 	}
+	firstRevision, err := repository.CreateRevision(ctx, rrInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.MarkDiscarded(ctx, firstRevision["id"].(int64)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := repository.CreateRevision(ctx, rrInput()); err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +30,10 @@ func TestReviewRevisionReadTransactionMatchesRepositoryMetadata(t *testing.T) {
 	beforePending, err := repository.ListRevisions(ctx, 900001, true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	beforeAll, err := repository.ListRevisions(ctx, 900001, false)
+	if err != nil || len(beforeAll) != 2 || len(beforePending) != 1 {
+		t.Fatalf("revision fixture all=%#v pending=%#v err=%v", beforeAll, beforePending, err)
 	}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -35,6 +46,7 @@ func TestReviewRevisionReadTransactionMatchesRepositoryMetadata(t *testing.T) {
 	}{
 		{"db:review-list", beforeReviews},
 		{"db:revision-get-pending", beforePending},
+		{"db:revision-list", beforeAll},
 	} {
 		got, err := ReadReviewRevisionListTx(ctx, tx, tc.operation, 900001)
 		if err != nil || !reflect.DeepEqual(got, tc.want) {

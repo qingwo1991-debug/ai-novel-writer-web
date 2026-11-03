@@ -77,6 +77,7 @@ func TestReadLifecycleReviewRevisionListsKeepLeaseAndSource(t *testing.T) {
 	}{
 		{"db:review-list", review["id"].(int64)},
 		{"db:revision-get-pending", revision["id"].(int64)},
+		{"db:revision-list", revision["id"].(int64)},
 	} {
 		wire, err := lifecycle.ReadReviewRevisionJSON(ctx, owner, identity, tc.operation, draftID)
 		if err != nil {

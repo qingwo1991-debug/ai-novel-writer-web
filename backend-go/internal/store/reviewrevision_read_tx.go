@@ -5,7 +5,7 @@ import (
 	"database/sql"
 )
 
-// ReadReviewRevisionListTx reads only the two metadata lists needed while a
+// ReadReviewRevisionListTx reads only the three metadata lists needed while a
 // draft tab loads. The caller owns the already admitted read transaction.
 // It cannot borrow a writable repository or acknowledge a review mutation.
 func ReadReviewRevisionListTx(ctx context.Context, tx *sql.Tx, operation string, baseDraftID int64) ([]map[string]any, error) {
@@ -17,6 +17,8 @@ func ReadReviewRevisionListTx(ctx context.Context, tx *sql.Tx, operation string,
 		return rrMaps(ctx, tx, "SELECT "+rrReviewMeta+" FROM reviews r WHERE r.base_draft_id=? ORDER BY r.review_index ASC", baseDraftID)
 	case "db:revision-get-pending":
 		return rrMaps(ctx, tx, "SELECT "+rrRevisionMeta+" FROM revisions r WHERE r.base_draft_id=? AND r.status='pending' ORDER BY r.revision_index ASC", baseDraftID)
+	case "db:revision-list":
+		return rrMaps(ctx, tx, "SELECT "+rrRevisionMeta+" FROM revisions r WHERE r.base_draft_id=? ORDER BY r.revision_index ASC", baseDraftID)
 	default:
 		return nil, ErrReviewRevisionInvalidInput
 	}

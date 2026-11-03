@@ -26,7 +26,7 @@ func (f EditorReviewReadProviderFunc) ReadReviewRevisionJSON(ctx context.Context
 	return f(ctx, caller, expected, operation, baseDraftID)
 }
 
-// BindEditorReviewReads binds the two original metadata lists used when a
+// BindEditorReviewReads binds the three original metadata lists used when a
 // draft tab loads. All review/revision mutations stay unported and return 501.
 func (s *Server) BindEditorReviewReads(provider EditorReviewReadProvider) error {
 	if provider == nil {
@@ -39,7 +39,7 @@ func (s *Server) BindEditorReviewReads(provider EditorReviewReadProvider) error 
 			return errors.New("REVIEW_REVISION_PROVIDER_REQUIRED")
 		}
 	}
-	names := []string{"db:revision-get-pending", "db:review-list"}
+	names := []string{"db:revision-get-pending", "db:revision-list", "db:review-list"}
 	handlers := make(map[string]Operation, len(names))
 	for _, operation := range names {
 		name := operation
