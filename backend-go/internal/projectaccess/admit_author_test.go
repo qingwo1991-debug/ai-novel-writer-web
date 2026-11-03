@@ -77,10 +77,7 @@ func TestAdmitAuthorVerifyDetectsReplacedDatabase(t *testing.T) {
 		t.Fatalf("pre-change verify failed: %v", err)
 	}
 	// Replacing the database entry breaks the content identity proof.
-	replacement := make([]byte, 0)
-	if err := writeAccess(t, configProjectDB(t, config), replacement); err != nil {
-		t.Fatal(err)
-	}
+	writeAccess(t, configProjectDB(t, config), []byte("replacement database"))
 	if err := permit.Verify(context.Background(), project); !errors.Is(err, ErrAuthorStale) {
 		t.Fatalf("replaced database verified: %v", err)
 	}
