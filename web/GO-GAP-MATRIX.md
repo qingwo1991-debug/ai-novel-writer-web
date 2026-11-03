@@ -15,7 +15,7 @@ Baseline: `HEAD=9cc21933` == `origin/main`. Durable author write lane landed and
 
 | Lane | Ops | Bindings |
 |---|---|---|
-| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go:310`, from `main.go:116-117`) | **7** | `BindNavigation` (`:322`) + `BindProjects` (`:347`): `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open` |
+| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go`, from `main.go:116-117`) | **27** | `BindNavigation` + `BindProjects` (7: `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open`) + 8 disjoint editor read binders landed in `af31c463` (20: 8 draft reads, `project:recent-list`, `fs:list-dir`, `project:overview-current`, `fs:read-json`, `db:project-core-get`, `db:blueprint-get-all`, `db:revision-get-pending`, `db:revision-list`, `db:review-list`, `db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) |
 | read-only (`main.go:315-362`) | 28 | 8 draft reads + `db:draft-update-content` CAS (`syntheticReadOpen.CommitDraftContent` → `authorruntime.CommitDraftCAS`), character reads, editor reads, `project:recent-list`, `fs:list-dir`, `fs:read-json`, `project:overview-current` |
 | model (`main.go:275-278`) | 9 | config/startup/`llm:list-models`/`llm:save-model`/`llm:delete-model` |
 
@@ -98,7 +98,7 @@ same lifecycle): `BindDraftLiveReads` (8), `BindCharacterLiveReads` (3), `BindEd
 | finalized-character | 5 | 0 | 0 | 5 |
 | chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
 | prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
-| **TOTAL** | **281** | **110** | **7** | **171** |
+| **TOTAL** | **281** | **110** | **27** | **171** |
 
 ## Runtime exists but no binder (Tier D gating)
 
