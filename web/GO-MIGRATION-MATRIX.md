@@ -2,11 +2,13 @@
 
 ## Audit boundary and status
 
-Round25 qualifies only the internal ordinary streaming execution service, trusted usage arithmetic and native OpenAI/Gemini→real ledger adapter: source `d7780031`, [41539542139](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41539542139), 524top/5819all pass; new14top/551all and actual444usage+60lifecycle traces, 12recursive modules. No public handler/main/current-generation-owner/source/model-policy authority, durable author save, Agent/planning/finalization or deployment is inferred. **No rows promoted; 2/69/210 remain unchanged.** See [GO-GENERATION-SERVICE.md](GO-GENERATION-SERVICE.md). Final delivery now explicitly includes pulling and deploying the fully accepted Go image locally with data backup and rollback; current production stays untouched before that complete gate.
+Current accepted status after the synthetic editor read chain at `951654b0` ([Go Actions 41577470286](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41577470286)) and recovery-gate components at `06026626` ([Go Actions 41578165554](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41578165554)): **2 IMPLEMENTED / 75 IN PROGRESS / 204 NOT STARTED**. [Native interop 41576528936](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41576528936) also passed. The synthetic main now binds private-copy project open/close, recent list, bounded directory and checkpoint reads, editor core/blueprint/character/draft/review/revision reads, and current shelf overview. Real author-data admission, durable draft publication, populated review-cycle projection, full source compatibility, and Go deployment remain open. The recovery journal and catalog gates are not a completed save/restart protocol; the source exchange entry still refuses publication.
+
+Round25 qualifies only the internal ordinary streaming execution service, trusted usage arithmetic and native OpenAI/Gemini→real ledger adapter: source `d7780031`, [41539542139](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41539542139), 524top/5819all pass; new14top/551all and actual444usage+60lifecycle traces, 12recursive modules. No public handler/main/current-generation-owner/source/model-policy authority, durable author save, Agent/planning/finalization or deployment is inferred. **No rows were promoted in Round25; the then-current count stayed 2/69/210.** See [GO-GENERATION-SERVICE.md](GO-GENERATION-SERVICE.md). Final delivery now explicitly includes pulling and deploying the fully accepted Go image locally with data backup and rollback; current production stays untouched before that complete gate.
 
 Source baseline: `b69dc19c` (`fix(web): persist shelf visibility and fence concurrent draft commits`). Read-only audit of source; no production data, private files, credentials, runtime, CI or module manifests were changed. The only audit outputs are this document and `GO-MIGRATION-PLAN.md`. Existing React/CodeMirror stays; this is **not** a Go HTTP proxy over the Node workers. Prior Node acceptance records are reference tests, not Go parity evidence, and the latest Node fixes are not asserted production-deployed.
 
-Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 69 are IN PROGRESS (isolated draft/core/review/revision/postprocess-ledger/LLM-history/narrative/exemption/plot-read-clear/ordinary-blueprint/knowledge-four-read/recovery-candidate/summary-continuity-read/character-read HTTP/repository tests, NOT bound in binary); 210 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
+Go policy/security, project-runtime lease/event and HTTP foundations passed GitHub-only tests at `0350a13c` (52 top-level / 115 including subtests, plus race/build/smoke). Read-only physical project/SQLite v7 inspection passed GitHub-only qualification at `f24e145e` (81 top-level / 237 including subtests, zero skipped), while full author-data admission/migration remains **IN PROGRESS**, with its exact scope and remaining compatibility limits in [GO-DATA-ADMISSION.md](GO-DATA-ADMISSION.md). At `e7457541`, two fixed navigation intents are implemented and bound in the binary, with authenticated HTTP + caller-private SSE contract tests passing in [Actions 41378784128](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41378784128). **2/281 operation rows are IMPLEMENTED (HTTP/SSE tested); 75 are IN PROGRESS (including synthetic-main editor reads plus isolated draft/core/review/revision/postprocess-ledger/LLM-history/narrative/exemption/plot-read-clear/ordinary-blueprint/knowledge-four-read/recovery-candidate/summary-continuity-read/character-read work); 204 remain NOT STARTED.** The private-copy session + draft integration at `3a2bc966` passed [Actions 41381280660](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41381280660), but cannot count as durable author saving; see [GO-PROJECT-SESSIONS.md](GO-PROJECT-SESSIONS.md). These simple links do not imply project, AI or author-data business readiness. A registered name, compiling skeleton, security wrapper, HTTP 200, empty list or explicit unsupported response is not implementation. Update a row only with actual Go handler/service/repository code and passing contract/domain evidence; infrastructure progress does not promote operation status.
 
 Round7 source `73244fa7` passed [Actions 41385531191](https://github.com/qingwo1991-debug/ai-novel-writer-web/actions/runs/41385531191): native OpenAI request/SSE/visible reasoning filtering (72 provider +922 scanner differential cases), exact-origin native egress, and Linux cross-process writer module. **No operation status is promoted by these modules**: providers remain unbound and workflows/source-target CAS/reservations/diagnostics/Gemini and production writer coordination are missing. Full suite183 top-level/1512 including subtests PASS; one foreign-owner lock test skipped due to nonroot runner, disclosed in GO-CI-ACCEPTANCE.md. See [GO-AI-TRANSPORT.md](GO-AI-TRANSPORT.md) and [GO-WRITER-LOCK.md](GO-WRITER-LOCK.md).
 
@@ -152,8 +154,8 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | cloud-backup:clear-credential | G | CL | NOT STARTED |
 | config:get | G | CFG | NOT STARTED |
 | config:set | G | CFG | NOT STARTED |
-| db:close | P | DB; release tab, retain live project | NOT STARTED |
-| db:project-core-get | P | CORE; raw nullable/Buffer wire and original normalizers | IN PROGRESS — isolated HTTP+original TS oracle PASS 6d5f2f71; not binary bound |
+| db:close | P | DB; release tab, retain live project | IN PROGRESS — synthetic main same-lease close HTTP; real author lifecycle/deployment absent |
+| db:project-core-get | P | CORE; raw nullable/Buffer wire and original normalizers | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; real author admission absent |
 | db:project-core-update | P | CORE; original allowlist, charactersArch read-only | IN PROGRESS — isolated HTTP+original TS oracle PASS 6d5f2f71; not binary bound |
 | db:project-core-commit-generated | P | CORE/GEN; same transaction proof | NOT STARTED |
 | db:project-core-synopsis-commit | P | CORE; 11-field plain source/target CAS only; generated/recovery rejected | IN PROGRESS — isolated HTTP+original TS oracle PASS 6d5f2f71; missing generated/recovery owner |
@@ -177,7 +179,7 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:import-run-advance-stage | P | IMP | NOT STARTED |
 | db:import-run-fail | P | IMP | NOT STARTED |
 | db:import-run-complete | P | IMP; evidence not counters alone | NOT STARTED |
-| db:blueprint-get-all | P | BP; nullable/raw projection and permissive JSON characters | IN PROGRESS — isolated repository/HTTP/oracle; main/durable missing |
+| db:blueprint-get-all | P | BP; nullable/raw projection and permissive JSON characters | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
 | db:blueprint-get | P | BP; native binding parity/bool guard | IN PROGRESS — isolated repository/HTTP/oracle; main/durable missing |
 | db:blueprint-upsert | P | BP; original overwrite, NOT AI CAS authority | IN PROGRESS — isolated repository/HTTP/oracle; JSON property-order boundary |
 | db:blueprint-upsert-many | P | BP; atomic batch rollback | IN PROGRESS — isolated repository/HTTP/oracle; JSON property-order boundary |
@@ -188,18 +190,18 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:blueprint-update-notes | P | BP; reject direct finalization bypass | NOT STARTED |
 | db:blueprint-delete | P | BP; native identity binding and atomic statement | IN PROGRESS — isolated repository/HTTP/oracle; recovery/ledger retention unchanged |
 | db:blueprint-clear-all | P | BP | NOT STARTED |
-| db:character-get-all | P | ROSTER; original role order/nullable truthiness/Buffer wire/retired filter | IN PROGRESS — isolated private-copy HTTP/original140case character oracle; native input limits explicit |
-| db:character-roster-read | P | ROSTER; M02 ID/name hashes, localized historical projection, source-bound derived fields | IN PROGRESS — isolated private-copy HTTP/original140case character oracle; legacy DDL/author commit absent |
+| db:character-get-all | P | ROSTER; original role order/nullable truthiness/Buffer wire/retired filter | IN PROGRESS — original140case oracle plus synthetic main same-lease HTTP; native input limits and real author admission remain |
+| db:character-roster-read | P | ROSTER; M02 ID/name hashes, localized historical projection, source-bound derived fields | IN PROGRESS — original140case oracle plus synthetic main same-lease HTTP; legacy DDL/author commit absent |
 | db:character-roster-commit | P | ROSTER; author scope | NOT STARTED |
 | db:draft-import-finalized-batch | P | DR/IMP; source receipt | NOT STARTED |
 | db:draft-create | P | DR | NOT STARTED |
-| db:draft-list | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — isolated private-copy HTTP PASS; no durable project open/binary binding |
-| db:draft-list-all | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — isolated private-copy HTTP PASS; no durable project open/binary binding |
-| db:draft-get-meta | P | DR; transport/drafts.go + transport/drafts_test.go | IN PROGRESS — isolated HTTP PASS; no durable project open/binary binding |
-| db:draft-get-full | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — isolated private-copy HTTP PASS; no durable project open/binary binding |
-| db:draft-get-latest | P | DR; original metadata query, version-only order | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
-| db:draft-get-finalized | P | DR; exact finalized status, original metadata query | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
-| db:draft-get-max-finalized-chapter | P | DR; scalar MAX with original null fallback | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
+| db:draft-list | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — private-copy synthetic main same-lease HTTP; no durable author save |
+| db:draft-list-all | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — private-copy synthetic main same-lease HTTP; no durable author save |
+| db:draft-get-meta | P | DR; transport/drafts.go + transport/drafts_test.go | IN PROGRESS — private-copy synthetic main same-lease HTTP; no durable author save |
+| db:draft-get-full | P | DR; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — private-copy synthetic main same-lease HTTP; no durable author save |
+| db:draft-get-latest | P | DR; original metadata query, version-only order | IN PROGRESS — original metadata query plus synthetic main same-lease HTTP; durable author state absent |
+| db:draft-get-finalized | P | DR; exact finalized status, original metadata query | IN PROGRESS — original metadata query plus synthetic main same-lease HTTP; durable author state absent |
+| db:draft-get-max-finalized-chapter | P | DR; scalar MAX with original null fallback | IN PROGRESS — original scalar semantics plus synthetic main same-lease HTTP; durable author state absent |
 | db:draft-authority-sequence | P | DR | NOT STARTED |
 | db:draft-export-snapshot | P | DR | NOT STARTED |
 | db:draft-export-authority-current | P | DR; revalidate receipt | NOT STARTED |
@@ -219,9 +221,9 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:plot-tree-read | P | CONT; consistent sources + exact ordered hash; historical snapshot validation | IN PROGRESS — isolated repository/HTTP/oracle; encoding/date compatibility boundaries remain |
 | db:plot-tree-save | P | GRAPH; original public gate retained, isolated Save prototype CAS is NOT generation owner | NOT STARTED |
 | db:plot-tree-clear | P | CONT; explicit clear only, source hash unchanged | IN PROGRESS — isolated repository/HTTP/oracle; main/durable save missing |
-| db:draft-next-version | P | DR; preview, not allocation authority | IN PROGRESS — isolated HTTP+store PASS 30373e51; not binary bound |
+| db:draft-next-version | P | DR; preview, not allocation authority | IN PROGRESS — preview plus synthetic main same-lease HTTP; never allocation authority |
 | db:draft-update-status | P | DR; finalized transitions guarded | NOT STARTED |
-| db:draft-update-content | P | DR; expectedContent CAS; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — real SQLite private-copy HTTP concurrent CAS PASS; not durable author save/binary bound |
+| db:draft-update-content | P | DR; expectedContent CAS; transport/drafts.go + projectsession/http_test.go | IN PROGRESS — private-copy HTTP CAS and private full-stage edit proof/PREPARED journal; source exchange still denied, no durable author save or binary binding |
 | db:draft-delete | P | DR; finalized deletion via CH | NOT STARTED |
 | db:recovery-candidate-record | P | REC; ordered source/body hashes, frozen project injection | IN PROGRESS — isolated private-copy HTTP/original55case oracle; no AI failure-flow binding |
 | db:recovery-candidate-list | P | REC; pending integrity/currentness, legacy identity captured bit | IN PROGRESS — isolated private-copy HTTP/original55case oracle; not current durable author state |
@@ -230,18 +232,18 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:finalization-link-knowledge-document | P | FIN/KB; verify linkage | NOT STARTED |
 | db:revision-create | P | REV; exact expectedSource, transaction MAX allocation | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle owner missing |
 | db:revision-replace-pending | P | REV; insert/discard atomic rollback | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; bound cycles rejected |
-| db:revision-list | P | REV; nullable raw metadata | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
-| db:revision-get-pending | P | REV; exact pending filter/index-only ordering | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
-| db:revision-get-full | P | REV; frozen source + content pool, Buffer/REAL | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:revision-list | P | REV; nullable raw metadata | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
+| db:revision-get-pending | P | REV; exact pending filter/index-only ordering | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
+| db:revision-get-full | P | REV; frozen source + content pool, Buffer/REAL | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
 | db:revision-next-index | P | REV; preview not allocation authority | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
 | db:revision-merge | P | REV; source+target full body CAS/idempotency/content exclusivity | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle/recheck receipt missing |
 | db:revision-mark-merged | P | REV; legacy metadata-only unbound behavior, bound merge required | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; final workflow review pending |
 | db:revision-mark-discarded | P | REV; pending only, bound cycles failclosed | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; cycle reconciliation missing |
 | db:review-create | P | REV; exact source snapshot/content+metadata atomicity | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; reviewCycle confirmation rejected |
-| db:review-list | P | REV; metadata only/index ASC | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
+| db:review-list | P | REV; metadata only/index ASC | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
 | db:review-get-latest | P | REV; frozen source/content/index DESC | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
-| db:review-get-full | P | REV; source nullable/Buffer body | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
-| db:review-cycle-get | P | REV | NOT STARTED |
+| db:review-get-full | P | REV; source nullable/Buffer body | IN PROGRESS — original oracle plus synthetic main same-lease HTTP; durable author state absent |
+| db:review-cycle-get | P | REV | NOT STARTED — synthetic absent-only null; populated cycle returns 501, M03 projection missing |
 | db:review-cycle-list-pending-rechecks | P | REV | NOT STARTED |
 | db:review-next-index | P | REV; preview not allocation authority | IN PROGRESS — isolated HTTP+original oracle PASS a5e38a20; not binary bound |
 | db:post-process-create-run | P | POST; latest finalized identity+hash, atomic run/steps, nullable labels | IN PROGRESS — isolated ledger HTTP/oracle, not executor or binary bound |
@@ -282,10 +284,10 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | finalized-character:decide-state-candidate | P | CP | NOT STARTED |
 | fs:read-file | P | FS | NOT STARTED |
 | fs:write-file | P | FS; expected body and commitState | NOT STARTED |
-| fs:list-dir | P | FS | NOT STARTED |
+| fs:list-dir | P | FS | IN PROGRESS — bounded same-lease synthetic project tree HTTP; full filesystem contract absent |
 | fs:mkdir | P | FS | NOT STARTED |
 | fs:check-exists | P | FS | NOT STARTED |
-| fs:read-json | P | FS | NOT STARTED |
+| fs:read-json | P | FS | IN PROGRESS — fixed partial_arch.json same-lease synthetic HTTP; arbitrary JSON paths/write absent |
 | fs:write-json | P | FS | NOT STARTED |
 | fs:grant-read-file | F | FS/DLG | NOT STARTED |
 | fs:grant-write-file | F | FS/DLG | NOT STARTED |
@@ -375,12 +377,12 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | project:import-legacy-copy | F | PROJ/IMP; source untouched | NOT STARTED |
 | project:get-runtime-context | F | PROJ; truthful no-project state | NOT STARTED |
 | project:create | G | PROJ; granted controlled library | NOT STARTED |
-| project:open | G | PROJ; obtains project authority | NOT STARTED |
+| project:open | G | PROJ; obtains project authority | IN PROGRESS — synthetic private-copy read-only open and lease HTTP; real author admission/write absent |
 | project:save | P | PROJ; current-source semantics | NOT STARTED |
 | project:update-config | P | PROJ/CORE | NOT STARTED |
-| project:recent-list | G | PROJ; visible library override | NOT STARTED |
+| project:recent-list | G | PROJ; visible library override | IN PROGRESS — synthetic private catalog HTTP; real visible-library override/durable state absent |
 | project:peek-overview | G | PROJ; opaque peek capability | NOT STARTED |
-| project:overview-current | P | PROJ | NOT STARTED |
+| project:overview-current | P | PROJ | IN PROGRESS — six-stage synthetic private-copy HTTP; real author admission/deployment absent |
 | project:recent-remove | G | PROJ; persistent hide, not delete | NOT STARTED |
 | project:archive-export | P | ARCH | NOT STARTED |
 | project:archive-restore | F | ARCH; originating grant | NOT STARTED |
