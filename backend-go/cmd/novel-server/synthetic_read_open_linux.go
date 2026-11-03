@@ -4,12 +4,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"syscall"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
@@ -19,9 +16,6 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectgrant"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectpublish"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
@@ -30,17 +24,12 @@ import (
 // using a process-local catalog key for every author admission.
 type syntheticReadOpenConfig struct{ Schema admission.SchemaContract }
 
+// syntheticReadOpen is the read-only synthetic lane. It embeds the shared
+// read surface and selects the lifecycle's admitted private snapshot as its
+// transaction source; the durable lane embeds the same surface with its own
+// reader-per-request transaction source.
 type syntheticReadOpen struct {
-	mu        sync.Mutex
-	library   *projectfs.Library
-	catalog   *projectcatalog.Store
-	lifecycle *authorruntime.ReadLifecycle
-	commits   *authorruntime.DraftCommitService
-	grants    *projectgrant.Registry
-	keys      map[string]string
-	workspace string
-	recovery  projectcatalog.RecoveryCheck
-	closed    bool
+	syntheticReadSurface
 }
 
 type syntheticLibraryRecoveryGuard struct {
@@ -139,8 +128,11 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 		remove()
 		return nil, err
 	}
-	return &syntheticReadOpen{library: library, catalog: catalog, lifecycle: lifecycle,
-		commits: commits, grants: grants, keys: make(map[string]string), workspace: workspace, recovery: check}, nil
+	return &syntheticReadOpen{syntheticReadSurface: syntheticReadSurface{
+		library: library, catalog: catalog, lifecycle: lifecycle,
+		commits: commits, grants: grants, keys: make(map[string]string), workspace: workspace, recovery: check,
+		readTx: lifecycleReadTx(lifecycle),
+	}}, nil
 }
 
 func ensureSyntheticCatalogDirectory(dataRoot, directory string) error {
@@ -258,234 +250,4 @@ func sameSyntheticFilesystem(a, b string) bool {
 	leftStat, leftOK := left.Sys().(*syscall.Stat_t)
 	rightStat, rightOK := right.Sys().(*syscall.Stat_t)
 	return leftOK && rightOK && leftStat.Dev == rightStat.Dev
-}
-
-// VerifyRecovery gates the raw library route as well as catalog-backed RPCs.
-// The dedicated probe makes even orphan journals block a library with no
-// registered projects. The stage parent persists across process restarts.
-func (s *syntheticReadOpen) VerifyRecovery() error {
-	if s == nil {
-		return errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.recovery == nil {
-		return errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	return s.recovery(filepath.Join(s.library.Path(), ".go-recovery-probe"), syntheticRecoveryProbeID)
-}
-
-func (s *syntheticReadOpen) OpenReadOnlyProject(ctx context.Context, caller transport.Caller, browserPath, token string) (any, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	if err := s.recovery(filepath.Join(s.library.Path(), ".go-recovery-probe"), syntheticRecoveryProbeID); err != nil {
-		return nil, err
-	}
-	// Compare only against canonical entries from the trusted library. A path
-	// from RPC is never passed to OpenProject or the author runtime directly.
-	listed, err := s.library.ListCanonicalProjects(ctx, projectfs.MaxLibraryEntries)
-	if err != nil {
-		return nil, err
-	}
-	var matched *projectfs.ListedProject
-	for _, entry := range listed {
-		if entry.Path == browserPath {
-			matched = &entry
-			break
-		}
-	}
-	if matched == nil {
-		return nil, security.NewHTTPError(http.StatusNotFound, "PROJECT_NOT_FOUND")
-	}
-	key := s.keys[browserPath]
-	if key != "" {
-		// A revoked cached key must fail closed. Future publisher integration
-		// must update this cache only after verified recovery; an unjournaled
-		// inode change is never a reason to silently register a new key.
-		project, resolveErr := s.catalog.Resolve(key)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-		if err := project.Close(); err != nil {
-			return nil, err
-		}
-	}
-	if key == "" {
-		project, err := s.library.OpenProject(matched.Path)
-		if err != nil {
-			return nil, err
-		}
-		recent, registerErr := s.catalog.Register(project)
-		closeErr := project.Close()
-		if registerErr != nil {
-			return nil, registerErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		key = recent.Key
-		s.keys[browserPath] = key
-	}
-	return s.lifecycle.OpenProjectReadOnly(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, key, token)
-}
-
-// OpenGrantedReadOnlyProject accepts only a grant issued by trusted server
-// state. No public route issues these grants in the synthetic bridge yet.
-func (s *syntheticReadOpen) OpenGrantedReadOnlyProject(ctx context.Context, caller transport.Caller, grantID, token string) (any, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.grants == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	if err := s.recovery(filepath.Join(s.library.Path(), ".go-recovery-probe"), syntheticRecoveryProbeID); err != nil {
-		return nil, err
-	}
-	return s.lifecycle.OpenGrantedProjectReadOnly(ctx,
-		projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, s.grants, grantID, token)
-}
-
-// ReadCharactersJSON uses the same lifecycle and exact cookie/tab lease as
-// project:open. The runtime owns the private snapshot and finishes JSON
-// serialization before returning; this bridge never exposes a database handle.
-func (s *syntheticReadOpen) ReadCharactersJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	expected, err := projectsession.ParseContext(raw)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	return s.lifecycle.ReadCharactersJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
-}
-
-// ReadDraftJSON keeps serialization inside the same admitted private-copy
-// lifecycle and exact cookie/tab/project lease used for project:open.
-func (s *syntheticReadOpen) ReadDraftJSON(ctx context.Context, caller transport.Caller, raw any, operation string, number int64) (json.RawMessage, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	expected, err := projectsession.ParseContext(raw)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	return s.lifecycle.ReadDraftJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, number)
-}
-
-// CommitDraftContent is available only to the private, read-enabled synthetic
-// server. The cached catalog key comes from a prior admitted project:open,
-// never from a browser path. A read-only exact-lease check rejects ordinary
-// stale saves before the drained commit begins; the private-stage CAS remains
-// the final authority once publication starts.
-func (s *syntheticReadOpen) CommitDraftContent(ctx context.Context, caller transport.Caller, request transport.DraftLiveWriteRequest) (transport.DraftLiveWriteAck, error) {
-	var zero transport.DraftLiveWriteAck
-	if s == nil || ctx == nil {
-		return zero, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	expected, err := projectsession.ParseContext(request.Expected)
-	if err != nil {
-		return zero, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.commits == nil {
-		return zero, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	key := s.keys[expected.ProjectPath]
-	if key == "" {
-		return zero, errors.New("PROJECT_NOT_OPEN")
-	}
-	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
-	baseline := request.ExpectedContent
-	committed, err := s.commits.CommitDraftCAS(ctx, authorruntime.DraftCommitRequest{
-		Owner: owner, Expected: expected, CatalogKey: key, DraftID: request.DraftID,
-		Content: request.Content, WordCount: request.WordCount, ExpectedContent: &baseline,
-	})
-	if err != nil {
-		return zero, err
-	}
-	if committed.Key == "" || committed.Key == key || committed.Context.ProjectID != expected.ProjectID ||
-		committed.Context.ProjectPath != expected.ProjectPath || committed.Context.LeaseID == "" ||
-		committed.Context.LeaseID == expected.LeaseID {
-		return zero, errors.New("SYNTHETIC_COMMIT_RESULT_INVALID")
-	}
-	// CommitDraftCAS has verified the switched source and atomically bound the
-	// fresh Reader to this key. Reopen must never reuse the revoked old key.
-	s.keys[expected.ProjectPath] = committed.Key
-	return transport.DraftLiveWriteAck{ProjectSession: map[string]any{
-		"projectId":   committed.Context.ProjectID,
-		"projectPath": committed.Context.ProjectPath,
-		"leaseId":     committed.Context.LeaseID,
-	}}, nil
-}
-
-func (s *syntheticReadOpen) ReadEditorStageJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	expected, err := projectsession.ParseContext(raw)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	return s.lifecycle.ReadEditorStageJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
-}
-
-func (s *syntheticReadOpen) ReadReviewRevisionJSON(ctx context.Context, caller transport.Caller, raw any, operation string, baseDraftID int64) (json.RawMessage, error) {
-	if s == nil || ctx == nil {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	expected, err := projectsession.ParseContext(raw)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, errors.New("SYNTHETIC_READ_CLOSED")
-	}
-	return s.lifecycle.ReadReviewRevisionJSON(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation, baseDraftID)
-}
-
-func (s *syntheticReadOpen) Close() error {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	if err := s.lifecycle.Shutdown(); err != nil {
-		// An unclosed private Reader may still own files in this workspace.
-		// Leave them for process-level recovery while its writer lock stays held.
-		return err
-	}
-	if err := os.RemoveAll(s.workspace); err != nil {
-		return err
-	}
-	s.closed = true
-	return nil
 }

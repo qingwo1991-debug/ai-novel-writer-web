@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
@@ -21,6 +20,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectruntime"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
@@ -110,20 +110,16 @@ func createSyntheticDurableProject(libraryDir, baseline string) (string, error) 
 }
 
 // syntheticDurableOpen is the transport bridge for the durable Go author
-// runtime. It shares the process-local catalog and one continuously held legacy
-// writer lock with the lifecycle, and maps browser project paths to the exact
-// catalog keys this lane created. Only the created synthetic project has a key,
-// so no other path can reach the author runtime.
+// runtime. It embeds the shared read surface (so editor reads are served from
+// the same durable project) and adds the write runtime plus the held legacy
+// lock and read configuration needed to open a short-lived verified reader
+// per read request. Only the created synthetic project has a key, so no other
+// path can reach the author runtime.
 type syntheticDurableOpen struct {
-	mu        sync.Mutex
-	library   *projectfs.Library
-	catalog   *projectcatalog.Store
-	lifecycle *authorruntime.ReadLifecycle
-	manager   *projectruntime.Manager
-	keys      map[string]string
-	workspace string
-	recovery  projectcatalog.RecoveryCheck
-	closed    bool
+	syntheticReadSurface
+	manager    *projectruntime.Manager
+	held       *writerlock.Lock
+	readConfig projectaccess.Config
 }
 
 // newSyntheticDurableOpen builds the read/write lifecycle and the transport
@@ -174,10 +170,9 @@ func newSyntheticDurableOpen(library *projectfs.Library, libraryDir, projectPath
 		remove()
 		return nil, err
 	}
-	lifecycle, err := authorruntime.NewReadLifecycleWithHeldLock(catalog, projectaccess.Config{
-		DataRoot: dataRoot, LibraryRoot: libraryDir,
-		ScratchParent: scratch, MaxDatabaseBytes: 64 << 20, Schema: config.Schema,
-	}, held)
+	readConfig := projectaccess.Config{DataRoot: dataRoot, LibraryRoot: libraryDir,
+		ScratchParent: scratch, MaxDatabaseBytes: 64 << 20, Schema: config.Schema}
+	lifecycle, err := authorruntime.NewReadLifecycleWithHeldLock(catalog, readConfig, held)
 	if err != nil {
 		remove()
 		return nil, err
@@ -204,20 +199,46 @@ func newSyntheticDurableOpen(library *projectfs.Library, libraryDir, projectPath
 	if closeErr != nil {
 		return fail(closeErr)
 	}
-	return &syntheticDurableOpen{library: library, catalog: catalog, lifecycle: lifecycle,
-		manager: manager, keys: map[string]string{projectPath: recent.Key}, workspace: workspace, recovery: check}, nil
+	result := &syntheticDurableOpen{syntheticReadSurface: syntheticReadSurface{
+		library: library, catalog: catalog, lifecycle: lifecycle,
+		keys: map[string]string{projectPath: recent.Key}, workspace: workspace, recovery: check,
+	}, manager: manager, held: held, readConfig: readConfig}
+	result.readTx = result.readAuthorTx
+	return result, nil
 }
 
-func (s *syntheticDurableOpen) VerifyRecovery() error {
-	if s == nil {
+// readAuthorTx is the durable lane's transaction source. The durable write
+// admission cannot serve read-only transactions, and the coordinator forbids a
+// second read-only admission for the same project path, so every editor read
+// opens a short-lived verified reader for the exact project under the still
+// held legacy writer lock, guarded by the live durable lease from the same
+// lifecycle. The reader's source proof is re-verified on every read against
+// the same library files the write handle holds.
+func (s *syntheticDurableOpen) readAuthorTx(ctx context.Context, caller transport.Caller, expected projectsession.Context, operation func(*sql.Tx) error) error {
+	if s == nil || ctx == nil || s.held == nil {
 		return errors.New("SYNTHETIC_DURABLE_CLOSED")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.recovery == nil {
-		return errors.New("SYNTHETIC_DURABLE_CLOSED")
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	current, present, err := s.lifecycle.CurrentProjectDurable(ctx, owner)
+	if err != nil {
+		return err
 	}
-	return s.recovery(filepath.Join(s.library.Path(), ".go-recovery-probe"), syntheticRecoveryProbeID)
+	if !present || current != expected {
+		return errors.New("PROJECT_SESSION_STALE")
+	}
+	key := s.keys[expected.ProjectPath]
+	if key == "" {
+		return errors.New("PROJECT_NOT_OPEN")
+	}
+	config := s.readConfig
+	config.ProjectPath = expected.ProjectPath
+	reader, err := authorruntime.OpenReadOnlyUnderLock(ctx, s.held, s.catalog, key, config)
+	if err != nil {
+		return err
+	}
+	readErr := reader.Read(ctx, operation)
+	closeErr := reader.Close()
+	return errors.Join(readErr, closeErr)
 }
 
 // OpenProject maps a browser project path to the exact process-local catalog
@@ -282,31 +303,14 @@ func (s *syntheticDurableOpen) SaveProject(ctx context.Context, caller transport
 	return s.manager.SaveProject(ctx, caller, projectID, patch, expected)
 }
 
-func (s *syntheticDurableOpen) Close() error {
-	if s == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	if err := s.lifecycle.Shutdown(); err != nil {
-		// An admitted write handle may still own files in this workspace; the
-		// legacy lock stays held while the process-level recovery cleans them up.
-		return err
-	}
-	if err := os.RemoveAll(s.workspace); err != nil {
-		return err
-	}
-	s.closed = true
-	return nil
-}
-
 // migrationHandlerWithDurable mounts the browser project lifecycle protocol
-// over the durable Go author runtime for one real synthetic project. It binds
-// only BindProjects for the project domain: the read-only project binder is
-// never installed, so project:open cannot be double-bound here.
+// over the durable Go author runtime for one real synthetic project. BindProjects
+// binds the write domain (project:open, db:close, project:get-runtime-context,
+// project:save, project:update-config) plus project:recent-list only when the
+// provider implements ProjectCatalogProvider — syntheticDurableOpen does not.
+// The disjoint read binders below are the only read providers installed, so no
+// operation is ever double-bound and the read-only project binder (which would
+// rebind project:open) is never installed here.
 func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, durableDir string, config syntheticDurableConfig) (http.Handler, func(), error) {
 	if durableDir == "" || !underTempRoot(durableDir) || !privateSyntheticGlobalRoot(filepath.Dir(durableDir)) {
 		return nil, nil, errors.New("synthetic durable project requires a library beneath a private temporary data root")
@@ -347,6 +351,26 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	if err := server.BindProjects(durable); err != nil {
 		cleanup()
 		return nil, nil, err
+	}
+	// Disjoint read binders: none of these operations overlap the write domain
+	// bound by BindProjects above (project:open, db:close, project:save,
+	// project:update-config, project:get-runtime-context). The read-only
+	// project/open and project/close binders are deliberately skipped: they
+	// would rebind project:open and db:close and fail OPERATION_ALREADY_BOUND.
+	for _, bind := range []func() error{
+		func() error { return server.BindDraftLiveReads(durable) },
+		func() error { return server.BindEditorNavigation(durable) },
+		func() error { return server.BindCurrentOverview(durable) },
+		func() error { return server.BindEditorCheckpoint(durable) },
+		func() error { return server.BindEditorStageReads(durable) },
+		func() error { return server.BindEditorReviewReads(durable) },
+		func() error { return server.BindEditorReviewFullReads(durable) },
+		func() error { return server.BindEditorReviewCycleAbsentRead(durable) },
+	} {
+		if err := bind(); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", server)

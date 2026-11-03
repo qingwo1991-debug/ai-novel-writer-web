@@ -118,6 +118,12 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		t.Fatal("open project identity malformed", opened.Body.String())
 	}
 	expected := map[string]any{"projectId": id, "leaseId": lease, "projectPath": projectPath}
+	// Editor reads run over the same durable runtime: project-core reflects the
+	// author's own database right after the open admission.
+	seededCore := rpc("db:project-core-get", []any{projectPath, expected})
+	if seededCore.Code != http.StatusOK || !json.Valid(seededCore.Body.Bytes()) || !bytes.Contains(seededCore.Body.Bytes(), []byte(`"projectName":"Synthetic durable novel"`)) {
+		t.Fatal("durable project-core read failed", seededCore.Code, seededCore.Body.String())
+	}
 	// The live frozen context matches the Open DTO exactly.
 	contextRec := rpc("project:get-runtime-context", []any{})
 	var contextWire struct {
@@ -179,6 +185,36 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	}
 	if got := durableProjectGenre(t, database); got != "urban" {
 		t.Fatalf("update-config did not persist: %q", got)
+	}
+	// The durable lane's shared read surface serves editor reads from the same
+	// author DB: the overview and project-core reads reflect the committed save
+	// and config update before db:close.
+	overviewRec := rpc("project:overview-current", []any{expected})
+	var overviewWire struct {
+		Result struct {
+			State     string `json:"state"`
+			ProjectID string `json:"projectId"`
+			Revision  string `json:"revision"`
+			Name      string `json:"name"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(overviewRec.Body.Bytes(), &overviewWire); err != nil || overviewRec.Code != http.StatusOK {
+		t.Fatal("overview decode failed", overviewRec.Code, overviewRec.Body.String(), err)
+	}
+	if overviewWire.Result.State != "ready" || overviewWire.Result.ProjectID != id || overviewWire.Result.Name != savedName || len(overviewWire.Result.Revision) != 64 {
+		t.Fatal("durable overview mismatch", overviewRec.Body.String())
+	}
+	coreRec := rpc("db:project-core-get", []any{projectPath, expected})
+	if coreRec.Code != http.StatusOK || !json.Valid(coreRec.Body.Bytes()) || !bytes.Contains(coreRec.Body.Bytes(), []byte(`"projectName":"`+savedName+`"`)) || !bytes.Contains(coreRec.Body.Bytes(), []byte(`"genre":"urban"`)) {
+		t.Fatal("durable project-core read missing committed data", coreRec.Code, coreRec.Body.String())
+	}
+	// Recent navigation exposes only the one synthetic project, never a key.
+	recentRec := rpc("project:recent-list", []any{})
+	var recentWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(recentRec.Body.Bytes(), &recentWire); err != nil || recentRec.Code != http.StatusOK || len(recentWire.Result) != 1 || recentWire.Result[0]["path"] != projectPath || recentWire.Result[0]["key"] != nil {
+		t.Fatal("durable recent navigation mismatch", recentRec.Code, recentRec.Body.String(), err)
 	}
 	// db:close closes the admitted database before acknowledging.
 	closed := rpc("db:close", []any{projectPath, expected})
