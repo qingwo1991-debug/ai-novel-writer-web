@@ -76,6 +76,23 @@ int32_t nv_lance_export(const uint8_t *path, size_t pathlen,
                         NvBytes *result, NvBytes *err);
 
 /*
+ * Read-only bounded flat vector query on a trusted private Lance copy. The
+ * request is UTF-8 JSON with exact fields table, version, generation,
+ * dimension, metric (l2/cosine/dot), modelFingerprint, topK and vector.
+ * table must equal chunks__space_<generation>; version must be current.
+ * modelFingerprint is echoed as a caller-validated registry binding, not
+ * independently authenticated by Lance. The caller must validate registry,
+ * source/currentness and document-copy state before using these rows.
+ * No index is used; results are limited to 100 and serialized JSON is capped
+ * at 4 MiB. result is {table,version,generation,dimension,metric,
+ * modelFingerprint,records:[...]} with finite _distance per record. The same
+ * private copy/path/concurrent-writer requirements as export apply.
+ */
+int32_t nv_lance_vector_query(const uint8_t *path, size_t pathlen,
+                              const uint8_t *request, size_t requestlen,
+                              NvBytes *result, NvBytes *err);
+
+/*
  * staging is an existing EMPTY private LanceDB root; inputdir holds IPC STREAMS.
  * Input IPC is at most 64 MiB per table and 128 MiB retained in aggregate; this
  * does not bound decoded Arrow allocation for hostile/compressed input. Only

@@ -19,6 +19,7 @@ use arrow_schema::{DataType, Field, SchemaRef};
 use futures::TryStreamExt;
 use lancedb::database::CreateTableMode;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
+use lancedb::DistanceType;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
@@ -33,6 +34,33 @@ const MAX_DOMAIN_CELLS: usize = 200_000;
 const MAX_DOMAIN_STRINGS: usize = 32 * 1024 * 1024;
 const MAX_DOMAIN_FIELDS: usize = 128;
 const MAX_DOMAIN_DEPTH: usize = 16;
+const MAX_VECTOR_REQUEST: usize = 64 * 1024;
+const MAX_VECTOR_RESULTS: usize = 4 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct VectorRequest {
+    table: String,
+    version: u64,
+    generation: u64,
+    dimension: usize,
+    metric: String,
+    model_fingerprint: String,
+    top_k: usize,
+    vector: Vec<f32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VectorResult {
+    table: String,
+    version: u64,
+    generation: u64,
+    dimension: usize,
+    metric: String,
+    model_fingerprint: String,
+    records: Vec<serde_json::Map<String, serde_json::Value>>,
+}
 
 #[derive(Clone, Copy)]
 enum Fault {
@@ -474,6 +502,75 @@ async fn export_db(path: &Path, out: &Path) -> Result<Manifest> {
     Ok(Manifest { tables })
 }
 
+async fn query_vector(path: &Path, request: VectorRequest) -> Result<Vec<u8>> {
+    let expected_table = format!("chunks__space_{}", request.generation);
+    if request.table != expected_table || request.generation == 0 || request.version == 0
+        || request.dimension == 0 || request.dimension > 4096
+        || request.top_k == 0 || request.top_k > 100
+        || request.vector.len() != request.dimension
+        || request.model_fingerprint.is_empty() || request.model_fingerprint.len() > 512
+        || request.vector.iter().any(|value| !value.is_finite()) {
+        return Err(Fault::Input);
+    }
+    let metric = match request.metric.as_str() {
+        "l2" => DistanceType::L2,
+        "cosine" => DistanceType::Cosine,
+        "dot" => DistanceType::Dot,
+        _ => return Err(Fault::Input),
+    };
+    if request.metric == "cosine" && request.vector.iter().all(|value| *value == 0.0) {
+        return Err(Fault::Input);
+    }
+    let table_path = path.join(format!("{}.lance", request.table));
+    let meta = fs::symlink_metadata(&table_path).map_err(|_| Fault::Path)?;
+    if !meta.is_dir() || meta.file_type().is_symlink() { return Err(Fault::Path); }
+    let db = lancedb::connect(path_text(path)?).execute().await.map_err(|_| Fault::Database)?;
+    let table = db.open_table(&request.table).execute().await.map_err(|_| Fault::Database)?;
+    if table.version().await.map_err(|_| Fault::Database)? != request.version {
+        return Err(Fault::Database);
+    }
+    table.checkout(request.version).await.map_err(|_| Fault::Database)?;
+    let schema = table.schema().await.map_err(|_| Fault::Database)?;
+    let field = schema.field_with_name("vector").map_err(|_| Fault::Input)?;
+    match field.data_type() {
+        DataType::FixedSizeList(child, size) if *size as usize == request.dimension
+            && child.data_type() == &DataType::Float32 => {},
+        _ => return Err(Fault::Input),
+    }
+    let query = table.query().nearest_to(request.vector.as_slice())
+        .map_err(|_| Fault::Input)?.column("vector").distance_type(metric)
+        .bypass_vector_index().limit(request.top_k);
+    let mut stream = query.execute().await.map_err(|_| Fault::Database)?;
+    let result_schema = stream.schema();
+    let mut budget = DomainBudget::default();
+    let mut fields = Vec::new();
+    let mut names = BTreeSet::<String>::new();
+    for field in result_schema.fields() {
+        if !names.insert(field.name().clone()) { return Err(Fault::Ipc); }
+        fields.push(domain_field(field, 0, &mut budget)?);
+    }
+    if !names.contains("_distance") { return Err(Fault::Ipc); }
+    let mut result_rows = DomainTable { name: request.table.clone(), version: request.version,
+        metadata: false, schema: fields, records: Vec::new() };
+    while let Some(batch) = stream.try_next().await.map_err(|_| Fault::Database)? {
+        if batch.schema().fields() != result_schema.fields() { return Err(Fault::Ipc); }
+        if budget.rows.saturating_add(batch.num_rows()) > request.top_k { return Err(Fault::Limit); }
+        domain_batch(&batch, &mut result_rows, &mut budget)?;
+    }
+    for row in &result_rows.records {
+        match row.get("_distance") {
+            Some(serde_json::Value::Number(number)) if number.as_f64().is_some_and(f64::is_finite) => {},
+            _ => return Err(Fault::Ipc),
+        }
+    }
+    let result = VectorResult { table: request.table, version: request.version,
+        generation: request.generation, dimension: request.dimension, metric: request.metric,
+        model_fingerprint: request.model_fingerprint, records: result_rows.records };
+    let raw = serde_json::to_vec(&result).map_err(|_| Fault::Ipc)?;
+    if raw.len() > MAX_VECTOR_RESULTS { return Err(Fault::Limit); }
+    Ok(raw)
+}
+
 fn validate_manifest(raw: &[u8]) -> Result<Manifest> {
     let mut manifest: Manifest = serde_json::from_slice(raw).map_err(|_| Fault::Input)?;
     if manifest.tables.len() > MAX_TABLES {
@@ -632,6 +729,23 @@ pub unsafe extern "C" fn nv_lance_export(
         let runtime = Runtime::new().map_err(|_| Fault::Runtime)?;
         let manifest = runtime.block_on(export_db(&path, &out))?;
         manifest_bytes(manifest)
+    }) }
+}
+
+/// # Safety
+/// Foreign pointers must meet the vector contract in novel_lance.h.
+#[no_mangle]
+pub unsafe extern "C" fn nv_lance_vector_query(
+    path: *const u8, pathlen: usize, request: *const u8, requestlen: usize,
+    result: *mut NvBytes, err: *mut NvBytes,
+) -> i32 {
+    unsafe { boundary(result, err, || {
+        let path = existing_private_dir(input_owned(path, pathlen, MAX_PATH)?)?;
+        check_tree(&path, 0, &mut 0)?;
+        let raw = input_owned(request, requestlen, MAX_VECTOR_REQUEST)?;
+        let request: VectorRequest = serde_json::from_slice(&raw).map_err(|_| Fault::Input)?;
+        let runtime = Runtime::new().map_err(|_| Fault::Runtime)?;
+        runtime.block_on(query_vector(&path, request))
     }) }
 }
 
