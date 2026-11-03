@@ -11,11 +11,11 @@ Baseline: `HEAD=9cc21933` == `origin/main`. Durable author write lane landed and
 
 ### Tier A — bound at the transport level: 110 ops via 35 binders
 
-### Tier B — wired into a running lane: 38 ops total
+### Tier B — wired into a running lane: 42 ops total
 
 | Lane | Ops | Bindings |
 |---|---|---|
-| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go`, from `main.go:116-117`) | **27** | `BindNavigation` + `BindProjects` (7: `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open`) + 8 disjoint editor read binders landed in `af31c463` (20: 8 draft reads, `project:recent-list`, `fs:list-dir`, `project:overview-current`, `fs:read-json`, `db:project-core-get`, `db:blueprint-get-all`, `db:revision-get-pending`, `db:revision-list`, `db:review-list`, `db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) |
+| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go`, from `main.go:116-117`) | **31** | `BindNavigation` + `BindProjects` (7: `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open`) + 8 disjoint editor read binders landed in `af31c463` (20: 8 draft reads, `project:recent-list`, `fs:list-dir`, `project:overview-current`, `fs:read-json`, `db:project-core-get`, `db:blueprint-get-all`, `db:revision-get-pending`, `db:revision-list`, `db:review-list`, `db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) + `BindCharacterLiveReads` (3: `db:character-get-all`, `db:character-roster-read`, `character-identity:read`; served by `syntheticDurableOpen.ReadCharactersJSON` → `authorruntime.ReadCharactersJSONDurable` on the admitted author DB) + `BindDraftLiveWrites` (1: `db:draft-update-content`; served by `syntheticDurableOpen.CommitDraftContent` → `authorruntime.CommitDraftCASDurable` → `store.Drafts.UpdateContentIfCurrent`, with the lease rotated in place on the same `*admittedAuthor`) |
 | read-only (`main.go:315-362`) | 28 | 8 draft reads + `db:draft-update-content` CAS (`syntheticReadOpen.CommitDraftContent` → `authorruntime.CommitDraftCAS`), character reads, editor reads, `project:recent-list`, `fs:list-dir`, `fs:read-json`, `project:overview-current` |
 | model (`main.go:275-278`) | 9 | config/startup/`llm:list-models`/`llm:save-model`/`llm:delete-model` |
 
@@ -30,29 +30,24 @@ and `project:recent-remove` (no provider implements `RemoveRecentProject` anywhe
 
 Return `501 GO_OPERATION_NOT_MIGRATED` (`transport/server.go:97-100`); unknown ops → `404 OPERATION_NOT_EXPOSED`.
 
-## Cheapest next win: wire the read binders into the durable lane (21 ops)
+## Durable character reads and draft CAS (landed on top of `af31c463`)
 
-The durable `authorruntime.ReadLifecycle` **already implements** the readers:
+The durable lane now binds its remaining stateful reads/writes without replacing its write
+admission:
 
-- `ReadDraftJSON` (`draft_read.go:17`)
-- `ReadCharactersJSON` (`character_read.go:57`)
-- `ReadEditorStageJSON` (`editor_stage_read.go:16`)
-- `ReadReviewRevisionJSON` (`editor_review_read.go:17`)
-- `ReadReviewRevisionFullJSON` (`editor_review_full_read.go:16`)
-- `ReadAbsentReviewCycleJSON` (`editor_review_cycle_read.go:16`)
-- `ReadCurrentOverviewJSON` (`project_overview_read.go:17`)
-- `ReadArchCheckpoint` (`editor_checkpoint.go:22`)
-- `BeginKnowledgeRead` (`knowledge_read_linux.go:30`)
-
-Binders to add (disjoint from `BindProjects`; the read-only lane already proves them against the
-same lifecycle): `BindDraftLiveReads` (8), `BindCharacterLiveReads` (3), `BindEditorStageReads` (2),
-`BindEditorReviewReads` (3), `BindEditorReviewFullReads` (2), `BindEditorReviewCycleAbsentRead` (1),
-`BindCurrentOverview` (1), `BindEditorCheckpoint` (1) = **21 ops**.
-
-## Draft CAS write (medium effort)
-
-`db:draft-update-content` needs `DraftCommitService` (`draft_commit_linux.go:59`) plus a
-`CommitDraftContent` adapter in the durable builder. The read-only lane proves the pattern.
+- `BindCharacterLiveReads` → `syntheticDurableOpen.ReadCharactersJSON` →
+  `authorruntime.ReadCharactersJSONDurable` (`character_read.go`). The three character reads run on
+  the admitted author database under the frozen cookie/tab/lease fence. The legacy writer lock is
+  process-exclusive, so the repository's `BEGIN IMMEDIATE` multi-query reservation is safe on the
+  author's own `mode=rw` connection and no private snapshot copy is needed.
+- `BindDraftLiveWrites` → `syntheticDurableOpen.CommitDraftContent` →
+  `authorruntime.CommitDraftCASDurable` (`durable_draft_commit_linux.go`). The full-body CAS runs
+  through the single author-save path `store.Drafts.UpdateContentIfCurrent` against the admitted
+  author DB (baseline compare, receipt/content-ownership fences, both updates in one
+  `BEGIN IMMEDIATE`). On success the permit adopts the new committed digest and the frozen lease
+  rotates in place: the same `*admittedAuthor` handle stays installed, so `project:save` keeps
+  working and the session is never downgraded to a read-only handle. A stale or replayed baseline
+  fails exactly like the read-only lane (`DRAFT_CONTENT_CONFLICT`).
 
 ## Implemented in runtime but has NO transport binder (Tier D gating work)
 
@@ -98,7 +93,7 @@ same lifecycle): `BindDraftLiveReads` (8), `BindCharacterLiveReads` (3), `BindEd
 | finalized-character | 5 | 0 | 0 | 5 |
 | chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
 | prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
-| **TOTAL** | **281** | **110** | **27** | **171** |
+| **TOTAL** | **281** | **110** | **31** | **171** |
 
 ## Runtime exists but no binder (Tier D gating)
 

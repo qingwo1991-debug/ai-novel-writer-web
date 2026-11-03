@@ -70,6 +70,57 @@ func (l *ReadLifecycle) ReadCharactersJSON(ctx context.Context, owner projectses
 	return admitted.reader.readCharactersJSON(ctx, expected.ProjectID, operation)
 }
 
+// ReadCharactersJSONDurable executes one of the three public character reads
+// directly on the admitted author database under the frozen cookie/tab/lease
+// context. The durable lane holds the real writable project.db and the legacy
+// writer lock is exclusive, so no other writer can exist and the repository's
+// BEGIN IMMEDIATE multi-query reservation is safe on the author's own mode=rw
+// connection. The exact session, tab and project lease remain held through JSON
+// serialization and source re-verification; a database handle never escapes.
+func (l *ReadLifecycle) ReadCharactersJSONDurable(ctx context.Context, owner projectsession.Owner, expected projectsession.Context, operation string) (json.RawMessage, error) {
+	if l == nil || l.active == nil || !characterReadOperation(operation) {
+		return nil, ErrInvalid
+	}
+	handle, done, err := l.active.Begin(ctx, owner, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	author, ok := handle.(*admittedAuthor)
+	if !ok {
+		return nil, ErrDurableInvalid
+	}
+	author.mu.Lock()
+	defer author.mu.Unlock()
+	if author.closed || author.handle == nil || author.permit == nil {
+		return nil, ErrDurableClosed
+	}
+	if err := author.permit.Verify(ctx, author.project); err != nil {
+		return nil, err
+	}
+	if err := author.handle.Verify(ctx); err != nil {
+		return nil, err
+	}
+	repository := store.NewCharacters(author.handle.DB())
+	var result any
+	switch operation {
+	case "db:character-get-all":
+		result, err = repository.All(ctx)
+	case "db:character-roster-read":
+		result, err = repository.ReadForProject(ctx, expected.ProjectID)
+	case "character-identity:read":
+		result, err = repository.IdentityView(ctx)
+	}
+	var wire json.RawMessage
+	if err == nil {
+		wire, err = json.Marshal(result)
+	}
+	if err := errors.Join(err, author.handle.Verify(ctx)); err != nil {
+		return nil, err
+	}
+	return wire, nil
+}
+
 func characterReadOperation(operation string) bool {
 	switch operation {
 	case "db:character-get-all", "db:character-roster-read", "character-identity:read":

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -60,6 +61,10 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if _, err := os.Stat(database); err != nil {
 		t.Fatalf("real synthetic project.db missing: %v", err)
 	}
+	// Seed the real current-schema rows this lane must serve: one working draft
+	// body (the CAS target) and two characters. This runs before project:open so
+	// the durable write admission fingerprints exactly the seeded database.
+	draftID, originalBody := seedSyntheticDurableRows(t, database)
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	bootRequest.Header.Set("X-Novel-User", "synthetic-author")
 	boot := httptest.NewRecorder()
@@ -135,6 +140,17 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if contextWire.Result["projectId"] != id || contextWire.Result["leaseId"] != lease || contextWire.Result["projectPath"] != projectPath {
 		t.Fatal("frozen context mismatch", contextRec.Body.String())
 	}
+	// Character reads run directly on the admitted author database under the
+	// same frozen cookie/tab/lease fence: both the full characters query and the
+	// roster read return real rows written into this durable project.
+	characterAll := rpc("db:character-get-all", []any{projectPath, expected})
+	if characterAll.Code != http.StatusOK || !bytes.Contains(characterAll.Body.Bytes(), []byte(`"name":"甲"`)) {
+		t.Fatal("durable character-get-all failed", characterAll.Code, characterAll.Body.String())
+	}
+	characterRoster := rpc("db:character-roster-read", []any{projectPath, expected})
+	if characterRoster.Code != http.StatusOK || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"name":"乙"`)) || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"currentDerivedFields"`)) {
+		t.Fatal("durable character-roster-read failed", characterRoster.Code, characterRoster.Body.String())
+	}
 	// A stale frozen context is rejected before any write reaches the database.
 	staleExpected := map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}
 	stale := rpc("project:save", []any{id, map[string]any{"id": id, "sessionLease": "forged-lease", "path": projectPath, "name": "骗写"}, projectPath, staleExpected})
@@ -208,6 +224,85 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if coreRec.Code != http.StatusOK || !json.Valid(coreRec.Body.Bytes()) || !bytes.Contains(coreRec.Body.Bytes(), []byte(`"projectName":"`+savedName+`"`)) || !bytes.Contains(coreRec.Body.Bytes(), []byte(`"genre":"urban"`)) {
 		t.Fatal("durable project-core read missing committed data", coreRec.Code, coreRec.Body.String())
 	}
+	// The durable lane commits a draft body CAS against the author's own
+	// database: the stale-baseline rejection keeps the stored content unchanged,
+	// then the matched CAS persists and rotates the frozen lease in place.
+	var resultWire struct {
+		Result map[string]any `json:"result"`
+	}
+	staleCAS := rpc("db:draft-update-content", []any{draftID, "replayed", 2, projectPath, "stale draft", expected})
+	if err := json.Unmarshal(staleCAS.Body.Bytes(), &resultWire); err != nil || staleCAS.Code != http.StatusOK {
+		t.Fatal("stale CAS decode failed", staleCAS.Code, staleCAS.Body.String(), err)
+	}
+	conflict, _ := resultWire.Result["errorCode"].(string)
+	if success, _ := resultWire.Result["success"].(bool); success || conflict != "DRAFT_CONTENT_CONFLICT" {
+		t.Fatal("stale draft CAS was not rejected", staleCAS.Body.String())
+	}
+	if got := durableDraftBody(t, database, draftID); got != originalBody {
+		t.Fatalf("stale draft CAS changed stored content: %q", got)
+	}
+	const changedBody = "durable committed draft"
+	committedDraft := rpc("db:draft-update-content", []any{draftID, changedBody, 5, projectPath, originalBody, expected})
+	if err := json.Unmarshal(committedDraft.Body.Bytes(), &resultWire); err != nil || committedDraft.Code != http.StatusOK {
+		t.Fatal("draft CAS decode failed", committedDraft.Code, committedDraft.Body.String(), err)
+	}
+	if success, _ := resultWire.Result["success"].(bool); !success {
+		t.Fatal("draft CAS reported failure", committedDraft.Body.String())
+	}
+	session, _ := resultWire.Result["projectSession"].(map[string]any)
+	fresh, _ := session["leaseId"].(string)
+	if fresh == "" || fresh == lease || session["projectId"] != id || session["projectPath"] != projectPath {
+		t.Fatal("draft CAS did not rotate the lease in place", committedDraft.Body.String())
+	}
+	freshSession := map[string]any{"projectId": id, "leaseId": fresh, "projectPath": projectPath}
+	// The committed body is readable through the rotated lease both over the
+	// real transport and by reading the SQLite file directly.
+	full := rpc("db:draft-get-full", []any{draftID, projectPath, freshSession})
+	if full.Code != http.StatusOK || !bytes.Contains(full.Body.Bytes(), []byte(`"content":"`+changedBody+`"`)) {
+		t.Fatal("committed draft not readable over HTTP", full.Code, full.Body.String())
+	}
+	if got := durableDraftBody(t, database, draftID); got != changedBody {
+		t.Fatalf("committed draft not visible in direct readback: %q", got)
+	}
+	if got := durableDraftWordCount(t, database, draftID); got != 5 {
+		t.Fatalf("committed word count not persisted: %d", got)
+	}
+	// The rotated lease is the only live one: the pre-commit frozen context is
+	// fenced out of every further operation.
+	if old := rpc("db:draft-get-full", []any{draftID, projectPath, expected}); old.Code == http.StatusOK {
+		t.Fatal("pre-commit lease still readable after the CAS", old.Body.String())
+	}
+	// Replaying the pre-commit baseline through the rotated lease is a stale
+	// revision and must be rejected without touching the stored content.
+	replayed := rpc("db:draft-update-content", []any{draftID, "again", 6, projectPath, originalBody, freshSession})
+	if err := json.Unmarshal(replayed.Body.Bytes(), &resultWire); err != nil || replayed.Code != http.StatusOK {
+		t.Fatal("replayed CAS decode failed", replayed.Code, replayed.Body.String(), err)
+	}
+	conflict, _ = resultWire.Result["errorCode"].(string)
+	if success, _ := resultWire.Result["success"].(bool); success || conflict != "DRAFT_CONTENT_CONFLICT" {
+		t.Fatal("replayed draft CAS was not rejected", replayed.Body.String())
+	}
+	if got := durableDraftBody(t, database, draftID); got != changedBody {
+		t.Fatalf("replayed draft CAS changed stored content: %q", got)
+	}
+	// project:save still succeeds AFTER the draft CAS with the rotated lease:
+	// the durable session was not downgraded by the commit.
+	const savedNameAfterCAS = "草稿后书名"
+	afterCAS := rpc("project:save", []any{id, map[string]any{
+		"id": id, "sessionLease": fresh, "path": projectPath, "name": savedNameAfterCAS,
+	}, projectPath, freshSession})
+	if err := json.Unmarshal(afterCAS.Body.Bytes(), &saveWire); err != nil || afterCAS.Code != http.StatusOK {
+		t.Fatal("save after draft CAS decode failed", afterCAS.Code, afterCAS.Body.String(), err)
+	}
+	if !saveWire.Result.Success {
+		t.Fatal("save after draft CAS reported failure", afterCAS.Body.String())
+	}
+	if value, _ := saveWire.Result.Project["projectName"].(string); value != savedNameAfterCAS {
+		t.Fatalf("save after draft CAS missing committed name: %q", saveWire.Result.Project)
+	}
+	if got := durableProjectName(t, database); got != savedNameAfterCAS {
+		t.Fatalf("save after draft CAS did not persist: %q", got)
+	}
 	// Recent navigation exposes only the one synthetic project, never a key.
 	recentRec := rpc("project:recent-list", []any{})
 	var recentWire struct {
@@ -217,7 +312,7 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		t.Fatal("durable recent navigation mismatch", recentRec.Code, recentRec.Body.String(), err)
 	}
 	// db:close closes the admitted database before acknowledging.
-	closed := rpc("db:close", []any{projectPath, expected})
+	closed := rpc("db:close", []any{projectPath, freshSession})
 	if closed.Code != http.StatusOK {
 		t.Fatal("db:close failed", closed.Code, closed.Body.String())
 	}
@@ -235,12 +330,75 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if !reopenWire.Result.Success || reopenWire.Result.Project == nil {
 		t.Fatal("reopen failed", reopened.Body.String())
 	}
-	if value, _ := reopenWire.Result.Project["name"].(string); value != savedName {
+	if value, _ := reopenWire.Result.Project["name"].(string); value != savedNameAfterCAS {
 		t.Fatalf("reopen lost committed update: %q", value)
 	}
 	if value, _ := reopenWire.Result.Project["path"].(string); value != projectPath {
 		t.Fatalf("reopen changed project path: %q", value)
 	}
+}
+
+// seedSyntheticDurableRows writes the real current-schema rows the durable
+// lane must serve into the created synthetic project: one working draft body
+// (the CAS target) and two characters. It runs before project:open so the write
+// admission fingerprints exactly the seeded database.
+func seedSyntheticDurableRows(t *testing.T, database string) (int64, string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	originalBody := "old durable draft"
+	inserted, err := db.Exec("INSERT INTO contents(body) VALUES(?)", originalBody)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	contentID, err := inserted.LastInsertId()
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	inserted, err = db.Exec("INSERT INTO drafts(chapter_number, version, status, content_id, word_count) VALUES(1, 1, 'draft', ?, 9)", contentID)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	draftID, err := inserted.LastInsertId()
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO characters(character_id, name, role) VALUES('c-durable', '甲', 'protagonist')"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO characters(character_id, name, role) VALUES('c-durable-2', '乙', 'supporting')"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return draftID, originalBody
+}
+
+// durableDraftBody reads a draft body straight from the online database file.
+func durableDraftBody(t *testing.T, database string, draftID int64) string {
+	t.Helper()
+	var value string
+	durableQuery(t, database, "SELECT c.body FROM drafts d JOIN contents c ON c.id=d.content_id WHERE d.id="+strconv.FormatInt(draftID, 10), &value)
+	return value
+}
+
+// durableDraftWordCount reads a draft's committed word count straight from the
+// online database file.
+func durableDraftWordCount(t *testing.T, database string, draftID int64) int64 {
+	t.Helper()
+	var value int64
+	durableQuery(t, database, "SELECT word_count FROM drafts WHERE id="+strconv.FormatInt(draftID, 10), &value)
+	return value
 }
 
 func durableProjectName(t *testing.T, database string) string {

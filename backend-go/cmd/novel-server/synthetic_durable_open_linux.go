@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -241,6 +242,64 @@ func (s *syntheticDurableOpen) readAuthorTx(ctx context.Context, caller transpor
 	return errors.Join(readErr, closeErr)
 }
 
+// ReadCharactersJSON is the durable lane's character read. The shared surface
+// method needs the read-only admission's private snapshot, so this lane runs
+// the three character reads directly on the admitted author database under the
+// same frozen cookie/tab/lease fence as project:save; the exclusive legacy
+// writer lock leaves no other writer to conflict with BEGIN IMMEDIATE.
+func (s *syntheticDurableOpen) ReadCharactersJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.lifecycle == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	return s.lifecycle.ReadCharactersJSONDurable(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
+}
+
+// CommitDraftContent is the durable lane's draft body CAS. It runs the CAS
+// directly on the admitted author database and rotates the frozen lease in
+// place, so the same admittedAuthor handle stays installed and the durable
+// write session is never downgraded to a read-only handle. The catalog key is
+// unchanged because this lane edits the author's own tree instead of switching
+// sources.
+func (s *syntheticDurableOpen) CommitDraftContent(ctx context.Context, caller transport.Caller, request transport.DraftLiveWriteRequest) (transport.DraftLiveWriteAck, error) {
+	var zero transport.DraftLiveWriteAck
+	if s == nil || ctx == nil {
+		return zero, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(request.Expected)
+	if err != nil {
+		return zero, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.lifecycle == nil {
+		return zero, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	baseline := request.ExpectedContent
+	fresh, err := s.lifecycle.CommitDraftCASDurable(ctx, owner, expected, request.DraftID, request.Content, request.WordCount, &baseline)
+	if err != nil {
+		return zero, err
+	}
+	if fresh.ProjectID != expected.ProjectID || fresh.ProjectPath != expected.ProjectPath ||
+		fresh.LeaseID == "" || fresh.LeaseID == expected.LeaseID {
+		return zero, errors.New("SYNTHETIC_COMMIT_RESULT_INVALID")
+	}
+	return transport.DraftLiveWriteAck{ProjectSession: map[string]any{
+		"projectId":   fresh.ProjectID,
+		"projectPath": fresh.ProjectPath,
+		"leaseId":     fresh.LeaseID,
+	}}, nil
+}
+
 // OpenProject maps a browser project path to the exact process-local catalog
 // key of the created synthetic project, then opens it for durable editing.
 // The path is never passed to the runtime and never opens a filesystem target.
@@ -308,9 +367,11 @@ func (s *syntheticDurableOpen) SaveProject(ctx context.Context, caller transport
 // binds the write domain (project:open, db:close, project:get-runtime-context,
 // project:save, project:update-config) plus project:recent-list only when the
 // provider implements ProjectCatalogProvider — syntheticDurableOpen does not.
-// The disjoint read binders below are the only read providers installed, so no
+// The disjoint binders below are the only read/write providers installed, so no
 // operation is ever double-bound and the read-only project binder (which would
-// rebind project:open) is never installed here.
+// rebind project:open) is never installed here. Character reads and the draft
+// body CAS are served by syntheticDurableOpen's own overrides against the
+// admitted author database under the same frozen lease as project:save.
 func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, durableDir string, config syntheticDurableConfig) (http.Handler, func(), error) {
 	if durableDir == "" || !underTempRoot(durableDir) || !privateSyntheticGlobalRoot(filepath.Dir(durableDir)) {
 		return nil, nil, errors.New("synthetic durable project requires a library beneath a private temporary data root")
@@ -358,7 +419,9 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	// project/open and project/close binders are deliberately skipped: they
 	// would rebind project:open and db:close and fail OPERATION_ALREADY_BOUND.
 	for _, bind := range []func() error{
+		func() error { return server.BindCharacterLiveReads(durable) },
 		func() error { return server.BindDraftLiveReads(durable) },
+		func() error { return server.BindDraftLiveWrites(durable) },
 		func() error { return server.BindEditorNavigation(durable) },
 		func() error { return server.BindCurrentOverview(durable) },
 		func() error { return server.BindEditorCheckpoint(durable) },

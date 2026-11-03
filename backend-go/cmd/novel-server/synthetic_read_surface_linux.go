@@ -181,8 +181,9 @@ func (s *syntheticReadSurface) OpenGrantedReadOnlyProject(ctx context.Context, c
 // ReadCharactersJSON uses the same lifecycle and exact cookie/tab lease as
 // project:open. The runtime owns the private snapshot and finishes JSON
 // serialization before returning; this bridge never exposes a database handle.
-// Character reads need the read-only admission's private snapshot machinery,
-// so only the read-only lane binds this provider.
+// Character reads need the read-only admission's private snapshot machinery, so
+// this read-only implementation is bound by the read-only lane; the durable
+// lane overrides the method to read the admitted author database directly.
 func (s *syntheticReadSurface) ReadCharactersJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
 	if s == nil || ctx == nil {
 		return nil, errors.New("SYNTHETIC_READ_CLOSED")
@@ -246,10 +247,11 @@ func (s *syntheticReadSurface) ReadDraftJSON(ctx context.Context, caller transpo
 	return wire, nil
 }
 
-// CommitDraftContent is available only to the private, read-enabled synthetic
-// server: the durable lane keeps no DraftCommitService, and a committed CAS
-// would downgrade its write admission. The cached catalog key comes from a
-// prior admitted project:open, never from a browser path.
+// CommitDraftContent is the read-only lane's draft body CAS via the switched
+// DraftCommitService. The durable lane overrides the method and commits the CAS
+// directly on its admitted author database without a source switch, so the
+// read-only implementation stays exclusive to this lane. The cached catalog key
+// comes from a prior admitted project:open, never from a browser path.
 func (s *syntheticReadSurface) CommitDraftContent(ctx context.Context, caller transport.Caller, request transport.DraftLiveWriteRequest) (transport.DraftLiveWriteAck, error) {
 	var zero transport.DraftLiveWriteAck
 	if s == nil || ctx == nil {

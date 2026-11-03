@@ -63,7 +63,8 @@ func redactOpenError(err error) string {
 
 // admittedAuthor is one durable, write-capable admitted project. It implements
 // projectsession.Admitted so the coordinator can fence it exactly like the
-// read-only handle: the lease context is stable and Verify re-proves authority.
+// read-only handle: the lease context is stable except for the in-place lease
+// rotation after an author draft CAS, and Verify re-proves authority.
 type admittedAuthor struct {
 	mu      sync.Mutex
 	context projectsession.Context
@@ -74,7 +75,17 @@ type admittedAuthor struct {
 	closed  bool
 }
 
-func (a *admittedAuthor) Context() projectsession.Context { return a.context }
+// Context reports the currently live lease. It is locked because a durable
+// draft CAS rotates the lease in place under the same handle instead of
+// installing a read-only replacement.
+func (a *admittedAuthor) Context() projectsession.Context {
+	if a == nil {
+		return projectsession.Context{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.context
+}
 
 // Verify re-proves the retained lock, the project/storage identity, the pinned
 // database inode and the admission content digest.
