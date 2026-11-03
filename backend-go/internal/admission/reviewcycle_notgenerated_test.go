@@ -73,7 +73,26 @@ func TestM03NotGeneratedAgainstOriginalTypeScriptOracle(t *testing.T) {
 			if fmt.Sprintf("%x", sha256.Sum256(before)) != sample.SHA256 {
 				t.Fatal("original oracle fixture hash differs")
 			}
-			db, err := sql.Open("sqlite3", "file:"+sample.File+"?mode=ro")
+			// The original TypeScript oracle copies the fixture to a writable
+			// database and enables foreign keys before verifyM03ReviewCycle. A
+			// read-only connection cannot enable PRAGMA foreign_keys, so verify
+			// on a writable copy while leaving the original fixture untouched.
+			copyFile, err := os.CreateTemp("", "novel-m03-notgenerated-*.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			copyPath := copyFile.Name()
+			defer os.Remove(copyPath)
+			if err := copyFile.Chmod(0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := copyFile.Write(before); err != nil {
+				t.Fatal(err)
+			}
+			if err := copyFile.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite3", "file:"+copyPath+"?mode=rw")
 			if err != nil {
 				t.Fatal(err)
 			}

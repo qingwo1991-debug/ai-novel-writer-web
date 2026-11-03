@@ -246,6 +246,22 @@ jobs:
           path: ${{ runner.temp }}/novel-go-m03-generated/contract.json
           retention-days: 7
           if-no-files-found: error
+      - name: Generate original rechecked M03 verifier-only fixtures
+        env:
+          NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
+        run: |
+          export GO_M03_GENERATED_CONTRACT="$RUNNER_TEMP/novel-go-m03-generated/contract.json"
+          export GO_M03_RECHECKED_CONTRACT="$RUNNER_TEMP/novel-go-m03-rechecked/contract.json"
+          printf 'GO_M03_RECHECKED_CONTRACT=%s\n' "$GO_M03_RECHECKED_CONTRACT" >> "$GITHUB_ENV"
+          node --import ./contract/register-typescript.mjs ./contract/m03-rechecked-contract.mjs
+          test -s "$GO_M03_RECHECKED_CONTRACT"
+      - name: Upload original rechecked M03 verifier-only oracle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: go-m03-rechecked-oracle-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-m03-rechecked/contract.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Generate original recognized v4 populated M03 fixtures
         env:
           NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
