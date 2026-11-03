@@ -3,6 +3,7 @@
 package projectcatalog
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,94 @@ import (
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
+
+func TestPromoteVerifiedRecoveryKeepsHoldUntilNewKeyIsReady(t *testing.T) {
+	library, oldProject, path, metadata := fixture(t)
+	pending := true
+	store, err := OpenWithRecoveryCheck(library, metadata, func(gotPath, gotID string) error {
+		if gotPath != path || gotID != oldProject.ProjectID() {
+			return ErrCatalogInvalid
+		}
+		if pending {
+			return ErrCatalogRecoveryPending
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Initial registration predates the exchange and persists the navigation
+	// record. The held promotion must not rewrite that record.
+	pending = false
+	initial, err := store.Register(oldProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(metadata, fileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.HoldRecovery(path, oldProject.ProjectID()); err != nil {
+		t.Fatal(err)
+	}
+	pending = true
+	if got, err := store.PromoteVerifiedRecovery(context.Background(), oldProject); got.Key != "" || !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("pending recovery promoted a key: %#v, %v", got, err)
+	}
+	if got, err := store.PromoteVerifiedRecovery(nil, oldProject); got.Key != "" || !errors.Is(err, ErrCatalogInvalid) {
+		t.Fatalf("invalid context promoted a key: %#v, %v", got, err)
+	}
+	if err := os.Rename(path, path+"-retained-old"); err != nil {
+		t.Fatal(err)
+	}
+	storage := filepath.Join(path, projectfs.StorageDirectory)
+	if err := os.MkdirAll(storage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.ManifestName), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storage, projectfs.DatabaseName), []byte("confirmed synthetic fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := library.OpenProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	pending = false
+	if got, err := store.PromoteVerifiedRecovery(context.Background(), oldProject); got.Key != "" || !errors.Is(err, projectfs.ErrChanged) {
+		t.Fatalf("stale project promoted a key: %#v, %v", got, err)
+	}
+	if _, err := store.List(); !errors.Is(err, ErrCatalogRecoveryPending) {
+		t.Fatalf("failed promotion removed hold: %v", err)
+	}
+	promoted, err := store.PromoteVerifiedRecovery(context.Background(), replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promoted.Key == "" || promoted.Key == initial.Key || promoted.Path != path || promoted.ProjectID != replacement.ProjectID() {
+		t.Fatalf("replacement key or metadata invalid: %#v", promoted)
+	}
+	after, err := os.ReadFile(filepath.Join(metadata, fileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("promotion rewrote durable recent metadata")
+	}
+	if resolved, err := store.Resolve(initial.Key); resolved != nil || !errors.Is(err, ErrCatalogKey) {
+		if resolved != nil {
+			resolved.Close()
+		}
+		t.Fatalf("old key survived promotion: %v", err)
+	}
+	resolved, err := store.Resolve(promoted.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.Close()
+}
 
 func TestRecoveryCheckBlocksRekeyResolutionAndRemovalAcrossRestart(t *testing.T) {
 	library, project, path, metadata := fixture(t)

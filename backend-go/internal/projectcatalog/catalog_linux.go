@@ -6,6 +6,7 @@
 package projectcatalog
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -126,7 +127,7 @@ func (s *Store) checkRecoveryLocked(path, projectID string) error {
 
 // HoldRecovery synchronizes an in-process exchange with List, Resolve and
 // Register. Once it returns, no catalog operation can issue or resolve a key
-// for this project until ReleaseAfterVerifiedRecovery succeeds. The trusted
+// for this project until a verified release or promotion succeeds. The trusted
 // publisher must acquire this hold before changing the source tree. Holds are
 // process-local; restart safety requires OpenWithRecoveryCheck to consult the
 // persisted exchange journal before any catalog operation.
@@ -154,6 +155,7 @@ func (s *Store) HoldRecovery(path, projectID string) error {
 // only after the trusted recovery checker has confirmed a durable SWITCHED
 // marker and post-swap readback. It revokes all keys for the old inode before
 // making the new project available. A store without a checker cannot release.
+// Coordinators that need a new key must use PromoteVerifiedRecovery instead.
 func (s *Store) ReleaseAfterVerifiedRecovery(project *projectfs.Project) error {
 	if project == nil {
 		return ErrCatalogInvalid
@@ -178,6 +180,81 @@ func (s *Store) ReleaseAfterVerifiedRecovery(project *projectfs.Project) error {
 	s.revokeLocked(path)
 	delete(s.holds, path)
 	return nil
+}
+
+// PromoteVerifiedRecovery publishes a replacement catalog key after the
+// coordinator has installed its reader while the catalog hold is still in
+// force. The prior Register and HoldRecovery guarantee that the navigation
+// record is already durable, so this step only changes process-local keys.
+// The caller must still own the source writer exclusion and reader fence.
+func (s *Store) PromoteVerifiedRecovery(ctx context.Context, project *projectfs.Project) (Recent, error) {
+	if ctx == nil || project == nil {
+		return Recent{}, ErrCatalogInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return Recent{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path, projectID := project.Path(), project.ProjectID()
+	if s.holds[path] != projectID || s.recovery == nil {
+		return Recent{}, ErrCatalogRecoveryPending
+	}
+	var saved *record
+	for i := range s.recent {
+		if s.recent[i].Path == path && s.recent[i].ProjectID == projectID {
+			saved = &s.recent[i]
+			break
+		}
+	}
+	if saved == nil {
+		return Recent{}, ErrCatalogInvalid
+	}
+	if err := s.recovery(path, projectID); err != nil {
+		return Recent{}, ErrCatalogRecoveryPending
+	}
+	if err := project.VerifyNoPortableAuthority(ctx); err != nil {
+		return Recent{}, err
+	}
+	current, err := s.library.OpenProject(path)
+	if err != nil {
+		return Recent{}, err
+	}
+	if current.ProjectID() != projectID || !current.Identity().Same(project.Identity()) {
+		current.Close()
+		return Recent{}, projectfs.ErrChanged
+	}
+	verifyErr := current.VerifyNoPortableAuthority(ctx)
+	closeErr := current.Close()
+	if verifyErr != nil {
+		return Recent{}, verifyErr
+	}
+	if closeErr != nil {
+		return Recent{}, closeErr
+	}
+	if err := ctx.Err(); err != nil {
+		return Recent{}, err
+	}
+	var key string
+	for {
+		key, err = newKey()
+		if err != nil {
+			return Recent{}, err
+		}
+		if _, exists := s.keys[key]; exists {
+			continue
+		}
+		if _, exists := s.removeKeys[key]; !exists {
+			break
+		}
+	}
+	// No fallible operation follows. Catalog readers cannot observe an
+	// intermediate state because the Store mutex remains held throughout.
+	s.revokeLocked(path)
+	s.byPath[path] = key
+	s.keys[key] = capability{path: path, id: projectID, identity: project.Identity()}
+	delete(s.holds, path)
+	return Recent{Key: key, Name: saved.Name, Path: path, ProjectID: projectID, UpdatedAt: saved.UpdatedAt}, nil
 }
 
 func privateDirectory(path string) error {
