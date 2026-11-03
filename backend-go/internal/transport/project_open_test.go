@@ -42,3 +42,61 @@ func TestReadOnlyProjectOpenBindingIsIndependentAndCatalogOnly(t *testing.T) {
 		t.Fatalf("invalid target reached provider %d times", called)
 	}
 }
+
+func TestReadOnlyProjectOpenGrantBindingAcceptsOnlyOpaqueTarget(t *testing.T) {
+	server := fixture(t)
+	catalogCalls, grantCalls := 0, 0
+	catalog := ProjectReadOpenProviderFunc(func(_ context.Context, _ Caller, key, token string) (any, error) {
+		catalogCalls++
+		if key != "catalog-key" || token != "catalog-request" {
+			t.Fatalf("catalog arguments changed: %q %q", key, token)
+		}
+		return map[string]any{"success": true}, nil
+	})
+	grants := ProjectGrantReadOpenProviderFunc(func(_ context.Context, caller Caller, grantID, token string) (any, error) {
+		grantCalls++
+		if caller.SessionID != "cookie" || caller.ClientID != "tab" || grantID != "opaque-grant" || token != "grant-request" {
+			t.Fatalf("untrusted grant arguments forwarded: %+v %q %q", caller, grantID, token)
+		}
+		return map[string]any{"success": true}, nil
+	})
+	if err := server.BindProjectReadOpenWithGrants(catalog, grants); err != nil {
+		t.Fatal(err)
+	}
+	if server.handlers["project:save"] != nil || server.handlers["db:close"] != nil {
+		t.Fatal("grant binder exposed other project mutations")
+	}
+	caller := Caller{SessionID: "cookie", ClientID: "tab"}
+	for _, request := range []struct {
+		target any
+		token  string
+	}{
+		{map[string]any{"grantId": "opaque-grant"}, "grant-request"},
+		{map[string]any{"grantId": "opaque-grant", "displayName": "Book"}, "grant-request"},
+		{"catalog-key", "catalog-request"},
+	} {
+		result, err := server.handlers["project:open"](context.Background(), caller, []any{request.target, request.token, "/untrusted/renderer/path"})
+		if err != nil || result.(map[string]any)["success"] != true {
+			t.Fatalf("valid target refused: %#v %v", request.target, err)
+		}
+	}
+	if catalogCalls != 1 || grantCalls != 2 {
+		t.Fatalf("unexpected routing: catalog=%d grants=%d", catalogCalls, grantCalls)
+	}
+	for _, target := range []any{
+		map[string]any{"grantId": "opaque-grant", "path": "/author/project"},
+		map[string]any{"grantId": "opaque-grant", "displayName": "Book", "extra": true},
+		map[string]any{"grantId": ""}, map[string]any{"grantId": 17},
+		map[string]any{"grantId": "opaque-grant", "displayName": 17},
+		map[string]any{"path": "/author/project"},
+	} {
+		_, err := server.handlers["project:open"](context.Background(), caller, []any{target, "grant-request", nil})
+		public, ok := err.(*security.HTTPError)
+		if !ok || public.Status != http.StatusBadRequest {
+			t.Fatalf("accepted invalid grant target %#v: %v", target, err)
+		}
+	}
+	if catalogCalls != 1 || grantCalls != 2 {
+		t.Fatalf("invalid target reached provider: catalog=%d grants=%d", catalogCalls, grantCalls)
+	}
+}

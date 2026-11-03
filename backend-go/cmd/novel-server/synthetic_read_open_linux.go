@@ -17,6 +17,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectgrant"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectpublish"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -35,6 +36,7 @@ type syntheticReadOpen struct {
 	catalog   *projectcatalog.Store
 	lifecycle *authorruntime.ReadLifecycle
 	commits   *authorruntime.DraftCommitService
+	grants    *projectgrant.Registry
 	keys      map[string]string
 	workspace string
 	recovery  projectcatalog.RecoveryCheck
@@ -131,8 +133,14 @@ func newSyntheticReadOpen(library *projectfs.Library, libraryDir string, config 
 		remove()
 		return nil, err
 	}
+	grants, err := projectgrant.New(library)
+	if err != nil {
+		_ = lifecycle.Shutdown()
+		remove()
+		return nil, err
+	}
 	return &syntheticReadOpen{library: library, catalog: catalog, lifecycle: lifecycle,
-		commits: commits, keys: make(map[string]string), workspace: workspace, recovery: check}, nil
+		commits: commits, grants: grants, keys: make(map[string]string), workspace: workspace, recovery: check}, nil
 }
 
 func ensureSyntheticCatalogDirectory(dataRoot, directory string) error {
@@ -325,6 +333,24 @@ func (s *syntheticReadOpen) OpenReadOnlyProject(ctx context.Context, caller tran
 		s.keys[browserPath] = key
 	}
 	return s.lifecycle.OpenProjectReadOnly(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, key, token)
+}
+
+// OpenGrantedReadOnlyProject accepts only a grant issued by trusted server
+// state. No public route issues these grants in the synthetic bridge yet.
+func (s *syntheticReadOpen) OpenGrantedReadOnlyProject(ctx context.Context, caller transport.Caller, grantID, token string) (any, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.grants == nil {
+		return nil, errors.New("SYNTHETIC_READ_CLOSED")
+	}
+	if err := s.recovery(filepath.Join(s.library.Path(), ".go-recovery-probe"), syntheticRecoveryProbeID); err != nil {
+		return nil, err
+	}
+	return s.lifecycle.OpenGrantedProjectReadOnly(ctx,
+		projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, s.grants, grantID, token)
 }
 
 // ReadCharactersJSON uses the same lifecycle and exact cookie/tab lease as

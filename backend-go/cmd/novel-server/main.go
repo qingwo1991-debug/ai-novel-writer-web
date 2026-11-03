@@ -277,7 +277,7 @@ func migrationHandlerWithModelsAndReadOpen(registry *policy.Registry, address, s
 				cleanup()
 				return nil, nil, fmt.Errorf("synthetic project read: %w", err)
 			}
-			if err := server.BindProjectReadOpen(readOpen); err != nil {
+			if err := server.BindProjectReadOpenWithGrants(readOpen, readOpen); err != nil {
 				cleanup()
 				return nil, nil, err
 			}
