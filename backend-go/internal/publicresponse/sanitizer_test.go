@@ -152,10 +152,10 @@ func TestConcurrentRegistryAndClones(t *testing.T) {
 type promotedResponseA struct {
 	Text string `json:"text"`
 	Password string `json:"password"`
-	Collision string `json:"collision"`
+	Collision string
 }
 type promotedResponseB struct {
-	Collision string `json:"collision"`
+	Collision string
 }
 type promotedResponse struct {
 	promotedResponseA
@@ -175,7 +175,7 @@ func TestPromotedStructFieldsResolveBeforeCredentialFiltering(t *testing.T) {
 	}
 	out := s.Sanitize(value).(map[string]any)
 	if out["text"] != redacted || out["password"] != "" { t.Fatalf("promoted fields leaked or lost: %#v", out) }
-	if _, exists := out["collision"]; exists { t.Fatal("ambiguous promoted field survived") }
+	if _, exists := out["Collision"]; exists { t.Fatal("ambiguous promoted field survived") }
 	if _, exists := out["Hidden"]; exists { t.Fatal("ignored field survived") }
 }
 

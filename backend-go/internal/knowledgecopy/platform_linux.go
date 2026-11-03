@@ -37,3 +37,6 @@ func openRegular(root *os.Root, name string) (*os.File, error) {
 func openDirectory(root *os.Root) (*os.File, error) {
 	return root.OpenFile(".", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
+func createExclusive(root *os.Root, name string) (*os.File, error) {
+	return root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+}

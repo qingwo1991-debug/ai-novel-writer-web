@@ -76,10 +76,27 @@ type stageHook func(*projectfs.Project) error
 func Preflight(ctx context.Context, config Config) (Report, error) {
 	return preflight(ctx, config, nil)
 }
+
+// PreflightUnderLock performs the same read-only admission while the caller
+// retains the exact legacy gateway lock. This lets a future durable runtime
+// keep one exclusion across admission and the subsequent database lifetime.
+// The caller must keep the lock open, exclude non-cooperating writers, and
+// close all database handles before releasing it. This does not grant a write
+// capability or imply that a copied snapshot can be committed to author data.
+func PreflightUnderLock(ctx context.Context, config Config, held *writerlock.Lock) (Report, error) {
+	if held == nil {
+		return Report{}, writerlock.ErrUnsafe
+	}
+	return preflightReadWithLock(ctx, config, nil, nil, held)
+}
+
 func preflight(ctx context.Context, config Config, afterStage stageHook) (Report, error) {
 	return preflightRead(ctx, config, afterStage, nil)
 }
 func preflightRead(ctx context.Context, config Config, afterStage stageHook, capture *KnowledgeRead) (report Report, err error) {
+	return preflightReadWithLock(ctx, config, afterStage, capture, nil)
+}
+func preflightReadWithLock(ctx context.Context, config Config, afterStage stageHook, capture *KnowledgeRead, held *writerlock.Lock) (report Report, err error) {
 	defer func() {
 		if err != nil && capture != nil {
 			*capture = KnowledgeRead{}
@@ -94,17 +111,20 @@ func preflightRead(ctx context.Context, config Config, afterStage stageHook, cap
 	if err := validate(config); err != nil {
 		return report, err
 	}
-	guard, err := writerlock.AcquireLegacy(config.DataRoot)
-	if err != nil {
-		return report, err
-	}
-	defer func() {
-		if closeErr := guard.Close(); closeErr != nil {
-			report = Report{}
-			err = errors.Join(err, ErrCleanup)
+	guard := held
+	if guard == nil {
+		guard, err = writerlock.AcquireLegacy(config.DataRoot)
+		if err != nil {
+			return report, err
 		}
-	}()
-	if err := guard.Verify(); err != nil {
+		defer func() {
+			if closeErr := guard.Close(); closeErr != nil {
+				report = Report{}
+				err = errors.Join(err, ErrCleanup)
+			}
+		}()
+	}
+	if err := guard.VerifyLegacy(config.DataRoot); err != nil {
 		return report, err
 	}
 	if err := ctx.Err(); err != nil {

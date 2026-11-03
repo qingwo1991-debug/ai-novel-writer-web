@@ -2,9 +2,11 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -109,7 +111,13 @@ func TestProjectLifecycleHTTPDelegatesAdmissionWithoutInventingReadyState(t *tes
 	}
 	probe.err = errors.New("PRIVATE /author/project.db SQLITE failure")
 	failed := draftRPC(t, server, cookie, csrf, tab, "project:open", "opaque-catalog-key", "token", nil)
-	requireDraftHTTPError(t, failed, http.StatusInternalServerError, "REQUEST_FAILED")
+	var failure map[string]map[string]any
+	if err := json.Unmarshal(failed.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if failed.Code != http.StatusInternalServerError || failure["error"]["code"] != "REQUEST_FAILED" || strings.Contains(failed.Body.String(), "/author/project.db") {
+		t.Fatal("private provider diagnostic leaked", failed.Code, failed.Body.String())
+	}
 	if probe.opens != 1 || probe.target != "opaque-catalog-key" {
 		t.Fatal("catalog key was not delegated", probe.opens, probe.target)
 	}
