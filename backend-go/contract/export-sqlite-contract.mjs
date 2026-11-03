@@ -27,6 +27,8 @@ const domainProofs = []
 for (const [name, donor, version] of [
   ['baseline-v7', false, 7], ['donor-v7', true, 7], ['baseline-v6', false, 6], ['donor-v6', true, 6],
   ['baseline-v6-upgraded-v7', false, 7], ['donor-v6-upgraded-v7', true, 7],
+  ['baseline-v3',false,3],['donor-v3',true,3],
+  ['baseline-v3-upgraded-v4',false,4],['donor-v3-upgraded-v4',true,4],
   ['baseline-v4',false,4],['donor-v4',true,4],['baseline-v5',false,5],['donor-v5',true,5],
   ['baseline-v4-upgraded-v5',false,5],['donor-v4-upgraded-v5',true,5],
   ['baseline-v5-upgraded-v6',false,6],['donor-v5-upgraded-v6',true,6],
@@ -66,6 +68,33 @@ for (const [name, donor, version] of [
     const evidence = probeProjectSqlite({ databasePath: filename })
     domainProofs.push({ file, domain: evidence.domain })
   }
+}
+// M03 adds empty review-cycle tables without guessing cycles from historical
+// reviews. These two files share exactly the same synthetic v3 author rows;
+// only the original TypeScript migration may create the v4 target.
+for (const [name, upgraded] of [
+  ['baseline-v3-history', false], ['baseline-v3-history-upgraded-v4', true],
+]) {
+  const file = name + '.db'
+  const filename = path.join(directory, file)
+  const source = path.join(directory, upgraded ? 'baseline-v3-history.db' : 'baseline-v3.db')
+  copyFileSync(source, filename, constants.COPYFILE_EXCL)
+  const db = new Database(filename)
+  try {
+    db.pragma('foreign_keys=ON')
+    if (upgraded) {
+      migrateSchema(new SqliteSchemaAdapter(db), registry, 4)
+    } else {
+      db.prepare('INSERT INTO contents(id,body) VALUES(?,?)').run(900003, 'M03 前的草稿正文\r\n')
+      db.prepare('INSERT INTO contents(id,body) VALUES(?,?)').run(900004, 'M03 前的审稿正文\r\n')
+      db.prepare('INSERT INTO drafts(id,chapter_number,version,content_id) VALUES(?,?,?,?)')
+        .run(900003, 900003, 1, 900003)
+      db.prepare('INSERT INTO reviews(id,base_draft_id,review_index,content_id) VALUES(?,?,?,?)')
+        .run(900003, 900003, 1, 900004)
+    }
+    verifySchema(new SqliteSchemaAdapter(db), registry, upgraded ? 4 : 3)
+    fixtures.push({ name, file, version: upgraded ? 4 : 3, fingerprint: sqliteSchemaFingerprint(db) })
+  } finally { db.close() }
 }
 // Original installed M04 over a genuinely populated, receipt-only v4 history.
 // These are disposable synthetic copies of the recognized baseline v4 schema;
