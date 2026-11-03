@@ -42,6 +42,7 @@ func run() error {
 	completedGlobalParent := flag.String("synthetic-completed-global-parent", "", "optional private disposable completed global migration root")
 	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
 	readSchema := flag.String("synthetic-read-schema-contract", "", "trusted SQLite contract for disposable read-only project opens")
+	durableDir := flag.String("synthetic-durable-dir", "", "optional private disposable library for a real synthetic durable author project")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
@@ -69,7 +70,15 @@ func run() error {
 	if (*globalDir == "" && *completedGlobalParent == "") != (*modelOrigins == "") {
 		return errors.New("synthetic model config requires both a private global root and trusted origins")
 	}
-	if *readSchema != "" && (*libraryDir == "" || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
+	if *durableDir != "" {
+		if *libraryDir != "" || *uploadDir != "" || *globalDir != "" || *completedGlobalParent != "" || *readSchema == "" {
+			return errors.New("synthetic durable project requires the schema contract and cannot share other data lanes")
+		}
+		if !underTempRoot(*durableDir) || !privateSyntheticGlobalRoot(filepath.Dir(*durableDir)) {
+			return errors.New("synthetic durable project requires a library beneath a private temporary data root")
+		}
+	}
+	if *readSchema != "" && *durableDir == "" && (*libraryDir == "" || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
 		return errors.New("synthetic project reads require a library beneath a private temporary data root")
 	}
 	file, err := os.Open(*policyPath)
@@ -86,6 +95,7 @@ func run() error {
 		origins = strings.Split(*modelOrigins, ",")
 	}
 	var readConfig *syntheticReadOpenConfig
+	var durableConfig *syntheticDurableConfig
 	if *readSchema != "" {
 		contractFile, err := os.Open(*readSchema)
 		if err != nil {
@@ -99,10 +109,13 @@ func run() error {
 			return fmt.Errorf("synthetic read contract: %w", parseErr)
 		}
 		readConfig = &syntheticReadOpenConfig{Schema: contract}
+		durableConfig = &syntheticDurableConfig{Schema: contract, Baseline: filepath.Join(filepath.Dir(*readSchema), syntheticBaselineDatabaseName)}
 	}
 	var handler http.Handler
 	var cleanup func()
-	if *completedGlobalParent != "" {
+	if *durableDir != "" {
+		handler, cleanup, err = migrationHandlerWithDurable(registry, *address, *staticDir, *durableDir, *durableConfig)
+	} else if *completedGlobalParent != "" {
 		handler, cleanup, err = migrationHandlerWithCompletedGlobal(registry, *address, *staticDir, *completedGlobalParent, origins)
 	} else {
 		handler, cleanup, err = migrationHandlerWithModelsAndReadOpen(registry, *address, *staticDir, *libraryDir, *uploadDir, *globalDir, origins, readConfig)
@@ -116,7 +129,7 @@ func run() error {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	log.Printf("Go migration scaffold at %s; author saves only in private synthetic read-enabled mode; no Node fallback; not production-ready", *address)
+	log.Printf("Go migration scaffold at %s; author writes only in private synthetic lanes; no Node fallback; not production-ready", *address)
 	select {
 	case err := <-done:
 		if errors.Is(err, http.ErrServerClosed) {
