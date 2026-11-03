@@ -21,6 +21,7 @@ var (
 	ErrFinalizationNotFound = errors.New("FINALIZATION_COMMIT_NOT_FOUND")
 	ErrFinalizationSnapshotHashMismatch = errors.New("FINALIZATION_SNAPSHOT_HASH_MISMATCH")
 	ErrFinalizationSchemaUnsupported = errors.New("FINALIZATION_SCHEMA_UNSUPPORTED")
+	ErrFinalizationKnowledgeDocumentRequired = errors.New("FINALIZATION_COMMIT_KNOWLEDGE_DOCUMENT_REQUIRED")
 )
 
 // FinalizationScope is captured by the admitted-project owner, never resolved
@@ -60,9 +61,10 @@ type FinalizationRecord struct {
 // FinalizationMutation is a value snapshot of exactly what is being authorized.
 // Existing is nil only for a fresh commit. A replay is still owner-authorized.
 type FinalizationMutation struct {
-	Action string // commit, publication-pending, publication-published
+	Action string // commit, knowledge-link, publication-pending, publication-published
 	Input FinalizationCommitInput
 	Existing *FinalizationRecord
+	KnowledgeDocumentID string
 	LastError string
 }
 
@@ -70,8 +72,10 @@ type FinalizationMutation struct {
 // It must bind opaque proof to this captured database/project/epoch, the exact
 // operation and immutable source, enforce portable freeze and lifecycle/source
 // guards, and reject renderer-manufactured proof. For publication-published it
-// must verify the real publisher's receipt, not a client success boolean. It runs
-// under the SAME write lock; it must use conn, not borrow another DB connection.
+// must verify the real publisher's receipt, not a client success boolean.
+// Knowledge-link must verify the actual managed KB document receipt for this
+// immutable finalization ID and content hash. It runs under the SAME write
+// lock; it must use conn, not borrow another DB connection.
 // No permissive/default implementation or proof minting API exists here.
 type FinalizationOwnerProofVerifier interface {
 	VerifyFinalizationOwnerProof(context.Context, *sql.Conn, FinalizationScope, FinalizationMutation, any) error
@@ -144,6 +148,56 @@ func (r *FinalizationOutbox) GetByDraftID(ctx context.Context, id int64) (*Final
 func (r *FinalizationOutbox) ListPending(ctx context.Context) ([]FinalizationRecord, error) {
 	if r == nil || r.db == nil { return nil, ErrReviewRevisionProjectNotOpen }
 	return finalizationRecords(ctx, r.db, " WHERE publication_status='pending' ORDER BY chapter_number,draft_id,finalization_id")
+}
+
+// KnowledgeDocumentChapters reads the outbox's chapter linkage for copied
+// knowledge documents. Duplicate document IDs retain the last SQL row, matching
+// the original repository's Map(rows.map(...)) behavior. The caller must hold
+// the admitted project session; this read does not confer KB write authority.
+func (r *FinalizationOutbox) KnowledgeDocumentChapters(ctx context.Context) (map[string]int64, error) {
+	if r == nil || r.db == nil { return nil, ErrReviewRevisionProjectNotOpen }
+	rows, err := r.db.QueryContext(ctx, `SELECT knowledge_document_id,chapter_number FROM finalization_outbox WHERE knowledge_document_id != ''`)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make(map[string]int64)
+	for rows.Next() {
+		var id string
+		var chapter int64
+		if err := rows.Scan(&id, &chapter); err != nil { return nil, err }
+		if !summarySupportedText(id) { return nil, ErrFinalizationSchemaUnsupported }
+		if _, ok := rrInteger(chapter, 1); !ok { return nil, ErrFinalizationSchemaUnsupported }
+		out[id] = chapter
+	}
+	if err := rows.Err(); err != nil { return nil, err }
+	return out, rows.Close()
+}
+
+// LinkKnowledgeDocumentWithOwnerProof records a real KB document identity only
+// after the trusted owner verifies its receipt against this exact frozen outbox
+// row. This repository cannot mint or infer that receipt. Verification and the
+// conditional update share one IMMEDIATE transaction/connection.
+func (r *FinalizationOutbox) LinkKnowledgeDocumentWithOwnerProof(ctx context.Context, draftID int64, documentID string, proof any) (*FinalizationRecord, error) {
+	if r == nil || r.db == nil { return nil, ErrReviewRevisionProjectNotOpen }
+	if _, ok := rrInteger(draftID, 1); !ok || !summarySupportedText(documentID) { return nil, ErrFinalizationInputInvalid }
+	canon := trimJS(documentID)
+	if canon == "" { return nil, ErrFinalizationKnowledgeDocumentRequired }
+	var output *FinalizationRecord
+	err := NewReviewRevisions(r.db).immediate(ctx, func(conn *sql.Conn) error {
+		existing, err := finalizationOne(finalizationRecords(ctx, conn, " WHERE draft_id=?", draftID))
+		if err != nil { return err }
+		if existing == nil { return ErrFinalizationNotFound }
+		if !summaryHashValid(existing.ContentHash) || summaryHash(existing.ContentSnapshot) != existing.ContentHash { return ErrFinalizationSnapshotHashMismatch }
+		if err := r.authorize(ctx, conn, FinalizationMutation{Action: "knowledge-link", Existing: existing, KnowledgeDocumentID: canon}, proof); err != nil { return err }
+		result, err := conn.ExecContext(ctx, `UPDATE finalization_outbox SET knowledge_document_id=?,updated_at=datetime('now')
+ WHERE draft_id=? AND finalization_id=? AND content_hash=? AND content_snapshot=?`, canon, draftID, existing.FinalizationID, existing.ContentHash, existing.ContentSnapshot)
+		if err := rrAffected(result, err, ErrFinalizationNotFound); err != nil { return err }
+		output, err = finalizationOne(finalizationRecords(ctx, conn, " WHERE draft_id=?", draftID))
+		if err != nil { return err }
+		if output == nil { return ErrFinalizationNotFound }
+		return nil
+	})
+	if err != nil { return nil, err }
+	return output, nil
 }
 
 func finalizationInputValid(input FinalizationCommitInput) bool {

@@ -8,7 +8,6 @@ import (
  "context"
  "encoding/json"
  "errors"
- "io"
  "net/http"
  "net/url"
  "os"
@@ -118,9 +117,7 @@ func(m *Manager)LoadConfig()ConfigResult{
  m.mu.Lock();defer m.mu.Unlock()
  result:=ConfigResult{Status:"error",Servers:[]ServerSummary{},Error:"MCP_CONFIG_INVALID"}
  if !m.enabled{result.Error="MCP_DISABLED";return result}
- var raw []byte
- f,err:=os.Open(m.options.ConfigPath)
- if err==nil{raw,err=io.ReadAll(io.LimitReader(f,MaxConfigBytes+1));_ = f.Close()}
+ raw,err:=readConfigFile(m.options.ConfigPath)
  var configs map[string]serverConfig
  if err==nil{configs,err=parseConfig(raw)}
  if err==nil&&m.options.RegisterSecret!=nil{
