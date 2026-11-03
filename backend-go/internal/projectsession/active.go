@@ -36,6 +36,7 @@ type activeSlot struct {
 	active             int
 	idle               chan struct{}
 	switching          bool
+	committing         bool
 }
 
 // ActiveCoordinator owns one continuously held legacy writer lock. It only
@@ -95,6 +96,10 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 		return Context{}, ErrActiveClosed
 	}
 	state := c.slot(owner)
+	if state.committing {
+		c.mu.Unlock()
+		return Context{}, ErrCommitInProgress
+	}
 	state.latest++
 	request := state.latest
 	c.mu.Unlock()
