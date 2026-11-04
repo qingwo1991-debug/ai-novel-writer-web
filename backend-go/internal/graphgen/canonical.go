@@ -17,9 +17,10 @@ import (
 //
 // CanonicalJSON is the answer for the graph lane: the graph context, task and
 // slot hashes are defined over a canonical form instead of an insertion order.
-// Object keys are sorted at every level, array order is preserved, and the
-// leaf encoding is EncodeJSON's, so the JavaScript rules for numbers, strings
-// and escapes are unchanged.
+// Object keys are sorted at every level whether the value arrived as a map or
+// as an ordered Object, array order is preserved, and the leaf encoding is
+// EncodeJSON's, so the JavaScript rules for numbers, strings and escapes are
+// unchanged.
 //
 // The writer and the verifier must both use this function. A run written by
 // CanonicalJSON can be verified by CanonicalJSON; a run written by the Node
@@ -65,16 +66,28 @@ func canonicalValue(value any) (any, error) {
 		}
 		return object, nil
 	case Object:
-		// Already ordered by the caller; only the values need canonicalising.
-		object := make(Object, 0, len(typed))
+		// Objects are sorted too, not preserved: the point of this function is
+		// that a value built as an ordered Object and the same value decoded
+		// into a map must canonicalise identically. Callers that need
+		// insertion order use EncodeJSON, which never sorts.
+		members := make([]Member, 0, len(typed))
+		keys := make([]string, 0, len(typed))
+		values := make(map[string]any, len(typed))
 		for _, member := range typed {
-			item, err := canonicalValue(member.Value)
+			if _, duplicate := values[member.Key]; !duplicate {
+				keys = append(keys, member.Key)
+			}
+			values[member.Key] = member.Value
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			item, err := canonicalValue(values[key])
 			if err != nil {
 				return nil, err
 			}
-			object = append(object, Member{Key: member.Key, Value: item})
+			members = append(members, Member{Key: key, Value: item})
 		}
-		return object, nil
+		return Object(members), nil
 	case []any:
 		items := make([]any, 0, len(typed))
 		for _, item := range typed {

@@ -92,6 +92,21 @@ func TestCanonicalHashIsIndependentOfHowTheValueWasBuilt(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONSortsObjectsToo(t *testing.T) {
+	// An ordered Object is still sorted, otherwise the same value would hash
+	// differently depending on how the caller happened to build it.
+	got, err := CanonicalJSON(Object{
+		{Key: "zulu", Value: float64(1)},
+		{Key: "alpha", Value: "a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"alpha":"a","zulu":1}`; got != want {
+		t.Fatalf("CanonicalJSON(Object) = %s, want %s", got, want)
+	}
+}
+
 func TestCanonicalJSONReportsUnencodableLeaves(t *testing.T) {
 	// A value EncodeJSON cannot express must surface as ErrUnsupportedJSONValue
 	// rather than a panic or a silently dropped key.
