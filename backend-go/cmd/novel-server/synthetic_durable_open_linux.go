@@ -421,11 +421,15 @@ func (s *syntheticDurableOpen) BeginPostHistory(ctx context.Context, caller tran
 }
 
 // BeginNarrative is the durable lane's narrative thread and consistency
-// exemption repository. Only the three reads are bound to it (thread list,
-// relevant thread list, exemption list); the six mutating names stay unbound,
-// so this lane can never plan, update, delete or confirm a thread or save or
-// revoke an exemption. The repository borrows the admitted author database and
-// never a path.
+// exemption repository. The three reads (thread list, relevant thread list,
+// exemption list) are bound by BindNarrativeReads and the five mutating plan
+// and exemption names (plan-create, plan-update, plan-delete, exemption-save,
+// exemption-revoke) by BindNarrativeWrites, so this family is served
+// completely. db:narrative-thread-event-confirm stays unbound: thread
+// confirmation belongs to the graph admission gate and keeps failing closed
+// here. Both halves borrow the admitted author database and never a path; a
+// write commits on that handle and the permit is refreshed on release, exactly
+// like the draft CAS and the post-process writes.
 func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transport.Caller, raw any) (*store.Narrative, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
 	if err != nil {
@@ -620,9 +624,15 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// observed again, never a database path.
 		func() error { return server.BindPostHistoryWrites(durable) },
 		// Narrative thread and consistency exemption reads run on the same
-		// admitted author database. This binds only the three reads; the six
-		// mutating names in that family stay unbound and keep failing closed.
+		// admitted author database.
 		func() error { return server.BindNarrativeReads(durable) },
+		// The five mutating plan and exemption names write that same admitted
+		// author database through the same borrow-and-refresh permit path the
+		// draft CAS and the post-process writes use: one admitted handle per
+		// request, refreshed before the fence is observed again, never a
+		// database path. db:narrative-thread-event-confirm belongs to the graph
+		// admission gate and stays unbound, so it keeps failing closed.
+		func() error { return server.BindNarrativeWrites(durable) },
 		// Blueprint and character-sync reads run on the same admitted author
 		// database. This binds only the three reads; db:blueprint-get-all is
 		// already bound by BindEditorStageReads above, and the five mutating

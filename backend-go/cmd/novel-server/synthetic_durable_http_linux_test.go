@@ -430,19 +430,17 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(skillDirectory, "SKILL.md")); err != nil {
 		t.Fatal("unbound skills:uninstall-user removed the installed skill", err)
 	}
-	// The six mutating names in the narrative thread and consistency exemption
-	// family stay unbound on this lane: the registry exposes them, so the 501
-	// is the durable binding, not a 404.
+	// The one mutating name in the narrative thread and consistency exemption
+	// family that belongs to the graph admission gate (thread event
+	// confirmation) stays unbound on this lane: the registry exposes it, so the
+	// 501 is the durable binding, not a 404. The five plan and exemption writes
+	// are bound by BindNarrativeWrites and are exercised further down once the
+	// draft CAS has rotated the lease.
 	for _, unboundWrite := range []struct {
 		name string
 		args []any
 	}{
-		{"db:narrative-thread-plan-create", []any{map[string]any{"title": "线", "type": "goal", "authorIntent": "意图", "targetStartChapter": 1, "targetEndChapter": 3}, projectPath, expected}},
-		{"db:narrative-thread-plan-update", []any{1, map[string]any{}, projectPath, expected}},
-		{"db:narrative-thread-plan-delete", []any{1, projectPath, expected}},
 		{"db:narrative-thread-event-confirm", []any{map[string]any{"type": "planted", "evidence": "证据", "reason": "理由"}, projectPath, expected}},
-		{"db:consistency-exemption-save", []any{"stable.fact", "理由", projectPath, expected}},
-		{"db:consistency-exemption-revoke", []any{"stable.fact", projectPath, expected}},
 	} {
 		writeRec := rpc(unboundWrite.name, unboundWrite.args)
 		if writeRec.Code != http.StatusNotImplemented || !strings.Contains(writeRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
@@ -750,6 +748,139 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	durableQuery(t, database, "SELECT COUNT(*) FROM llm_calls", &callRows)
 	if runRows != 1 || stepRows != 2 || callRows != 1 {
 		t.Fatalf("refused post-process writes left partial rows: %d runs, %d steps, %d calls", runRows, stepRows, callRows)
+	}
+	// The five mutating narrative plan and consistency exemption names are bound
+	// by BindNarrativeWrites to the same admitted author database through the
+	// same borrow-and-refresh write path as the draft CAS and the post-process
+	// writes. Every write is performed over the real HTTP handler and then read
+	// back through the already bound db:narrative-thread-list and
+	// db:consistency-exemption-list, so what is asserted is the persisted state,
+	// not only the write receipt.
+	narrativePlans := func() []map[string]any {
+		t.Helper()
+		response := rpc("db:narrative-thread-list", []any{projectPath, freshSession})
+		var wire struct {
+			Result []map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable narrative-thread-list readback failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	exemptionRows := func() []map[string]any {
+		t.Helper()
+		response := rpc("db:consistency-exemption-list", []any{projectPath, freshSession})
+		var wire struct {
+			Result []map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable consistency-exemption-list readback failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	createdPlan := mutate("db:narrative-thread-plan-create", []any{map[string]any{
+		"title": "合成线索", "type": "伏笔", "authorIntent": "作者决定回收时机",
+		"targetStartChapter": 2, "targetEndChapter": 4,
+	}, projectPath, freshSession})
+	if createdPlan["success"] != true || createdPlan["error"] != nil {
+		t.Fatalf("durable plan-create reported failure: %v", createdPlan)
+	}
+	createdPlanWire, _ := createdPlan["plan"].(map[string]any)
+	if createdPlanWire == nil || createdPlanWire["title"] != "合成线索" || createdPlanWire["type"] != "伏笔" {
+		t.Fatalf("durable plan-create returned a malformed plan: %v", createdPlan)
+	}
+	planID, _ := createdPlanWire["id"].(float64)
+	if planID <= 0 {
+		t.Fatalf("durable plan-create did not mint a plan id: %v", createdPlan)
+	}
+	// The created plan is visible through the already bound list read.
+	if plans := narrativePlans(); len(plans) != 1 || plans[0]["title"] != "合成线索" || plans[0]["status"] != "planned" {
+		t.Fatalf("created plan is not visible in narrative-thread-list: %v", plans)
+	}
+	// A plan update changes a persisted field: the retitled and re-ranged plan is
+	// what the list read returns, not only what the write receipt echoes.
+	updatedPlan := mutate("db:narrative-thread-plan-update", []any{planID, map[string]any{
+		"title": "合成线索·改", "type": "伏笔", "authorIntent": "作者改期",
+		"targetStartChapter": 2, "targetEndChapter": 5,
+	}, projectPath, freshSession})
+	if updatedPlan["success"] != true || updatedPlan["error"] != nil {
+		t.Fatalf("durable plan-update reported failure: %v", updatedPlan)
+	}
+	if plans := narrativePlans(); len(plans) != 1 || plans[0]["title"] != "合成线索·改" ||
+		plans[0]["authorIntent"] != "作者改期" || plans[0]["targetEndChapter"] != float64(5) {
+		t.Fatalf("updated plan fields were not persisted: %v", plans)
+	}
+	// A plan delete removes the row: the list read no longer returns it.
+	deletedPlan := mutate("db:narrative-thread-plan-delete", []any{planID, projectPath, freshSession})
+	if deletedPlan["success"] != true || deletedPlan["error"] != nil {
+		t.Fatalf("durable plan-delete reported failure: %v", deletedPlan)
+	}
+	if plans := narrativePlans(); len(plans) != 0 {
+		t.Fatalf("deleted plan is still visible in narrative-thread-list: %v", plans)
+	}
+	// A saved exemption is visible through the already bound list read as an
+	// active row with its authored reason.
+	savedExemption := mutate("db:consistency-exemption-save", []any{"stable:durable-fact", "作者豁免理由", projectPath, freshSession})
+	if savedExemption["success"] != true || savedExemption["error"] != nil {
+		t.Fatalf("durable exemption-save reported failure: %v", savedExemption)
+	}
+	if exemptions := exemptionRows(); len(exemptions) != 1 || exemptions[0]["stableFactKey"] != "stable:durable-fact" ||
+		exemptions[0]["reason"] != "作者豁免理由" || exemptions[0]["revoked"] != false {
+		t.Fatalf("saved exemption is not visible in consistency-exemption-list: %v", exemptions)
+	}
+	// A revoked exemption is no longer active: the same row is read back with
+	// revoked=true, so the exemption is gone from the consistency authority.
+	revokedExemption := mutate("db:consistency-exemption-revoke", []any{"stable:durable-fact", projectPath, freshSession})
+	if revokedExemption["success"] != true || revokedExemption["error"] != nil {
+		t.Fatalf("durable exemption-revoke reported failure: %v", revokedExemption)
+	}
+	if exemptions := exemptionRows(); len(exemptions) != 1 || exemptions[0]["stableFactKey"] != "stable:durable-fact" ||
+		exemptions[0]["revoked"] != true {
+		t.Fatalf("revoked exemption is still active in consistency-exemption-list: %v", exemptions)
+	}
+	// A failed write is reported as a refusal and leaves no partial row. The
+	// inverted plan range is rejected by the store before its transaction, so no
+	// plan row exists and the earlier delete is not undone.
+	refusedPlan := mutate("db:narrative-thread-plan-create", []any{map[string]any{
+		"title": "越界线索", "type": "伏笔", "authorIntent": "作者越界",
+		"targetStartChapter": 5, "targetEndChapter": 2,
+	}, projectPath, freshSession})
+	if refusedPlan["success"] != false || refusedPlan["error"] != "Error: NARRATIVE_THREAD_RANGE_INVALID" {
+		t.Fatalf("refused plan-create was not reported as a refusal: %v", refusedPlan)
+	}
+	// An update of the deleted plan is a refusal too: the store reports zero
+	// matched rows as NARRATIVE_THREAD_PLAN_NOT_FOUND and inserts nothing.
+	refusedUpdate := mutate("db:narrative-thread-plan-update", []any{planID, map[string]any{
+		"title": "复活线索", "type": "伏笔", "authorIntent": "作者复活",
+		"targetStartChapter": 1, "targetEndChapter": 2,
+	}, projectPath, freshSession})
+	if refusedUpdate["success"] != false || refusedUpdate["error"] != "Error: NARRATIVE_THREAD_PLAN_NOT_FOUND" {
+		t.Fatalf("refused plan-update was not reported as a refusal: %v", refusedUpdate)
+	}
+	// A blank exemption key is refused before the upsert, so the revoked row is
+	// neither replaced nor reactivated.
+	refusedExemption := mutate("db:consistency-exemption-save", []any{"  \n ", "作者乱写", projectPath, freshSession})
+	if refusedExemption["success"] != false || refusedExemption["error"] != "Error: CONSISTENCY_EXEMPTION_KEY_INVALID" {
+		t.Fatalf("refused exemption-save was not reported as a refusal: %v", refusedExemption)
+	}
+	if exemptions := exemptionRows(); len(exemptions) != 1 || exemptions[0]["reason"] != "作者豁免理由" || exemptions[0]["revoked"] != true {
+		t.Fatalf("refused exemption-save changed the persisted exemption: %v", exemptions)
+	}
+	// No refused write left a partial row anywhere: the plan table is empty
+	// (created then deleted) and the exemption table holds only the revoked row.
+	var planRows, exemptionTableRows int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM narrative_thread_plans", &planRows)
+	durableQuery(t, database, "SELECT COUNT(*) FROM consistency_exemptions", &exemptionTableRows)
+	if planRows != 0 || exemptionTableRows != 1 {
+		t.Fatalf("refused narrative writes left partial rows: %d plans, %d exemptions", planRows, exemptionTableRows)
+	}
+	// Neither readback echoes a filesystem path: the receipt vocabulary stays
+	// symbolic even after a refused write.
+	for _, readback := range []string{"db:narrative-thread-list", "db:consistency-exemption-list"} {
+		response := rpc(readback, []any{projectPath, freshSession})
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), projectPath) || strings.Contains(response.Body.String(), durableDir) {
+			t.Fatalf("durable %s readback leaked a filesystem path: %d %s", readback, response.Code, response.Body.String())
+		}
 	}
 	// Recent navigation exposes only the one synthetic project, never a key.
 	recentRec := rpc("project:recent-list", []any{})
