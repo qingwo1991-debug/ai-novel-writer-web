@@ -898,3 +898,22 @@ pinned by a store assertion plus this lane test.
 S3 agent-generation, then S4 graph/finalization/import. Editor-inline stays blocked behind the
 generation owner port (see the entry above); do not schedule it in parallel.
 
+### 2026-11-04 — nine more operations wired (durable 93 -> 102)
+
+Green: `d5958ecd`, all three jobs.
+
+- Unconditional: `db:narrative-thread-event-confirm` (arity 3, path 1), `db:plot-tree-clear`
+  (arity 2, path 0). Both refuse as transport errors - HTTP 500 with a symbolic code and **no**
+  `Error: ` prefix - asserted verbatim rather than normalised.
+- Conditional on `GlobalRoot` + model origins, mirroring `main.go:275-302`: `config:get`,
+  `config:set`, `startup:get-state`, `startup:appearance-ack`, `llm:list-models`, `llm:save-model`,
+  `llm:delete-model`.
+
+**mcp (8) was refused, correctly.** `BindMCP` needs a pristine `*mcp.Manager` over a trusted config
+path and runtime dir plus a server-owned admin predicate; this lane carries no MCP field and
+`cmd/novel-server` has no mcp import, so any manager here would be fabricated. It stays at 501 with an
+assertion pinning that.
+
+Next cheapest pool, from the survey: cloud-backup (8, `internal/webdav` is complete with no binder) and
+finalization (3, `store/finalization_outbox.go` complete but called only from its own tests).
+
