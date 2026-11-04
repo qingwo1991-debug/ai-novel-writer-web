@@ -52,6 +52,15 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 				"db:revision-merge", "db:revision-next-index", "db:revision-replace-pending",
 			},
 		},
+		{
+			name: "finalization",
+			bind: func(s *Server) error {
+				return s.BindFinalization(FinalizationProviderFunc(nil))
+			},
+			want: []string{
+				"db:finalization-link-knowledge-document", "finalization:commit", "finalization:retry",
+			},
+		},
 	}
 	for _, c := range cases {
 		server := fixture(t)

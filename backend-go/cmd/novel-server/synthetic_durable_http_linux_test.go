@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1117,6 +1119,205 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	}
 	if got := durableDraftBody(t, database, draftID); got != changedBody {
 		t.Fatalf("replayed draft CAS changed stored content: %q", got)
+	}
+	// The finalization outbox is bound to that same admitted author database by
+	// three names: finalization:commit freezes the author-confirmed prose and the
+	// outbox row in one transaction, finalization:retry re-records the pending
+	// projection, and db:finalization-link-knowledge-document binds a managed
+	// document identity to the frozen row. The two service names carry the frozen
+	// three-key context as their own last argument (their wire declaration has no
+	// separate path), and the db name carries the required project path before it.
+	const finalTitle = "定稿:标题?*中文"
+	const finalBody = "定稿正文🐍 café\r\n第二行 <&>\u2028"
+	finalSnapshot := func(content, baseline string) map[string]any {
+		return map[string]any{
+			"tabId": tab, "projectPath": projectPath, "projectSession": freshSession,
+			"draftId": draftID, "chapterNumber": 1, "chapterTitle": finalTitle,
+			"content": content, "expectedContent": baseline, "contentRevision": 1,
+		}
+	}
+	finalizationRow := func(column string) string {
+		t.Helper()
+		var value string
+		durableQuery(t, database, "SELECT "+column+" FROM finalization_outbox WHERE draft_id="+
+			strconv.FormatInt(draftID, 10), &value)
+		return value
+	}
+	digest := sha256.Sum256([]byte(finalBody))
+	finalDigest := hex.EncodeToString(digest[:])
+	committedFinal := coreWrite("finalization:commit", []any{finalSnapshot(finalBody, changedBody), freshSession})
+	if committedFinal["committed"] != true || committedFinal["success"] != false ||
+		committedFinal["publicationStatus"] != "pending" ||
+		committedFinal["draftId"] != float64(draftID) ||
+		committedFinal["error"] != "Error: FINALIZATION_PUBLISHER_UNAVAILABLE" {
+		t.Fatalf("durable finalization:commit did not freeze an unpublished projection: %v", committedFinal)
+	}
+	finalID, _ := committedFinal["finalizationId"].(string)
+	if len(finalID) != 36 || finalID[14] != '4' || committedFinal["contentHash"] != finalDigest {
+		t.Fatalf("durable finalization:commit minted the wrong frozen facts: %v", committedFinal)
+	}
+	// The commit is a database fact, not an echo: the draft is finalized, the
+	// confirmed prose is the stored body, and the outbox row holds the frozen
+	// snapshot, the hash of that snapshot, the portable target name and the
+	// acknowledged publication state. No publication receipt exists, because this
+	// lane owns no publisher and never claims one.
+	if got := durableDraftBody(t, database, draftID); got != finalBody {
+		t.Fatalf("durable finalization:commit froze a different body: %q", got)
+	}
+	var finalizedStatus string
+	durableQuery(t, database, "SELECT status FROM drafts WHERE id="+strconv.FormatInt(draftID, 10), &finalizedStatus)
+	if finalizedStatus != "finalized" {
+		t.Fatalf("durable finalization:commit did not finalize the draft: %q", finalizedStatus)
+	}
+	if row := finalizationRow("finalization_id"); row != finalID {
+		t.Fatalf("durable finalization:commit persisted a different id: %q", row)
+	}
+	if row := finalizationRow("chapter_title"); row != finalTitle {
+		t.Fatalf("durable finalization:commit persisted a different title: %q", row)
+	}
+	if row := finalizationRow("content_hash"); row != finalDigest {
+		t.Fatalf("durable finalization:commit persisted a different hash: %q", row)
+	}
+	if row := finalizationRow("content_snapshot"); row != finalBody {
+		t.Fatalf("durable finalization:commit persisted a different snapshot: %q", row)
+	}
+	if row := finalizationRow("target_file_name"); row != "第1章 定稿_标题__中文.txt" {
+		t.Fatalf("durable finalization:commit did not derive the portable target name: %q", row)
+	}
+	if row := finalizationRow("publication_status"); row != "pending" {
+		t.Fatalf("durable finalization:commit claimed a publication state: %q", row)
+	}
+	if row := finalizationRow("COALESCE(last_error,'')"); row != "Error: FINALIZATION_PUBLISHER_UNAVAILABLE" {
+		t.Fatalf("durable finalization:commit hid the unpublished projection: %q", row)
+	}
+	var finalPublished sql.NullString
+	durableQuery(t, database, "SELECT published_at FROM finalization_outbox WHERE draft_id="+
+		strconv.FormatInt(draftID, 10), &finalPublished)
+	if finalPublished.Valid && finalPublished.String != "" {
+		t.Fatalf("durable finalization:commit minted a publication receipt: %q", finalPublished.String)
+	}
+	// Replaying the identical frozen request returns the original identity instead
+	// of minting a second commit, and a different frozen request for the same
+	// draft is the service's own conflict — the bare code, not the prefixed one.
+	replayedFinal := coreWrite("finalization:commit", []any{finalSnapshot(finalBody, changedBody), freshSession})
+	if replayedFinal["committed"] != true || replayedFinal["finalizationId"] != finalID ||
+		replayedFinal["contentHash"] != finalDigest {
+		t.Fatalf("durable finalization:commit did not replay the frozen identity: %v", replayedFinal)
+	}
+	conflictFinal := coreWrite("finalization:commit", []any{finalSnapshot("另一份正文", changedBody), freshSession})
+	if conflictFinal["success"] != false || conflictFinal["committed"] != false ||
+		conflictFinal["error"] != "FINALIZATION_COMMIT_CONFLICT" {
+		t.Fatalf("durable finalization:commit did not refuse a conflicting request: %v", conflictFinal)
+	}
+	if got := durableDraftBody(t, database, draftID); got != finalBody {
+		t.Fatalf("a refused finalization changed the frozen prose: %q", got)
+	}
+	if row := finalizationRow("content_snapshot"); row != finalBody {
+		t.Fatalf("a refused finalization changed the frozen snapshot: %q", row)
+	}
+	// Snapshot refusals run before the borrow, so neither a malformed snapshot nor
+	// a snapshot whose own session copy disagrees with the wire context writes.
+	malformedFinal := coreWrite("finalization:commit", []any{map[string]any{"tabId": tab}, freshSession})
+	if malformedFinal["success"] != false || malformedFinal["committed"] != false ||
+		malformedFinal["error"] != "Error: FINALIZATION_SNAPSHOT_INVALID" {
+		t.Fatalf("durable finalization:commit accepted a malformed snapshot: %v", malformedFinal)
+	}
+	mismatchedFinal := coreWrite("finalization:commit", []any{map[string]any{
+		"tabId": tab, "projectPath": projectPath,
+		"projectSession": map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath},
+		"draftId": draftID, "chapterNumber": 1, "chapterTitle": finalTitle,
+		"content": finalBody, "expectedContent": changedBody, "contentRevision": 1,
+	}, freshSession})
+	if mismatchedFinal["success"] != false || mismatchedFinal["committed"] != false ||
+		mismatchedFinal["error"] != "Error: FINALIZATION_SNAPSHOT_SESSION_MISMATCH" {
+		t.Fatalf("durable finalization:commit accepted a mismatched session: %v", mismatchedFinal)
+	}
+	// db:finalization-link-knowledge-document stores the trimmed managed document
+	// identity on the frozen row and returns the record the store now holds.
+	linkedFinal := coreWrite("db:finalization-link-knowledge-document", []any{draftID, "  kb:合成文档  ", projectPath, freshSession})
+	if linkedFinal["success"] != true || linkedFinal["error"] != nil {
+		t.Fatalf("durable finalization link reported failure: %v", linkedFinal)
+	}
+	linkedRecord, _ := linkedFinal["finalization"].(map[string]any)
+	if linkedRecord == nil || linkedRecord["knowledgeDocumentId"] != "kb:合成文档" ||
+		linkedRecord["finalizationId"] != finalID || linkedRecord["contentHash"] != finalDigest ||
+		linkedRecord["contentSnapshot"] != finalBody || linkedRecord["publicationStatus"] != "pending" ||
+		linkedRecord["chapterNumber"] != float64(1) || linkedRecord["draftId"] != float64(draftID) ||
+		linkedRecord["publishedAt"] != nil {
+		t.Fatalf("durable finalization link returned a malformed record: %v", linkedFinal)
+	}
+	if row := finalizationRow("COALESCE(knowledge_document_id,'')"); row != "kb:合成文档" {
+		t.Fatalf("durable finalization link did not persist the document: %q", row)
+	}
+	// A blank identity is refused with the repository's prefix-carrying code, an
+	// unknown draft with its not-found code, and a forged lease before the store is
+	// reached; none of them rewrites the linked row.
+	blankDocument := coreWrite("db:finalization-link-knowledge-document", []any{draftID, "\ufeff ", projectPath, freshSession})
+	if blankDocument["success"] != false || blankDocument["error"] != "Error: FINALIZATION_COMMIT_KNOWLEDGE_DOCUMENT_REQUIRED" {
+		t.Fatalf("durable finalization link accepted a blank document: %v", blankDocument)
+	}
+	unknownDraft := coreWrite("db:finalization-link-knowledge-document", []any{int64(999999), "kb:合成文档", projectPath, freshSession})
+	if unknownDraft["success"] != false || unknownDraft["error"] != "Error: FINALIZATION_COMMIT_NOT_FOUND" {
+		t.Fatalf("durable finalization link accepted an unknown draft: %v", unknownDraft)
+	}
+	forgedLink := coreWrite("db:finalization-link-knowledge-document", []any{draftID, "kb:伪造", projectPath,
+		map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}})
+	forgedLinkError, _ := forgedLink["error"].(string)
+	if forgedLink["success"] != false || !strings.HasPrefix(forgedLinkError, "Error: ") {
+		t.Fatalf("durable finalization link accepted a forged lease: %v", forgedLink)
+	}
+	if row := finalizationRow("COALESCE(knowledge_document_id,'')"); row != "kb:合成文档" {
+		t.Fatalf("a refused finalization link rewrote the document: %q", row)
+	}
+	// The link name requires the project path as its own argument, so a call
+	// without the frozen context is refused instead of reading through it.
+	shortLink := coreWrite("db:finalization-link-knowledge-document", []any{draftID, "kb:合成文档", projectPath})
+	if shortLink["success"] != false || shortLink["error"] != "Error: PROJECT_CONTEXT_REQUIRED" {
+		t.Fatalf("durable finalization link accepted a request without a context: %v", shortLink)
+	}
+	// finalization:retry re-records the pending projection for the frozen id and
+	// still mints no publication receipt: the committed facts come back from the
+	// outbox, never from the request.
+	retriedFinal := coreWrite("finalization:retry", []any{finalID, freshSession})
+	if retriedFinal["committed"] != true || retriedFinal["success"] != false ||
+		retriedFinal["finalizationId"] != finalID || retriedFinal["contentHash"] != finalDigest ||
+		retriedFinal["draftId"] != float64(draftID) || retriedFinal["contentRevision"] != float64(1) ||
+		retriedFinal["publicationStatus"] != "pending" ||
+		retriedFinal["error"] != "Error: FINALIZATION_PUBLISHER_UNAVAILABLE" {
+		t.Fatalf("durable finalization:retry did not replay the frozen projection: %v", retriedFinal)
+	}
+	if row := finalizationRow("publication_status"); row != "pending" {
+		t.Fatalf("durable finalization:retry claimed a publication state: %q", row)
+	}
+	if row := finalizationRow("COALESCE(last_error,'')"); row != "Error: FINALIZATION_PUBLISHER_UNAVAILABLE" {
+		t.Fatalf("durable finalization:retry hid the unpublished projection: %q", row)
+	}
+	missingID := coreWrite("finalization:retry", []any{"", freshSession})
+	if missingID["success"] != false || missingID["committed"] != false ||
+		missingID["error"] != "Error: FINALIZATION_COMMIT_ID_REQUIRED" {
+		t.Fatalf("durable finalization:retry accepted a missing id: %v", missingID)
+	}
+	unknownID := coreWrite("finalization:retry", []any{"durable-missing-finalization", freshSession})
+	if unknownID["success"] != false || unknownID["committed"] != false ||
+		unknownID["error"] != "FINALIZATION_COMMIT_NOT_FOUND" {
+		t.Fatalf("durable finalization:retry accepted an unknown id: %v", unknownID)
+	}
+	// The eight cloud-backup names stay unbound: every one of them needs the
+	// safeStorage credential/binding store, a deployment-supplied WebDAV dispatch,
+	// portable export/restore into the author's tree, or an in-flight backup
+	// registry that no bound operation in this lane can populate. They keep failing
+	// closed with the honest migration code instead of a fabricated success.
+	for _, cloudOperation := range []string{
+		"cloud-backup:connect", "cloud-backup:view", "cloud-backup:confirm-binding",
+		"cloud-backup:backup", "cloud-backup:list", "cloud-backup:restore-copy",
+		"cloud-backup:cancel", "cloud-backup:clear-credential",
+	} {
+		refused := rpc(cloudOperation, []any{map[string]any{"cloudBookId": "synthetic-cloud-book"}, freshSession})
+		if refused.Code != http.StatusNotImplemented ||
+			!strings.Contains(refused.Body.String(), "GO_OPERATION_NOT_MIGRATED") ||
+			strings.Contains(refused.Body.String(), projectPath) || strings.Contains(refused.Body.String(), durableDir) {
+			t.Fatalf("%s was not refused as unmigrated: %d %s", cloudOperation, refused.Code, refused.Body.String())
+		}
 	}
 	// project:save still succeeds AFTER the draft CAS with the rotated lease:
 	// the durable session was not downgraded by the commit.

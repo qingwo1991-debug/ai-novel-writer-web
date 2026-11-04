@@ -407,6 +407,85 @@ func (s *syntheticDurableOpen) BeginReviewRevisions(ctx context.Context, caller 
 	return store.NewReviewRevisions(db), release, nil
 }
 
+// BeginFinalization is the durable lane's finalization-outbox repository. The
+// three names bound to it (finalization:commit, finalization:retry and
+// db:finalization-link-knowledge-document) freeze the author's confirmed prose
+// and the outbox row in one IMMEDIATE transaction on the admitted author
+// database, so the durable session is never downgraded and the catalog key is
+// unchanged. The scope is the frozen project and the frozen lease, and the
+// verifier below refuses every mutation the transport did not authorize for this
+// exact request.
+//
+// This lane owns no manuscript publisher, so markPublished can never be reached:
+// no file is written, no path is resolved and no filesystem collision is
+// scanned. BindFinalization therefore binds exactly three names and leaves the
+// publication-published receipt unminted rather than fabricated.
+func (s *syntheticDurableOpen) BeginFinalization(ctx context.Context, caller transport.Caller, raw any) (*store.FinalizationOutbox, func(), error) {
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	scope := store.FinalizationScope{ProjectID: expected.ProjectID, Epoch: expected.LeaseID}
+	return store.NewFinalizationOutbox(db, scope, durableFinalizationOwner{expected: expected}), release, nil
+}
+
+// durableFinalizationOwner is the trusted owner proof verifier of that
+// repository. It binds the opaque proof to this exact captured project and lease
+// and refuses any mutation whose action or frozen values differ from the ones the
+// transport authorized for this request, so a renderer cannot reach the store
+// through a fabricated proof (store/finalization_outbox.go:63-82). It needs no
+// second connection: the store re-reads the outbox row and re-verifies the frozen
+// content hash inside the same IMMEDIATE transaction before it calls this
+// verifier (:179-190, :294-305), and its own CAS repeats both facts in the UPDATE.
+//
+// The one receipt this verifier cannot prove is a managed knowledge-base
+// document: the knowledge base is not part of this lane's admitted database, so
+// the transport freezes the exact identity the request carried and this verifier
+// refuses any other. It never mints one.
+type durableFinalizationOwner struct{ expected projectsession.Context }
+
+func (o durableFinalizationOwner) VerifyFinalizationOwnerProof(_ context.Context, _ *sql.Conn, scope store.FinalizationScope, mutation store.FinalizationMutation, proof any) error {
+	authorized, ok := proof.(transport.FinalizationProof)
+	if !ok {
+		return store.ErrFinalizationOwnerRequired
+	}
+	if scope.ProjectID != o.expected.ProjectID || scope.Epoch != o.expected.LeaseID ||
+		authorized.ProjectID != o.expected.ProjectID || authorized.LeaseID != o.expected.LeaseID ||
+		authorized.ProjectPath != o.expected.ProjectPath || mutation.Action != authorized.Action {
+		return store.ErrFinalizationOwnerRequired
+	}
+	switch authorized.Action {
+	case "commit":
+		if mutation.Input.DraftID != authorized.DraftID ||
+			mutation.Input.FinalizationID != authorized.FinalizationID ||
+			mutation.Input.ContentHash != authorized.ContentHash {
+			return store.ErrFinalizationOwnerRequired
+		}
+	case "knowledge-link":
+		if mutation.Existing == nil || mutation.Existing.DraftID != authorized.DraftID ||
+			mutation.Existing.FinalizationID != authorized.FinalizationID ||
+			mutation.Existing.ContentHash != authorized.ContentHash ||
+			mutation.KnowledgeDocumentID != authorized.KnowledgeDocumentID {
+			return store.ErrFinalizationOwnerRequired
+		}
+	case "publication-pending":
+		if mutation.Existing == nil || mutation.Existing.FinalizationID != authorized.FinalizationID ||
+			mutation.Existing.ContentHash != authorized.ContentHash ||
+			mutation.LastError != authorized.LastError {
+			return store.ErrFinalizationOwnerRequired
+		}
+	default:
+		// publication-published needs the real publisher receipt this lane
+		// cannot produce, so it is refused here as well as being unreachable.
+		return store.ErrFinalizationOwnerRequired
+	}
+	return nil
+}
+
 // BeginPostHistory is the durable lane's post-process receipt and LLM call
 // ledger repository. All nine names in that family are bound to it: the five
 // reads by BindPostHistoryReads and the four mutations (create-run,
@@ -798,6 +877,14 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	// Review and revision writes keep their source CAS in the repository; this
 	// binding adds only the operations the editor read binders leave unbound.
 	if err := server.BindReviewRevisionRemainder(durable); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	// The finalization outbox commits the author-confirmed prose of one draft on
+	// the same admitted author database. Those rows ARE the manuscript of record
+	// for the durable lane, so the three names that write them are bound here;
+	// the publication receipt stays unminted because this lane owns no publisher.
+	if err := server.BindFinalization(durable); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
