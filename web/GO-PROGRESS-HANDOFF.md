@@ -4,6 +4,33 @@ Written at a deliberate stopping point (the user asked to wrap up this phase, pu
 everything, and resume later). Everything below is committed and pushed; `main` is
 CI-green. Nothing here claims the migration is complete.
 
+## START HERE (next session, cold start)
+
+State: durable lane serves **64 of 281** operations over real HTTP, `main` is CI-green at
+`9592bad3`, working tree clean, production container untouched.
+
+The single blocking prerequisite for the next batch is the **binding rebuild**: rebuild a run's
+frozen source binding from current project state and compare it with the stored one. Everything
+else in the graph and finalization families waits behind it.
+
+1. Reconstruct `syntheticSelection` and the model receipt from the frozen manifest (`modelId`,
+   `promptKeys`, `skillStages`, `authorInputs`, `selectedDraftIds`,
+   `selectedFinalizedBlueprintChapters`, `chapterNumber`, `budget`, `output`).
+2. Rebuild the nine reduced hashes with `syntheticFingerprint` (it already derives them from real
+   project state; do not write a second derivation).
+3. Compare with the frozen `binding.fingerprint`; any difference means the sources moved.
+4. Wire it into `syntheticGraphSourceStatus` so `plot` and `plan` stop reporting `conflict`, and
+   into the finalization family.
+5. Only then bind `graph-generation:begin` / `execute` / `confirm` and the finalization chain.
+
+Two rules that were learned the hard way and must not be relaxed:
+
+- **A bound operation needs a positive assertion through the durable admission path.** A "not 501"
+  assertion cannot distinguish a working handler from one that reads the wrong argument shape; two
+  such defects shipped green (`{ handle }` envelopes, and op-body errors escaping the DTO envelope).
+- **Fail closed on anything that gates confirmation.** `syntheticGraphFreshness` returns `conflict`
+  unless sameness is positively proven, and its seven-case test pins that direction.
+
 ## S1 generation lane: RESOLVED (2026-11-04)
 
 The eleven migrated `generation:*` operations are now bound in the durable lane and the
