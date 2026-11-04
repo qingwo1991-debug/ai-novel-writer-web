@@ -542,3 +542,21 @@ Path safety was already enforced by the owner and was reused rather than re-impl
 after opening, and `ListUser` skips any child that fails - the browser only ever sees
 `managed://skills/<name>`.
 
+### 2026-11-04 — blueprint reads bound (durable 74 → 77)
+
+`BindBlueprintReads` binds `db:blueprint-get`, `db:blueprint-character-sync-get` and
+`db:blueprint-character-sync-list-pending`; the five mutations stay unbound and the test proves the
+`delete`/`commit-range` calls left no trace. `db:blueprint-get-all` was already bound elsewhere and
+was deliberately not re-bound. CI green at `c9523711`.
+
+Arities here are not uniform: `-get` and `-character-sync-get` are arity 3 with the path at index 1,
+`-character-sync-list-pending` is arity 2 with the path at index 0 - and all three **do** carry the
+frozen 3-key context last, unlike the global prompt/skill family. Check both facts per name before
+copying a template.
+
+**These two "reads" are not read-only.** `PendingSync` and `GetSync` execute the store's existing
+`blueprintBackfillSQL` (`internal/store/blueprints.go:137`), an `INSERT OR IGNORE` that backfills the
+sync tables. So a GET mutates the author database. That is the original behaviour and it is preserved,
+but it matters twice: such a read cannot run on a read-only transaction, and any future
+"reads are side-effect free" assumption in the admission lane would be wrong here.
+
