@@ -12,9 +12,9 @@ import (
 
 // BindPlotTreeReads binds only the single plot tree read that the durable lane
 // serves from its admitted author database. BindPlotTree registers the whole
-// family; this binder takes exactly the read, so db:plot-tree-save and
-// db:plot-tree-clear (both mutations: save replaces the snapshot, clear blanks
-// it) stay unbound and keep failing closed.
+// family; this binder takes exactly the read, so the two mutations are bound
+// elsewhere: db:plot-tree-save stays unbound because the original refuses it
+// unconditionally, and db:plot-tree-clear is bound by BindPlotTreeClear.
 //
 // Arity, path index and wire normalization mirror BindPlotTree exactly:
 // db:plot-tree-read is arity 2 with the project path at index 0

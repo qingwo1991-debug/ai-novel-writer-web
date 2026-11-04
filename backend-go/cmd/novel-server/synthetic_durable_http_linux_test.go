@@ -23,11 +23,24 @@ import (
 // lane must read back from the author's own database.
 const syntheticDurableBlueprintTitle = "合成蓝图标题"
 
+// syntheticDurableFinalChapterTitle and syntheticDurableFinalEvidence are the
+// frozen finalization outbox facts db:narrative-thread-event-confirm must bind
+// to: the evidence only resolves through the outbox prose, so both live in one
+// seeded row instead of being constants a stub could echo back.
+const (
+	syntheticDurableFinalChapterTitle = "第二章 合成定稿"
+	syntheticDurableFinalEvidence     = "定稿证据"
+)
+
 // TestSyntheticDurableHTTPOpenSaveCloseReopenPersists drives the real browser
 // project lifecycle protocol over the durable Go author runtime. It opens the
 // one real synthetic project, rejects a stale frozen context before any write,
 // saves a new projectName plus novelConfig, reads the live frozen context, and
 // confirms the committed value survives db:close and a fresh project:open.
+// It also asserts the three families wired beside the project lifecycle:
+// config/startup/model settings read back from the lane's private root,
+// db:plot-tree-clear blanking a real stored snapshot, and
+// db:narrative-thread-event-confirm binding evidence to frozen outbox prose.
 func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	oracle := os.Getenv("GO_SQLITE_CONTRACT")
 	if oracle == "" {
@@ -128,6 +141,198 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		handler.ServeHTTP(response, request)
 		return response
 	}
+	// config:get, config:set, startup:get-state, startup:appearance-ack and the
+	// three llm model names are served from the lane's pinned private global
+	// root, so they are exercised before any project is opened: none of them
+	// takes a project context. Values are read back both over the real handler
+	// and from the private files they commit.
+	const durableModelID = "durable-model"
+	const durableModelKey = "sk-durable-private-key"
+	configRead := func() map[string]any {
+		t.Helper()
+		response := rpc("config:get", []any{})
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("config:get decode failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), globalRoot) {
+			t.Fatalf("config:get leaked the private root: %s", response.Body.String())
+		}
+		return wire.Result
+	}
+	initialConfig := configRead()
+	if initialConfig["theme"] != "dark" || initialConfig["editorFontSize"] != float64(16) {
+		t.Fatalf("config:get did not return the original defaults: %v", initialConfig)
+	}
+	configured := rpc("config:set", []any{map[string]any{"theme": "light", "editorFontSize": 18}})
+	var configuredWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(configured.Body.Bytes(), &configuredWire); err != nil || configured.Code != http.StatusOK || configuredWire.Result["success"] != true {
+		t.Fatalf("config:set failed: %d %s %v", configured.Code, configured.Body.String(), err)
+	}
+	if stored := configRead(); stored["theme"] != "light" || stored["editorFontSize"] != float64(18) {
+		t.Fatalf("config:set was not persisted: %v", stored)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "config.json")); err != nil || !bytes.Contains(raw, []byte(`"light"`)) {
+		t.Fatalf("config:set did not commit config.json: %v", err)
+	}
+	// A proxy field is refused by presence (403), a non-public field is refused
+	// before the write (400), and neither refusal changes the committed config.
+	if proxySet := rpc("config:set", []any{map[string]any{"proxy": map[string]any{"enabled": false}}}); proxySet.Code != http.StatusForbidden || !strings.Contains(proxySet.Body.String(), "PROXY_SERVER_ADMIN_ONLY") {
+		t.Fatalf("config:set accepted a proxy field: %d %s", proxySet.Code, proxySet.Body.String())
+	}
+	if deniedSet := rpc("config:set", []any{map[string]any{"binding": "0.0.0.0"}}); deniedSet.Code != http.StatusBadRequest || !strings.Contains(deniedSet.Body.String(), "CONFIG_FIELD_DENIED") {
+		t.Fatalf("config:set accepted a private field: %d %s", deniedSet.Code, deniedSet.Body.String())
+	}
+	if stored := configRead(); stored["theme"] != "light" {
+		t.Fatalf("a refused config:set changed the stored config: %v", stored)
+	}
+	startupState := func() map[string]any {
+		t.Helper()
+		response := rpc("startup:get-state", []any{})
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("startup:get-state decode failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	readyState := startupState()
+	if readyState["state"] != "ready" || readyState["globalGeneration"] != "synthetic-model-config-v1" {
+		t.Fatalf("startup:get-state mismatch: %v", readyState)
+	}
+	if _, present := readyState["appearanceRevisionFloor"]; present {
+		t.Fatalf("startup:get-state reported an unacknowledged appearance floor: %v", readyState)
+	}
+	appearanceAck := func(args map[string]any) (*httptest.ResponseRecorder, bool) {
+		t.Helper()
+		response := rpc("startup:appearance-ack", []any{args})
+		var wire struct {
+			Result bool `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("startup:appearance-ack decode failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return response, wire.Result
+	}
+	if _, acknowledged := appearanceAck(map[string]any{
+		"storageKey": "ai-novel-writer-appearance-v3", "profileRevision": 3,
+		"globalGeneration": "synthetic-model-config-v1",
+	}); !acknowledged {
+		t.Fatal("startup:appearance-ack refused the frozen generation")
+	}
+	if ackState := startupState(); ackState["appearanceRevisionFloor"] != float64(3) {
+		t.Fatalf("startup:appearance-ack was not retained: %v", ackState)
+	}
+	// An acknowledgement for another generation is a false result at 200 and
+	// leaves the retained floor exactly where it was.
+	if _, acknowledged := appearanceAck(map[string]any{
+		"storageKey": "ai-novel-writer-appearance-v3", "profileRevision": 4,
+		"globalGeneration": "another-generation",
+	}); acknowledged {
+		t.Fatal("startup:appearance-ack accepted another generation")
+	}
+	if ackState := startupState(); ackState["appearanceRevisionFloor"] != float64(3) {
+		t.Fatalf("a refused appearance acknowledgement changed the floor: %v", ackState)
+	}
+	modelsList := func() []map[string]any {
+		t.Helper()
+		response := rpc("llm:list-models", []any{})
+		var wire struct {
+			Result []map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("llm:list-models decode failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), globalRoot) || strings.Contains(response.Body.String(), durableModelKey) {
+			t.Fatalf("llm:list-models leaked private configuration: %s", response.Body.String())
+		}
+		return wire.Result
+	}
+	if emptyModels := modelsList(); len(emptyModels) != 0 {
+		t.Fatalf("llm:list-models should start empty: %v", emptyModels)
+	}
+	savedModel := rpc("llm:save-model", []any{map[string]any{
+		"id": durableModelID, "provider": "custom", "protocol": "openai",
+		"baseUrl": "https://example.invalid/v1", "modelName": "durable-story",
+		"temperature": 0.5, "maxTokens": 1024, "purposes": []any{"write"},
+		"apiKey": durableModelKey,
+	}})
+	var savedModelWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(savedModel.Body.Bytes(), &savedModelWire); err != nil || savedModel.Code != http.StatusOK || savedModelWire.Result["success"] != true {
+		t.Fatalf("llm:save-model failed: %d %s %v", savedModel.Code, savedModel.Body.String(), err)
+	}
+	savedModels := modelsList()
+	if len(savedModels) != 1 || savedModels[0]["id"] != durableModelID || savedModels[0]["hasCredential"] != true || savedModels[0]["apiKey"] != "" {
+		t.Fatalf("llm:list-models did not return the saved profile: %v", savedModels)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || !bytes.Contains(raw, []byte(durableModelID)) {
+		t.Fatalf("llm:save-model did not commit models.json: %v", err)
+	}
+	// A default that points at the profile makes the deletion observable in the
+	// other private file: llm:delete-model must clear that reference.
+	setDefault := rpc("config:set", []any{map[string]any{"defaultModelId": durableModelID}})
+	if err := json.Unmarshal(setDefault.Body.Bytes(), &configuredWire); err != nil || setDefault.Code != http.StatusOK || configuredWire.Result["success"] != true {
+		t.Fatalf("config:set defaultModelId failed: %d %s %v", setDefault.Code, setDefault.Body.String(), err)
+	}
+	if pointed := configRead(); pointed["defaultModelId"] != durableModelID {
+		t.Fatalf("config:set did not persist defaultModelId: %v", pointed)
+	}
+	deletedModel := rpc("llm:delete-model", []any{durableModelID})
+	var deletedModelWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(deletedModel.Body.Bytes(), &deletedModelWire); err != nil || deletedModel.Code != http.StatusOK || deletedModelWire.Result["success"] != true {
+		t.Fatalf("llm:delete-model failed: %d %s %v", deletedModel.Code, deletedModel.Body.String(), err)
+	}
+	if deletedModelWire.Result["defaultModelId"] != nil {
+		t.Fatalf("llm:delete-model reported a surviving default: %v", deletedModelWire.Result)
+	}
+	if remaining := modelsList(); len(remaining) != 0 {
+		t.Fatalf("llm:delete-model left the profile in the store: %v", remaining)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || bytes.Contains(raw, []byte(durableModelID)) {
+		t.Fatalf("llm:delete-model did not commit models.json: %v", err)
+	}
+	if cleared := configRead(); cleared["defaultModelId"] != nil {
+		t.Fatalf("llm:delete-model did not clear the default reference: %v", cleared)
+	}
+	// A profile outside the administrator approved origins is refused at 403 and
+	// nothing is persisted for it.
+	deniedModel := rpc("llm:save-model", []any{map[string]any{
+		"id": "denied-model", "provider": "custom", "protocol": "openai",
+		"baseUrl": "https://denied.example/v1", "modelName": "denied",
+		"apiKey": "sk-durable-denied-key",
+	}})
+	if deniedModel.Code != http.StatusForbidden || !strings.Contains(deniedModel.Body.String(), "ENDPOINT_NOT_ALLOWED") {
+		t.Fatalf("llm:save-model accepted an unapproved endpoint: %d %s", deniedModel.Code, deniedModel.Body.String())
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || bytes.Contains(raw, []byte("denied-model")) {
+		t.Fatalf("a refused model save persisted a profile: %v", err)
+	}
+	// The eight mcp names stay unbound on this lane. BindMCP needs a pristine
+	// *mcp.Manager plus a host-captured administrator predicate
+	// (transport/mcp.go:26), and this lane owns neither: it has no trusted MCP
+	// config path, no runtime directory and no host enable grant, so building a
+	// manager here would mean stubbing one that can never load a config or spawn
+	// a server. The registry exposes all eight, so the 501 is the durable
+	// binding, not a 404.
+	for _, unboundMCP := range []string{
+		"mcp:load-config", "mcp:connect", "mcp:disconnect", "mcp:disconnect-all",
+		"mcp:list-tools", "mcp:list-resources", "mcp:call-tool", "mcp:get-servers-status",
+	} {
+		mcpRec := rpc(unboundMCP, []any{})
+		if mcpRec.Code != http.StatusNotImplemented || !strings.Contains(mcpRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("mcp name %s was bound on the durable lane: %d %s", unboundMCP, mcpRec.Code, mcpRec.Body.String())
+		}
+	}
+
 	// project:open returns the durable Open DTO backed by the author's own DB.
 	opened := rpc("project:open", []any{projectPath, "durable-open-1", nil})
 	var openWire struct {
@@ -414,21 +619,24 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if strings.Contains(plotRec.Body.String(), projectPath) {
 		t.Fatal("durable plot-tree-read leaked the project path", plotRec.Body.String())
 	}
-	// The two plot tree mutations stay unbound on this lane: the registry
-	// exposes them, so the 501 is the durable binding, not a 404.
+	// db:plot-tree-save stays unbound on this lane: the original refuses it
+	// unconditionally (plottree.go:22 returns GENERATION_GRAPH_ADMISSION_REQUIRED)
+	// and there is no generation graph admission here, so the registry-exposed
+	// name keeps failing closed at 501, not 404. db:plot-tree-clear is a plain
+	// one-statement mutation and is bound, so it is exercised further down
+	// against a real stored snapshot instead of being probed here.
 	for _, unboundWrite := range []struct {
 		name string
 		args []any
 	}{
 		{"db:plot-tree-save", []any{map[string]any{"version": 1, "tracks": []any{}}, "synthetic-source-revision", projectPath, expected}},
-		{"db:plot-tree-clear", []any{projectPath, expected}},
 	} {
 		plotWriteRec := rpc(unboundWrite.name, unboundWrite.args)
 		if plotWriteRec.Code != http.StatusNotImplemented || !strings.Contains(plotWriteRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("mutating plot tree name %s was bound on the durable lane: %d %s", unboundWrite.name, plotWriteRec.Code, plotWriteRec.Body.String())
 		}
 	}
-	// Both refused mutations left the author database untouched.
+	// The refused save left the author database untouched: no snapshot exists.
 	if keptPlot := rpc("db:plot-tree-read", []any{projectPath, expected}); keptPlot.Code != http.StatusOK || !strings.Contains(keptPlot.Body.String(), `"snapshot":null`) {
 		t.Fatal("unbound plot tree mutation changed the author database", keptPlot.Code, keptPlot.Body.String())
 	}
@@ -653,23 +861,13 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(skillDirectory, "SKILL.md")); err != nil {
 		t.Fatal("unbound skills:uninstall-user removed the installed skill", err)
 	}
-	// The one mutating name in the narrative thread and consistency exemption
-	// family that belongs to the graph admission gate (thread event
-	// confirmation) stays unbound on this lane: the registry exposes it, so the
-	// 501 is the durable binding, not a 404. The five plan and exemption writes
-	// are bound by BindNarrativeWrites and are exercised further down once the
-	// draft CAS has rotated the lease.
-	for _, unboundWrite := range []struct {
-		name string
-		args []any
-	}{
-		{"db:narrative-thread-event-confirm", []any{map[string]any{"type": "planted", "evidence": "证据", "reason": "理由"}, projectPath, expected}},
-	} {
-		writeRec := rpc(unboundWrite.name, unboundWrite.args)
-		if writeRec.Code != http.StatusNotImplemented || !strings.Contains(writeRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("mutating narrative name %s was bound on the durable lane: %d %s", unboundWrite.name, writeRec.Code, writeRec.Body.String())
-		}
-	}
+	// The ninth name in that family, db:narrative-thread-event-confirm, is bound
+	// separately by BindNarrativeEventConfirm and is exercised at the end of
+	// this test: store.ConfirmEvent binds the evidence to frozen finalization
+	// outbox prose, so it needs a finalized chapter and its outbox row seeded
+	// while no lease is admitted. The five plan and exemption writes are bound
+	// by BindNarrativeWrites and are exercised further down once the draft CAS
+	// has rotated the lease.
 	// The four mutating names in the same family are bound by
 	// BindPostHistoryWrites against the same admitted author database, so they
 	// are exercised further down once the draft CAS has rotated the lease.
@@ -1231,6 +1429,15 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if closed.Code != http.StatusOK {
 		t.Fatal("db:close failed", closed.Code, closed.Body.String())
 	}
+	// The two names wired this round need source facts that only exist in the
+	// author's own database, so they are seeded here, while no lease is
+	// admitted: db:close released the write handle and its content identity
+	// proof, and the next project:open fingerprints exactly what is on disk.
+	// One stored plot tree snapshot gives db:plot-tree-clear something real to
+	// blank, and one finalized chapter plus its frozen finalization outbox row
+	// gives db:narrative-thread-event-confirm the evidence source it requires.
+	finalDraftID := seedSyntheticDurableFinalizedDraft(t, database)
+	seedSyntheticDurablePlotSnapshot(t, database, finalDraftID)
 	// A fresh open reads back the committed name from the same project.db.
 	reopened := rpc("project:open", []any{projectPath, "durable-open-2", nil})
 	var reopenWire struct {
@@ -1250,6 +1457,153 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	}
 	if value, _ := reopenWire.Result.Project["path"].(string); value != projectPath {
 		t.Fatalf("reopen changed project path: %q", value)
+	}
+	reopenedLease, _ := reopenWire.Result.Project["sessionLease"].(string)
+	if reopenedLease == "" {
+		t.Fatal("reopen did not mint a session lease")
+	}
+	reopenedSession := map[string]any{"projectId": id, "leaseId": reopenedLease, "projectPath": projectPath}
+	// db:plot-tree-clear is bound by BindPlotTreeClear. The read before it proves
+	// the seeded snapshot really is stored and readable through the original
+	// stored-snapshot validator; the read after it proves the clear committed,
+	// and the file itself is queried so the assertion is on persisted state.
+	seededPlot := rpc("db:plot-tree-read", []any{projectPath, reopenedSession})
+	var seededPlotWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(seededPlot.Body.Bytes(), &seededPlotWire); err != nil || seededPlot.Code != http.StatusOK {
+		t.Fatalf("durable plot-tree-read decode failed: %d %s %v", seededPlot.Code, seededPlot.Body.String(), err)
+	}
+	seededSnapshot, _ := seededPlotWire.Result["snapshot"].(map[string]any)
+	if seededSnapshot == nil {
+		t.Fatalf("the seeded plot tree snapshot was not readable: %s", seededPlot.Body.String())
+	}
+	if tracks, _ := seededSnapshot["tracks"].([]any); len(tracks) != 1 {
+		t.Fatalf("the seeded plot tree snapshot shape changed: %s", seededPlot.Body.String())
+	}
+	cleared := rpc("db:plot-tree-clear", []any{projectPath, reopenedSession})
+	var clearedWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(cleared.Body.Bytes(), &clearedWire); err != nil || cleared.Code != http.StatusOK || clearedWire.Result["success"] != true {
+		t.Fatalf("db:plot-tree-clear failed: %d %s %v", cleared.Code, cleared.Body.String(), err)
+	}
+	if strings.Contains(cleared.Body.String(), projectPath) || strings.Contains(cleared.Body.String(), durableDir) {
+		t.Fatalf("db:plot-tree-clear leaked a filesystem path: %s", cleared.Body.String())
+	}
+	clearedPlot := rpc("db:plot-tree-read", []any{projectPath, reopenedSession})
+	var clearedPlotWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(clearedPlot.Body.Bytes(), &clearedPlotWire); err != nil || clearedPlot.Code != http.StatusOK {
+		t.Fatalf("durable plot-tree-read after clear decode failed: %d %s %v", clearedPlot.Code, clearedPlot.Body.String(), err)
+	}
+	if snapshot, present := clearedPlotWire.Result["snapshot"]; !present || snapshot != nil {
+		t.Fatalf("db:plot-tree-clear did not blank the stored snapshot: %s", clearedPlot.Body.String())
+	}
+	var storedSnapshot string
+	durableQuery(t, database, "SELECT plot_tree_snapshot FROM project_core WHERE id='main'", &storedSnapshot)
+	if storedSnapshot != "" {
+		t.Fatalf("db:plot-tree-clear left a stored snapshot: %q", storedSnapshot)
+	}
+	// A forged lease is refused before the store is reached and changes nothing.
+	// Like the original binder for this name, the refusal is a transport error
+	// carrying a symbolic code, not the save name's `Error: CODE` result.
+	forgedClear := rpc("db:plot-tree-clear", []any{projectPath, map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}})
+	if forgedClear.Code == http.StatusOK || strings.Contains(forgedClear.Body.String(), projectPath) || strings.Contains(forgedClear.Body.String(), durableDir) {
+		t.Fatalf("db:plot-tree-clear accepted a forged lease: %d %s", forgedClear.Code, forgedClear.Body.String())
+	}
+	// db:narrative-thread-event-confirm is bound by BindNarrativeEventConfirm and
+	// writes against a real plan plus the seeded frozen finalization outbox row.
+	// The receipt carries the committed event, and the already bound thread list
+	// reads that confirmation back from the author's own database.
+	confirmedPlan := mutate("db:narrative-thread-plan-create", []any{map[string]any{
+		"title": "定稿线索", "type": "伏笔", "authorIntent": "作者决定回收时机",
+		"targetStartChapter": 1, "targetEndChapter": 4,
+	}, projectPath, reopenedSession})
+	if confirmedPlan["success"] != true || confirmedPlan["error"] != nil {
+		t.Fatalf("durable plan-create reported failure: %v", confirmedPlan)
+	}
+	confirmedPlanWire, _ := confirmedPlan["plan"].(map[string]any)
+	if confirmedPlanWire == nil {
+		t.Fatalf("durable plan-create returned a malformed plan: %v", confirmedPlan)
+	}
+	confirmedPlanID, _ := confirmedPlanWire["id"].(float64)
+	if confirmedPlanID <= 0 {
+		t.Fatalf("durable plan-create did not mint a plan id: %v", confirmedPlan)
+	}
+	confirmed := mutate("db:narrative-thread-event-confirm", []any{map[string]any{
+		"type": "resolved", "evidence": syntheticDurableFinalEvidence, "reason": "作者确认回收",
+		"draftId": finalDraftID, "planId": confirmedPlanID,
+	}, projectPath, reopenedSession})
+	if confirmed["success"] != true || confirmed["error"] != nil {
+		t.Fatalf("durable event-confirm reported failure: %v", confirmed)
+	}
+	confirmedEvent, _ := confirmed["event"].(map[string]any)
+	if confirmedEvent == nil || confirmedEvent["evidence"] != syntheticDurableFinalEvidence ||
+		confirmedEvent["reason"] != "作者确认回收" || confirmedEvent["type"] != "resolved" ||
+		confirmedEvent["chapterNumber"] != float64(2) || confirmedEvent["chapterTitle"] != syntheticDurableFinalChapterTitle {
+		t.Fatalf("durable event-confirm returned a malformed event: %v", confirmed)
+	}
+	threads := func() []map[string]any {
+		t.Helper()
+		response := rpc("db:narrative-thread-list", []any{projectPath, reopenedSession})
+		var wire struct {
+			Result []map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable narrative-thread-list readback failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	confirmedThreads := threads()
+	if len(confirmedThreads) != 1 || confirmedThreads[0]["title"] != "定稿线索" || confirmedThreads[0]["status"] != "resolved" {
+		t.Fatalf("the confirmed plan was not read back: %v", confirmedThreads)
+	}
+	confirmedEvents, _ := confirmedThreads[0]["events"].([]any)
+	if len(confirmedEvents) != 1 {
+		t.Fatalf("the confirmed event was not read back: %v", confirmedThreads[0])
+	}
+	confirmedEventRow, _ := confirmedEvents[0].(map[string]any)
+	if confirmedEventRow == nil || confirmedEventRow["evidence"] != syntheticDurableFinalEvidence ||
+		confirmedEventRow["reason"] != "作者确认回收" || confirmedEventRow["type"] != "resolved" ||
+		confirmedEventRow["draftId"] != float64(finalDraftID) {
+		t.Fatalf("the confirmed event row mismatch: %v", confirmedEvents[0])
+	}
+	var confirmationRows int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM narrative_thread_confirmations", &confirmationRows)
+	if confirmationRows != 1 {
+		t.Fatalf("durable event-confirm did not persist exactly one confirmation: %d", confirmationRows)
+	}
+	// Evidence that is not inside the frozen outbox prose is refused before the
+	// insert, with this name's transport-error envelope at HTTP 500 carrying the
+	// symbolic code — never the `Error: ` prefix the exemption names use.
+	outsideEvidence := rpc("db:narrative-thread-event-confirm", []any{map[string]any{
+		"type": "planted", "evidence": "正文里没有这句", "reason": "理由",
+		"draftId": finalDraftID, "planId": confirmedPlanID,
+	}, projectPath, reopenedSession})
+	if outsideEvidence.Code != http.StatusInternalServerError ||
+		!strings.Contains(outsideEvidence.Body.String(), "NARRATIVE_THREAD_EVIDENCE_NOT_IN_SOURCE") ||
+		strings.Contains(outsideEvidence.Body.String(), "Error: ") ||
+		strings.Contains(outsideEvidence.Body.String(), projectPath) {
+		t.Fatalf("durable event-confirm did not refuse unsupported evidence: %d %s", outsideEvidence.Code, outsideEvidence.Body.String())
+	}
+	// An unknown plan is refused with the same envelope and its own code, so the
+	// finite mapping is exercised in both directions.
+	unknownPlan := rpc("db:narrative-thread-event-confirm", []any{map[string]any{
+		"type": "planted", "evidence": syntheticDurableFinalEvidence, "reason": "理由",
+		"draftId": finalDraftID, "planId": float64(999999),
+	}, projectPath, reopenedSession})
+	if unknownPlan.Code != http.StatusInternalServerError || !strings.Contains(unknownPlan.Body.String(), "NARRATIVE_THREAD_PLAN_NOT_FOUND") {
+		t.Fatalf("durable event-confirm did not refuse an unknown plan: %d %s", unknownPlan.Code, unknownPlan.Body.String())
+	}
+	// Both refusals left exactly the one committed confirmation row.
+	if afterRefusals := threads(); len(afterRefusals) != 1 {
+		t.Fatalf("a refused event-confirm changed the thread list: %v", afterRefusals)
+	}
+	durableQuery(t, database, "SELECT COUNT(*) FROM narrative_thread_confirmations", &confirmationRows)
+	if confirmationRows != 1 {
+		t.Fatalf("a refused event-confirm persisted a row: %d", confirmationRows)
 	}
 }
 
@@ -1313,6 +1667,75 @@ func seedSyntheticDurableBlueprint(t *testing.T, database string) {
 		characters, suspense_hook, user_guidance, notes, notes_updated_at)
 		VALUES(1, ?, 'main', '目的', '事件', ?, '悬念', '指导', '作者摘要', 'synthetic-fixed-author-clock')`,
 		syntheticDurableBlueprintTitle, `["甲"]`)
+	closeErr := db.Close()
+	if execErr != nil || closeErr != nil {
+		t.Fatal(execErr, closeErr)
+	}
+}
+
+// seedSyntheticDurableFinalizedDraft writes one finalized chapter with its
+// frozen finalization outbox row into the author's database while no lease is
+// admitted, and returns its draft id. store.ConfirmEvent requires exactly that
+// pair: it refuses evidence that is not inside the outbox's frozen prose, so a
+// draft row alone would prove nothing about the confirmation source.
+func seedSyntheticDurableFinalizedDraft(t *testing.T, database string) int64 {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	prose := "第二章正文：作者在此写下" + syntheticDurableFinalEvidence + "，随后收束。"
+	inserted, err := db.Exec("INSERT INTO contents(body) VALUES(?)", prose)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	contentID, err := inserted.LastInsertId()
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	inserted, err = db.Exec("INSERT INTO drafts(chapter_number, version, status, content_id, word_count) VALUES(2, 1, 'finalized', ?, 24)", contentID)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	draftID, err := inserted.LastInsertId()
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_, execErr := db.Exec(`INSERT INTO finalization_outbox(finalization_id, draft_id, chapter_number,
+		chapter_title, content_hash, content_revision, content_snapshot, target_file_name)
+		VALUES('durable-finalized-1', ?, 2, ?, ?, 1, ?, 'synthetic.txt')`,
+		draftID, syntheticDurableFinalChapterTitle, strings.Repeat("a1", 32), prose)
+	closeErr := db.Close()
+	if execErr != nil || closeErr != nil {
+		t.Fatal(execErr, closeErr)
+	}
+	return draftID
+}
+
+// seedSyntheticDurablePlotSnapshot writes one valid stored plot tree snapshot
+// into the author's database while no lease is admitted, so db:plot-tree-clear
+// has a real stored snapshot to blank. The shape is the validator's own
+// accepted stored form (store/plottree_validation.go:210): version 1, a
+// readable generatedAt, zh-CN, and one track whose event supports itself from
+// the seeded finalized chapter.
+func seedSyntheticDurablePlotSnapshot(t *testing.T, database string, draftID int64) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	snapshot := `{"version":1,"generatedAt":"2026-01-02T03:04:05.678Z","writingLanguage":"zh-CN",` +
+		`"sourceRevision":"` + strings.Repeat("a1", 32) + `","tracks":[{"id":"main","title":"合成轨道",` +
+		`"role":"main","startChapter":2,"endChapter":5,"summary":"轨道摘要",` +
+		`"events":[{"status":"occurred","chapterNumber":2,"summary":"事件摘要",` +
+		`"sources":[{"type":"finalized-chapter","draftId":` + strconv.FormatInt(draftID, 10) + `,"chapterNumber":2}]}]}]}`
+	_, execErr := db.Exec("UPDATE project_core SET plot_tree_snapshot=? WHERE id='main'", snapshot)
 	closeErr := db.Close()
 	if execErr != nil || closeErr != nil {
 		t.Fatal(execErr, closeErr)

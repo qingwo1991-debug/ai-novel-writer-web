@@ -13,8 +13,10 @@ import (
 // BindNarrativeReads binds only the three narrative thread and consistency
 // exemption reads that the durable lane serves from its admitted author
 // database. The six mutating names in the same family (plan-create, -update,
-// -delete, event-confirm, exemption-save, exemption-revoke) stay unbound, so
-// they keep failing closed.
+// -delete, event-confirm, exemption-save, exemption-revoke) stay unbound here;
+// the five plan and exemption writes are bound by BindNarrativeWrites and
+// db:narrative-thread-event-confirm by BindNarrativeEventConfirm, which is why
+// this binder leaves them out instead of failing them closed.
 //
 // The provider is the same seam BindNarrative already uses: it lends one
 // admitted repository per request and never a database handle. Arity, path

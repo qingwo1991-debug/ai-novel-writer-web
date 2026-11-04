@@ -13,10 +13,10 @@ import (
 // BindNarrativeWrites binds only the five mutating narrative thread plan and
 // consistency exemption names: plan-create, plan-update, plan-delete,
 // exemption-save and exemption-revoke. db:narrative-thread-event-confirm is
-// deliberately NOT here: thread confirmation is the graph admission gate's
-// evidence, so that name stays unbound on a lane and keeps failing closed.
-// Together with BindNarrativeReads the family is then served completely, and
-// no name is bound twice.
+// deliberately NOT here either: thread confirmation is a separate write with
+// its own evidence rule, so it is bound by BindNarrativeEventConfirm instead of
+// being mixed into this list. Together with BindNarrativeReads and that binder
+// the family is then served completely, and no name is bound twice.
 //
 // The provider is the same seam BindNarrative already uses: it lends one
 // admitted repository per request and never a database handle, so the write

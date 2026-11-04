@@ -18,7 +18,9 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/authorruntime"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globalconfig"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
@@ -422,14 +424,13 @@ func (s *syntheticDurableOpen) BeginPostHistory(ctx context.Context, caller tran
 
 // BeginNarrative is the durable lane's narrative thread and consistency
 // exemption repository. The three reads (thread list, relevant thread list,
-// exemption list) are bound by BindNarrativeReads and the five mutating plan
-// and exemption names (plan-create, plan-update, plan-delete, exemption-save,
-// exemption-revoke) by BindNarrativeWrites, so this family is served
-// completely. db:narrative-thread-event-confirm stays unbound: thread
-// confirmation belongs to the graph admission gate and keeps failing closed
-// here. Both halves borrow the admitted author database and never a path; a
-// write commits on that handle and the permit is refreshed on release, exactly
-// like the draft CAS and the post-process writes.
+// exemption list) are bound by BindNarrativeReads, the five mutating plan and
+// exemption names (plan-create, plan-update, plan-delete, exemption-save,
+// exemption-revoke) by BindNarrativeWrites, and db:narrative-thread-event-confirm
+// by BindNarrativeEventConfirm, so this family is served completely. Both halves
+// borrow the admitted author database and never a path; a write commits on that
+// handle and the permit is refreshed on release, exactly like the draft CAS and
+// the post-process writes.
 func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transport.Caller, raw any) (*store.Narrative, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
 	if err != nil {
@@ -470,11 +471,14 @@ func (s *syntheticDurableOpen) BeginProjectCore(ctx context.Context, caller tran
 	return store.NewProjectCore(db), release, nil
 }
 
-// BeginPlotTree is the durable lane's plot tree repository. Only the single
-// read (db:plot-tree-read) is bound to it; db:plot-tree-save and
-// db:plot-tree-clear are mutations and stay unbound, so this lane can never
-// replace or blank the stored snapshot. The repository borrows the admitted
-// author database and never a path.
+// BeginPlotTree is the durable lane's plot tree repository. The single read
+// (db:plot-tree-read) is bound to it by BindPlotTreeReads and the one mutation
+// the store expresses as a plain write (db:plot-tree-clear) by
+// BindPlotTreeClear; db:plot-tree-save stays unbound because the original
+// refuses it unconditionally, so this lane can never replace the stored
+// snapshot. The repository borrows the admitted author database and never a
+// path; the clear commits on that handle and the permit is refreshed on release,
+// exactly like the other write binders.
 func (s *syntheticDurableOpen) BeginPlotTree(ctx context.Context, caller transport.Caller, raw any) (*store.PlotTree, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
 	if err != nil {
@@ -592,6 +596,11 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	}
 	var library *projectfs.Library
 	var durable *syntheticDurableOpen
+	// models and endpoints own descriptors on the pinned private global root and
+	// on the administrator approved egress policy; both are released with the
+	// rest of the lane.
+	var models *globalconfig.Service
+	var endpoints *egress.Client
 	cleanup := func() {
 		server.Close()
 		if durable != nil {
@@ -599,6 +608,12 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		}
 		if library != nil {
 			_ = library.Close()
+		}
+		if endpoints != nil {
+			endpoints.Close()
+		}
+		if models != nil {
+			_ = models.Close()
 		}
 	}
 	library, err = projectfs.OpenLibrary(durableDir)
@@ -647,9 +662,15 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// author database through the same borrow-and-refresh permit path the
 		// draft CAS and the post-process writes use: one admitted handle per
 		// request, refreshed before the fence is observed again, never a
-		// database path. db:narrative-thread-event-confirm belongs to the graph
-		// admission gate and stays unbound, so it keeps failing closed.
+		// database path. db:narrative-thread-event-confirm is not one of them
+		// (its refusal is a transport error, not an `Error: CODE` result), so
+		// it is bound separately just below and the family is served completely.
 		func() error { return server.BindNarrativeWrites(durable) },
+		// Thread confirmation is an ordinary author write on that same admitted
+		// author database: store.ConfirmEvent re-reads the frozen finalization
+		// outbox itself and binds the evidence to that prose, so no generation
+		// graph admission is composed and no confirmation authority is invented.
+		func() error { return server.BindNarrativeEventConfirm(durable) },
 		// Blueprint and character-sync reads run on the same admitted author
 		// database. This binds only the three reads; db:blueprint-get-all is
 		// already bound by BindEditorStageReads above, so it must not be bound
@@ -672,10 +693,14 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// keeps failing closed.
 		func() error { return server.BindProjectCoreWrites(durable) },
 		// The plot tree read runs on the same admitted author database. This
-		// binds only db:plot-tree-read; db:plot-tree-save and
-		// db:plot-tree-clear are mutations and stay unbound, so both keep
-		// failing closed.
+		// binds only db:plot-tree-read; db:plot-tree-save stays unbound because
+		// the original refuses it unconditionally and it keeps failing closed.
 		func() error { return server.BindPlotTreeReads(durable) },
+		// db:plot-tree-clear is a one-statement mutation of that same admitted
+		// database (it blanks the stored snapshot and needs no source-revision
+		// CAS), so it is bound on its own, with the original's transport-error
+		// refusal envelope instead of the save name's `Error: CODE` result.
+		func() error { return server.BindPlotTreeClear(durable) },
 	} {
 		if err := bind(); err != nil {
 			cleanup()
@@ -715,6 +740,38 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		if err := server.BindGraphGeneration(&transport.GraphGenerationProvider{Read: provider.GraphRead}); err != nil {
 			cleanup()
 			return nil, nil, err
+		}
+	}
+	// The protected global config, startup snapshot and private model store are
+	// served from that same pinned private root, so they are wired by the same
+	// condition. The startup capture mirrors the trusted claim the synthetic
+	// model lane already makes for an administrator supplied private root
+	// (main.go:287-291, StartupCapture{Generation:"synthetic-model-config-v1"}):
+	// the root and its capture are host configuration, never request input, and
+	// the appearance acknowledgement is scoped to that generation. Model saves
+	// keep their own administrator approved egress policy.
+	if config.GlobalRoot != "" {
+		models, err = globalconfig.New(config.GlobalRoot)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic durable global config: %w", err)
+		}
+		endpoints, err = egress.New(config.ModelOrigins)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic durable model origins: %w", err)
+		}
+		startup := globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "synthetic-model-config-v1"})
+		for _, bind := range []func() error{
+			func() error { return server.BindGlobalConfig(models, startup) },
+			func() error { return server.BindModelReads(models, startup) },
+			func() error { return server.BindModelSave(models, startup, endpoints) },
+			func() error { return server.BindModelDelete(models, startup) },
+		} {
+			if err := bind(); err != nil {
+				cleanup()
+				return nil, nil, fmt.Errorf("synthetic durable model binding: %w", err)
+			}
 		}
 	}
 	// The prompt template and installed-skill reads are served from that same
