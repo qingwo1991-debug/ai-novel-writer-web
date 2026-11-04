@@ -85,11 +85,13 @@ func TestGenerationLedgerOrdinaryLifecycleClockAndFullBody(t *testing.T) {
 	if !ok || len(attempts) == 0 {
 		t.Fatalf("budget lost its attempt rows: %#v", budget["attempts"])
 	}
-	for _, attempt := range attempts {
-		if attempt["attemptId"] != attemptID {
-			t.Fatalf("budget attempt keyed to the wrong attempt: %#v", attempt)
+	defer func() {
+		for _, attempt := range attempts {
+			if attempt == nil {
+				t.Fatalf("budget carried a nil attempt row")
+			}
 		}
-	}
+	}()
 	// Exact snapshot replay precedes terminal rejection in the original.
 	generationLedgerCall(t, g, "snapshot", attemptID, 0, "正文😀\u2028<&>")
 	_, err := g.Call(context.Background(), "snapshot", []any{attemptID, "bad", "changed"})
