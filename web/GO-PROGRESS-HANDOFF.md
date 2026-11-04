@@ -273,3 +273,31 @@ The port was verified rather than trusted:
 
 The two divergences that remain reachable are recorded above (surrogate splitting at an exact
 cut point, and `Date.parse` approximated by a fixed layout list).
+
+### 2026-11-04 — why `graph-generation:read` is not a wiring job (concrete blocker)
+
+Attempting the port surfaced the real obstruction, and it is in the store, not in the projection:
+
+`readGraphGenerationContext` verifies `textHash(JSON.stringify(context)) === contextHash`. Node hashes
+the object **in insertion order**, and that order is preserved in `binding_json` on disk. But
+`GenerationLedger.get` returns `binding` as a `map[string]any` — Go maps have no order, so by the
+time the projection sees the context, the byte sequence Node hashed no longer exists. And
+`graphgen.EncodeJSON` deliberately refuses Go maps rather than guessing an order, so there is
+nothing to fall back to.
+
+Two ways out, and only these:
+
+1. **Expose the raw binding text.** Add a ledger read that returns `binding_json` (and, if needed,
+   `usage_receipt_json`) as the stored string, then decode it with an order-preserving pass into
+   `graphgen.Object` before hashing. This is the smaller change and keeps the hash semantics exact.
+2. **Re-order after the fact.** Decode into a map, then re-emit with a fixed key order and compare
+   against a hash computed the same way. This silently changes what is being verified — the hash
+   would then prove "this context re-encodes to itself", not "this is the context Node froze", so
+   a Node-written run and a Go-written run would never agree.
+
+Option 1 is the only one that preserves cross-version parity, so that is the next step, and the
+read binding should not be attempted again before it exists.
+
+Note the knock-on effect: this same raw-text requirement will apply to `graph-generation:execute`
+(the task hash) and to `finalization-generation:*` (slot hash), so solving it once unblocks the
+whole family rather than one operation.
