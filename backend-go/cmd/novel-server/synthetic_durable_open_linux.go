@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
@@ -24,6 +26,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectruntime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
@@ -310,6 +313,40 @@ func (s *syntheticDurableOpen) CommitDraftContent(ctx context.Context, caller tr
 	}}, nil
 }
 
+// BeginRecovery is the durable lane's recovery candidate repository. Candidate
+// writes go through the admitted author database, so the release refreshes the
+// permit before the fence is observed again; a read leaves it unchanged.
+func (s *syntheticDurableOpen) BeginRecovery(ctx context.Context, caller transport.Caller, raw any) (*store.Recovery, func(), error) {
+	if s == nil || ctx == nil {
+		return nil, nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	if s.closed || s.lifecycle == nil {
+		s.mu.Unlock()
+		return nil, nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	lifecycle := s.lifecycle
+	s.mu.Unlock()
+	repository, refresh, done, err := lifecycle.RecoveryRepositoryDurable(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected)
+	if err != nil {
+		return nil, nil, err
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = refresh(refreshCtx)
+			done()
+		})
+	}
+	return repository, release, nil
+}
+
 // OpenProject maps a browser project path to the exact process-local catalog
 // key of the created synthetic project, then opens it for durable editing.
 // The path is never passed to the runtime and never opens a filesystem target.
@@ -472,6 +509,12 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			cleanup()
 			return nil, nil, err
 		}
+	}
+	// The four recovery candidate operations share the durable author admission:
+	// their repository writes the author's own database, never a renderer path.
+	if err := server.BindRecovery(durable); err != nil {
+		cleanup()
+		return nil, nil, err
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", server)

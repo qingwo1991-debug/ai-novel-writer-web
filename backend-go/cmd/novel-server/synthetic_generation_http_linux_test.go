@@ -408,6 +408,13 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		t.Fatalf("generation_roots = %d, want >= 3", rootCount)
 	}
 
+	// --- the four recovery candidate operations are bound to the durable lane. ---
+	recoveryProjectPath, _ := expected["projectPath"].(string)
+	candidates := rpc("db:recovery-candidate-list", []any{recoveryProjectPath, expected})
+	if candidates.Code != http.StatusOK || !strings.Contains(candidates.Body.String(), `"result"`) {
+		t.Fatalf("recovery candidate list = %d %s", candidates.Code, candidates.Body.String())
+	}
+
 	// --- all 32 non-S1 generation-family operations stay unmigrated. ---
 	unmigrated := append([]string{
 		"generation:begin-batch", "generation:commit-draft", "generation:compose-visible",
