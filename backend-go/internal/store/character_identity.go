@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +26,12 @@ var (
 	ErrCharacterIDConflict             = errors.New("CHARACTER_ID_CONFLICT")
 	ErrCharacterIDUnknown              = errors.New("CHARACTER_ID_UNKNOWN")
 	ErrCharacterIDConfirmationRequired = errors.New("CHARACTER_ID_CONFIRMATION_REQUIRED")
+	// The three codes below belong to the relationship and proposal stages
+	// (:1240-1271), still verbatim from commitCharacterIdentities.
+	ErrCharacterRelationshipIDRequired = errors.New("CHARACTER_RELATIONSHIP_ID_REQUIRED")
+	ErrCharacterRelationshipInvalid    = errors.New("CHARACTER_RELATIONSHIP_INVALID")
+	ErrCharacterProposalConflict       = errors.New("CHARACTER_PROPOSAL_CONFLICT")
+	ErrCharacterProposalKindInvalid    = errors.New("CHARACTER_PROPOSAL_KIND_INVALID")
 )
 
 // CharacterIdentityField is one ordered static field assignment. Field order is
@@ -68,22 +75,42 @@ type CharacterIdentityChange struct {
 	Fields      []CharacterIdentityField
 }
 
+// CharacterIdentityCreation is one new identity plus the selection key the same
+// commit's relationships may refer to instead of an ID.
 type CharacterIdentityCreation struct {
 	SelectionKey string
 	Fields       []CharacterIdentityField
 }
 
-// CharacterIdentityCommitRequest is the ported slice of
-// CharacterIdentityCommitRequest (repository :1150-1159). The remaining two
-// original fields, relationships and resolutions, are deliberately absent rather
-// than silently dropped: a request that carries them cannot be expressed here, so
-// this type can never be used to report a commit that skipped :1240-1271. Any
-// future binder must add both stages before serving db:character-roster-commit.
+// CharacterIdentityRelationship is one row of the original's relationship stage
+// (:1240-1253). The original endpoint helper refuses two truthy identifiers, two
+// absent ones and a selection key that resolves to nothing, all as
+// CHARACTER_RELATIONSHIP_ID_REQUIRED; an empty Go string is the absent value.
+type CharacterIdentityRelationship struct {
+	SourceCharacterID  string
+	SourceSelectionKey string
+	TargetCharacterID  string
+	TargetSelectionKey string
+	Relation           string
+}
+
+// CharacterIdentityResolution is one row of the original's proposal stage
+// (:1254-1271).
+type CharacterIdentityResolution struct {
+	ProposalID  string
+	CharacterID string
+}
+
+// CharacterIdentityCommitRequest is CharacterIdentityCommitRequest
+// (repository :1150-1159). Relationships and resolutions are the two stages the
+// first slice left out; both are now carried and written by the same commit.
 type CharacterIdentityCommitRequest struct {
-	Approval  CharacterIdentityApproval
-	Changes   []CharacterIdentityChange
-	Creations []CharacterIdentityCreation
-	RetireIDs []string
+	Approval      CharacterIdentityApproval
+	Changes       []CharacterIdentityChange
+	Creations     []CharacterIdentityCreation
+	RetireIDs     []string
+	Relationships []CharacterIdentityRelationship
+	Resolutions   []CharacterIdentityResolution
 }
 
 // CharacterIdentities is the identity write owner for one borrowed, already
@@ -96,17 +123,18 @@ type CharacterIdentityCommitRequest struct {
 //	:1178-1182 idempotency   ported
 //	:1183-1184 revision CAS  ported
 //	:1185-1197 approval/provenance shape ported
-//	:1201 resolutions gate   unreachable (no resolutions field in the slice)
+//	:1201 resolutions gate   ported (a resolution outside confirm-identity refuses)
 //	:1203-1209 field/ID checks ported
 //	:1210-1237 creations, changes, retirements and aliases ported
 //	:1238-1239 receipt + approval row ported
-//	:1240-1253 relationships NOT ported
-//	:1254-1271 proposal resolutions NOT ported
+//	:1240-1253 relationships ported
+//	:1254-1271 proposal resolutions ported
 //	:1272 identity meta bump ported
 //
 // The author service's projection refresh, roster-meta bump and readback
-// (electron/services/character-roster-author.ts:160-175) are a separate owner and
-// are NOT ported, which is why db:character-roster-commit stays 501.
+// (electron/services/character-roster-author.ts:135-147) are a separate owner:
+// character_roster_author.go ports them and is the only caller that serves
+// db:character-roster-commit for a manual_edit request.
 type CharacterIdentities struct{ db *sql.DB }
 
 func NewCharacterIdentities(db *sql.DB) *CharacterIdentities { return &CharacterIdentities{db: db} }
@@ -125,8 +153,11 @@ var characterIdentityAllowedSources = map[string][]string{
 }
 
 // CommitIdentities commits character identity rows, their aliases, retirements,
-// the approval row and the identity revision. It writes nothing else: no
-// projection, no roster meta, no relationships, no proposals.
+// the approval row, the identity relationships and proposal resolutions of the
+// same commit, and the identity revision. It writes nothing else: no projection
+// and no roster meta. Those two belong to the author service
+// (character_roster_author.go), which runs this commit, the refresh and the
+// readback inside one transaction.
 func (c *CharacterIdentities) CommitIdentities(ctx context.Context, request CharacterIdentityCommitRequest,
 	authorize func(CharacterIdentityCommitRequest) bool) (map[string]any, error) {
 	if c == nil || c.db == nil {
@@ -226,10 +257,11 @@ func characterIdentityCommit(ctx context.Context, conn *sql.Conn, request Charac
 	if err != nil {
 		return nil, err
 	}
-	// :1201 `resolutions.length && action !== confirm-identity` is unreachable
-	// here: the slice request cannot carry a resolution, so no resolution can be
-	// dropped and CHARACTER_ID_CONFIRMATION_REQUIRED can never be earned. That code
-	// stays declared so a future port cannot quietly forget the gate.
+	// :1201 a resolution needs the confirmation action. Reachable now that the
+	// request carries resolutions; the code stays exactly as the original's.
+	if len(request.Resolutions) > 0 && action != "confirm-identity" {
+		return nil, ErrCharacterIDConfirmationRequired
+	}
 	// :1207-1208 uniqueness of change IDs, then creation keys, then retire IDs.
 	if err := characterIdentityUnique(characterIdentityChangeIDs(request.Changes)); err != nil {
 		return nil, err
@@ -252,6 +284,7 @@ func characterIdentityCommit(ctx context.Context, conn *sql.Conn, request Charac
 	}
 	// :1215-1222 creations insert the identity row and its first alias.
 	created := make([]any, 0, len(request.Creations))
+	selection := make(map[string]string, len(request.Creations))
 	for _, creation := range request.Creations {
 		if err := characterIdentityValidateFields(creation.Fields); err != nil {
 			return nil, err
@@ -272,6 +305,11 @@ func characterIdentityCommit(ctx context.Context, conn *sql.Conn, request Charac
 			return nil, err
 		}
 		created = append(created, plotObject{{"selectionKey", creation.SelectionKey}, {"characterId", id}})
+		// A selection key is only ever resolved through `created.find(...)`, so a
+		// repeated key keeps the FIRST creation, exactly like Array#find.
+		if _, taken := selection[creation.SelectionKey]; !taken {
+			selection[creation.SelectionKey] = id
+		}
 	}
 	// :1223-1236 changes: the active lookup precedes field validation, so an
 	// unknown or retired ID wins over an illegal field for the same change.
@@ -332,8 +370,102 @@ func characterIdentityCommit(ctx context.Context, conn *sql.Conn, request Charac
 	if _, err := conn.ExecContext(ctx, "INSERT INTO character_identity_approvals VALUES(?,?,?)", request.Approval.OperationID, digest, receiptJSON); err != nil {
 		return nil, err
 	}
-	// The original writes relationships and proposal resolutions here. They are
-	// not ported, and nothing in this file pretends otherwise.
+	// :1240-1253 relationships. Both endpoints resolve first, then both identities
+	// are re-read as active rows, and only then is the relation itself judged: an
+	// unknown or retired endpoint therefore wins over an empty relation string.
+	relationKeys := make(map[string]bool, len(request.Relationships))
+	for _, relationship := range request.Relationships {
+		fromID, err := characterIdentityEndpoint(relationship.SourceCharacterID, relationship.SourceSelectionKey, selection)
+		if err != nil {
+			return nil, err
+		}
+		toID, err := characterIdentityEndpoint(relationship.TargetCharacterID, relationship.TargetSelectionKey, selection)
+		if err != nil {
+			return nil, err
+		}
+		from, err := characterIdentityActive(ctx, conn, fromID)
+		if err != nil {
+			return nil, err
+		}
+		to, err := characterIdentityActive(ctx, conn, toID)
+		if err != nil {
+			return nil, err
+		}
+		key, err := plotJSON([]any{fromID, toID, relationship.Relation})
+		if err != nil {
+			return nil, err
+		}
+		if summaryTrim(relationship.Relation) == "" || fromID == toID || relationKeys[key] {
+			return nil, ErrCharacterRelationshipInvalid
+		}
+		relationKeys[key] = true
+		relationshipID, err := characterIdentityUUID()
+		if err != nil {
+			return nil, err
+		}
+		// The display snapshots are the two current names and the provenance is
+		// the same attributed source object the identities above were given.
+		if _, err := conn.ExecContext(ctx, `INSERT INTO character_relationships(relationship_id,source_character_id,target_character_id,relation,
+			source_display_snapshot,target_display_snapshot,provenance_json,approval_id) VALUES(?,?,?,?,?,?,?,?)`,
+			relationshipID, fromID, toID, relationship.Relation, from["name"], to["name"], source, request.Approval.OperationID); err != nil {
+			return nil, err
+		}
+	}
+	// :1254-1271 proposal resolutions. The resolved identity is checked active
+	// before the proposal is read, an already resolved proposal refuses, and only
+	// the two immutable legacy source-key shapes may be resolved here.
+	for _, resolution := range request.Resolutions {
+		if _, err := characterIdentityActive(ctx, conn, resolution.CharacterID); err != nil {
+			return nil, err
+		}
+		proposals, err := rrMaps(ctx, conn, "SELECT resolved_character_id,owner_character_id,raw_value,source_key FROM character_identity_proposals WHERE proposal_id=?", resolution.ProposalID)
+		if err != nil {
+			return nil, err
+		}
+		if len(proposals) == 0 || phTruthy(proposals[0]["resolved_character_id"]) {
+			return nil, ErrCharacterProposalConflict
+		}
+		proposal := proposals[0]
+		sourceKey, ok := proposal["source_key"].(string)
+		if !ok || !characterIdentityLegacyProposalKey.MatchString(sourceKey) {
+			return nil, ErrCharacterProposalKindInvalid
+		}
+		if _, err := conn.ExecContext(ctx, "UPDATE character_identity_proposals SET resolved_character_id=?,approval_id=? WHERE proposal_id=?",
+			resolution.CharacterID, request.Approval.OperationID, resolution.ProposalID); err != nil {
+			return nil, err
+		}
+		// An owner character means the proposal was itself a relationship edge: it
+		// becomes a row of the same commit. A missing owner resolves the proposal
+		// only. Neither arm runs for a non-relationship raw value.
+		if !phTruthy(proposal["owner_character_id"]) {
+			continue
+		}
+		ownerID := rosterText(proposal["owner_character_id"])
+		relation, ok := characterIdentityProposalRelation(proposal["raw_value"])
+		if !ok {
+			continue
+		}
+		from, err := characterIdentityActive(ctx, conn, ownerID)
+		if err != nil {
+			return nil, err
+		}
+		to, err := characterIdentityActive(ctx, conn, resolution.CharacterID)
+		if err != nil {
+			return nil, err
+		}
+		if ownerID == resolution.CharacterID {
+			return nil, ErrCharacterRelationshipInvalid
+		}
+		relationshipID, err := characterIdentityUUID()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := conn.ExecContext(ctx, `INSERT INTO character_relationships(relationship_id,source_character_id,target_character_id,relation,
+			source_display_snapshot,target_display_snapshot,provenance_json,approval_id) VALUES(?,?,?,?,?,?,?,?)`,
+			relationshipID, ownerID, resolution.CharacterID, relation, from["name"], to["name"], source, request.Approval.OperationID); err != nil {
+			return nil, err
+		}
+	}
 	// :1272
 	if _, err := conn.ExecContext(ctx, "UPDATE character_identity_meta SET revision=? WHERE id='main'", commandRevision); err != nil {
 		return nil, err
@@ -358,6 +490,8 @@ func characterIdentityNormalize(request CharacterIdentityCommitRequest) Characte
 		out.Creations = append(out.Creations, CharacterIdentityCreation{SelectionKey: creation.SelectionKey, Fields: characterIdentityDedupe(creation.Fields)})
 	}
 	out.RetireIDs = append([]string{}, request.RetireIDs...)
+	out.Relationships = append([]CharacterIdentityRelationship{}, request.Relationships...)
+	out.Resolutions = append([]CharacterIdentityResolution{}, request.Resolutions...)
 	return out
 }
 
@@ -376,8 +510,8 @@ func characterIdentityDedupe(fields []CharacterIdentityField) []CharacterIdentit
 }
 
 // characterIdentityEncode is the authorized payload: the original request shape in
-// a fixed order (declared order of the TS interfaces, with the unported remainder
-// pinned to empty). Same request, same bytes; any edit, different bytes.
+// a fixed order (declared order of the TS interfaces). Same request, same bytes;
+// any edit, different bytes.
 func characterIdentityEncode(request CharacterIdentityCommitRequest) (string, error) {
 	changes := make([]any, 0, len(request.Changes))
 	for _, change := range request.Changes {
@@ -391,13 +525,27 @@ func characterIdentityEncode(request CharacterIdentityCommitRequest) (string, er
 	for _, id := range request.RetireIDs {
 		retired = append(retired, id)
 	}
+	relationships := make([]any, 0, len(request.Relationships))
+	for _, relationship := range request.Relationships {
+		relationships = append(relationships, plotObject{
+			{"sourceCharacterId", relationship.SourceCharacterID},
+			{"sourceSelectionKey", relationship.SourceSelectionKey},
+			{"targetCharacterId", relationship.TargetCharacterID},
+			{"targetSelectionKey", relationship.TargetSelectionKey},
+			{"relation", relationship.Relation},
+		})
+	}
+	resolutions := make([]any, 0, len(request.Resolutions))
+	for _, resolution := range request.Resolutions {
+		resolutions = append(resolutions, plotObject{{"proposalId", resolution.ProposalID}, {"characterId", resolution.CharacterID}})
+	}
 	return plotJSON(plotObject{
 		{"approval", characterIdentityApprovalObject(request.Approval)},
 		{"changes", changes},
 		{"creations", creations},
 		{"retireIds", retired},
-		{"relationships", []any{}},
-		{"resolutions", []any{}},
+		{"relationships", relationships},
+		{"resolutions", resolutions},
 	})
 }
 
@@ -551,6 +699,54 @@ func characterIdentityOpenAlias(ctx context.Context, conn *sql.Conn, id, name, o
 func characterIdentityCloseAliases(ctx context.Context, conn *sql.Conn, id string, revision int64) error {
 	_, err := conn.ExecContext(ctx, "UPDATE character_aliases SET valid_through=? WHERE character_id=? AND valid_through IS NULL", revision, id)
 	return err
+}
+
+// characterIdentityEndpoint ports the original's endpoint(): exactly one of the
+// ID and the selection key identifies an endpoint, and a selection key resolves
+// only through this commit's own creations. Every rejected combination is
+// CHARACTER_RELATIONSHIP_ID_REQUIRED rather than a skipped row.
+func characterIdentityEndpoint(id, selectionKey string, created map[string]string) (string, error) {
+	if (id != "") == (selectionKey != "") {
+		return "", ErrCharacterRelationshipIDRequired
+	}
+	resolved := id
+	if resolved == "" {
+		resolved = created[selectionKey]
+	}
+	if resolved == "" {
+		return "", ErrCharacterRelationshipIDRequired
+	}
+	return resolved, nil
+}
+
+// characterIdentityLegacyProposalKey is the original's
+// /^legacy:(?:characters:\d+:relationships:\d+|blueprints:\d+:characters:\d+)$/u.
+// Go's \d is ASCII-only and its $ is end-of-text, so this is the same domain.
+var characterIdentityLegacyProposalKey = regexp.MustCompile(`^legacy:(?:characters:[0-9]+:relationships:[0-9]+|blueprints:[0-9]+:characters:[0-9]+)$`)
+
+// characterIdentityProposalRelation reproduces
+// `JSON.parse(raw_value)` guarded by `parsed && typeof === 'object' && 'relation'
+// in parsed && typeof parsed.relation === 'string' && parsed.relation.trim()`.
+// A parse failure, a non-object and a missing or empty relation all skip the
+// relationship write. The returned relation is the raw value, not the trimmed one.
+func characterIdentityProposalRelation(raw any) (string, bool) {
+	text, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return "", false
+	}
+	object, ok := parsed.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	relation, ok := object["relation"].(string)
+	if !ok || strings.TrimFunc(relation, narrativeSpace) == "" {
+		return "", false
+	}
+	return relation, true
 }
 
 // characterIdentityMergeProvenance reproduces

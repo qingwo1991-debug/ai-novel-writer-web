@@ -308,6 +308,51 @@ func (s *syntheticDurableOpen) ReadCharactersJSON(ctx context.Context, caller tr
 	return s.lifecycle.ReadCharactersJSONDurable(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected, operation)
 }
 
+// CommitCharacterRoster is the durable lane's db:character-roster-commit. The
+// roster author pipeline (identity commit, compatibility prose, projection
+// refresh, roster-meta bump and readback) runs on the admitted author database
+// under the same frozen cookie/tab/lease fence as every other durable write, so
+// it borrows one handle, re-observes that same context from the lifecycle that
+// admitted it, and never names a database path.
+//
+// The author scope's project is the admitted project and its epoch is the admitted
+// lease: the identity approval records which frozen session authorized the roster,
+// and the lease is exactly the value that changes when that session is replaced.
+func (s *syntheticDurableOpen) CommitCharacterRoster(ctx context.Context, caller transport.Caller, request map[string]any, raw any) (map[string]any, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	lifecycle := s.lifecycle
+	closed := s.closed
+	s.mu.Unlock()
+	if closed || lifecycle == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	authorize := func() error {
+		current, present, err := lifecycle.CurrentProjectDurable(ctx, owner)
+		if err != nil {
+			return err
+		}
+		if !present || current != expected {
+			return errors.New("PROJECT_SESSION_STALE")
+		}
+		return nil
+	}
+	scope := store.RosterAuthorScope{ProjectID: expected.ProjectID, Epoch: expected.LeaseID}
+	return store.NewRosterAuthor(db).CommitAuthorRoster(ctx, request, scope, authorize)
+}
+
 // CommitDraftContent is the durable lane's draft body CAS. It runs the CAS
 // directly on the admitted author database and rotates the frozen lease in
 // place, so the same admittedAuthor handle stays installed and the durable
@@ -767,10 +812,15 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// admitted handle per request, refreshed before the fence is observed
 		// again, never a database path. db:project-core-get is already bound by
 		// BindEditorStageReads above, so BindProjectCoreWrites binds only the
-		// two writes. db:character-roster-commit stays unbound: no store method
-		// expresses a roster commit and the original only ever denies it, so it
-		// keeps failing closed.
+		// two writes.
 		func() error { return server.BindProjectCoreWrites(durable) },
+		// db:character-roster-commit is the one author-facing character write:
+		// store.RosterAuthor runs the original's identity commit, prose and state
+		// writes, projection refresh, roster-meta bump and readback on that same
+		// admitted author database, through the same borrow-and-refresh path and
+		// under a re-observed lease. The three character reads stay with
+		// BindCharacterLiveReads above, so nothing is bound twice.
+		func() error { return server.BindCharacterRosterCommit(durable) },
 		// The plot tree read runs on the same admitted author database. This
 		// binds only db:plot-tree-read; db:plot-tree-save stays unbound because
 		// the original refuses it unconditionally and it keeps failing closed.

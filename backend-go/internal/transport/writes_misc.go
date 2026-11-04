@@ -27,11 +27,10 @@ import (
 //	db:project-core-update          input object at 0, path 1, context 2
 //	db:project-core-synopsis-commit input object at 0, path 1, context 2
 //
-// db:character-roster-commit is NOT bound here. Its original binder only ever
-// denies it (backend-go/internal/transport/characters.go:61,103-126), and no
-// store method expresses a roster commit at all — every method on
-// store.Characters is a read — so binding it would mean inventing SQL in a
-// transport file. It therefore keeps failing closed.
+// db:character-roster-commit is NOT bound here. It is bound on its own by
+// BindCharacterRosterCommit, which serves the author pipeline in
+// store.RosterAuthor; keeping it out of this binder means a lane that binds the
+// project core writes cannot gain the roster commit by accident.
 //
 // A refusal is always reported as a business result, never as success, so a
 // write that did not commit can never be read as committed; and a commit is

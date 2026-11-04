@@ -27,8 +27,10 @@ func (f CharacterLiveReadProviderFunc) ReadCharactersJSON(ctx context.Context, c
 	return f(ctx, caller, expected, operation)
 }
 
-// BindCharacterLiveReads binds only the three original character reads. In
-// particular, db:character-roster-commit remains the explicit unported 501.
+// BindCharacterLiveReads binds only the three original character reads.
+// db:character-roster-commit is deliberately NOT among them: it is the author
+// lane's write and is bound on its own by BindCharacterRosterCommit, so binding
+// the reads can never grant a write.
 func (s *Server) BindCharacterLiveReads(provider CharacterLiveReadProvider) error {
 	if provider == nil {
 		return errors.New("CHARACTER_PROVIDER_REQUIRED")

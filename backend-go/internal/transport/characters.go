@@ -29,9 +29,11 @@ func (f CharactersProviderFunc) BeginCharacters(ctx context.Context, caller Call
 	return f(ctx, caller, expected)
 }
 
-// BindCharacters implements the original two database reads and the generation
-// controller's identity read. The commit name preserves ONLY an unsupported
-// author/identity-lane denial, not an implemented write or generation capability.
+// BindCharacters implements the original two database reads, the generation
+// controller's identity read, and db:character-roster-commit. The commit is real
+// only when the provider also implements CharacterRosterCommitter; otherwise this
+// binder keeps the original author/identity-lane denial, because a provider that
+// cannot author must not acquire the capability by being bound here.
 // register('character-identity:read', 0, ...) consumes [context], unlike the two
 // database reads' [expectedPath, context]. Do not add a path-only fallback.
 func (s *Server) BindCharacters(provider CharactersProvider) error {
@@ -57,13 +59,17 @@ func (s *Server) BindCharacters(provider CharactersProvider) error {
 	handlers := make(map[string]Operation, len(operations))
 	for _, operation := range operations {
 		name, arity, pathIndex := operation.name, operation.arity, operation.pathIndex
+		if name == "db:character-roster-commit" {
+			// The one author write in this family. This handler is shared with
+			// BindCharacterRosterCommit, and a provider without the commit
+			// capability is refused (character_roster_commit.go:81-99) instead of
+			// writing: a read borrow is never permission to author a roster.
+			handlers[name] = characterRosterCommitOperation(provider, arity, pathIndex)
+			continue
+		}
 		handlers[name] = func(ctx context.Context, caller Caller, args []any) (any, error) {
-			denial := name == "db:character-roster-commit"
 			fail := func(err error) (any, error) {
 				code := charactersCode(err)
-				if denial {
-					return charactersSerialized(map[string]any{"success": false, "error": "Error: " + code})
-				}
 				var public *security.HTTPError
 				if errors.As(err, &public) && public != nil && public.Code == code {
 					return nil, security.NewHTTPError(public.Status, code)
@@ -99,12 +105,6 @@ func (s *Server) BindCharacters(provider CharactersProvider) error {
 			// the entire identity against the caller; never take a request's ID
 			// as authorization. Capture before provider code can mutate its clone.
 			projectID := expected["projectId"].(string)
-			manual := false
-			if denial {
-				if request, ok := args[0].(map[string]any); ok {
-					manual = request["intent"] == "manual_edit"
-				}
-			}
 			repository, release, err := provider.BeginCharacters(ctx, caller, expected)
 			if release != nil {
 				defer release()
@@ -114,15 +114,6 @@ func (s *Server) BindCharacters(provider CharactersProvider) error {
 			}
 			if repository == nil || release == nil {
 				return fail(errors.New("CHARACTER_PROVIDER_UNAVAILABLE"))
-			}
-			if denial {
-				// db-controller's manual_edit branch requires author scope; all
-				// other identity-schema roster commits require the identity lane.
-				// Neither lane is supplied by a read borrow or a renderer handle.
-				if manual {
-					return fail(errors.New("CHARACTER_AUTHOR_SCOPE_REQUIRED"))
-				}
-				return fail(errors.New("CHARACTER_ID_WRITE_REQUIRED"))
 			}
 			var result any
 			switch name {
@@ -200,6 +191,24 @@ func charactersCode(err error) string {
 		"CHARACTER_ROSTER_SCHEMA_UNSUPPORTED", "CHARACTER_ROSTER_META_MISSING",
 		"CHARACTER_ROSTER_INPUT_UNSUPPORTED", "CHARACTER_PROVIDER_UNAVAILABLE",
 		"CHARACTER_AUTHOR_SCOPE_REQUIRED", "CHARACTER_ID_WRITE_REQUIRED",
+		// The author roster commit's own refusals, in the original's vocabulary.
+		// Every one of them is a refusal, so an unmapped code would only lose the
+		// reason; a mapped one can never turn a refusal into a success.
+		"CHARACTER_AUTHOR_REQUEST_INVALID", "CHARACTER_AUTHOR_ENTRY_INVALID",
+		"CHARACTER_AUTHOR_ROSTER_NOT_READY", "CHARACTER_AUTHOR_RECEIPT_INVALID",
+		"CHARACTER_AUTHOR_READBACK_FAILED",
+		"CHARACTER_ROSTER_TEXT_INVALID", "CHARACTER_ROSTER_NAME_REQUIRED", "CHARACTER_ROSTER_ROLE_INVALID",
+		"CHARACTER_ROSTER_RELATIONSHIPS_INVALID", "CHARACTER_ROSTER_RELATIONSHIP_TARGET_REQUIRED",
+		"CHARACTER_ROSTER_RELATIONSHIP_DESCRIPTION_REQUIRED", "CHARACTER_ROSTER_RELATIONSHIP_SELF",
+		"CHARACTER_ROSTER_RELATIONSHIP_DUPLICATE", "CHARACTER_ROSTER_STATE_INVALID",
+		"CHARACTER_ROSTER_STATE_CHAPTER_INVALID", "CHARACTER_ROSTER_STATE_PROVENANCE_INVALID",
+		"CHARACTER_ROSTER_FINALIZED_SOURCE_INVALID",
+		"CHARACTER_ID_REVISION_CONFLICT", "CHARACTER_ID_DUPLICATE", "CHARACTER_ID_UNKNOWN",
+		"CHARACTER_ID_CONFLICT", "CHARACTER_ID_CONFIRMATION_REQUIRED", "CHARACTER_FIELDS_INVALID",
+		"CHARACTER_PROVENANCE_INVALID", "CHARACTER_RELATIONSHIP_ID_REQUIRED", "CHARACTER_RELATIONSHIP_INVALID",
+		"CHARACTER_PROPOSAL_CONFLICT", "CHARACTER_PROPOSAL_KIND_INVALID",
+		"CHARACTER_APPROVAL_REQUIRED", "CHARACTER_APPROVAL_INVALID", "CHARACTER_APPROVAL_NONCE_CONFLICT",
+		"CHARACTER_APPROVAL_MUTATED",
 		"PROJECT_CONTEXT_REQUIRED", "PROJECT_CONTEXT_CHANGED", "PROJECT_SESSION_REQUIRED",
 		"PROJECT_SESSION_CONTEXT_REQUIRED", "PROJECT_SESSION_MANAGER_CLOSED",
 		"PROJECT_SESSION_STALE", "PROJECT_SESSION_ROOT_MISMATCH", "PROJECT_SESSION_NOT_OWNED",

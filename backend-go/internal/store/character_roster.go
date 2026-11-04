@@ -382,6 +382,87 @@ func rosterMarkdown(entries []map[string]any, english bool) string {
 	return strings.Join(blocks, "\n\n")
 }
 
+// rosterFacts derives the display facts of every active character the way the
+// roster read does: raw provenance kept in its stored JSON order, incoming edges
+// in relationship_id order, entries in canonical role/name order, plus the
+// project's writing language and its stored compatibility projection.
+// identityProjectionEntries (:864-872) and readSnapshot share this same shape, so
+// the projection refresh and the read can never disagree about the facts.
+func rosterFacts(ctx context.Context, conn *sql.Conn) ([]map[string]any, map[string]plotObject, bool, string, error) {
+	characters, err := charactersAll(ctx, conn)
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	rawRows, err := rrMaps(ctx, conn, "SELECT character_id,cs_provenance,cs_updated_at_chapter FROM characters WHERE retired=0")
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	provenance := map[string]plotObject{}
+	active := map[string]bool{}
+	for _, row := range rawRows {
+		id, ok := row["character_id"].(string)
+		if !ok || rosterScalar(id) != nil {
+			return nil, nil, false, "", ErrCharacterInputUnsupported
+		}
+		active[id] = true
+		if row["cs_updated_at_chapter"] != nil {
+			raw, err := rosterProvenance(row["cs_provenance"])
+			if err != nil {
+				return nil, nil, false, "", err
+			}
+			provenance[id] = raw
+		}
+	}
+	relationships, err := rrMaps(ctx, conn, `SELECT r.source_character_id,r.target_character_id,c.name,r.relation FROM character_relationships r JOIN characters c ON c.character_id=r.target_character_id WHERE c.retired=0 ORDER BY r.relationship_id`)
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	entries := []map[string]any{}
+	for _, character := range characters {
+		id, ok := character["characterId"].(string)
+		if !ok {
+			return nil, nil, false, "", ErrCharacterInputUnsupported
+		}
+		if !active[id] {
+			continue
+		}
+		entry, err := rosterEntry(character)
+		if err != nil {
+			return nil, nil, false, "", err
+		}
+		entry["characterId"] = id
+		edges := []map[string]any{}
+		for _, row := range relationships {
+			if row["source_character_id"] == id {
+				for _, key := range []string{"target_character_id", "name", "relation"} {
+					text, ok := row[key].(string)
+					if !ok || rosterScalar(text) != nil {
+						return nil, nil, false, "", ErrCharacterInputUnsupported
+					}
+				}
+				edges = append(edges, map[string]any{"target": row["name"], "relation": row["relation"], "targetCharacterId": row["target_character_id"]})
+			}
+		}
+		entry["relationships"] = edges
+		entries = append(entries, entry)
+	}
+	rosterSort(entries)
+	core, err := rrMaps(ctx, conn, "SELECT writing_language,COALESCE(characters_arch,'') AS characters_arch FROM project_core WHERE id='main'")
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	english, projection := false, ""
+	if len(core) > 0 {
+		english = core[0]["writing_language"] == "en-US"
+		text, ok := core[0]["characters_arch"].(string)
+		if !ok || rosterScalar(text) != nil {
+			return nil, nil, false, "", ErrCharacterInputUnsupported
+		}
+		projection = text
+	}
+	return entries, provenance, english, projection, nil
+}
+
 func charactersRoster(ctx context.Context, conn *sql.Conn) (map[string]any, error) {
 	if err := rosterSchema(ctx, conn); err != nil {
 		return nil, err
@@ -410,76 +491,9 @@ func charactersRoster(ctx context.Context, conn *sql.Conn) (map[string]any, erro
 			return nil, ErrCharacterInputUnsupported
 		}
 	}
-	characters, err := charactersAll(ctx, conn)
+	entries, provenance, english, projection, err := rosterFacts(ctx, conn)
 	if err != nil {
 		return nil, err
-	}
-	rawRows, err := rrMaps(ctx, conn, "SELECT character_id,cs_provenance,cs_updated_at_chapter FROM characters WHERE retired=0")
-	if err != nil {
-		return nil, err
-	}
-	provenance := map[string]plotObject{}
-	active := map[string]bool{}
-	for _, row := range rawRows {
-		id, ok := row["character_id"].(string)
-		if !ok || rosterScalar(id) != nil {
-			return nil, ErrCharacterInputUnsupported
-		}
-		active[id] = true
-		if row["cs_updated_at_chapter"] != nil {
-			raw, err := rosterProvenance(row["cs_provenance"])
-			if err != nil {
-				return nil, err
-			}
-			provenance[id] = raw
-		}
-	}
-	relationships, err := rrMaps(ctx, conn, `SELECT r.source_character_id,r.target_character_id,c.name,r.relation FROM character_relationships r JOIN characters c ON c.character_id=r.target_character_id WHERE c.retired=0 ORDER BY r.relationship_id`)
-	if err != nil {
-		return nil, err
-	}
-	entries := []map[string]any{}
-	for _, character := range characters {
-		id, ok := character["characterId"].(string)
-		if !ok {
-			return nil, ErrCharacterInputUnsupported
-		}
-		if !active[id] {
-			continue
-		}
-		entry, err := rosterEntry(character)
-		if err != nil {
-			return nil, err
-		}
-		entry["characterId"] = id
-		edges := []map[string]any{}
-		for _, row := range relationships {
-			if row["source_character_id"] == id {
-				for _, key := range []string{"target_character_id", "name", "relation"} {
-					text, ok := row[key].(string)
-					if !ok || rosterScalar(text) != nil {
-						return nil, ErrCharacterInputUnsupported
-					}
-				}
-				edges = append(edges, map[string]any{"target": row["name"], "relation": row["relation"], "targetCharacterId": row["target_character_id"]})
-			}
-		}
-		entry["relationships"] = edges
-		entries = append(entries, entry)
-	}
-	rosterSort(entries)
-	core, err := rrMaps(ctx, conn, "SELECT writing_language,COALESCE(characters_arch,'') AS characters_arch FROM project_core WHERE id='main'")
-	if err != nil {
-		return nil, err
-	}
-	english, projection := false, ""
-	if len(core) > 0 {
-		english = core[0]["writing_language"] == "en-US"
-		text, ok := core[0]["characters_arch"].(string)
-		if !ok || rosterScalar(text) != nil {
-			return nil, ErrCharacterInputUnsupported
-		}
-		projection = text
 	}
 	rendered, previous := rosterMarkdown(entries, english), rosterMarkdown(entries, !english)
 	if state == "ready" && projection == previous && meta["projection_hash"] == rosterHash(previous) {
@@ -537,4 +551,55 @@ func charactersRoster(ctx context.Context, conn *sql.Conn) (map[string]any, erro
 		result["legacyMarkdown"] = meta["legacy_markdown"]
 	}
 	return result, nil
+}
+
+// characterIdentityRefreshProjection ports refreshCharacterIdentityProjection
+// (repository :880-886): the compatibility prose and the roster meta row are
+// recomputed from identity facts and never from the prose they replace. The
+// original's transaction membership is the caller's: this helper writes on the
+// connection it is given, so it only ever runs inside the roster author's
+// immediate transaction (or RefreshIdentityProjection's own).
+func characterIdentityRefreshProjection(ctx context.Context, conn *sql.Conn) error {
+	entries, provenance, english, _, err := rosterFacts(ctx, conn)
+	if err != nil {
+		return err
+	}
+	projection := rosterMarkdown(entries, english)
+	// The persisted fact hash stays the name-keyed version, exactly like the
+	// original's fullFactHash(entries) with includeIds=false.
+	facts, err := rosterEntriesJSON(entries, provenance, false)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE project_core SET characters_arch=? WHERE id='main'", projection); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE character_roster_meta SET revision=revision+1,migration_state='ready',projection_hash=?,fact_hash=?,updated_at=datetime('now') WHERE id='main'`,
+		rosterHash(projection), rosterHash(facts)); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RefreshIdentityProjection is the exported original refreshCharacterIdentityProjection
+// for a trusted admitted handle that owns no surrounding transaction. It is not
+// reachable from the browser: the roster commit runs the same helper inside its
+// own transaction, and this export exists for the one-shot shape the original
+// also exports. Unlike the original there is no separate "transaction required"
+// refusal: this method owns its immediate transaction and refuses a project
+// without the identity schema instead.
+func (r *Characters) RefreshIdentityProjection(ctx context.Context) error {
+	if r == nil || r.db == nil {
+		return ErrProjectNotOpen
+	}
+	return NewReviewRevisions(r.db).immediate(ctx, func(conn *sql.Conn) error {
+		hasIdentity, err := summaryHasIdentity(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if !hasIdentity {
+			return ErrCharacterIDSchemaRequired
+		}
+		return characterIdentityRefreshProjection(ctx, conn)
+	})
 }

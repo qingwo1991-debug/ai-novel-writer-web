@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 // syntheticDurableBlueprintTitle is the authored blueprint title the durable
@@ -389,29 +391,127 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if characterRoster.Code != http.StatusOK || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"name":"乙"`)) || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"currentDerivedFields"`)) {
 		t.Fatal("durable character-roster-read failed", characterRoster.Code, characterRoster.Body.String())
 	}
-	// db:character-roster-commit is deliberately NOT bound on this lane. The
-	// original binder only ever denies it (the manual_edit branch requires
-	// author scope, every other roster commit the identity lane) and no store
-	// method expresses a roster commit at all, so binding it would mean
-	// inventing SQL in a transport file. The registry exposes the name, so the
-	// 501 is the durable binding, not a 404, and the refused call leaves the
-	// roster exactly as seeded — asserted through the bound read and the file.
-	rosterCommit := rpc("db:character-roster-commit", []any{map[string]any{
-		"intent":     "manual_edit",
-		"characters": []any{map[string]any{"characterId": "c-durable", "name": "改造角色"}},
-	}, projectPath, expected})
-	if rosterCommit.Code != http.StatusNotImplemented || !strings.Contains(rosterCommit.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("db:character-roster-commit was bound on the durable lane: %d %s", rosterCommit.Code, rosterCommit.Body.String())
+	// db:character-roster-commit is bound on this lane by
+	// BindCharacterRosterCommit: store.RosterAuthor runs the original author
+	// pipeline (identity commit, prose and dynamic-state writes, projection
+	// refresh, roster-meta bump and the readback gate) on the admitted author
+	// database, under the same frozen cookie/tab/lease fence as every other
+	// durable write. The lanes that serve only character reads bind nothing here,
+	// so their 501 stays.
+	var rosterRevision, rosterIdentityRevision int64
+	durableQuery(t, database, "SELECT revision FROM character_roster_meta WHERE id='main'", &rosterRevision)
+	durableQuery(t, database, "SELECT revision FROM character_identity_meta WHERE id='main'", &rosterIdentityRevision)
+	rosterEntry := func(characterID, name, role string) map[string]any {
+		return map[string]any{"characterId": characterID, "name": name, "role": role,
+			"gender": "", "age": "", "appearance": "", "personality": "", "background": "",
+			"abilities": "", "motivation": "", "arc": "", "notes": "",
+			"relationships": []any{}}
 	}
-	var rosterName string
-	durableQuery(t, database, "SELECT name FROM characters WHERE character_id='c-durable'", &rosterName)
-	if rosterName != "甲" {
-		t.Fatalf("unbound roster commit changed the persisted character: %q", rosterName)
+	const committedName = "甲改"
+	const rosterOperation = "synthetic-durable-roster-commit-1"
+	// A roster write is a business result at HTTP 200, exactly like the other
+	// durable writes: {success:true,receipt} here and {success:false,error} for the
+	// refusals below. A malformed envelope would be a 200 with neither shape, so
+	// the decode fails loudly instead of guessing.
+	rosterWrite := func(request map[string]any) map[string]any {
+		t.Helper()
+		response := rpc("db:character-roster-commit", []any{request, projectPath, expected})
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable db:character-roster-commit decode failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), projectPath) || strings.Contains(response.Body.String(), durableDir) {
+			t.Fatalf("durable db:character-roster-commit leaked a filesystem path: %s", response.Body.String())
+		}
+		return wire.Result
 	}
+	committedRoster := rosterWrite(map[string]any{
+		"intent": "manual_edit", "schemaVersion": 1, "operationId": rosterOperation,
+		"expectedRevision": rosterRevision, "expectedIdentityRevision": rosterIdentityRevision,
+		"entries": []any{rosterEntry("c-durable", committedName, "protagonist"),
+			rosterEntry("c-durable-2", "乙", "supporting")},
+	})
+	if committedRoster["success"] != true || committedRoster["error"] != nil {
+		t.Fatalf("durable db:character-roster-commit reported failure: %v", committedRoster)
+	}
+	rosterReceipt, _ := committedRoster["receipt"].(map[string]any)
+	if rosterReceipt == nil || rosterReceipt["operationId"] != rosterOperation || rosterReceipt["idempotent"] != false ||
+		rosterReceipt["revision"] != float64(rosterRevision+1) || rosterReceipt["payloadHash"] == nil {
+		t.Fatalf("durable roster commit receipt malformed: %v", committedRoster)
+	}
+	rosterSnapshot, _ := rosterReceipt["snapshot"].(map[string]any)
+	rosterSnapshotEntries, _ := rosterSnapshot["entries"].([]any)
+	if rosterSnapshot == nil || rosterSnapshot["status"] != "ready" || len(rosterSnapshotEntries) != 2 {
+		t.Fatalf("durable roster commit receipt snapshot malformed: %v", rosterReceipt)
+	}
+	if rosterCreated, _ := rosterReceipt["created"].([]any); len(rosterCreated) != 0 {
+		t.Fatalf("a manual edit reported a created character: %v", rosterCreated)
+	}
+	// The commit is proved by the author's own rows, not only by its receipt: the
+	// edited name, both meta revisions and the refreshed projection.
+	var committedStoredName, committedState, committedArch string
+	var committedIdentityRevision, committedRosterRevision int64
+	durableQuery(t, database, "SELECT name FROM characters WHERE character_id='c-durable'", &committedStoredName)
+	durableQuery(t, database, "SELECT revision FROM character_identity_meta WHERE id='main'", &committedIdentityRevision)
+	durableQuery(t, database, "SELECT revision FROM character_roster_meta WHERE id='main'", &committedRosterRevision)
+	durableQuery(t, database, "SELECT migration_state FROM character_roster_meta WHERE id='main'", &committedState)
+	durableQuery(t, database, "SELECT characters_arch FROM project_core WHERE id='main'", &committedArch)
+	if committedStoredName != committedName {
+		t.Fatalf("durable roster commit did not persist the edited name: %q", committedStoredName)
+	}
+	if committedIdentityRevision != rosterIdentityRevision+1 || committedRosterRevision != rosterRevision+1 || committedState != "ready" {
+		t.Fatalf("durable roster commit did not bump identity and roster meta: %d %d %q",
+			committedIdentityRevision, committedRosterRevision, committedState)
+	}
+	if !strings.Contains(committedArch, committedName) {
+		t.Fatalf("durable roster commit did not refresh the projection: %q", committedArch)
+	}
+	// The already bound read has to agree with the rows the commit wrote.
 	rosterAfterCommit := rpc("db:character-roster-read", []any{projectPath, expected})
-	if rosterAfterCommit.Code != http.StatusOK || !bytes.Contains(rosterAfterCommit.Body.Bytes(), []byte(`"name":"甲"`)) ||
-		!bytes.Contains(rosterAfterCommit.Body.Bytes(), []byte(`"name":"乙"`)) {
-		t.Fatal("durable character-roster-read changed after a refused roster commit", rosterAfterCommit.Code, rosterAfterCommit.Body.String())
+	if rosterAfterCommit.Code != http.StatusOK ||
+		!bytes.Contains(rosterAfterCommit.Body.Bytes(), []byte(`"name":"`+committedName+`"`)) ||
+		!bytes.Contains(rosterAfterCommit.Body.Bytes(), []byte(`"status":"ready"`)) {
+		t.Fatal("durable character-roster-read did not reflect the committed roster", rosterAfterCommit.Code, rosterAfterCommit.Body.String())
+	}
+	// Two refusals, both at HTTP 200 as business results, and neither may write: a
+	// stale roster revision is refused after the idempotency lookup, and a
+	// duplicate character ID is refused while the request is normalized, before a
+	// single statement runs.
+	for _, refusal := range []struct {
+		name    string
+		request map[string]any
+		code    string
+	}{
+		{"stale roster revision", map[string]any{
+			"intent": "manual_edit", "schemaVersion": 1, "operationId": "synthetic-durable-roster-stale",
+			"expectedRevision": rosterRevision, "expectedIdentityRevision": rosterIdentityRevision,
+			"entries": []any{rosterEntry("c-durable", "不得写入", "protagonist"),
+				rosterEntry("c-durable-2", "乙", "supporting")},
+		}, "CHARACTER_ID_REVISION_CONFLICT"},
+		{"duplicate character id", map[string]any{
+			"intent": "manual_edit", "schemaVersion": 1, "operationId": "synthetic-durable-roster-duplicate",
+			"expectedRevision": committedRosterRevision, "expectedIdentityRevision": committedIdentityRevision,
+			"entries": []any{rosterEntry("c-durable", "不得写入", "protagonist"),
+				rosterEntry("c-durable", "也不写入", "supporting")},
+		}, "CHARACTER_ID_DUPLICATE"},
+	} {
+		refused := rosterWrite(refusal.request)
+		if refused["success"] != false || refused["error"] != "Error: "+refusal.code {
+			t.Fatalf("%s was not reported as a refusal: %v", refusal.name, refused)
+		}
+	}
+	var refusedName, refusedState, refusedArch string
+	var refusedIdentity, refusedRoster int64
+	durableQuery(t, database, "SELECT name FROM characters WHERE character_id='c-durable'", &refusedName)
+	durableQuery(t, database, "SELECT revision FROM character_identity_meta WHERE id='main'", &refusedIdentity)
+	durableQuery(t, database, "SELECT revision FROM character_roster_meta WHERE id='main'", &refusedRoster)
+	durableQuery(t, database, "SELECT migration_state FROM character_roster_meta WHERE id='main'", &refusedState)
+	durableQuery(t, database, "SELECT characters_arch FROM project_core WHERE id='main'", &refusedArch)
+	if refusedName != committedName || refusedIdentity != committedIdentityRevision ||
+		refusedRoster != committedRosterRevision || refusedState != committedState || refusedArch != committedArch {
+		t.Fatalf("a refused roster commit wrote: %q %q %d %d %q", refusedName, refusedState, refusedIdentity, refusedRoster, refusedArch)
 	}
 	// The four editor-inline names stay unbound on this lane. They are not
 	// store writes and not plain reads either: the original binds each one to
@@ -1845,6 +1945,15 @@ func seedSyntheticDurableRows(t *testing.T, database string) (int64, string) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec("INSERT INTO characters(character_id, name, role) VALUES('c-durable-2', '乙', 'supporting')"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	// The roster commit refuses anything but a ready or empty roster, exactly like
+	// the original author service, so the seeded facts are projected with the same
+	// helper the commit itself runs (store.RefreshIdentityProjection). Seeding the
+	// projection, not the status, keeps the readiness gate honest: the hashes and
+	// the roster markdown are derived from the two characters above.
+	if err := store.NewCharacters(db).RefreshIdentityProjection(context.Background()); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}
