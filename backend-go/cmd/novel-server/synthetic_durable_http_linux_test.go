@@ -151,6 +151,62 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if characterRoster.Code != http.StatusOK || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"name":"乙"`)) || !bytes.Contains(characterRoster.Body.Bytes(), []byte(`"currentDerivedFields"`)) {
 		t.Fatal("durable character-roster-read failed", characterRoster.Code, characterRoster.Body.String())
 	}
+	// The five post-process receipt and LLM ledger reads are served from the
+	// same admitted author database under the same frozen lease. Absence is the
+	// absent shape (null run, false aggregate) or an empty list, never an error.
+	statsRec := rpc("db:get-llm-stats", []any{projectPath, expected})
+	var statsWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(statsRec.Body.Bytes(), &statsWire); err != nil || statsRec.Code != http.StatusOK {
+		t.Fatal("durable llm stats decode failed", statsRec.Code, statsRec.Body.String(), err)
+	}
+	for _, key := range []string{"totalCalls", "successfulCalls", "failedCalls", "knownUsageCalls", "totalTokens", "totalPromptTokens", "totalCompletionTokens"} {
+		if _, ok := statsWire.Result[key]; !ok {
+			t.Fatalf("durable llm stats missing %q: %s", key, statsRec.Body.String())
+		}
+	}
+	if _, ok := statsWire.Result["totalCalls"].(float64); !ok {
+		t.Fatal("durable llm stats totalCalls is not a number", statsRec.Body.String())
+	}
+	// An absent run and a zero history limit both resolve to a real empty list.
+	for _, emptyRead := range []struct {
+		name string
+		args []any
+	}{
+		{"db:get-llm-history", []any{0, projectPath, expected}},
+		{"db:post-process-get-steps", []any{"synthetic-durable-absent-run", projectPath, expected}},
+	} {
+		emptyRec := rpc(emptyRead.name, emptyRead.args)
+		var emptyWire struct {
+			Result []any `json:"result"`
+		}
+		if err := json.Unmarshal(emptyRec.Body.Bytes(), &emptyWire); err != nil || emptyRec.Code != http.StatusOK || emptyWire.Result == nil || len(emptyWire.Result) != 0 {
+			t.Fatalf("durable %s should be an empty list: %d %s", emptyRead.name, emptyRec.Code, emptyRec.Body.String())
+		}
+	}
+	for _, absentRead := range []struct {
+		name string
+		args []any
+		want string
+	}{
+		{"db:post-process-get-latest-run", []any{"arch_extract", "synthetic-durable-absent-source", projectPath, expected}, "null"},
+		{"db:post-process-is-all-passed", []any{"arch_extract", "synthetic-durable-absent-source", projectPath, expected}, "false"},
+	} {
+		absentRec := rpc(absentRead.name, absentRead.args)
+		var absentWire struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(absentRec.Body.Bytes(), &absentWire); err != nil || absentRec.Code != http.StatusOK || string(absentWire.Result) != absentRead.want {
+			t.Fatalf("durable %s absent shape mismatch: %d %s", absentRead.name, absentRec.Code, absentRec.Body.String())
+		}
+	}
+	// The four mutating names in the same family stay unbound on this lane: the
+	// registry exposes them, so the 501 is the durable binding, not a 404.
+	unboundRec := rpc("db:post-process-create-run", []any{map[string]any{}, projectPath, expected})
+	if unboundRec.Code != http.StatusNotImplemented || !strings.Contains(unboundRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatal("mutating ledger name was bound on the durable lane", unboundRec.Code, unboundRec.Body.String())
+	}
 	// A stale frozen context is rejected before any write reaches the database.
 	staleExpected := map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}
 	stale := rpc("project:save", []any{id, map[string]any{"id": id, "sessionLease": "forged-lease", "path": projectPath, "name": "骗写"}, projectPath, staleExpected})
