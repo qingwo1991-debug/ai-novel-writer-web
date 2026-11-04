@@ -668,3 +668,29 @@ Also worth keeping from the reverted work: `db:character-roster-commit` has **no
 original binder only denies it, so it is a fifth refusal-only candidate that the earlier audit did not
 classify as one - the audit's "277 real implementations" may need amending.
 
+### 2026-11-04 — bisect result: project-core writes bound, assertions NOT yet landed
+
+Bisect, three CI runs, each verified by the run itself:
+
+| commit | content | CI |
+|---|---|---|
+| `06fbb501` | `writes_misc.go` present, **not** registered | green |
+| `348d6d8c` | registered via `BeginProjectCore` | green |
+| `fb38d79b` | + 129 lines of HTTP assertions and the CAS fix | **red** |
+
+The red is not a Go failure: step 38 logs zero `--- FAIL` and zero `_test.go:` lines, and step 34
+*Generate remaining-domain original synthetic contracts* reports `conclusion: success` while its
+`outcome` is `failure` (`continue-on-error` masks it), which skips the race step and fails the enforce
+step. So the failing piece is the **step summary** of step 34 - `run_contract` writes `FAIL <name>`
+there and nowhere else, and the step ends with a bare `test "$failures" -eq 0`. Read
+`$GITHUB_STEP_SUMMARY`, not the job log; the job log cannot show it.
+
+Current state at `8ba2c31b` (green): `db:project-core-update` and `db:project-core-synopsis-commit`
+are **bound and registered but have no positive end-to-end assertion** - the identical anti-pattern
+this handoff warns about elsewhere. Treat them as *unverified*, not as delivered, until their
+assertions land. The CAS fix they depend on (`stale synopsis CAS must report the bare
+`PROJECT_CORE_SYNOPSIS_CHANGED``) was reverted with them, so `writes_misc.go` currently still returns
+the wrong `Error: PROJECT_CORE_OPERATION_FAILED`.
+
+Do not count these two in the durable total until that is closed.
+
