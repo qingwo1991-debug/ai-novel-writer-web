@@ -199,3 +199,19 @@ follow the same shape: an operation-scoped predicate plus a test that pins the r
 Every batch must also decrement the `want 32` assertion at
 `cmd/novel-server/synthetic_generation_http_linux_test.go:456`.
 
+### 2026-11-04 — P2 and B1 landed
+
+- `88137187` **`RecordEffect`** — the ledger's thirteenth write method. It patches one named
+  `usage_receipt_json` key through `glPatch`, refuses any key the run's own operation does not
+  own, and is idempotent on `[key, value]`. The receipt allowlist in `mutableRoot` now admits
+  `graphEffects` / `finalizationEffect`, but only when some run under the same root legitimately
+  owns that key, so an ordinary attempt still cannot carry one. Pinned by
+  `generation_ledger_family_test.go` (five admitted and six refused key/operation pairs).
+- `7cfc143d` **B1** — `graph-generation:cancel` and `finalization-generation:cancel` now route
+  to the ordinary frozen-handle stop. Verified in the HTTP test by asserting both operations no
+  longer answer `501 GO_OPERATION_NOT_MIGRATED`; the unmigrated generation assertion dropped to
+  `want 30`.
+
+Durable lane: **63 / 281**. Next is B2 (`graph-generation:begin` + `:read`), which is the first
+batch that needs the request-shape widening (G5) and the full recovery projection (G6/G7), not
+just wiring.
