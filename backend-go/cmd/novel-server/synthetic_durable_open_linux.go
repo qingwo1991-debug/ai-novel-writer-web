@@ -445,34 +445,6 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			return nil, nil, err
 		}
 	}
-	// The reduced S1 generation lane binds exactly the eleven migrated
-	// generation-family names; every other generation-family operation stays
-	// GO_OPERATION_NOT_MIGRATED. It is only wired when an administrator
-	// supplies the private trusted model config root (with egress origins).
-	if config.GlobalRoot != "" {
-		provider, err := newSyntheticGeneration(durable, server, config)
-		if err != nil {
-			cleanup()
-			return nil, nil, fmt.Errorf("synthetic generation lane: %w", err)
-		}
-		binder := &transport.GenerationProvider{
-			Begin:                  provider.Begin,
-			BindMaterialDecision:   provider.BindMaterialDecision,
-			Execute:                provider.Execute,
-			Read:                   provider.Read,
-			List:                   provider.List,
-			Pause:                  provider.Pause,
-			Cancel:                 provider.Cancel,
-			Resume:                 provider.Resume,
-			Restart:                provider.Restart,
-			DiscardCandidate:       provider.DiscardCandidate,
-			RetryDraftShortOutline: provider.RetryDraftShortOutline,
-		}
-		if err := server.BindGeneration(binder); err != nil {
-			cleanup()
-			return nil, nil, err
-		}
-	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", server)
 	mux.Handle("/api", server)
