@@ -839,3 +839,27 @@ transport file.
 plan that schedules it before the generation owner port is wrong. The same is likely true of the
 `generation:*` family as a whole, which is where the remaining budget should go next.
 
+### 2026-11-04 — the generation budget blocker was already fixed; CI is now billing-blocked
+
+**Correction to the pause point of this handoff.** The `budgetDiagnostics` item is *not* open. The
+attempt insert (`store/generation_ledger.go:957`) runs with the correct `rootActionId`, in a committed
+transaction, and `budget` returns `[]map[string]any` correctly. The defect was one layer above, in the
+lane projection: `syntheticSlice` (`synthetic_generation_linux.go:232`) only accepted `[]any`, so the
+ledger's `[]map[string]any` narrowed to nil and the loop emitted an empty array. That was fixed in
+`d253f49e`, and the file is byte-identical to the CI-green revision `6f1bc572`.
+
+Consequence: the 11 S1 generation operations were un-wired (`059c57a2`) for a reason that no longer
+exists. **Re-wiring them is the highest-value next step**, not more peripheral binders.
+
+A store-level assertion was added (`generation_ledger_test.go`) so an empty `attempts` slice now fails
+at the store boundary, not only in the HTTP lane.
+
+**CI is blocked by account billing**, not by code:
+
+    The job was not started because recent account payments have failed
+    or your spending limit needs to be increased.
+
+Every job fails to start, so nothing can be verified until that is resolved. All compile/test happens
+on Actions by design, so this stops the migration completely. Source-only work can continue, but it
+lands unverified.
+
