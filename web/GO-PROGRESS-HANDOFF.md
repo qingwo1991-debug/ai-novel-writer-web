@@ -215,3 +215,39 @@ Every batch must also decrement the `want 32` assertion at
 Durable lane: **63 / 281**. Next is B2 (`graph-generation:begin` + `:read`), which is the first
 batch that needs the request-shape widening (G5) and the full recovery projection (G6/G7), not
 just wiring.
+
+### 2026-11-04 — the graph family's missing substrate is now in Go
+
+`65814b77`/`8670f2ee` add `internal/graphgen/` (nine files, ~3 400 lines), a mechanical port of
+the modules `graph-generation:read` depends on:
+
+| Go | Source |
+|---|---|
+| `task.go` | `plot-tree-generation-pure.ts`, `narrative-thread-generation-pure.ts` builders |
+| `derive.go` | `derivePlotTreeSnapshot` plus the whole `src/shared/plot-tree.ts` validator set |
+| `parse.go` | `parseNarrativeThreadPlanCandidates`, `parseNarrativeThreadEventCandidates` |
+| `hash.go` | `textHash` and a `JSON.stringify`-faithful encoder |
+| `language.go` | `resolveWritingLanguage` |
+
+The twelve prompt literals are pinned **byte for byte** in the tests. That matters more than the
+usual golden test: a reflowed template changes what the model is asked without failing anything
+behavioural, so the only way to keep the port honest is to compare the exact bytes.
+
+The port records seven known divergences, of which two deserve attention before the family is
+declared equivalent:
+
+1. **Surrogate-pair truncation** — JS keeps a lone surrogate when a character budget splits an
+   astral pair; Go decodes the half as `U+FFFD`. Reachable only at the exact cut point.
+2. **`Date.parse`** is approximated by a fixed layout list. Everything the app writes matches;
+   exotic legacy strings would be rejected where JS accepts them.
+
+Also landed: `BoundOperations()`, an exported view of what a server actually serves, and
+`bound_operations_test.go`, which pins `BindGeneration` to its thirteen names, `BindReviewRevisions`
+to fourteen and `BindReviewRevisionRemainder` to nine. A family binder could previously be
+written, never wired, or wired into a collision, and every test still passed — that is exactly how
+`BindReviewRevisions` sat as dead code until it was parameterised.
+
+**Next:** bind `graph-generation:read` on top of `graphgen`. It needs a run whose manifest carries
+`graphGenerationContext` plus its three hashes, so the acceptance test has to seed that manifest
+through the ledger directly. `begin` follows, and it is the batch that also needs the request-shape
+widening (`syntheticParseSelection` still rejects `input`/`slot`/`artifact`/`index`).
