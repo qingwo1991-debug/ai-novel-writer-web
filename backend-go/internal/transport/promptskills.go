@@ -34,16 +34,7 @@ func(s *Server) BindPromptSkills(provider *promptskills.Service,startup *globalc
     if err:=provider.DeletePrompt(key,language);err!=nil{return failure("PROMPT_DELETE_FAILED")};return map[string]any{"success":true},nil
    case "skills:list-user":
     if len(args)!=0{return invalid()};skills,err:=provider.ListUser();if err!=nil{return nil,errors.New("SKILLS_LIST_FAILED")}
-    public:=make([]any,0,len(skills))
-    for _,skill:=range skills {
-     bundle:=map[string]any{"status":skill.Bundle.Status}
-     if skill.Bundle.Status=="intact"{files:=make([]any,0,len(skill.Bundle.Files));for _,file:=range skill.Bundle.Files{files=append(files,map[string]any{"path":file.Path,"content":file.Content})};bundle["files"]=files}
-     // Host paths are not browser capabilities. Generation reads retain the
-     // private anchored source; the browser receives stable display identifiers.
-     base:="managed://skills/"+skill.Name
-     public=append(public,map[string]any{"name":skill.Name,"content":skill.Content,"baseDir":base,"filePath":base+"/SKILL.md","bundle":bundle})
-    }
-    return public,nil
+    return promptSkillsListWire(skills),nil
    case "skills:uninstall-user":
     if len(args)!=1{return invalid()};name,ok:=args[0].(string);if !ok{return invalid()}
     if err:=provider.UninstallUser(name);err!=nil{return failure("SKILLS_UNINSTALL_FAILED")};return map[string]any{"success":true},nil

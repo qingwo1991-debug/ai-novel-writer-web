@@ -49,8 +49,32 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if err := os.Mkdir(durableDir, 0700); err != nil {
 		t.Fatal(err)
 	}
+	// The prompt template and installed-skill reads are served from the lane's
+	// pinned private config root, so seed one real prompt and one real installed
+	// skill under it. Both reads must return that content and must never echo
+	// the absolute root back to the browser.
+	globalRoot := filepath.Join(root, "durable-global")
+	const promptKey = "durable-global-prompt"
+	const skillName = "public-skill"
+	const skillContent = "Synthetic installed skill content."
+	promptDirectory := filepath.Join(globalRoot, "prompts")
+	skillDirectory := filepath.Join(globalRoot, "skills", skillName)
+	if err := os.MkdirAll(promptDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(skillDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	promptJSON := `{"key":"` + promptKey + `","content":"合成全局提示词","writingLanguage":"zh-CN"}`
+	if err := os.WriteFile(filepath.Join(promptDirectory, promptKey+".zh-CN.json"), []byte(promptJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDirectory, "SKILL.md"), []byte("---\nname: "+skillName+"\n---\n"+skillContent+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	handler, cleanup, err := migrationHandlerWithDurable(migrationRegistry(t), "127.0.0.1:16082", "", durableDir, syntheticDurableConfig{
 		Schema: contract, Baseline: filepath.Join(filepath.Dir(oracle), syntheticBaselineDatabaseName),
+		GlobalRoot: globalRoot, ModelOrigins: []string{"https://example.invalid"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +244,63 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		if err := json.Unmarshal(narrativeRec.Body.Bytes(), &narrativeWire); err != nil || narrativeRec.Code != http.StatusOK || narrativeWire.Result == nil || len(narrativeWire.Result) != 0 {
 			t.Fatalf("durable %s should be an empty list: %d %s", emptyRead.name, narrativeRec.Code, narrativeRec.Body.String())
 		}
+	}
+	// The prompt template and installed-skill reads are served from the lane's
+	// pinned private config root. Both names take no argument at all, so the
+	// caller sends `{"args":[]}`; the seeded root proves the reads return the
+	// real files instead of only a non-501, and that no host path is echoed.
+	promptsRec := rpc("prompt:load-global", []any{})
+	var promptsWire struct {
+		Result struct {
+			Templates   []map[string]any `json:"templates"`
+			Diagnostics []map[string]any `json:"diagnostics"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(promptsRec.Body.Bytes(), &promptsWire); err != nil || promptsRec.Code != http.StatusOK {
+		t.Fatal("durable prompt:load-global decode failed", promptsRec.Code, promptsRec.Body.String(), err)
+	}
+	if len(promptsWire.Result.Templates) != 1 || len(promptsWire.Result.Diagnostics) != 0 {
+		t.Fatal("durable prompt:load-global returned the wrong receipts", promptsRec.Body.String())
+	}
+	if key, _ := promptsWire.Result.Templates[0]["key"].(string); key != promptKey || !strings.Contains(promptsRec.Body.String(), "合成全局提示词") {
+		t.Fatal("durable prompt:load-global did not read the private root", promptsRec.Body.String())
+	}
+	if strings.Contains(promptsRec.Body.String(), globalRoot) {
+		t.Fatal("durable prompt:load-global leaked the private root", promptsRec.Body.String())
+	}
+	skillsRec := rpc("skills:list-user", []any{})
+	var skillsWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(skillsRec.Body.Bytes(), &skillsWire); err != nil || skillsRec.Code != http.StatusOK || len(skillsWire.Result) != 1 {
+		t.Fatal("durable skills:list-user did not return the installed skill", skillsRec.Code, skillsRec.Body.String(), err)
+	}
+	skillWire := skillsWire.Result[0]
+	if skillWire["name"] != skillName || skillWire["baseDir"] != "managed://skills/"+skillName ||
+		skillWire["filePath"] != "managed://skills/"+skillName+"/SKILL.md" || !strings.Contains(skillsRec.Body.String(), skillContent) {
+		t.Fatal("durable skills:list-user wire mismatch", skillsRec.Body.String())
+	}
+	if strings.Contains(skillsRec.Body.String(), globalRoot) {
+		t.Fatal("durable skills:list-user leaked the private root", skillsRec.Body.String())
+	}
+	// The three mutating names in the prompt and installed-skill family stay
+	// unbound on this lane: the registry exposes them, so the 501 is the durable
+	// binding, not a 404. A refused uninstall must also leave the skill on disk.
+	for _, unboundWrite := range []struct {
+		name string
+		args []any
+	}{
+		{"prompt:save-global", []any{map[string]any{"key": "public", "content": "no"}}},
+		{"prompt:delete-global", []any{promptKey, "zh-CN"}},
+		{"skills:uninstall-user", []any{skillName}},
+	} {
+		promptRec := rpc(unboundWrite.name, unboundWrite.args)
+		if promptRec.Code != http.StatusNotImplemented || !strings.Contains(promptRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("mutating prompt/skill name %s was bound on the durable lane: %d %s", unboundWrite.name, promptRec.Code, promptRec.Body.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(skillDirectory, "SKILL.md")); err != nil {
+		t.Fatal("unbound skills:uninstall-user removed the installed skill", err)
 	}
 	// The six mutating names in the narrative thread and consistency exemption
 	// family stay unbound on this lane: the registry exposes them, so the 501

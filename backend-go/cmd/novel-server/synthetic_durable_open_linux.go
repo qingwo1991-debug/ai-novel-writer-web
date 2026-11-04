@@ -25,6 +25,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectruntime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/promptskills"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -134,6 +135,10 @@ type syntheticDurableOpen struct {
 	manager    *projectruntime.Manager
 	held       *writerlock.Lock
 	readConfig projectaccess.Config
+	// prompts is the pinned private prompt and installed-skill root. It is nil
+	// when the lane was started without the trusted config root, and the two
+	// prompt/skill reads are then never bound at all.
+	prompts *promptskills.Service
 }
 
 // newSyntheticDurableOpen builds the read/write lifecycle and the transport
@@ -213,12 +218,37 @@ func newSyntheticDurableOpen(library *projectfs.Library, libraryDir, projectPath
 	if closeErr != nil {
 		return fail(closeErr)
 	}
+	// The prompt template and installed-skill reads share the same private
+	// trusted config root as the model profiles. That root is pinned by its
+	// owner (absolute, current UID, no symlink, not group/other writable) and
+	// never reaches the browser; a lane without it binds neither read.
+	var prompts *promptskills.Service
+	if config.GlobalRoot != "" {
+		prompts, err = promptskills.New(config.GlobalRoot)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	result := &syntheticDurableOpen{syntheticReadSurface: syntheticReadSurface{
 		library: library, catalog: catalog, lifecycle: lifecycle,
 		keys: map[string]string{projectPath: recent.Key}, workspace: workspace, recovery: check,
-	}, manager: manager, held: held, readConfig: readConfig}
+	}, manager: manager, held: held, readConfig: readConfig, prompts: prompts}
 	result.readTx = result.readAuthorTx
 	return result, nil
+}
+
+// Close releases the shared read surface and the pinned private prompt and
+// skill root this lane owns, so the root descriptor is released with the rest
+// of the lane instead of outliving it.
+func (s *syntheticDurableOpen) Close() error {
+	if s == nil {
+		return nil
+	}
+	err := s.syntheticReadSurface.Close()
+	if s.prompts != nil {
+		err = errors.Join(err, s.prompts.Close())
+	}
+	return err
 }
 
 // readAuthorTx is the durable lane's transaction source. The durable write
@@ -401,6 +431,25 @@ func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transp
 	return store.NewNarrative(db), release, nil
 }
 
+// BeginPromptSkills lends the durable lane's pinned private prompt and
+// installed-skill root. Only the two reads are bound to it (prompt:load-global,
+// skills:list-user); prompt save/delete and skill uninstall stay unbound, so
+// this lane can never rewrite the global prompt store or remove an installed
+// skill. Those two names take no argument at all, so unlike the project-family
+// borrows there is no frozen context to recheck; the service itself is the only
+// authority and it refuses any path that leaves the root.
+func (s *syntheticDurableOpen) BeginPromptSkills(ctx context.Context, _ transport.Caller) (*promptskills.Service, func(), error) {
+	if s == nil || ctx == nil {
+		return nil, nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.prompts == nil {
+		return nil, nil, errors.New("PROMPT_SKILLS_ROOT_UNAVAILABLE")
+	}
+	return s.prompts, func() {}, nil
+}
+
 // OpenProject maps a browser project path to the exact process-local catalog
 // key of the created synthetic project, then opens it for durable editing.
 // The path is never passed to the runtime and never opens a filesystem target.
@@ -575,6 +624,16 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// request shape: its channels carry `{ handle }`, so it binds through its
 		// own row set on top of the same adapter.
 		if err := server.BindGraphGeneration(&transport.GraphGenerationProvider{Read: provider.GraphRead}); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+	}
+	// The prompt template and installed-skill reads are served from that same
+	// pinned private config root, so they are wired by the same condition. This
+	// binds only the two reads; prompt save/delete and skill uninstall stay
+	// unbound and keep failing closed.
+	if config.GlobalRoot != "" {
+		if err := server.BindPromptSkillsReads(durable); err != nil {
 			cleanup()
 			return nil, nil, err
 		}
