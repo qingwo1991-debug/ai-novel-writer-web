@@ -877,3 +877,24 @@ assertion that `budget` carries its attempt rows.
 **Operating rule from now on:** batch changes and push once per batch. Pushing after every small edit is
 what exhausted the allowance, and it makes each diagnosis cost a full three-job cycle.
 
+### 2026-11-04 — S1 generation is DONE and verified (11 operations), not pending
+
+Verified at HEAD, not inferred:
+
+- The eleven names are wired at `synthetic_durable_open_linux.go:685-717` inside the
+  `config.GlobalRoot != ""` block: `generation:begin`, `bind-material-decision`, `execute`, `read`,
+  `list`, `pause`, `cancel`, `resume`, `restart`, `discard-candidate`, `retry-draft-short-outline`.
+  They are the conditional part of durable 93 (77 unconditional + 16 conditional).
+- `synthetic_generation_http_linux_test.go` (552 lines) exercises them end to end and asserts, among
+  other things, that `budgetDiagnostics` is non-empty (`:544-547`).
+- That test does **not** skip in CI: `:62-67` reads `GO_SQLITE_CONTRACT` and, when
+  `GITHUB_ACTIONS=true`, calls `t.Fatal` instead of `t.Skip`. The workflow exports that variable, so the
+  green run `41874837177` really executed it.
+
+So the round-59 blocker (`budgetDiagnostics` empty) is closed twice over: fixed in `d253f49e`, and now
+pinned by a store assertion plus this lane test.
+
+**Next targets, in the order the dependencies allow:** S2 batch/composition/preparation storage, then
+S3 agent-generation, then S4 graph/finalization/import. Editor-inline stays blocked behind the
+generation owner port (see the entry above); do not schedule it in parallel.
+
