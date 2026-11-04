@@ -773,3 +773,33 @@ Read them with:
 compiles; the runtime assertion for the two project-core writes is still **unproven**. Retry job 2 when
 the cache service recovers, then read the annotation.
 
+### 2026-11-04 — CI now names failures without the log API
+
+The job log API is unusable for this repo (`zip: not a valid zip file`, and `gh run view --job --log`
+returns nothing), so failure reporting was moved into **check-run annotations**, which do work:
+
+- compile gate: `::error title=compile failure::` with the first four `file:line:col` messages;
+- unit tests: `::error title=go test failures::` naming the failing package and test;
+- enforce step: `::error title=step outcomes::contracts=... unit=... race=...`, which finally
+  distinguishes "tests failed" from "a gate skipped".
+
+That last one answered the whole multi-round mystery in a single line: **`contracts=success unit=failure
+race=skipped`** - the contract generators were innocent all along, and the unit-test step was the real
+failure.
+
+Reading them:
+
+    SHA=$(git rev-parse HEAD)
+    for i in $(gh api repos/.../commits/$SHA/check-runs --jq '.check_runs[]|select(.conclusion=="failure")|.id'); do
+      gh api repos/.../check-runs/$i/annotations --jq '.[].message'; done
+
+**Where the project-core batch stands:** the binder, the registration and the CAS fix are merged and the
+code compiles (job 1 green). The assertions themselves fail at runtime in
+`TestSyntheticDurableHTTPOpenSaveCloseReopenPersists`, and the assertion message still cannot be read
+through any working channel, so they were withheld again at `c13ac12b` to keep main green. The two
+operations are **bound but unverified** - not counted in durable 91.
+
+Next step, concretely: emit the failing assertion's own text into the annotation (the `t.Fatalf`
+messages already carry context, so piping the last `_test.go:NNN:` line for the failing package into a
+second `::error::` will surface it), then fix the shape and re-apply.
+
