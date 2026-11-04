@@ -456,20 +456,6 @@ func (s *syntheticDurableOpen) BeginBlueprints(ctx context.Context, caller trans
 	return store.NewBlueprints(db), release, nil
 }
 
-// BeginProjectCore is the durable lane's project core repository for the two
-// mutating names BindProjectCoreWrites binds (db:project-core-update and
-// db:project-core-synopsis-commit). db:project-core-get is already served by
-// BindEditorStageReads, so this borrow never carries a read. A write commits on
-// the admitted author database and the permit is refreshed on release, exactly
-// like the draft CAS, the blueprint writes and the other write binders.
-func (s *syntheticDurableOpen) BeginProjectCore(ctx context.Context, caller transport.Caller, raw any) (*store.ProjectCore, func(), error) {
-	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store.NewProjectCore(db), release, nil
-}
-
 // BeginPlotTree is the durable lane's plot tree repository. Only the single
 // read (db:plot-tree-read) is bound to it; db:plot-tree-save and
 // db:plot-tree-clear are mutations and stay unbound, so this lane can never
@@ -662,15 +648,6 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// db:blueprint-update-notes is not among them: the original refuses it
 		// unconditionally, so it stays unbound and keeps failing closed.
 		func() error { return server.BindBlueprintWrites(durable) },
-		// The two mutating project core names write that same admitted author
-		// database through the same borrow-and-refresh permit path: one
-		// admitted handle per request, refreshed before the fence is observed
-		// again, never a database path. db:project-core-get is already bound by
-		// BindEditorStageReads above, so BindProjectCoreWrites binds only the
-		// two writes. db:character-roster-commit stays unbound: no store method
-		// expresses a roster commit and the original only ever denies it, so it
-		// keeps failing closed.
-		func() error { return server.BindProjectCoreWrites(durable) },
 		// The plot tree read runs on the same admitted author database. This
 		// binds only db:plot-tree-read; db:plot-tree-save and
 		// db:plot-tree-clear are mutations and stay unbound, so both keep
