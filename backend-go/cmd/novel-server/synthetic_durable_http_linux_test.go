@@ -281,6 +281,77 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncWire); err != nil || syncRec.Code != http.StatusOK || string(syncWire.Result) != "null" {
 		t.Fatal("durable character-sync-get absent shape mismatch", syncRec.Code, syncRec.Body.String(), err)
 	}
+	// The single plot tree read is served from the same admitted author database
+	// under the same frozen lease, and it is SELECT-only. This project has no
+	// stored snapshot, so the read returns the original's shape with a present
+	// null snapshot (never an error) over its real source facts.
+	plotRec := rpc("db:plot-tree-read", []any{projectPath, expected})
+	var plotWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(plotRec.Body.Bytes(), &plotWire); err != nil || plotRec.Code != http.StatusOK {
+		t.Fatal("durable plot-tree-read decode failed", plotRec.Code, plotRec.Body.String(), err)
+	}
+	plot := plotWire.Result
+	if plot == nil || plot["writingLanguage"] != "zh-CN" {
+		t.Fatal("durable plot-tree-read facts malformed", plotRec.Body.String())
+	}
+	if revision, _ := plot["sourceRevision"].(string); len(revision) != 64 {
+		t.Fatal("durable plot-tree-read sourceRevision malformed", plotRec.Body.String())
+	}
+	// The seeded chapter-1 blueprint is a real source fact, read back from the
+	// author's own database instead of a constant shape.
+	plotBlueprints, _ := plot["blueprints"].([]any)
+	if len(plotBlueprints) != 1 {
+		t.Fatal("durable plot-tree-read did not return the seeded blueprint", plotRec.Body.String())
+	}
+	if seededPlotBlueprint, _ := plotBlueprints[0].(map[string]any); seededPlotBlueprint == nil || seededPlotBlueprint["title"] != syntheticDurableBlueprintTitle || seededPlotBlueprint["chapterNumber"] != float64(1) {
+		t.Fatal("durable plot-tree-read blueprint malformed", plotRec.Body.String())
+	}
+	// No finalized chapter and no narrative thread exist in this project, so
+	// both source lists are real empty lists.
+	for _, key := range []string{"finalizedChapters", "narrativeThreads"} {
+		list, ok := plot[key].([]any)
+		if !ok || len(list) != 0 {
+			t.Fatalf("durable plot-tree-read %s should be an empty list: %s", key, plotRec.Body.String())
+		}
+	}
+	if synopsis, _ := plot["synopsis"].(map[string]any); synopsis == nil {
+		t.Fatal("durable plot-tree-read missing the synopsis object", plotRec.Body.String())
+	} else if _, ok := synopsis["content"]; !ok {
+		t.Fatal("durable plot-tree-read synopsis malformed", plotRec.Body.String())
+	}
+	// An absent snapshot keeps the original's shape: the key is present and
+	// null, and the invalid-snapshot flag the store adds for unreadable text is
+	// not set for this empty project.
+	snapshot, ok := plot["snapshot"]
+	if !ok || snapshot != nil {
+		t.Fatal("durable plot-tree-read absent snapshot shape mismatch", plotRec.Body.String())
+	}
+	if _, ok := plot["storedSnapshotInvalid"]; ok {
+		t.Fatal("durable plot-tree-read flagged an empty project snapshot as invalid", plotRec.Body.String())
+	}
+	if strings.Contains(plotRec.Body.String(), projectPath) {
+		t.Fatal("durable plot-tree-read leaked the project path", plotRec.Body.String())
+	}
+	// The two plot tree mutations stay unbound on this lane: the registry
+	// exposes them, so the 501 is the durable binding, not a 404.
+	for _, unboundWrite := range []struct {
+		name string
+		args []any
+	}{
+		{"db:plot-tree-save", []any{map[string]any{"version": 1, "tracks": []any{}}, "synthetic-source-revision", projectPath, expected}},
+		{"db:plot-tree-clear", []any{projectPath, expected}},
+	} {
+		plotWriteRec := rpc(unboundWrite.name, unboundWrite.args)
+		if plotWriteRec.Code != http.StatusNotImplemented || !strings.Contains(plotWriteRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("mutating plot tree name %s was bound on the durable lane: %d %s", unboundWrite.name, plotWriteRec.Code, plotWriteRec.Body.String())
+		}
+	}
+	// Both refused mutations left the author database untouched.
+	if keptPlot := rpc("db:plot-tree-read", []any{projectPath, expected}); keptPlot.Code != http.StatusOK || !strings.Contains(keptPlot.Body.String(), `"snapshot":null`) {
+		t.Fatal("unbound plot tree mutation changed the author database", keptPlot.Code, keptPlot.Body.String())
+	}
 	// The five mutating names in the blueprint family stay unbound on this lane:
 	// the registry exposes them, so the 501 is the durable binding, not a 404.
 	for _, unboundWrite := range []struct {

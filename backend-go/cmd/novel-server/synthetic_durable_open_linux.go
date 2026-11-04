@@ -446,6 +446,19 @@ func (s *syntheticDurableOpen) BeginBlueprints(ctx context.Context, caller trans
 	return store.NewBlueprints(db), release, nil
 }
 
+// BeginPlotTree is the durable lane's plot tree repository. Only the single
+// read (db:plot-tree-read) is bound to it; db:plot-tree-save and
+// db:plot-tree-clear are mutations and stay unbound, so this lane can never
+// replace or blank the stored snapshot. The repository borrows the admitted
+// author database and never a path.
+func (s *syntheticDurableOpen) BeginPlotTree(ctx context.Context, caller transport.Caller, raw any) (*store.PlotTree, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewPlotTree(db), release, nil
+}
+
 // BeginPromptSkills lends the durable lane's pinned private prompt and
 // installed-skill root. Only the two reads are bound to it (prompt:load-global,
 // skills:list-user); prompt save/delete and skill uninstall stay unbound, so
@@ -607,6 +620,11 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// already bound by BindEditorStageReads above, and the five mutating
 		// names in that family stay unbound and keep failing closed.
 		func() error { return server.BindBlueprintReads(durable) },
+		// The plot tree read runs on the same admitted author database. This
+		// binds only db:plot-tree-read; db:plot-tree-save and
+		// db:plot-tree-clear are mutations and stay unbound, so both keep
+		// failing closed.
+		func() error { return server.BindPlotTreeReads(durable) },
 	} {
 		if err := bind(); err != nil {
 			cleanup()
