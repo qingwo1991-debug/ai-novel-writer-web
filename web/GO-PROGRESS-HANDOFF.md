@@ -367,3 +367,32 @@ checkable at all.
 
 Next: `begin` writes these manifests and `read` projects them; both call `syntheticGraphContext`.
 
+### 2026-11-04 — what `graph-generation:read` actually depends on (do not bind it yet)
+
+`graphRecovery` is five pieces, and one of them is a security boundary:
+
+1. `readGraphGenerationContext` — done (`syntheticGraphContext`).
+2. `attemptCount`, and **`GENERATION_GRAPH_ATTEMPT_CONFLICT` when a run has more than one attempt**.
+   A second attempt means the run was retried, and the recovery would have to choose which raw
+   output the author is looking at.
+3. `effects` — projected from stored graph effects.
+4. `artifact`/`result` — from attempt 0's receipt, **omitted when `graphs.result` refuses**, because
+   unqualified raw output stays in the run view for copying rather than being presented as a result.
+5. `sourceStatus` — `assertFinalizationSources`, which is
+   `budget(root).root.status !== 'cancelled'` **and** a full binding rebuild compared against the
+   frozen one (`compareGenerationSourceBindings(run.binding, rebuildBinding(...))`, with the current
+   model receipt folded in).
+
+`sourceStatus` is not cosmetic: `'current'` is the signal the UI uses to enable confirmation, and
+confirmation is what writes finalized text. **Reporting `'current'` without the rebuild would be a
+data-safety defect** — the author's finalized content could be overwritten from sources that had
+already changed. So `read` stays unbound until the rebuild exists, and when it does land it must
+fail closed (`'conflict'`) on any doubt.
+
+The Go lane already has the parts of the rebuild that matter: `syntheticFingerprint` derives the
+same nine reduced hashes from real project state, and `generationowner` `binding.go` already
+verifies epoch currency plus material revision/text. What is missing is reconstructing `selection`
+and `receipt` from the frozen manifest so the rebuild can run at read time — that is the same work
+`finalization-generation:*` needs, which is why it should be done once, for both families, rather
+than patched into `read`.
+
