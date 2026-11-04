@@ -1182,7 +1182,12 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 		if !glEffectKeyAllowed(key, glText(glMap(binding["sourceManifest"])["operation"])) {
 			return nil, glError("GENERATION_EFFECT_UNSUPPORTED")
 		}
-		row, err := glOne(ctx, conn, "SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=?", "GENERATION_ATTEMPT_MISSING", text(1))
+		// The attempt must belong to this run. Scoping the lookup by run_id alone
+		// is not enough and the attempt id alone is worse: a caller who may mutate
+		// one run could otherwise write an effect into an attempt belonging to a
+		// different run, which is exactly the cross-run contamination the
+		// operation-scoped allowlist above exists to prevent.
+		row, err := glOne(ctx, conn, "SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=? AND run_id=?", "GENERATION_ATTEMPT_MISSING", text(1), text(0))
 		if err != nil {
 			return nil, err
 		}
@@ -1194,7 +1199,7 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 			before, beforeErr := json.Marshal(existing)
 			after, afterErr := json.Marshal(arg(3))
 			if beforeErr == nil && afterErr == nil && string(before) == string(after) {
-				return g.receipt(ctx, conn, text(0), nil)
+				return g.receipt(ctx, conn, text(1), nil)
 			}
 		}
 		encoded, err := glPatch(row["usage_receipt_json"], map[string]any{key: arg(3)})
@@ -1204,7 +1209,8 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 		if _, err := conn.ExecContext(ctx, "UPDATE generation_attempts SET usage_receipt_json=? WHERE attempt_id=?", encoded, text(1)); err != nil {
 			return nil, err
 		}
-		return g.receipt(ctx, conn, text(0), nil)
+		// receipt takes an attempt id; the project id in text(0) would never match.
+		return g.receipt(ctx, conn, text(1), nil)
 	case "replaceUnstartedBinding", "resume":
 		// replace validates the next frozen binding before reading the run in
 		// the original; preserve that error precedence even for missing runs.
