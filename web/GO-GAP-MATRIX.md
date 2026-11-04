@@ -1,7 +1,15 @@
 # Go migration — evidence-based gap matrix
 
-Baseline: `HEAD=9cc21933` == `origin/main`. Durable author write lane landed and CI-green
-(`54b5b754` bridge + HTTP test, `3bace738` open-error redaction, `9cc21933` docs).
+Baseline: `HEAD=059c57a2` == `origin/main`, CI run `41758583171` fully green
+(all three *Go backend migration* jobs). Durable author write lane landed and CI-green
+(`54b5b754` bridge + HTTP test, `3bace738` open-error redaction, `9cc21933` docs), and it
+serves **31 operations** over real HTTP.
+
+Current stopping point, what is deliberately quarantined and the exact resume plan:
+**`web/GO-PROGRESS-HANDOFF.md`**. The counts below are unchanged by that checkpoint: the
+eleven S1 generation operations were briefly wired and then unbound again in `059c57a2`
+because their run view reported no attempts after `execute`, so they are still counted
+as unbound.
 
 ## Inventory
 
