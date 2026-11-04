@@ -418,6 +418,27 @@ func (g *GenerationLedger) budget(ctx context.Context, conn *sql.Conn, rootID st
 	}
 	return map[string]any{"root": root, "policy": policy, "activeElapsedMs": elapsed, "attempts": attempts, "blockedCode": row["blocked_code"]}, nil
 }
+// glFamilyManifestAllowed is the narrow widening of the closed manifest. Each
+// family key stays refused for every other operation, so a run can never smuggle
+// an agent session, graph context or finalization slot into an ordinary
+// generation manifest: the key is only readable when the operation that owns it
+// is the one the frozen binding actually names.
+func glFamilyManifestAllowed(key, operation string) bool {
+	switch key {
+	case "agentSession":
+		return operation == "agent-round"
+	case "graphGenerationContext":
+		switch operation {
+		case "plot-tree-snapshot", "narrative-thread-plan-candidate",
+			"narrative-thread-event-candidate", "finalized-chapter-notes":
+			return true
+		}
+	case "finalizationGenerationSlotKey":
+		return operation == "finalized-character-state"
+	}
+	return false
+}
+
 func glPlanning(operation string) bool {
 	return strings.Contains(operation, "planning") || strings.Contains(operation, "blueprint") || strings.Contains(operation, "plot-outline")
 }
@@ -432,7 +453,10 @@ func glOrdinaryBinding(binding map[string]any) error {
 	}
 	manifest := glMap(binding["sourceManifest"])
 	for _, key := range []string{"agentSession", "graphGenerationContext", "importSlot", "legacyRosterContext", "finalizationGenerationSlotKey"} {
-		if _, ok := manifest[key]; ok {
+		if _, ok := manifest[key]; !ok {
+			continue
+		}
+		if !glFamilyManifestAllowed(key, glText(manifest["operation"])) {
 			return glError("GENERATION_OPERATION_UNSUPPORTED")
 		}
 	}
