@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -595,11 +594,8 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
 		}
 		row, err := store.NewBlueprints(db).Get(ctx, chapter)
-		if err != nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_BLUEPRINT_READ_ERROR")
-		}
-		if row == nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_BLUEPRINT_MISSING")
+		if err != nil || row == nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNAVAILABLE")
 		}
 		text, err := syntheticCanonical(row)
 		if err != nil {
@@ -610,15 +606,11 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 	set.Sources.Draft = func(ctx context.Context, scope generationowner.Scope, key generationowner.SourceKey) (generationowner.SourceValue, error) {
 		id, err := strconv.ParseInt(key.ID, 10, 64)
 		if err != nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED_DRAFT_ID")
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
 		}
 		full, err := store.NewDrafts(db).GetFull(ctx, id)
-		if err != nil {
-			log.Printf("synthetic draft read failed id=%d: %v", id, err)
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_DRAFT_READ_ERROR")
-		}
-		if full == nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_DRAFT_MISSING")
+		if err != nil || full == nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNAVAILABLE")
 		}
 		return generationowner.SourceValue{Revision: full.Version, Text: full.Content}, nil
 	}
@@ -656,38 +648,7 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 	if len(set.Selection) == 0 {
 		set.Selection = append(set.Selection, generationowner.SourceKey{Kind: "project-core", ID: "main"})
 	}
-	// PROBE (temporary): surface which selection key cannot be read so the
-	// symbolic failure code names the source kind instead of a generic miss.
-	for _, key := range set.Selection {
-		reader, ok := syntheticSourceReader(set.Sources, key.Kind)
-		if !ok {
-			return nil, errors.New("GENERATION_SOURCE_KIND_UNSUPPORTED_" + syntheticKindCode(key.Kind))
-		}
-		if _, err := reader(ctx, generationowner.Scope{}, key); err != nil {
-			return nil, err
-		}
-	}
 	return set, nil
-}
-
-// syntheticSourceReader maps a selection kind onto the resolver that serves it.
-func syntheticSourceReader(sources generationowner.Sources, kind string) (generationowner.SourceReader, bool) {
-	switch kind {
-	case "project-core":
-		return sources.ProjectCore, sources.ProjectCore != nil
-	case "blueprint":
-		return sources.Blueprint, sources.Blueprint != nil
-	case "draft":
-		return sources.Draft, sources.Draft != nil
-	case "prompt":
-		return sources.Prompt, sources.Prompt != nil
-	}
-	return nil, false
-}
-
-// syntheticKindCode renders a source kind as an all-caps symbolic fragment.
-func syntheticKindCode(kind string) string {
-	return strings.ToUpper(strings.ReplaceAll(kind, "-", "_"))
 }
 
 // syntheticOutputContract folds optional output overrides into the same

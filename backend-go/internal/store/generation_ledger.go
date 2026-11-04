@@ -355,6 +355,12 @@ func (g *GenerationLedger) ListRuns(ctx context.Context, projectID string) ([]ma
 		}
 		out = append(out, summary)
 	}
+	// Commit before releasing the connection: a read transaction left open on a
+	// pooled connection makes the next statement fail with "cannot start a
+	// transaction within a transaction".
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, err
+	}
 	committed = true
 	return out, nil
 }
