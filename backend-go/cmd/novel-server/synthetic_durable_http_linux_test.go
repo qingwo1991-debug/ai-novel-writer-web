@@ -19,6 +19,10 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
+// syntheticDurableBlueprintTitle is the authored blueprint title the durable
+// lane must read back from the author's own database.
+const syntheticDurableBlueprintTitle = "合成蓝图标题"
+
 // TestSyntheticDurableHTTPOpenSaveCloseReopenPersists drives the real browser
 // project lifecycle protocol over the durable Go author runtime. It opens the
 // one real synthetic project, rejects a stale frozen context before any write,
@@ -89,6 +93,9 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	// body (the CAS target) and two characters. This runs before project:open so
 	// the durable write admission fingerprints exactly the seeded database.
 	draftID, originalBody := seedSyntheticDurableRows(t, database)
+	// One authored blueprint row is seeded too, so the durable blueprint read
+	// proves it reads the author's own database instead of a constant shape.
+	seedSyntheticDurableBlueprint(t, database)
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	bootRequest.Header.Set("X-Novel-User", "synthetic-author")
 	boot := httptest.NewRecorder()
@@ -244,6 +251,56 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		if err := json.Unmarshal(narrativeRec.Body.Bytes(), &narrativeWire); err != nil || narrativeRec.Code != http.StatusOK || narrativeWire.Result == nil || len(narrativeWire.Result) != 0 {
 			t.Fatalf("durable %s should be an empty list: %d %s", emptyRead.name, narrativeRec.Code, narrativeRec.Body.String())
 		}
+	}
+	// The three blueprint and character-sync reads are served from the same
+	// admitted author database under the same frozen lease. db:blueprint-get
+	// returns the seeded chapter object; both character-sync reads keep the
+	// absent shape the original returns (an empty list and null) because this
+	// project has no committed blueprint range, never an error.
+	blueprintRec := rpc("db:blueprint-get", []any{1, projectPath, expected})
+	var blueprintWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(blueprintRec.Body.Bytes(), &blueprintWire); err != nil || blueprintRec.Code != http.StatusOK {
+		t.Fatal("durable blueprint-get decode failed", blueprintRec.Code, blueprintRec.Body.String(), err)
+	}
+	if blueprintWire.Result == nil || blueprintWire.Result["title"] != syntheticDurableBlueprintTitle || blueprintWire.Result["chapterNumber"] != float64(1) {
+		t.Fatal("durable blueprint-get did not return the seeded chapter", blueprintRec.Body.String())
+	}
+	pendingRec := rpc("db:blueprint-character-sync-list-pending", []any{projectPath, expected})
+	var pendingWire struct {
+		Result []any `json:"result"`
+	}
+	if err := json.Unmarshal(pendingRec.Body.Bytes(), &pendingWire); err != nil || pendingRec.Code != http.StatusOK || pendingWire.Result == nil || len(pendingWire.Result) != 0 {
+		t.Fatal("durable character-sync-list-pending should be an empty list", pendingRec.Code, pendingRec.Body.String(), err)
+	}
+	syncRec := rpc("db:blueprint-character-sync-get", []any{"synthetic-durable-absent-sync", projectPath, expected})
+	var syncWire struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(syncRec.Body.Bytes(), &syncWire); err != nil || syncRec.Code != http.StatusOK || string(syncWire.Result) != "null" {
+		t.Fatal("durable character-sync-get absent shape mismatch", syncRec.Code, syncRec.Body.String(), err)
+	}
+	// The five mutating names in the blueprint family stay unbound on this lane:
+	// the registry exposes them, so the 501 is the durable binding, not a 404.
+	for _, unboundWrite := range []struct {
+		name string
+		args []any
+	}{
+		{"db:blueprint-upsert", []any{map[string]any{"chapterNumber": 2, "title": "绑定写入"}, projectPath, expected}},
+		{"db:blueprint-upsert-many", []any{[]any{map[string]any{"chapterNumber": 3, "title": "绑定批量"}}, projectPath, expected}},
+		{"db:blueprint-delete", []any{1, projectPath, expected}},
+		{"db:blueprint-commit-range", []any{map[string]any{"mode": "full", "operationId": "durable-unbound-range", "blueprints": []any{}}, projectPath, expected}},
+		{"db:blueprint-update-notes", []any{1, map[string]any{"notes": "绑定"}, projectPath, expected}},
+	} {
+		writeRec := rpc(unboundWrite.name, unboundWrite.args)
+		if writeRec.Code != http.StatusNotImplemented || !strings.Contains(writeRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("mutating blueprint name %s was bound on the durable lane: %d %s", unboundWrite.name, writeRec.Code, writeRec.Body.String())
+		}
+	}
+	// The refused delete and commit-range left the seeded chapter untouched.
+	if kept := rpc("db:blueprint-get", []any{1, projectPath, expected}); kept.Code != http.StatusOK || !strings.Contains(kept.Body.String(), syntheticDurableBlueprintTitle) {
+		t.Fatal("unbound blueprint mutation changed the author database", kept.Code, kept.Body.String())
 	}
 	// The prompt template and installed-skill reads are served from the lane's
 	// pinned private config root. Both names take no argument at all, so the
@@ -558,6 +615,26 @@ func seedSyntheticDurableRows(t *testing.T, database string) (int64, string) {
 		t.Fatal(err)
 	}
 	return draftID, originalBody
+}
+
+// seedSyntheticDurableBlueprint writes one real current-schema blueprint row
+// into the created synthetic project. It runs before project:open so the write
+// admission fingerprints exactly the seeded database.
+func seedSyntheticDurableBlueprint(t *testing.T, database string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	_, execErr := db.Exec(`INSERT INTO blueprints(chapter_number, title, role, purpose, key_events,
+		characters, suspense_hook, user_guidance, notes, notes_updated_at)
+		VALUES(1, ?, 'main', '目的', '事件', ?, '悬念', '指导', '作者摘要', 'synthetic-fixed-author-clock')`,
+		syntheticDurableBlueprintTitle, `["甲"]`)
+	closeErr := db.Close()
+	if execErr != nil || closeErr != nil {
+		t.Fatal(execErr, closeErr)
+	}
 }
 
 // durableDraftBody reads a draft body straight from the online database file.

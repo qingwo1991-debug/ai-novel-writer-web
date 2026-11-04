@@ -431,6 +431,21 @@ func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transp
 	return store.NewNarrative(db), release, nil
 }
 
+// BeginBlueprints is the durable lane's blueprint and character-sync
+// repository. Only the three reads are bound to it (chapter blueprint get,
+// character-sync get, pending character-sync list); db:blueprint-get-all is
+// already served by the editor stage read binder, and the five mutating names
+// stay unbound, so this lane can never upsert, commit a range, delete a chapter
+// blueprint or rewrite notes. The repository borrows the admitted author
+// database and never a path.
+func (s *syntheticDurableOpen) BeginBlueprints(ctx context.Context, caller transport.Caller, raw any) (*store.Blueprints, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewBlueprints(db), release, nil
+}
+
 // BeginPromptSkills lends the durable lane's pinned private prompt and
 // installed-skill root. Only the two reads are bound to it (prompt:load-global,
 // skills:list-user); prompt save/delete and skill uninstall stay unbound, so
@@ -587,6 +602,11 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// admitted author database. This binds only the three reads; the six
 		// mutating names in that family stay unbound and keep failing closed.
 		func() error { return server.BindNarrativeReads(durable) },
+		// Blueprint and character-sync reads run on the same admitted author
+		// database. This binds only the three reads; db:blueprint-get-all is
+		// already bound by BindEditorStageReads above, and the five mutating
+		// names in that family stay unbound and keep failing closed.
+		func() error { return server.BindBlueprintReads(durable) },
 	} {
 		if err := bind(); err != nil {
 			cleanup()
