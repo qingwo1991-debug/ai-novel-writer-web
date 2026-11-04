@@ -206,6 +206,62 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		!bytes.Contains(rosterAfterCommit.Body.Bytes(), []byte(`"name":"乙"`)) {
 		t.Fatal("durable character-roster-read changed after a refused roster commit", rosterAfterCommit.Code, rosterAfterCommit.Body.String())
 	}
+	// The four editor-inline names stay unbound on this lane. They are not
+	// store writes and not plain reads either: the original binds each one to
+	// the main generation owner (electron/controllers/generation-controller.ts:248-251
+	// register 'editor-inline:begin' / 'read-recovery' / 'execute' / 'cancel',
+	// every one arity 1 with a single request object, the handle carried as
+	// request.handle for the last three), and that owner's editor admission,
+	// frozen author-draft context (UTF-16 selection offsets over unsaved
+	// manuscript text, electron/services/editor-inline-generation.ts:20-43) and
+	// model dispatch have no Go port: internal/generationowner/binding.go:37-44
+	// has no editor-inline source kind at all, so store.GenerationLedger cannot
+	// open such a run, and no store method begins, executes, reads back or
+	// cancels one. Binding them here would mean inventing the whole owner
+	// pipeline in a transport file, so all four keep failing closed. The
+	// registry exposes them (web/operations.json:188-191), so the 501 is the
+	// durable binding, not a 404, and the refusals write nothing.
+	for _, unboundEditor := range []struct {
+		name string
+		args []any
+	}{
+		{"editor-inline:begin", []any{map[string]any{
+			"input": map[string]any{
+				"action": "instruct", "documentText": "原始正文", "from": 0, "to": 4,
+				"selectedText": "原始正文", "instruction": "改成第一人称",
+			},
+			"modelId": "synthetic-editor-model", "uiActionNonce": "synthetic-editor-nonce",
+		}}},
+		{"editor-inline:read-recovery", []any{map[string]any{"handle": map[string]any{
+			"projectId": id, "epoch": lease, "rootActionId": "synthetic-editor-root-1", "runId": "synthetic-editor-run-1",
+		}}}},
+		{"editor-inline:execute", []any{map[string]any{"handle": map[string]any{
+			"projectId": id, "epoch": lease, "rootActionId": "synthetic-editor-root-1", "runId": "synthetic-editor-run-1",
+		}}}},
+		{"editor-inline:cancel", []any{map[string]any{"handle": map[string]any{
+			"projectId": id, "epoch": lease, "rootActionId": "synthetic-editor-root-1", "runId": "synthetic-editor-run-1",
+		}}}},
+	} {
+		editorRec := rpc(unboundEditor.name, unboundEditor.args)
+		if editorRec.Code != http.StatusNotImplemented || !strings.Contains(editorRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("editor-inline name %s was bound on the durable lane: %d %s", unboundEditor.name, editorRec.Code, editorRec.Body.String())
+		}
+		if strings.Contains(editorRec.Body.String(), projectPath) || strings.Contains(editorRec.Body.String(), durableDir) {
+			t.Fatalf("refused %s leaked a filesystem path: %s", unboundEditor.name, editorRec.Body.String())
+		}
+	}
+	// No refusal reached the generation ledger: the editor-inline owner is the
+	// only writer of these rows and it never ran, so the run tables stay empty
+	// if this freshly created project carries them at all.
+	var editorLedgerTables int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='generation_runs'", &editorLedgerTables)
+	if editorLedgerTables != 0 {
+		var editorRuns int64
+		durableQuery(t, database, "SELECT COUNT(*) FROM generation_runs", &editorRuns)
+		if editorRuns != 0 {
+			t.Fatalf("a refused editor-inline name persisted %d generation run(s)", editorRuns)
+		}
+	}
 	// The five post-process receipt and LLM ledger reads are served from the
 	// same admitted author database under the same frozen lease. Absence is the
 	// absent shape (null run, false aggregate) or an empty list, never an error.
