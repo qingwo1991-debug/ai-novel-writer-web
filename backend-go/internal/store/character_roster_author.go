@@ -53,10 +53,10 @@ func NewRosterAuthor(db *sql.DB) *RosterAuthor { return &RosterAuthor{db: db} }
 // The eleven static fields in the original's declared order (author.ts:11). The
 // same order drives the diff, the identity write and the canonical request hash.
 const (
-	rosterName = iota
-	rosterRole
-	rosterGender
-	rosterAge
+	rosterAuthorName = iota
+	rosterAuthorRole
+	rosterAuthorGender
+	rosterAuthorAge
 	rosterAppearance
 	rosterPersonality
 	rosterBackground
@@ -781,7 +781,7 @@ func rosterAuthorNormalize(candidate any) (rosterAuthorRequest, error) {
 		// The display snapshot of an edge is the target entry's name, resolved only
 		// after every target above has been proved to be part of this same request.
 		for position := range entry.relationships {
-			entry.relationships[position].target = byID[entry.relationships[position].targetID].static[rosterName]
+			entry.relationships[position].target = byID[entry.relationships[position].targetID].static[rosterAuthorName]
 		}
 	}
 	if renames, present := object["renames"]; present {
@@ -796,7 +796,7 @@ func rosterAuthorNormalize(candidate any) (rosterAuthorRequest, error) {
 			}
 			characterID, _ := rename["characterId"].(string)
 			target, exists := byID[characterID]
-			if rosterAuthorTrim(characterID) == "" || !exists || target.static[rosterName] != rosterText(rename["newName"]) {
+			if rosterAuthorTrim(characterID) == "" || !exists || target.static[rosterAuthorName] != rosterText(rename["newName"]) {
 				return rosterAuthorRequest{}, ErrCharacterAuthorWriteRequired
 			}
 		}
@@ -937,9 +937,9 @@ func rosterAuthorEntryNormalize(object map[string]any) (rosterAuthorEntry, error
 	if !ok || !rosterAuthorRole(role) {
 		return entry, ErrCharacterRosterRoleInvalid
 	}
-	entry.static[rosterName] = name
-	entry.static[rosterRole] = role
-	for index := rosterGender; index < len(rosterAuthorFields); index++ {
+	entry.static[rosterAuthorName] = name
+	entry.static[rosterAuthorRole] = role
+	for index := rosterAuthorGender; index < len(rosterAuthorFields); index++ {
 		key := rosterAuthorFields[index]
 		var text string
 		var err error
@@ -1065,10 +1065,10 @@ func rosterAuthorRequestHash(scope RosterAuthorScope, request rosterAuthorReques
 	entries := make([]any, 0, len(request.entries))
 	for _, entry := range request.entries {
 		object := plotObject{
-			{"name", entry.static[rosterName]},
-			{"role", entry.static[rosterRole]},
-			{"gender", entry.static[rosterGender]},
-			{"age", entry.static[rosterAge]},
+			{"name", entry.static[rosterAuthorName]},
+			{"role", entry.static[rosterAuthorRole]},
+			{"gender", entry.static[rosterAuthorGender]},
+			{"age", entry.static[rosterAuthorAge]},
 			{"appearance", entry.static[rosterAppearance]},
 			{"personality", entry.static[rosterPersonality]},
 			{"background", entry.static[rosterBackground]},
