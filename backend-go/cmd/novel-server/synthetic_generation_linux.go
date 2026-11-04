@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -286,6 +285,15 @@ func syntheticArgs(values ...any) (json.RawMessage, error) {
 		return nil, err
 	}
 	return raw, nil
+}
+
+// syntheticCall invokes a ledger method with marshaled positional arguments.
+func syntheticCall(ctx context.Context, ledger *store.GenerationLedger, method string, values ...any) (any, error) {
+	args, err := syntheticArgs(values...)
+	if err != nil {
+		return nil, err
+	}
+	return ledger.CallJSON(ctx, method, args)
 }
 
 // admit re-verifies the frozen context and returns the fence plus the fresh
@@ -781,7 +789,7 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 	if err != nil {
 		return nil, err
 	}
-	contextValue, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
@@ -1157,7 +1165,7 @@ func (s *syntheticGeneration) RetryDraftShortOutline(ctx context.Context, caller
 // was a length stop or an empty stop. The ledger's own accounting plus the
 // stored attempt purpose are the authority.
 func (s *syntheticGeneration) syntheticAssertShortOutlineFailure(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, run map[string]any, failedAttemptID string) error {
-	budgetValue, err := ledger.CallJSON(ctx, "budget", syntheticArgs(run["rootActionId"]))
+	budgetValue, err := syntheticCall(ctx, ledger, "budget", run["rootActionId"])
 	if err != nil {
 		return err
 	}
@@ -1174,7 +1182,7 @@ func (s *syntheticGeneration) syntheticAssertShortOutlineFailure(ctx context.Con
 	if purpose != syntheticRetryPurpose {
 		return errors.New("GENERATION_DRAFT_SHORT_OUTLINE_RETRY_UNAVAILABLE")
 	}
-	receiptValue, err := ledger.CallJSON(ctx, "receipt", syntheticArgs(failedAttemptID))
+	receiptValue, err := syntheticCall(ctx, ledger, "receipt", failedAttemptID)
 	if err != nil {
 		return err
 	}
@@ -1368,7 +1376,7 @@ func (s *syntheticGeneration) Restart(ctx context.Context, caller transport.Call
 	if err != nil {
 		return nil, err
 	}
-	budgetValue, err := ledger.CallJSON(ctx, "budget", syntheticArgs(run["rootActionId"]))
+	budgetValue, err := syntheticCall(ctx, ledger, "budget", run["rootActionId"])
 	if err != nil {
 		return nil, err
 	}
@@ -1559,7 +1567,7 @@ func (s *syntheticGeneration) viewOf(ctx context.Context, ledger *store.Generati
 	manifest := syntheticMap(binding["sourceManifest"])
 	runID := syntheticString(run["runId"])
 	rootID := syntheticString(run["rootActionId"])
-	budgetValue, err := ledger.CallJSON(ctx, "budget", syntheticArgs(rootID))
+	budgetValue, err := syntheticCall(ctx, ledger, "budget", rootID)
 	if err != nil {
 		return nil, err
 	}
@@ -1569,13 +1577,13 @@ func (s *syntheticGeneration) viewOf(ctx context.Context, ledger *store.Generati
 	receipts := make([]map[string]any, 0, len(attemptValues))
 	for _, attemptValue := range attemptValues {
 		attempt := syntheticMap(attemptValue)
-		receiptValue, err := ledger.CallJSON(ctx, "receipt", syntheticArgs(syntheticString(attempt["attemptId"])))
+		receiptValue, err := syntheticCall(ctx, ledger, "receipt", syntheticString(attempt["attemptId"]))
 		if err != nil {
 			return nil, err
 		}
 		receipts = append(receipts, syntheticMap(receiptValue))
 	}
-	inFlightValue, err := ledger.CallJSON(ctx, "hasInFlight", syntheticArgs(runID))
+	inFlightValue, err := syntheticCall(ctx, ledger, "hasInFlight", runID)
 	if err != nil {
 		return nil, err
 	}
@@ -1829,7 +1837,7 @@ func (s *syntheticGeneration) publishSnapshot(caller transport.Caller, expected 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	receiptValue, err := ledger.CallJSON(ctx, "receipt", syntheticArgs(event.AttemptID))
+	receiptValue, err := syntheticCall(ctx, ledger, "receipt", event.AttemptID)
 	if err != nil {
 		return
 	}
