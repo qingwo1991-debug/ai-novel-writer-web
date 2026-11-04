@@ -323,3 +323,27 @@ caller's order while the map branch sorted, so the same value hashed two ways. A
 *canonical* cannot preserve order — `EncodeJSON` is the order-preserving one, and that separation
 is now explicit in both doc comments. Nothing consumes it yet: `graph-generation:read` is the first
 caller, and it must verify with exactly this function.
+
+### 2026-11-04 — two envelope defects found by checking the wire shape against the renderer
+
+Both were introduced by me and both were green in CI before being found, which is the point.
+
+1. **The family cancels read the wrong object.** `generation:read` and `generation:cancel` take the
+   bare handle; `graph-generation:cancel` and `finalization-generation:cancel` take
+   `{ handle }` (`src/services/graph-generation.ts:40`,
+   `src/services/finalization-generation.ts:27`, and the Node owner rejects any other key). The Go
+   binder passed the envelope straight to `syntheticParseHandle`, so every *real* call would have
+   failed to find its run. The HTTP test could not see it: it only asserted "not 501", and a
+   malformed-run error is also not 501. `familyCancelHandle` now unwraps and rejects unknown keys
+   with the family's own code, pinned by `TestFamilyCancelsUnwrapTheHandleEnvelope`.
+2. **Op-body errors escaped the lane envelope.** The adapter wrapped only argument validation in
+   `fail(...)` and returned `call(...)` verbatim, so a mutating op that reported
+   `GENERATION_OPERATION_UNSUPPORTED` (or a malformed request) answered with an HTTP error instead
+   of `{"success": false, "error": "Error: CODE"}`. The adapter now routes body errors through the
+   same `fail`, which fixes the read and mutating shapes at once.
+
+The lesson for the remaining batches is specific: **compare the Go handler's argument shape against
+the renderer's call site, not against the contract's type signature.** The contract says
+`args: [{ handle }]` for one family and `args: [handle]` for the other, and a test that only checks
+"not 501" cannot tell the two apart.
+
