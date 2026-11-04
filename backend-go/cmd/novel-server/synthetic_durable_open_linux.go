@@ -16,6 +16,7 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/authorruntime"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
@@ -34,6 +35,15 @@ import (
 type syntheticDurableConfig struct {
 	Schema   admission.SchemaContract
 	Baseline string
+	// GlobalRoot and ModelOrigins are the private trusted model config root
+	// and the administrator-approved egress origins for the reduced S1
+	// generation lane. Both-or-neither; when both are set the durable lane
+	// additionally binds the eleven S1 generation operations.
+	GlobalRoot   string
+	ModelOrigins []string
+	// Dispatch is the executor seam used by tests to substitute the native
+	// model dispatch; production main.go never sets it.
+	Dispatch generation.Dispatch
 }
 
 const (
@@ -431,6 +441,34 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		func() error { return server.BindEditorReviewCycleAbsentRead(durable) },
 	} {
 		if err := bind(); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+	}
+	// The reduced S1 generation lane binds exactly the eleven migrated
+	// generation-family names; every other generation-family operation stays
+	// GO_OPERATION_NOT_MIGRATED. It is only wired when an administrator
+	// supplies the private trusted model config root (with egress origins).
+	if config.GlobalRoot != "" {
+		provider, err := newSyntheticGeneration(durable, server, config)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("synthetic generation lane: %w", err)
+		}
+		binder := &transport.GenerationProvider{
+			Begin:                  provider.Begin,
+			BindMaterialDecision:   provider.BindMaterialDecision,
+			Execute:                provider.Execute,
+			Read:                   provider.Read,
+			List:                   provider.List,
+			Pause:                  provider.Pause,
+			Cancel:                 provider.Cancel,
+			Resume:                 provider.Resume,
+			Restart:                provider.Restart,
+			DiscardCandidate:       provider.DiscardCandidate,
+			RetryDraftShortOutline: provider.RetryDraftShortOutline,
+		}
+		if err := server.BindGeneration(binder); err != nil {
 			cleanup()
 			return nil, nil, err
 		}

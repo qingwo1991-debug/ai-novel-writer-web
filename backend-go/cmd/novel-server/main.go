@@ -43,6 +43,8 @@ func run() error {
 	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
 	readSchema := flag.String("synthetic-read-schema-contract", "", "trusted SQLite contract for disposable read-only project opens")
 	durableDir := flag.String("synthetic-durable-dir", "", "optional private disposable library for a real synthetic durable author project")
+	durableGlobalDir := flag.String("synthetic-durable-global-dir", "", "optional private trusted model config root for the durable generation lane")
+	durableModelOrigins := flag.String("synthetic-durable-model-origins", "", "comma-separated trusted HTTP(S) origins for the durable generation lane")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
@@ -70,12 +72,24 @@ func run() error {
 	if (*globalDir == "" && *completedGlobalParent == "") != (*modelOrigins == "") {
 		return errors.New("synthetic model config requires both a private global root and trusted origins")
 	}
+	if (*durableGlobalDir == "") != (*durableModelOrigins == "") {
+		return errors.New("synthetic durable model config requires both a private global root and trusted origins")
+	}
 	if *durableDir != "" {
 		if *libraryDir != "" || *uploadDir != "" || *globalDir != "" || *completedGlobalParent != "" || *readSchema == "" {
 			return errors.New("synthetic durable project requires the schema contract and cannot share other data lanes")
 		}
 		if !underTempRoot(*durableDir) || !privateSyntheticGlobalRoot(filepath.Dir(*durableDir)) {
 			return errors.New("synthetic durable project requires a library beneath a private temporary data root")
+		}
+		if *durableGlobalDir != "" {
+			if !privateSyntheticGlobalRoot(*durableGlobalDir) {
+				return errors.New("synthetic durable model config must use a private canonical temporary directory")
+			}
+			global, durable := *durableGlobalDir, *durableDir
+			if global == durable || strings.HasPrefix(global, durable+string(filepath.Separator)) || strings.HasPrefix(durable, global+string(filepath.Separator)) {
+				return errors.New("synthetic durable model root cannot overlap the durable project library")
+			}
 		}
 	}
 	if *readSchema != "" && *durableDir == "" && (*libraryDir == "" || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
@@ -94,6 +108,10 @@ func run() error {
 	if *modelOrigins != "" {
 		origins = strings.Split(*modelOrigins, ",")
 	}
+	var durableOrigins []string
+	if *durableModelOrigins != "" {
+		durableOrigins = strings.Split(*durableModelOrigins, ",")
+	}
 	var readConfig *syntheticReadOpenConfig
 	var durableConfig *syntheticDurableConfig
 	if *readSchema != "" {
@@ -109,7 +127,7 @@ func run() error {
 			return fmt.Errorf("synthetic read contract: %w", parseErr)
 		}
 		readConfig = &syntheticReadOpenConfig{Schema: contract}
-		durableConfig = &syntheticDurableConfig{Schema: contract, Baseline: filepath.Join(filepath.Dir(*readSchema), syntheticBaselineDatabaseName)}
+		durableConfig = &syntheticDurableConfig{Schema: contract, Baseline: filepath.Join(filepath.Dir(*readSchema), syntheticBaselineDatabaseName), GlobalRoot: *durableGlobalDir, ModelOrigins: durableOrigins}
 	}
 	var handler http.Handler
 	var cleanup func()
