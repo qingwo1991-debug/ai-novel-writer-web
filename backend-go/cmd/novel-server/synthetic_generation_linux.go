@@ -648,7 +648,38 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 	if len(set.Selection) == 0 {
 		set.Selection = append(set.Selection, generationowner.SourceKey{Kind: "project-core", ID: "main"})
 	}
+	// PROBE (temporary): surface which selection key cannot be read so the
+	// symbolic failure code names the source kind instead of a generic miss.
+	for _, key := range set.Selection {
+		reader, ok := syntheticSourceReader(set.Sources, key.Kind)
+		if !ok {
+			return nil, errors.New("GENERATION_SOURCE_KIND_UNSUPPORTED_" + syntheticKindCode(key.Kind))
+		}
+		if _, err := reader(ctx, generationowner.Scope{}, key); err != nil {
+			return nil, errors.New("GENERATION_SOURCE_MISSING_" + syntheticKindCode(key.Kind))
+		}
+	}
 	return set, nil
+}
+
+// syntheticSourceReader maps a selection kind onto the resolver that serves it.
+func syntheticSourceReader(sources generationowner.Sources, kind string) (generationowner.SourceReader, bool) {
+	switch kind {
+	case "project-core":
+		return sources.ProjectCore, sources.ProjectCore != nil
+	case "blueprint":
+		return sources.Blueprint, sources.Blueprint != nil
+	case "draft":
+		return sources.Draft, sources.Draft != nil
+	case "prompt":
+		return sources.Prompt, sources.Prompt != nil
+	}
+	return nil, false
+}
+
+// syntheticKindCode renders a source kind as an all-caps symbolic fragment.
+func syntheticKindCode(kind string) string {
+	return strings.ToUpper(strings.ReplaceAll(kind, "-", "_"))
 }
 
 // syntheticOutputContract folds optional output overrides into the same
