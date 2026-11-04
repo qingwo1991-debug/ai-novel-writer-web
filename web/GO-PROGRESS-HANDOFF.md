@@ -442,3 +442,17 @@ through `open` with a full `GLBinding`. `internal/generation/contract_test.go` a
 that fixture against real SQLite, so the test belongs there; until it exists these fixes are verified
 by inspection only.
 
+### 2026-11-04 — source freshness now fails closed
+
+`syntheticGraphSourceStatus` used to answer `current` for every run whose root was not cancelled,
+which meant it could say "fine" about sources that had moved. It now answers `current` only when it
+can re-read the frozen fact, and `conflict` otherwise:
+
+- cancelled root → `conflict`;
+- **event** → `current` only if `finalization_outbox` still holds the frozen
+  `(draftId, finalizationId) → contentHash`; a missing row is a changed source, not an error;
+- **plot** and **plan** → `conflict` until the plot baseline and blueprint re-derivations exist.
+
+Choosing "wrong but visible" over "permissive but invisible" is the point: confirmation writes over
+work the author already has, so an unverifiable state must read as changed. CI green at `db815fd6`.
+
