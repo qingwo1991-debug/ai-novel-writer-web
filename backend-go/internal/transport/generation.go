@@ -95,7 +95,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			}
 			handle, err := familyCancelHandle(args[0], "GENERATION_GRAPH_REQUEST_INVALID")
 			if err != nil {
-				return fail(err)
+				return nil, err
 			}
 			return provider.Cancel(ctx, caller, expected, handle)
 		}},
@@ -105,7 +105,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			}
 			handle, err := familyCancelHandle(args[0], "GENERATION_FINALIZATION_REQUEST_INVALID")
 			if err != nil {
-				return fail(err)
+				return nil, err
 			}
 			return provider.Cancel(ctx, caller, expected, handle)
 		}},
@@ -158,7 +158,15 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			if ctx == nil {
 				return fail(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
 			}
-			return call(ctx, caller, expected, args)
+			value, err := call(ctx, caller, expected, args)
+			if err != nil {
+				// The op body reports validation failures as plain errors (for
+				// example GENERATION_OPERATION_UNSUPPORTED or a malformed family
+				// request). Without this they escape as bare errors and a mutating
+				// op answers with an HTTP envelope instead of its business DTO.
+				return fail(err)
+			}
+			return value, nil
 		}
 	}
 	for name, handler := range handlers {
