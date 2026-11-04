@@ -489,9 +489,19 @@ func attemptsOf(t *testing.T, view map[string]any) []string {
 	return out
 }
 
+// assertStringField walks a dotted path into nested objects and asserts the
+// leaf is the wanted non-empty string.
 func assertStringField(t *testing.T, object map[string]any, key, want string) {
 	t.Helper()
-	if got, ok := object[key].(string); !ok || got != want {
-		t.Fatalf("%s = %#v, want %q", key, object[key], want)
+	var current any = object
+	for _, part := range strings.Split(key, ".") {
+		nested, ok := current.(map[string]any)
+		if !ok {
+			t.Fatalf("%s = %#v, want %q", key, current, want)
+		}
+		current = nested[part]
+	}
+	if got, ok := current.(string); !ok || got != want {
+		t.Fatalf("%s = %#v, want %q", key, current, want)
 	}
 }
