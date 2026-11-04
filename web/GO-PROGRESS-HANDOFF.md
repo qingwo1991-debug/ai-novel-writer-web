@@ -917,3 +917,26 @@ assertion pinning that.
 Next cheapest pool, from the survey: cloud-backup (8, `internal/webdav` is complete with no binder) and
 finalization (3, `store/finalization_outbox.go` complete but called only from its own tests).
 
+### 2026-11-04 — finalization writes bound (durable 102 -> 105)
+
+Green: `3050e6a6`.
+
+Bound, unconditional: `finalization:commit`, `finalization:retry`,
+`db:finalization-link-knowledge-document`. Each goes through a lane-owned owner proof
+(`durableFinalizationOwner`) that only accepts a `transport.FinalizationProof` matching the frozen
+scope, so the outbox cannot be driven by an unproven caller.
+
+`MarkPublishedWithOwnerProof` (`store/finalization_outbox.go:290`) is deliberately **not** wired: no
+manuscript publisher exists in this lane, so a published receipt could not be minted honestly. A commit
+therefore returns the original's failing-publisher shape (`success:false, committed:true,
+publicationStatus:"pending"`, `error:"Error: FINALIZATION_PUBLISHER_UNAVAILABLE"`), persisted to
+`last_error`, which is exactly `finalization-service.ts:163-168, 201-211`.
+
+**cloud-backup (8) stays 501, correctly.** Every one of them needs a credential or binding store this
+lane does not have, a deployment-supplied WebDAV dispatch (`internal/webdav/client.go` `New` refuses
+without one), portable export/restore, dialog grants, or an in-flight backup registry nothing can
+populate. Pinned at 501 by assertions.
+
+One compile fix this batch: `fail` in `finalization.go` is `func(code string) (any, error)`, so
+`return fail(x), nil` is a two-value-in-single-value error. Fixed 29 call sites.
+
