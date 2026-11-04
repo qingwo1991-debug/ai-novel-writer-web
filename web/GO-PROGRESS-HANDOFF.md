@@ -694,3 +694,27 @@ the wrong `Error: PROJECT_CORE_OPERATION_FAILED`.
 
 Do not count these two in the durable total until that is closed.
 
+### 2026-11-04 — the masking chain is unit-tests, not step 34 (corrects the earlier bisect note)
+
+Two workflow probes settled where the red comes from, and they **correct** the previous entry:
+
+- A step was added that `cat`s `$GITHUB_STEP_SUMMARY` right after *Generate remaining-domain original
+  synthetic contracts*. It printed **empty**: that step records no contract failure, so it is not the
+  culprit and its earlier `outcome: failure` reading was my misdiagnosis.
+- The race step's `if` was then reduced to `!cancelled() && steps.unit-tests.outcome == 'success'`. The
+  race step **still skipped**, which means `steps.unit-tests.outcome` is not `success`.
+
+So the chain is: `Synthetic-data unit and HTTP contract tests` has `outcome: failure` (masked by
+`continue-on-error`, so its `conclusion` reads success) -> the race gate sees a non-success outcome and
+skips -> the enforce step fails on `test race-tests.outcome = success`. The visible red is three steps
+away from the cause.
+
+The remaining contradiction to chase: when the project-core assertions are present the unit step's
+outcome is failure, **yet the parsed `-json` stream contains zero `Action: fail` records**. That points
+at a non-test failure inside that step - most likely the test package failing to build, which `go test
+-json` reports as `[build failed]` text rather than as a per-test fail action. First thing to check next
+time: whether the assertions restored from `fb38d79b` reference a helper that no longer exists.
+
+Everything is reverted to `e69d2ae0` (green); the two project-core writes remain bound, registered and
+**unverified**.
+
