@@ -28,7 +28,10 @@ func TestFamilyCancelsUnwrapTheHandleEnvelope(t *testing.T) {
 				return map[string]any{"success": true}, nil
 			},
 		}
-		server := &Server{}
+		// fixture loads the real operations inventory: Bind refuses anything the
+		// registry does not expose, so a zero Server would panic instead of telling
+		// us the operation is not inventoriued.
+		server := fixture(t)
 		if err := server.BindGeneration(provider); err != nil {
 			t.Fatal(err)
 		}
