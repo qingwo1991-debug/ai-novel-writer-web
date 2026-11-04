@@ -415,6 +415,12 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		t.Fatalf("recovery candidate list = %d %s", candidates.Code, candidates.Body.String())
 	}
 
+	// --- continuity and summary snapshots share the durable author admission. ---
+	latestSummary := rpc("db:get-latest-summary", []any{recoveryProjectPath, expected})
+	if latestSummary.Code != http.StatusOK || !strings.Contains(latestSummary.Body.String(), `"result"`) {
+		t.Fatalf("latest summary = %d %s", latestSummary.Code, latestSummary.Body.String())
+	}
+
 	// --- all 32 non-S1 generation-family operations stay unmigrated. ---
 	unmigrated := append([]string{
 		"generation:begin-batch", "generation:commit-draft", "generation:compose-visible",

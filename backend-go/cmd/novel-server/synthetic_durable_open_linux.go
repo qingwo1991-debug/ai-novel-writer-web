@@ -313,10 +313,11 @@ func (s *syntheticDurableOpen) CommitDraftContent(ctx context.Context, caller tr
 	}}, nil
 }
 
-// BeginRecovery is the durable lane's recovery candidate repository. Candidate
-// writes go through the admitted author database, so the release refreshes the
-// permit before the fence is observed again; a read leaves it unchanged.
-func (s *syntheticDurableOpen) BeginRecovery(ctx context.Context, caller transport.Caller, raw any) (*store.Recovery, func(), error) {
+// beginAuthorRepository admits the author project for this exact session, tab
+// and frozen context and returns the author's database plus a release that
+// refreshes the permit before the fence is observed again. Borrowing
+// repositories write the author's own database, never a renderer path.
+func (s *syntheticDurableOpen) beginAuthorRepository(ctx context.Context, caller transport.Caller, raw any) (*sql.DB, func(), error) {
 	if s == nil || ctx == nil {
 		return nil, nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
 	}
@@ -331,7 +332,7 @@ func (s *syntheticDurableOpen) BeginRecovery(ctx context.Context, caller transpo
 	}
 	lifecycle := s.lifecycle
 	s.mu.Unlock()
-	repository, refresh, done, err := lifecycle.RecoveryRepositoryDurable(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected)
+	db, refresh, done, err := lifecycle.DurableRepository(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, expected)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -344,7 +345,25 @@ func (s *syntheticDurableOpen) BeginRecovery(ctx context.Context, caller transpo
 			done()
 		})
 	}
-	return repository, release, nil
+	return db, release, nil
+}
+
+// BeginRecovery is the durable lane's recovery candidate repository.
+func (s *syntheticDurableOpen) BeginRecovery(ctx context.Context, caller transport.Caller, raw any) (*store.Recovery, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewRecovery(db), release, nil
+}
+
+// BeginSummary is the durable lane's continuity and summary repository.
+func (s *syntheticDurableOpen) BeginSummary(ctx context.Context, caller transport.Caller, raw any) (*store.Summary, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewSummary(db), release, nil
 }
 
 // OpenProject maps a browser project path to the exact process-local catalog
@@ -513,6 +532,11 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	// The four recovery candidate operations share the durable author admission:
 	// their repository writes the author's own database, never a renderer path.
 	if err := server.BindRecovery(durable); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	// Continuity and summary snapshots share the same durable author admission.
+	if err := server.BindSummary(durable); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
