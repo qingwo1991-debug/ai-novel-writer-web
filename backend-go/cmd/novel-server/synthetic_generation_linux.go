@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -613,6 +614,7 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 		}
 		full, err := store.NewDrafts(db).GetFull(ctx, id)
 		if err != nil {
+			log.Printf("synthetic draft read failed id=%d: %v", id, err)
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_DRAFT_READ_ERROR")
 		}
 		if full == nil {
