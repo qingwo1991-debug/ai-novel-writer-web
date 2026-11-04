@@ -863,3 +863,17 @@ Every job fails to start, so nothing can be verified until that is resolved. All
 on Actions by design, so this stops the migration completely. Source-only work can continue, but it
 lands unverified.
 
+### 2026-11-04 — CI unblocked: the repo is now public
+
+Actions was blocked by the private-repo minute allowance (2,000/month on Free, billed per **minute**,
+each job counted separately - a three-job run costs roughly 20 minutes). The owner chose to make the
+repository public, where Actions minutes are free and unmetered. A pre-flip scan found no credentials or
+author text in the tracked tree: `git grep` for private-key headers and the usual token prefixes
+returned nothing, `.npmrc` holds only registry settings, and the largest blobs are open fonts.
+
+Verified after the flip: run `41874837177` is green in all three jobs, including the store-level
+assertion that `budget` carries its attempt rows.
+
+**Operating rule from now on:** batch changes and push once per batch. Pushing after every small edit is
+what exhausted the allowance, and it makes each diagnosis cost a full three-job cycle.
+
