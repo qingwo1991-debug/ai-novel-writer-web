@@ -295,8 +295,17 @@ Two ways out, and only these:
    would then prove "this context re-encodes to itself", not "this is the context Node froze", so
    a Node-written run and a Go-written run would never agree.
 
-Option 1 is the only one that preserves cross-version parity, so that is the next step, and the
-read binding should not be attempted again before it exists.
+Option 1 preserves cross-version parity; option 2 does not.
+
+**Option 3 is the one to take**, and it follows from a fact already recorded in the S4 map: the Go
+lane's request hash can never match Node's, so a Go deployment must not point at a database the
+Node build already executed generation against. Graph runs are short-lived recoverable state, not
+author data, so in-flight graph runs written before cutover are not something we can resume anyway.
+That makes Go the **only writer** of a graph context, and then a single canonical encoding is
+sufficient: write with sorted keys, verify with sorted keys. No order-preserving decoder is needed,
+and `graphgen.EncodeJSON` — which refuses maps precisely to avoid inventing an order — should keep
+refusing them; the graph lane should pass `graphgen.Object` built from an explicit field list in
+both directions, which also makes the on-disk shape obvious at a glance.
 
 Note the knock-on effect: this same raw-text requirement will apply to `graph-generation:execute`
 (the task hash) and to `finalization-generation:*` (slot hash), so solving it once unblocks the
