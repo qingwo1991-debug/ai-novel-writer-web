@@ -467,6 +467,7 @@ jobs:
       - name: Enforce collected contract and test failures
         if: ${{ !cancelled() }}
         run: |
+          printf '::error title=step outcomes::contracts=%s unit=%s race=%s\n' '${{ steps.remaining-contracts.outcome }}' '${{ steps.unit-tests.outcome }}' '${{ steps.race-tests.outcome }}'
           test '${{ steps.remaining-contracts.outcome }}' = success
           test '${{ steps.unit-tests.outcome }}' = success
           test '${{ steps.race-tests.outcome }}' = success
