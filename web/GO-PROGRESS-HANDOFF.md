@@ -522,3 +522,23 @@ index 0, while `-list-relevant` is arity 3 with a `map[string]any` input at 0 an
 (`internal/transport/narrative.go:22`). Getting that wrong is invisible to any test that only
 asserts "not 501" - which is why each batch lands with a positive assertion through the durable lane.
 
+### 2026-11-04 — global prompt and user skill reads bound (durable 72 → 74)
+
+`BindPromptSkillsReads` binds `prompt:load-global` and `skills:list-user`; the three mutations in that
+family stay unbound. CI green at `8d3801b3`.
+
+**The trap in this family: both reads are arity 0.** There is no project path and no frozen 3-key
+session context (`internal/transport/promptskills.go:28,36` reject any argument), so copying the
+sibling binder's `draftExpectedContext(args, arity-1)` would make every real caller 4xx. The caller
+gate is `startupCaller(caller)` instead - empty means 409 `GLOBAL_DATA_NOT_READY`, the same predicate
+the transport binder already used. The renderer really does send `{"args":[]}`
+(`src/services/prompt-catalog.ts:360`).
+
+Because both need `-synthetic-durable-global-dir`, they are **conditional**: the unconditional count
+stays 58, the flag-gated count is now 16.
+
+Path safety was already enforced by the owner and was reused rather than re-implemented:
+`internal/promptskills/files_linux.go` pins the root with `O_NOFOLLOW`, re-checks identity before and
+after opening, and `ListUser` skips any child that fails - the browser only ever sees
+`managed://skills/<name>`.
+
