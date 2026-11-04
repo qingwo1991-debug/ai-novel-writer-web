@@ -61,7 +61,7 @@ func (s *syntheticGeneration) GraphRead(ctx context.Context, caller transport.Ca
 	if err != nil {
 		return nil, err
 	}
-	status, err := syntheticGraphSourceStatus(ctx, ledger, syntheticString(run["rootActionId"]))
+	status, err := syntheticGraphSourceStatus(ctx, ledger, db, syntheticString(run["rootActionId"]), contextValue)
 	if err != nil {
 		return nil, err
 	}
@@ -93,16 +93,21 @@ func syntheticGraphAttemptIDs(ctx context.Context, db *sql.DB, runID string) ([]
 	return attempts, rows.Err()
 }
 
-// syntheticGraphSourceStatus reports whether the run's sources are still the
-// ones it was frozen from.
+// syntheticGraphSourceStatus reports whether the run's sources are still the ones
+// it was frozen from.
 //
-// Only cancellation is checked today. That is the half of the check the ledger
-// can answer on its own; the other half rebuilds the source binding from current
-// project state, and until it exists this must not claim more than it can prove.
-// Note the direction of the remaining risk: this can report "current" for a run
-// whose sources moved, so no operation that writes may be bound on the strength
-// of this value alone.
-func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLedger, rootActionID string) (string, error) {
+// The default is "conflict", not "current". This value gates confirmation, and
+// confirmation writes finalized text over what the author already has, so an
+// unverifiable source state must read as changed rather than as fine. Only a kind
+// whose current state can actually be re-read gets to answer "current"; today
+// that is the event kind, whose context freezes the exact
+// draftId/finalizationId/contentHash triple the finalization outbox stores.
+//
+// The plot and plan kinds still need their own re-derivation (the frozen plot
+// baseline and the blueprint chapter). Until those exist, a run of either kind
+// reports "conflict" - visibly wrong rather than invisibly permissive, which is
+// the right way round for a value this one gates.
+func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, rootActionID string, contextValue map[string]any) (string, error) {
 	budgetValue, err := syntheticCall(ctx, ledger, "budget", rootActionID)
 	if err != nil {
 		return "", err
@@ -111,5 +116,28 @@ func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLed
 	if strings.TrimSpace(syntheticString(root["status"])) == "cancelled" {
 		return "conflict", nil
 	}
-	return "current", nil
+	if syntheticString(contextValue["kind"]) != "event" {
+		return "conflict", nil
+	}
+	source := syntheticMap(contextValue["source"])
+	if source == nil || syntheticString(source["contentHash"]) == "" {
+		return "conflict", nil
+	}
+	var current string
+	err = db.QueryRowContext(ctx,
+		"SELECT content_hash FROM finalization_outbox WHERE draft_id=? AND finalization_id=?",
+		syntheticNumber(source["draftId"]), syntheticString(source["finalizationId"]),
+	).Scan(&current)
+	if err != nil {
+		// A missing row means the finalized chapter is no longer the one the run
+		// was frozen from, which is exactly a changed source.
+		if errors.Is(err, sql.ErrNoRows) {
+			return "conflict", nil
+		}
+		return "", err
+	}
+	if current == syntheticString(source["contentHash"]) {
+		return "current", nil
+	}
+	return "conflict", nil
 }
