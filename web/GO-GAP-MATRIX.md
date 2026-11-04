@@ -3,13 +3,16 @@
 Baseline: `HEAD=6f1bc572` == `origin/main`, CI run `41782708522` fully green (S1 generation lane live)
 (all three *Go backend migration* jobs). Durable author write lane landed and CI-green
 (`54b5b754` bridge + HTTP test, `3bace738` open-error redaction, `9cc21933` docs), and it
-serves **64 operations** over real HTTP.
+serves **64 operations** over real HTTP - **conditionally**: 50 of them bind unconditionally, while the
+14 generation-family ones (11 `generation:*`, `graph-generation:read`, and the two family cancels)
+are installed only when `-synthetic-durable-global-dir` is supplied *and* the model egress origins
+are non-empty (`synthetic_durable_open_linux.go:517`). Without those flags the same binary serves
+**50**. Quote the number with its condition attached.
 
 Current stopping point, what is deliberately quarantined and the exact resume plan:
-**`web/GO-PROGRESS-HANDOFF.md`**. The counts below are unchanged by that checkpoint: the
-eleven S1 generation operations were briefly wired and then unbound again in `059c57a2`
-because their run view reported no attempts after `execute`, so they are still counted
-as unbound.
+**`web/GO-PROGRESS-HANDOFF.md`**. The eleven S1 generation operations were unbound in
+`059c57a2` and have since been re-bound together with `graph-generation:read`; the earlier note that
+they were "still counted as unbound" is superseded.
 
 ## Inventory
 
@@ -27,10 +30,10 @@ as unbound.
 | read-only (`main.go:315-362`) | 28 | 8 draft reads + `db:draft-update-content` CAS (`syntheticReadOpen.CommitDraftContent` → `authorruntime.CommitDraftCAS`), character reads, editor reads, `project:recent-list`, `fs:list-dir`, `fs:read-json`, `project:overview-current` |
 | model (`main.go:275-278`) | 9 | config/startup/`llm:list-models`/`llm:save-model`/`llm:delete-model` |
 
-### Tier C — bound at transport but wired into NO lane: 72 ops
+### Tier C — bound at transport but wired into NO lane: 62 ops
 
 `BindDrafts`, `BindCharacters`, `BindBlueprints`, `BindNarrative`, `BindPlotTree`, `BindPostHistory`,
-`BindRecovery`, `BindSummary`, `BindProjectCore`, `BindReviewRevisions`, `BindKnowledge`,
+`BindProjectCore`, `BindReviewRevisions`, `BindKnowledge`,
 `BindKnowledgeSearch`, `BindMCP`, `BindPromptSkills`, `BindImportSelection`, `BindArchiveExport`,
 and `project:recent-remove` (no provider implements `RemoveRecentProject` anywhere — never live).
 
@@ -101,12 +104,13 @@ admission:
 | finalized-character | 5 | 0 | 0 | 5 |
 | chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
 | prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
-| **TOTAL** | **281** | **100** | **63** | **118** |
+| **TOTAL** | **281** | **100** | **64** | **117** |
 
 > The per-domain split above is indicative; the TOTAL row is the authoritative count and is
 > re-derived from the registry, while individual domain rows are updated only when a batch is
 > reviewed. `generation` now carries the eleven S1 names plus `RecordEffect`; `graph-generation`
-> and `finalization-generation` each carry only their `cancel`.
+> carries `read` and `cancel`, `finalization-generation` only its `cancel`. All three are behind the
+> flag condition stated at the top of this file.
 
 ## Runtime exists but no binder (Tier D gating)
 
