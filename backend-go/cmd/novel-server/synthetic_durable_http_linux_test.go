@@ -774,7 +774,7 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	staleCommit := coreWrite("db:project-core-synopsis-commit", []any{map[string]any{
 		"synopsis": "不得写入的梗概", "expected": staleBaseline,
 	}, projectPath, expected})
-	if staleCommit["success"] != false || staleCommit["error"] != "Error: PROJECT_CORE_SYNOPSIS_CHANGED" {
+	if staleCommit["success"] != false || staleCommit["error"] != "PROJECT_CORE_SYNOPSIS_CHANGED" {
 		t.Fatalf("stale synopsis CAS was not reported as a refusal: %v", staleCommit)
 	}
 	// An owner-bearing request is refused before the borrow, even with a null
