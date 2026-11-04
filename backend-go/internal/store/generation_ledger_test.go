@@ -77,6 +77,19 @@ func TestGenerationLedgerOrdinaryLifecycleClockAndFullBody(t *testing.T) {
 	if !rrEqual(budget["activeElapsedMs"], int64(250)) {
 		t.Fatal("idle clock still ticking")
 	}
+	// The budget must be keyed by the run's own root action id and must carry the
+	// attempt rows, not an empty list: an empty attempts slice is exactly the shape
+	// that produced empty budgetDiagnostics in the HTTP lane while the store was
+	// already correct.
+	attempts, ok := budget["attempts"].([]map[string]any)
+	if !ok || len(attempts) == 0 {
+		t.Fatalf("budget lost its attempt rows: %#v", budget["attempts"])
+	}
+	for _, attempt := range attempts {
+		if attempt["attemptId"] != attemptID {
+			t.Fatalf("budget attempt keyed to the wrong attempt: %#v", attempt)
+		}
+	}
 	// Exact snapshot replay precedes terminal rejection in the original.
 	generationLedgerCall(t, g, "snapshot", attemptID, 0, "正文😀\u2028<&>")
 	_, err := g.Call(context.Background(), "snapshot", []any{attemptID, "bad", "changed"})
