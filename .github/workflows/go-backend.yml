@@ -425,6 +425,12 @@ jobs:
           for name in GO_GLOBAL_CONFIG_CONTRACT GO_PROMPT_SKILLS_CONTRACT GO_MCP_CONTRACT GO_ARCHIVE_FORMAT_CONTRACT GO_GENERATION_OWNER_CONTRACT GO_IMPORT_SOURCE_CONTRACT GO_WEBDAV_CONTRACT GO_FINALIZATION_OUTBOX_CONTRACT GO_KNOWLEDGE_LOGICAL_CONTRACT GO_PUBLIC_RESPONSE_CONTRACT; do
             test -s "${!name}"
           done
+      - name: Show contract generation summary
+        if: ${{ always() }}
+        run: |
+          echo '--- step summary so far ---'
+          cat "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          echo '--- end ---'
       - name: Verify pinned modules
         run: |
           go mod download
