@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -913,6 +914,9 @@ func syntheticRequireRun(ctx context.Context, ledger *store.GenerationLedger, sc
 	manifest := syntheticMap(binding["sourceManifest"])
 	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
 		binding["projectId"] != scope.Project || binding["epoch"] != scope.Epoch || manifest == nil {
+		log.Printf("requireRun mismatch runRoot=%#v handleRoot=%#v runID=%#v handleRunID=%#v proj=%#v scopeProj=%#v epoch=%#v scopeEpoch=%#v manifestNil=%v",
+			run["rootActionId"], handle.RootActionID, run["runId"], handle.RunID,
+			binding["projectId"], scope.Project, binding["epoch"], scope.Epoch, manifest == nil)
 		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
 	}
 	return run, binding, manifest, nil
