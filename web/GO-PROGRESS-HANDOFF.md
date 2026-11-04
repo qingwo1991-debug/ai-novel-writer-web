@@ -967,3 +967,34 @@ rather than discovered again mid-batch:**
    `character-proposal` / `finalized-character` / `character-avatar` families (~15 operations);
 2. LanceDB native store - unblocks the `kb` family (~18 operations); `lancenative` is still a stub.
 
+### 2026-11-04 — character identity commit: first slice landed, green
+
+Green: `7fce250f`. `internal/store/character_identity.go` (674 lines) plus
+`character_identity_test.go` (332 lines, 22 refusal cases including check-order precedence).
+
+**`commitCharacterIdentities` is staged** (`character-roster-repository.ts`): schema gate `:1173` ->
+payload digest `:1174` -> authorize `:1176` -> re-serialise and compare `:1177` -> approval replay
+`:1178-1182` -> revision check `:1183-1184` -> operationId/source/action `:1185` -> source-kind table
+`:1186-1193` -> source-ref shape `:1194-1197` -> resolutions `:1201` -> field set `:1203-1206` ->
+uniqueness `:1207-1208` -> retire/change overlap `:1209` -> creations `:1215-1222` -> changes
+`:1223-1236` -> retire `:1237` -> receipt `:1238-1239` -> relationships `:1240-1253` -> resolutions
+`:1254-1271` -> meta bump `:1272`.
+
+**Implemented:** creations, changes, retirements, alias open/close, approval row, receipt, meta bump,
+with the original's partial-write sequencing and 12 mirrored refusals. **Deliberately not yet:**
+relationships `:1240-1253`, proposal resolutions `:1254-1271`, projection refresh and roster-meta bump
+(`character-roster-author.ts:160-175`).
+
+The binder stays **501**: without the projection refresh a commit would report success and leave the
+roster inconsistent. That is the correct trade - the store slice is testable without it.
+
+**Three documented deviations, all fail-closed:**
+1. the payload digest uses this port's canonical encoder, so a cross-implementation replay yields
+   `NONCE_CONFLICT` rather than a wrong success;
+2. `CHARACTER_ID_META_MISSING` stands in for the original's uncaught TypeError at `:1183`;
+3. a non-object `static_provenance` is refused rather than spread.
+
+**Remaining before `db:character-roster-commit` can be bound:** the projection refresh, the
+relationships stage, and the proposal resolutions. Roughly the same size as this slice plus the roster
+readback in `character-roster-author.ts:160-175`.
+
