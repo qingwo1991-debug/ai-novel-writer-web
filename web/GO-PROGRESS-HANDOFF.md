@@ -314,7 +314,12 @@ whole family rather than one operation.
 **Implemented:** `graphgen.CanonicalJSON` / `graphgen.CanonicalHash` now provide that single
 canonical form — object keys sorted at every level, array order preserved, leaf encoding unchanged
 (so the JavaScript number, string and escape rules still hold). `EncodeJSON` keeps refusing Go
-maps; the graph lane canonicalises instead of guessing an order. Five pinning tests cover
+maps; the graph lane canonicalises instead of guessing an order. Six pinning tests cover
 per-level sorting, stability across map iteration, array-order preservation, construction-shape
-independence, and unencodable leaves. Nothing consumes it yet: `graph-generation:read` is the first
+independence, Object-versus-map equivalence, and unencodable leaves. CI green at `42576fff`.
+
+The first CI run of it caught a real semantic bug of my own: the `Object` branch preserved the
+caller's order while the map branch sorted, so the same value hashed two ways. A function called
+*canonical* cannot preserve order — `EncodeJSON` is the order-preserving one, and that separation
+is now explicit in both doc comments. Nothing consumes it yet: `graph-generation:read` is the first
 caller, and it must verify with exactly this function.
