@@ -711,27 +711,30 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		}
 		return wire.Result
 	}
-	// coreWrite sends a mutation with the frozen context appended and returns the
-	// DTO itself, so a refusal can be asserted instead of being fatal'd by read
-	// style decoding.
-	coreWrite := func(operation string, args []any, path string, ctx any) map[string]any {
+	coreWrite := func(operation string, args []any) map[string]any {
 		t.Helper()
-		response := rpc(operation, []any{args[0], path, ctx})
+		response := rpc(operation, args)
 		var wire struct {
 			Result map[string]any `json:"result"`
 		}
-		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
 			t.Fatalf("durable %s decode failed: %d %s %v", operation, response.Code, response.Body.String(), err)
 		}
 		if strings.Contains(response.Body.String(), projectPath) || strings.Contains(response.Body.String(), durableDir) {
 			t.Fatalf("durable %s leaked a filesystem path: %s", operation, response.Body.String())
 		}
-		if wire.Result != nil {
-			return wire.Result
+		return wire.Result
+	}
+	// coreWrite is the mutation counterpart of call: it returns the DTO the
+	// handler produced, so a refusal can be inspected rather than fatal'd.
+	coreWrite := func(operation string, args []any, path string, ctx any) map[string]any {
+		t.Helper()
+		response := rpc(operation, []any{args[0], path, ctx})
+		var wire map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("durable %s decode failed: %d %s %v", operation, response.Code, response.Body.String(), err)
 		}
-		var flat map[string]any
-		_ = json.Unmarshal(response.Body.Bytes(), &flat)
-		return flat
+		return wire
 	}
 	// coreRow re-reads the project core row through the bound get.
 	coreRow := func() map[string]any {
