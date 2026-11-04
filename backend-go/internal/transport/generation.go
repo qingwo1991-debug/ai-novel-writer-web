@@ -93,13 +93,21 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			if provider.Cancel == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
 			}
-			return provider.Cancel(ctx, caller, expected, args[0])
+			handle, err := familyCancelHandle(args[0], "GENERATION_GRAPH_REQUEST_INVALID")
+			if err != nil {
+				return nil, err
+			}
+			return provider.Cancel(ctx, caller, expected, handle)
 		}},
 		{"finalization-generation:cancel", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
 			if provider.Cancel == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
 			}
-			return provider.Cancel(ctx, caller, expected, args[0])
+			handle, err := familyCancelHandle(args[0], "GENERATION_FINALIZATION_REQUEST_INVALID")
+			if err != nil {
+				return nil, err
+			}
+			return provider.Cancel(ctx, caller, expected, handle)
 		}},
 		{"generation:resume", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
 			if provider.Resume == nil {
@@ -198,4 +206,29 @@ func generationSymbolicCode(err error) string {
 		}
 	}
 	return code
+}
+
+// familyCancelHandle unwraps the `{ handle }` envelope the graph and finalization
+// families use. It is not the same wire shape as `generation:cancel`, which
+// takes the handle itself: the renderer sends `{ handle: view.handle }` for the
+// family channels (src/services/graph-generation.ts:40,
+// src/services/finalization-generation.ts:27) and the Node owner rejects any
+// request carrying a key other than `handle` before it looks at the run.
+// Passing the envelope straight through would make every real call fail while a
+// test that only checks "not 501" still passed.
+func familyCancelHandle(value any, invalidCode string) (any, error) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New(invalidCode)
+	}
+	for key := range object {
+		if key != "handle" {
+			return nil, errors.New(invalidCode)
+		}
+	}
+	handle, present := object["handle"]
+	if !present {
+		return nil, errors.New(invalidCode)
+	}
+	return handle, nil
 }
