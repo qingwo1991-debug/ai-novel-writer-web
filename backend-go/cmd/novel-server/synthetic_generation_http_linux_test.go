@@ -447,19 +447,30 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		"agent-generation:begin", "agent-generation:claim-tool", "agent-generation:commit-domain-tool",
 		"agent-generation:finish-tool", "agent-generation:read", "agent-generation:register-workflow",
 		"agent-generation:resume", "agent-generation:round",
-		"finalization-generation:begin", "finalization-generation:cancel", "finalization-generation:commit",
+		"finalization-generation:begin", "finalization-generation:commit",
 		"finalization-generation:execute", "finalization-generation:read",
-		"graph-generation:begin", "graph-generation:cancel", "graph-generation:confirm",
+		"graph-generation:begin", "graph-generation:confirm",
 		"graph-generation:execute", "graph-generation:read",
 		"import-generation:execute", "import-generation:read",
 	}...)
-	if len(unmigrated) != 32 {
-		t.Fatalf("unmigrated list = %d, want 32", len(unmigrated))
+	if len(unmigrated) != 30 {
+		t.Fatalf("unmigrated list = %d, want 30", len(unmigrated))
 	}
 	for _, operation := range unmigrated {
 		response := rpc(operation, []any{expected})
 		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%s = %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
+		}
+	}
+
+	// --- both family cancels now reach the ledger instead of the 501 gate. ---
+	for _, operation := range []string{"graph-generation:cancel", "finalization-generation:cancel"} {
+		response := rpc(operation, []any{map[string]any{"handle": map[string]any{
+			"projectId": "synthetic-project", "epoch": "synthetic-epoch",
+			"rootActionId": "missing-root", "runId": "missing-run",
+		}}, expected})
+		if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("%s is still unmigrated: %d %s", operation, response.Code, response.Body.String())
 		}
 	}
 

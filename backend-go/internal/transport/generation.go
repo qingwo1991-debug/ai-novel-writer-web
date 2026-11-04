@@ -29,7 +29,8 @@ type GenerationProvider struct {
 	RetryDraftShortOutline func(context.Context, Caller, map[string]any, any) (any, error)
 }
 
-// BindGeneration binds exactly the eleven S1 names. The browser IPC contract
+// BindGeneration binds the eleven S1 names plus the two family cancels, which
+// share the ordinary handle shape and the ordinary stop path. The browser IPC contract
 // sends args = [request..., expectedContext], so each op's wire arity is its
 // request arity plus one. Read ops surface security.HTTPError envelopes;
 // mutating ops return the business DTO {"success":false,"error":"Error: CODE"}.
@@ -80,6 +81,21 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			return provider.Pause(ctx, caller, expected, args[0])
 		}},
 		{"generation:cancel", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			if provider.Cancel == nil {
+				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
+			}
+			return provider.Cancel(ctx, caller, expected, args[0])
+		}},
+		// Cancelling a graph or finalization run is the same frozen-handle stop the
+		// ordinary lane already performs, so it reuses the same call rather than a
+		// parallel implementation.
+		{"graph-generation:cancel", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			if provider.Cancel == nil {
+				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
+			}
+			return provider.Cancel(ctx, caller, expected, args[0])
+		}},
+		{"finalization-generation:cancel", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
 			if provider.Cancel == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
 			}
