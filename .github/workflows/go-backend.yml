@@ -464,12 +464,6 @@ jobs:
       - name: Enforce collected contract and test failures
         if: ${{ !cancelled() }}
         run: |
-          echo "remaining-contracts=${{ steps.remaining-contracts.outcome }}"
-          echo "unit-tests=${{ steps.unit-tests.outcome }}"
-          echo "race-tests=${{ steps.race-tests.outcome }}"
-          echo '--- step summary ---'
-          cat "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          echo '--- end ---'
           test '${{ steps.remaining-contracts.outcome }}' = success
           test '${{ steps.unit-tests.outcome }}' = success
           test '${{ steps.race-tests.outcome }}' = success
