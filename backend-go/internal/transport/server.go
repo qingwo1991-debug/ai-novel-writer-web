@@ -33,6 +33,21 @@ type Server struct {
  handlers map[string]Operation
  now func()time.Time
 }
+// BoundOperations is the exact set of operation names this server actually
+// serves, sorted. It exists so a batch can be pinned by a test: before this,
+// a whole family binder could be written, never wired, or wired into a
+// collision that silently turned it into dead code, and nothing failed.
+func (s *Server) BoundOperations() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.handlers))
+	for name := range s.handlers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func(s *Server)clock()time.Time{if s.now!=nil{return s.now()};return time.Now()}
 func New(registry *policy.Registry,origins security.Origins,generation string)*Server{
  return &Server{sessions:security.NewSessions(),origins:origins,registry:registry,public:publicresponse.New(),generation:generation,clients:make(map[string]*client),handlers:make(map[string]Operation)}
