@@ -594,8 +594,11 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
 		}
 		row, err := store.NewBlueprints(db).Get(ctx, chapter)
-		if err != nil || row == nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNAVAILABLE")
+		if err != nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_BLUEPRINT_READ_ERROR")
+		}
+		if row == nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_BLUEPRINT_MISSING")
 		}
 		text, err := syntheticCanonical(row)
 		if err != nil {
@@ -606,11 +609,14 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 	set.Sources.Draft = func(ctx context.Context, scope generationowner.Scope, key generationowner.SourceKey) (generationowner.SourceValue, error) {
 		id, err := strconv.ParseInt(key.ID, 10, 64)
 		if err != nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED_DRAFT_ID")
 		}
 		full, err := store.NewDrafts(db).GetFull(ctx, id)
-		if err != nil || full == nil {
-			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNAVAILABLE")
+		if err != nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_DRAFT_READ_ERROR")
+		}
+		if full == nil {
+			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_DRAFT_MISSING")
 		}
 		return generationowner.SourceValue{Revision: full.Version, Text: full.Content}, nil
 	}
@@ -656,7 +662,7 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 			return nil, errors.New("GENERATION_SOURCE_KIND_UNSUPPORTED_" + syntheticKindCode(key.Kind))
 		}
 		if _, err := reader(ctx, generationowner.Scope{}, key); err != nil {
-			return nil, errors.New("GENERATION_SOURCE_MISSING_" + syntheticKindCode(key.Kind))
+			return nil, err
 		}
 	}
 	return set, nil
