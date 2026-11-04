@@ -591,3 +591,22 @@ Consequence for planning: **there is no shortcut batch.** The remaining ~200 ope
 not stubs waiting to be declared done. A Go handler that "succeeds" where the original refuses is a
 divergence in the dangerous direction, so this four-row table is also the checklist to guard against it.
 
+### 2026-11-04 — first write family lands: post-process and llm-call (durable 78 → 82)
+
+`BindPostHistoryWrites` binds `db:post-process-create-run`, `-mark-step-ok`, `-mark-step-failed` and
+`db:log-llm-call`. The test creates a run, marks one step ok and another failed, logs an LLM call, then
+reads all of it back through the already-bound reads - persistence, not just a 200. CI green at
+`fc1963de`.
+
+Arities are not uniform (`posthistory.go:24-25`): create-run 3/path 1, mark-step-ok 4/path 2,
+mark-step-failed 5/path 3, log-llm-call 3/path 1; all four carry the frozen 3-key context last.
+
+**`db:log-llm-call` has its own failure shape** and it is preserved deliberately: a failure returns
+HTTP 200 with `{"success":false}` and **no** error code (`posthistory.go:23`), unlike the other three
+which return `{"success":false,"error":"Error: CODE"}`. Do not "fix" this into consistency - the
+renderer distinguishes them.
+
+These four did not need a lease rotation: the borrow refreshes the permit and releases, which is the
+same shape as the draft write but without the CAS. The draft write's rotated-lease requirement
+(`draft_live_write.go:100`) still has no counterpart for these, so do not copy it here.
+
