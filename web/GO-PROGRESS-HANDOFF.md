@@ -610,3 +610,18 @@ These four did not need a lease rotation: the borrow refreshes the permit and re
 same shape as the draft write but without the CAS. The draft write's rotated-lease requirement
 (`draft_live_write.go:100`) still has no counterpart for these, so do not copy it here.
 
+### 2026-11-04 — narrative and exemption writes bound (durable 82 → 87)
+
+`BindNarrativeWrites` binds `db:narrative-thread-plan-create/-update/-delete` and
+`db:consistency-exemption-save/-revoke`; `db:narrative-thread-event-confirm` stays unbound because it
+belongs to the graph admission gate. Each write is verified by reading the state back through the
+already-bound list reads. CI green at `5ad1f9c4`.
+
+**One open divergence, recorded rather than buried:** failures now come back as HTTP 200 with
+`{"success":false,"error":"Error: CODE"}` (this lane's mutation convention), while the original binder
+returned HTTP 500 for the three `plan-*` names. The tests assert the new shape, so CI cannot catch this
+class of change. Before acceptance: check whether the renderer branches on the status code for these
+names. Also note `db:consistency-exemption-revoke` reports success even when nothing was revoked - that
+mirrors the original (`Narrative.RevokeExemption` discards its result at `internal/store/narrative.go:305`),
+so it was preserved rather than "fixed".
+
