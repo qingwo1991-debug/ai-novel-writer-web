@@ -733,11 +733,6 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		_ = json.Unmarshal(response.Body.Bytes(), &flat)
 		return flat
 	}
-	// coreRow re-reads the project core row through the bound get.
-	coreRow := func() map[string]any {
-		t.Helper()
-		return call("db:project-core-get", []any{projectPath, expected})
-	}
 	// A successful update is reported as success and every named field it
 	// carried is what the bound read returns afterwards.
 	updatedCore := coreWrite("db:project-core-update", []any{map[string]any{
