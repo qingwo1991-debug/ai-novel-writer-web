@@ -165,3 +165,37 @@ task builders and result parsers, none of which exist in Go.
 **No traffic is switched and the production container is untouched, so an unwidened gate is
 not a regression: it is the current, tested 501 behaviour.**
 
+### 2026-11-04 — the user authorised the narrow widening
+
+The gate owner chose "授权：按窄谓词放开" (widen narrowly, per operation). Implemented and green
+in `d3e3ed5e`:
+
+- `store.generation_ledger.go`: `glFamilyManifestAllowed(key, operation)` replaces the blanket
+  refusal. A family key is readable **only** for the operation that owns it —
+  `agentSession`/`agent-round`; `graphGenerationContext`/the four graph operation strings;
+  `finalizationGenerationSlotKey`/`finalized-character-state`. `importSlot` and
+  `legacyRosterContext` stay closed for every operation, and `$runEffects` /
+  `$blueprintRetirement` still return `GENERATION_EFFECT_UNSUPPORTED`.
+- `store/generation_ledger_family_test.go` pins both directions: six admitted pairs and seven
+  refused pairs, so a future edit cannot quietly turn the widening into an open manifest.
+
+Still gated, deliberately: the `usage_receipt_json` key allowlist (`:519-527`) has no
+`graphEffects` / `finalizationEffect` yet, and `AgentToolNames != nil` is still rejected at
+`generation/service.go:259-263`, `:289-291`. Those are the next two widenings, and they must
+follow the same shape: an operation-scoped predicate plus a test that pins the refusals.
+
+### Ordered plan for the two families (from the S4 map)
+
+1. `RecordEffect` on the ledger — one write method re-running `mutableRoot`, patching a single
+   named `usage_receipt_json` key through `glPatch`, idempotent on `[key, hash(value)]`, with the
+   allowlist above extended behind the same operation predicate. Shared by six operations across
+   `graph-generation` and `finalization-generation` (and four `agent-generation` tool operations).
+2. B1 `{graph,finalization}:cancel` — binder only, proves the widened gate end to end.
+3. B2 `graph:begin` + `graph:read`; B3 `graph:execute` + `graph:confirm`.
+4. B4 `finalization:read` + `finalization:begin` (needs a slot-keyed run lookup).
+5. B5 `finalization:execute` (writes nothing, so it is independently verifiable).
+6. B6 `finalization:commit` — the only batch that writes author domain data.
+
+Every batch must also decrement the `want 32` assertion at
+`cmd/novel-server/synthetic_generation_http_linux_test.go:456`.
+
