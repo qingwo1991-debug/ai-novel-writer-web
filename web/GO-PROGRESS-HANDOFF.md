@@ -819,3 +819,23 @@ The annotation channel earned its keep: it printed
 
 which named the exact assertion while every log API was broken. Keep using it.
 
+### 2026-11-04 — why editor-inline cannot be bound yet (architecture, not effort)
+
+Attempted the four `editor-inline:*` operations. They are **not** `db:*` names and do not have the
+durable write family's shape: each is arity 1, a single request object, **no path argument and no
+frozen 3-key context** (proving lines: `electron/controllers/generation-controller.ts:248-251`,
+`src/shared/editor-inline-generation.ts:28-31`). `begin` and `execute` need an editor-inline
+generation run, and the Go ledger cannot create one: `store.GenerationLedger.open`
+(`internal/store/generation_ledger.go:639`) takes a `RunBinding` whose editor keys
+`internal/generationowner/binding.go:37-44` cannot resolve - it reads project-core, blueprint, draft and
+prompt only. The original also requires editor admission (`main-generation-owner.ts:418,564`) and
+reconstructs a UTF-16 selection context that has no Go port.
+
+So these four stay at 501 `GO_OPERATION_NOT_MIGRATED` **on purpose**, now pinned by assertions so they
+cannot silently flip to success. Binding them today would mean inventing the owner pipeline inside a
+transport file.
+
+**Planning consequence:** editor-inline is downstream of the generation lane, not a parallel chunk. Any
+plan that schedules it before the generation owner port is wrong. The same is likely true of the
+`generation:*` family as a whole, which is where the remaining budget should go next.
+
