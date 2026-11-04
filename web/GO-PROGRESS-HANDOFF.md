@@ -718,3 +718,30 @@ time: whether the assertions restored from `fb38d79b` reference a helper that no
 Everything is reverted to `e69d2ae0` (green); the two project-core writes remain bound, registered and
 **unverified**.
 
+### 2026-11-04 — root cause found: the project-core test never compiled
+
+The masked step was `Synthetic-data unit and HTTP contract tests`, and the reason it failed while
+emitting no `Action: fail` record is that the **test package did not build**. `go test -json` reports a
+build failure as `[build failed]` text, not as a per-test fail action, so every log-based diagnosis
+looked clean.
+
+The build errors, from CI:
+
+    synthetic_durable_http_linux_test.go:730:15: cannot use func literal ...
+    synthetic_durable_http_linux_test.go:742:10: undefined: call
+
+Cause: the batch declared `coreWrite` with **two** parameters (read shape) while every call site passed
+**four** (input, path, frozen context), and `coreRow` was never declared at all. The subagent reported
+"tests green" because it was forbidden to build, and CI could not say so plainly.
+
+After fixing both helpers the package compiled and the run failed later, but its log came back empty
+from the API twice (`zip: not a valid zip file`), so the remaining assertion failure is undiagnosed.
+
+State: reverted to `2438c60a` (green). durable is **91 verified**; the two project-core writes are
+bound, registered and **unverified** - do not count them.
+
+**Do this first next time**, before writing more binders: keep `continue-on-error` off the contract
+step and add a `go build ./...` (or `go vet ./...` output check) as its own early step, so a
+non-compiling test package fails loudly instead of being masked three steps downstream. Every round
+spent on this was spent fighting the masking, not the code.
+
