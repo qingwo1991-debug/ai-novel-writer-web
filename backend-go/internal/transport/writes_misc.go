@@ -125,10 +125,7 @@ func (s *Server) BindProjectCoreWrites(provider ProjectCoreProvider) error {
 					return fail(err)
 				}
 				if !changed {
-					// The original reports a lost CAS as this bare code - no
-					// "Error: " prefix - because projectCoreErrorCode does not
-					// recognise it and would degrade it to OPERATION_FAILED.
-					return map[string]any{"success": false, "error": "PROJECT_CORE_SYNOPSIS_CHANGED"}, nil
+					return projectCoreWriteFailure(errors.New("PROJECT_CORE_SYNOPSIS_CHANGED")), nil
 				}
 			}
 			return map[string]any{"success": true}, nil
