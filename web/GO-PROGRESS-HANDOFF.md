@@ -640,3 +640,31 @@ success**, exactly as the original does. That is preserved, not fixed; if a call
 The wire shape here matches the existing Go `BindBlueprints` binder (HTTP 200 with a DTO on failure),
 so this batch adds no new divergence on top of the one already listed as OPEN in the gap matrix.
 
+### 2026-11-04 — project-core writes reverted (durable stays 91); CI diagnosis open
+
+`db:project-core-update` and `db:project-core-synopsis-commit` were bound and pushed as `c79ef616`;
+CI failed. The failure was **not** in the Go code: it landed on step 34, *Generate remaining-domain
+original synthetic contracts*, which is silent by design - `run_contract` writes `FAIL <name>` into
+`$GITHUB_STEP_SUMMARY` and the step only ends with `test "$failures" -eq 0`, so the job shows
+`##[error]Process completed with exit code 1` with no failing command in the log.
+
+Established facts, in order (all verified by runs, not by reading):
+
+1. The Go tests in that same run **passed** - step 38 green, zero `--- FAIL`, zero `_test.go:` lines in
+   the parsed `-json` output. So the failure is not a compile error and not a test failure.
+2. Because step 34 reported non-success, step 39 *Race detector* was skipped, and step 40 *Enforce
+   collected contract and test failures* then failed on `test "${{ steps.race-tests.outcome }}" = success`.
+   The red job is downstream of step 34; do not chase the race step.
+3. A failed-jobs-only rerun and then a full rerun both failed identically, so it is deterministic, not a
+   flake.
+4. `git revert` of `c79ef616` and its follow-up `8a5a8eda` returns CI to green (`f64e6242`).
+
+Next step is a bisect, not a guess: reapply `internal/transport/writes_misc.go` **without** registering
+it in `synthetic_durable_open_linux.go` and run CI. If that is green, the trigger is the registration or
+the new test; if it is red, the trigger is the binder file itself. Then read
+`$GITHUB_STEP_SUMMARY` of that step (it names the failing contract) rather than the job log.
+
+Also worth keeping from the reverted work: `db:character-roster-commit` has **no store method** and the
+original binder only denies it, so it is a fifth refusal-only candidate that the earlier audit did not
+classify as one - the audit's "277 real implementations" may need amending.
+
