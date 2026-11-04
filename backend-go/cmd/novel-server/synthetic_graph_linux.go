@@ -103,10 +103,12 @@ func syntheticGraphAttemptIDs(ctx context.Context, db *sql.DB, runID string) ([]
 // that is the event kind, whose context freezes the exact
 // draftId/finalizationId/contentHash triple the finalization outbox stores.
 //
-// The plot and plan kinds still need their own re-derivation (the frozen plot
-// baseline and the blueprint chapter). Until those exist, a run of either kind
-// reports "conflict" - visibly wrong rather than invisibly permissive, which is
-// the right way round for a value this one gates.
+// The plot and plan kinds still need their own re-derivation, and neither is a
+// shortcut away: the frozen plot baseline is only a CAS over the raw
+// plot_tree_snapshot column, so a run whose other plot sources moved would read
+// "current" on it. Until the binding rebuild exists, a run of either kind reports
+// "conflict" - visibly wrong rather than invisibly permissive, which is the right
+// way round for a value this one gates.
 func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, rootActionID string, contextValue map[string]any) (string, error) {
 	budgetValue, err := syntheticCall(ctx, ledger, "budget", rootActionID)
 	if err != nil {

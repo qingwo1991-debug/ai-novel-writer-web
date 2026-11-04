@@ -23,11 +23,21 @@ else in the graph and finalization families waits behind it.
    into the finalization family.
 5. Only then bind `graph-generation:begin` / `execute` / `confirm` and the finalization chain.
 
-For the plot kind, the current sources are already readable: `internal/store/plottree.go` holds the
-`PlotTree` accessors and `plotRead`/`plotValidateStored` produce the same bundle the task builder
-consumes. The hazard is not reading them but **hashing them identically** to the frozen
-`targetBaselineHash`; a differently-shaped derivation still fails closed, so it shows up as a
-permanent `conflict` rather than as data loss. Reuse the existing encoder - do not add a second one.
+**Correction (this paragraph was wrong when first written).** `targetBaselineHash` is not a hash of
+the plot source bundle. It is `textHash` (sha256 of the UTF-8 text) of the **raw
+`project_core.plot_tree_snapshot` column**, hashed verbatim - invalid JSON included
+(`electron/services/graph-generation-source.ts:44`, consumed at
+`electron/services/graph-generation.ts:114-115`, and pinned by
+`electron/services/__tests__/graph-generation-source.test.ts:51-56`, whose fixture stores
+`'旧无效快照'` and still expects `textHash` of it). `store.PlotTree.Read` returns the *parsed*
+snapshot and `sourceRevision` (`internal/store/plottree.go:53-69`) - a different encoder over a
+different input, so comparing either against the baseline is false with certainty.
+
+Do **not** wire the plot baseline into `sourceStatus` as a freshness proof. The baseline covers only
+`plot_tree_snapshot`; a run whose synopsis, blueprints, finalized-chapter summaries or narrative
+threads changed after the freeze would then read `current`, which is more permissive than the value
+Node reports. That is the binding rebuild again, not a shortcut. The baseline belongs to `confirm`'s
+CAS, and is only meaningful once `confirm` is bound.
 
 Two rules that were learned the hard way and must not be relaxed:
 
