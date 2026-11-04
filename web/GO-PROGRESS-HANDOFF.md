@@ -396,3 +396,22 @@ and `receipt` from the frozen manifest so the rebuild can run at read time — t
 `finalization-generation:*` needs, which is why it should be done once, for both families, rather
 than patched into `read`.
 
+### 2026-11-04 — `graph-generation:read` bound (durable 63 → 64)
+
+Bound on the shared generation adapter (extracted from `BindGeneration`, so the graph family cannot
+drift from the lane's envelopes). It validates the `{ handle }` envelope, revalidates the frozen
+context and rebuilds the task, refuses a run with more than one attempt
+(`GENERATION_GRAPH_ATTEMPT_CONFLICT`), and returns `{view, modelId, context, attemptCount,
+sourceStatus, effects}`. CI green at `19241d65`.
+
+**Three deliberate omissions, all recorded in the code rather than only here:**
+
+- `effects` — recorded by confirmation, which is unbound, so no stored effect can exist.
+- `artifact`/`result` — the original qualifies the stored result against a graph-specific reference
+  and omits it when qualification fails, so raw output stays in the view for copying. Projecting it
+  without that check would present unverified text as a result.
+- `sourceStatus` now reports only that the root is not cancelled. It can therefore say `current`
+  for a run whose sources moved. **No writing operation may be bound on the strength of this value**
+  until the binding rebuild lands — that rebuild is the gate in front of the whole finalization
+  family, not a detail of `read`.
+
