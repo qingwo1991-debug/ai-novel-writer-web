@@ -803,3 +803,19 @@ Next step, concretely: emit the failing assertion's own text into the annotation
 messages already carry context, so piping the last `_test.go:NNN:` line for the failing package into a
 second `::error::` will surface it), then fix the shape and re-apply.
 
+### 2026-11-04 — project-core writes verified (durable 91 -> 93)
+
+Green: `49a0d789`, all three jobs. `db:project-core-update` and `db:project-core-synopsis-commit` are
+bound, registered and proven by write-then-readback over the real handler.
+
+The last blocker was a **wrong test expectation, not wrong code**: the assertion demanded
+`"Error: PROJECT_CORE_SYNOPSIS_CHANGED"` while the original returns the bare
+`"PROJECT_CORE_SYNOPSIS_CHANGED"`. The implementation already matched the original; the test had been
+written against the buggy prefix. Fixed the expectation.
+
+The annotation channel earned its keep: it printed
+
+    _test.go:778: stale synopsis CAS was not reported as a refusal: map[error:PROJECT_CORE_SYNOPSIS_CHANGED success:false]
+
+which named the exact assertion while every log API was broken. Keep using it.
+
