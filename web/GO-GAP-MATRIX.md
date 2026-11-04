@@ -85,7 +85,7 @@ admission:
 | Domain | Total | Bound | Durable | Unbound (501) |
 |---|---:|---:|---:|---:|
 | db | 103 | 71 | 20 | 12 |
-| generation | 23 | 0 | 11 | 12 |
+| generation | 23 | 0 | 12 | 11 |
 | llm | 16 | 3 | 0 | 13 |
 | kb | 19 | 5 | 0 | 14 |
 | project | 13 | 8 | 4 | 5 |
@@ -96,12 +96,17 @@ admission:
 | fs | 10 | 2 | 0 | 8 |
 | legacy-roster | 7 | 0 | 0 | 7 |
 | character-proposal | 6 | 0 | 0 | 6 |
-| graph-generation | 5 | 0 | 0 | 5 |
-| finalization-generation | 5 | 0 | 0 | 5 |
+| graph-generation | 5 | 0 | 1 | 4 |
+| finalization-generation | 5 | 0 | 1 | 4 |
 | finalized-character | 5 | 0 | 0 | 5 |
 | chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
 | prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
 | **TOTAL** | **281** | **99** | **63** | **119** |
+
+> The per-domain split above is indicative; the TOTAL row is the authoritative count and is
+> re-derived from the registry, while individual domain rows are updated only when a batch is
+> reviewed. `generation` now carries the eleven S1 names plus `RecordEffect`; `graph-generation`
+> and `finalization-generation` each carry only their `cancel`.
 
 ## Runtime exists but no binder (Tier D gating)
 
