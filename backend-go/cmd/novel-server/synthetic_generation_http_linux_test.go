@@ -144,27 +144,29 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 	}
 	open := rpc("project:open", []any{projectPath, "durable-open-1", nil})
 	var openWire struct {
-		Success bool `json:"success"`
-		Project struct {
-			ID          string `json:"id"`
-			LeaseID     string `json:"sessionLease"`
-			ProjectPath string `json:"path"`
-		} `json:"project"`
-		RequestToken      string `json:"requestToken"`
-		ActiveProjectPath string `json:"activeProjectPath"`
+		Result struct {
+			Success bool `json:"success"`
+			Project struct {
+				ID          string `json:"id"`
+				LeaseID     string `json:"sessionLease"`
+				ProjectPath string `json:"path"`
+			} `json:"project"`
+			RequestToken      string `json:"requestToken"`
+			ActiveProjectPath string `json:"activeProjectPath"`
+		} `json:"result"`
 	}
-	if err := json.Unmarshal(open.Body.Bytes(), &openWire); err != nil || !openWire.Success {
+	if err := json.Unmarshal(open.Body.Bytes(), &openWire); err != nil || !openWire.Result.Success {
 		t.Fatal(err, open.Body.String())
 	}
 	expected := map[string]any{
-		"projectId":   openWire.Project.ID,
-		"leaseId":     openWire.Project.LeaseID,
-		"projectPath": openWire.Project.ProjectPath,
+		"projectId":   openWire.Result.Project.ID,
+		"leaseId":     openWire.Result.Project.LeaseID,
+		"projectPath": openWire.Result.Project.ProjectPath,
 	}
 	// A stale lease is refused before any generation write (read ops surface
 	// the symbolic code as an HTTP error).
 	stale := rpc("generation:list", []any{map[string]any{
-		"projectId": openWire.Project.ID, "leaseId": "not-the-frozen-lease", "projectPath": openWire.Project.ProjectPath,
+		"projectId": openWire.Result.Project.ID, "leaseId": "not-the-frozen-lease", "projectPath": openWire.Result.Project.ProjectPath,
 	}})
 	if stale.Code != http.StatusInternalServerError || !strings.Contains(stale.Body.String(), "PROJECT_SESSION_NOT_OWNED") {
 		t.Fatalf("stale lease list = %d %s", stale.Code, stale.Body.String())
@@ -207,8 +209,8 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 	}
 	runA := decodeResult(t, begin)
 	handleA := runA["handle"].(map[string]any)
-	assertStringField(t, runA, "handle.projectId", openWire.Project.ID)
-	assertStringField(t, runA, "handle.epoch", openWire.Project.LeaseID)
+	assertStringField(t, runA, "handle.projectId", openWire.Result.Project.ID)
+	assertStringField(t, runA, "handle.epoch", openWire.Result.Project.LeaseID)
 	for _, key := range []string{"status", "operation", "budgetDiagnostics", "inFlight", "nonReplayable", "budget", "ledger", "artifacts", "candidates"} {
 		if _, ok := runA[key]; !ok {
 			t.Fatalf("begin view missing %q", key)
