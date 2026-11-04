@@ -454,7 +454,10 @@ jobs:
           status=0
           go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl || status=$?
           if test "$status" -ne 0; then
-            printf '::error title=go test failures::%s\n' "$(grep -E '"(Action)":"fail"|_test\.go:[0-9]+:' /tmp/go-tests.jsonl | tail -4 | tr '"' "'" | tr '\n' ' ' | cut -c1-900)"
+            printf '::error title=go test failures::%s\n' "$(grep '"Action":"fail"' /tmp/go-tests.jsonl | grep -o '"Package":"[^"]*","Test":"[^"]*"' | tr '\n' ' ' | cut -c1-600)"
+            grep '"Action":"fail"' /tmp/go-tests.jsonl | grep -o '"Package":"[^"]*"' | sed 's/.*\///' | sort -u | while read -r pkg; do
+              printf '::error title=failed package::%s\n' "$pkg"
+            done
           fi
           exit "$status"
       - name: Race detector (synthetic temporary databases only)
