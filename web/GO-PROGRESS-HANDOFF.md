@@ -560,3 +560,13 @@ sync tables. So a GET mutates the author database. That is the original behaviou
 but it matters twice: such a read cannot run on a read-only transaction, and any future
 "reads are side-effect free" assumption in the admission lane would be wrong here.
 
+### 2026-11-04 — plot tree read bound (durable 77 → 78)
+
+`BindPlotTreeReads` binds `db:plot-tree-read` (arity 2, path at index 0, frozen context last);
+`db:plot-tree-save` and `db:plot-tree-clear` stay unbound. `PlotTree.Read` runs on a read-only
+transaction and `plotRead` is SELECT-only, so unlike the blueprint sync reads this one really does not
+write. CI green at `c10f6a4b`.
+
+**Do not pair `BindPlotTreeReads` with `BindPlotTree`** - the transport binder already covers this
+name, and the duplicate would be a fatal `OPERATION_ALREADY_BOUND` at startup, not a test failure.
+
