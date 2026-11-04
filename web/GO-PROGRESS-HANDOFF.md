@@ -142,3 +142,26 @@ with a release that keeps the admitted project stable for the whole repository c
 `ReadCharactersJSONDurable` / `CommitDraftCASDurable`. Then add the `server.BindRecovery(...)`
 line next to `BindGeneration` in `synthetic_durable_open_linux.go` and count 46 durable operations.
 
+## Gate decisions that block the remaining generation families (2026-11-04)
+
+Two maps were produced by parallel analysis and are committed:
+`web/GO-S3-AGENT-GENERATION-MAP.md` (8 operations) and
+`web/GO-S4-GRAPH-FINALIZATION-MAP.md` (10 operations). Both families are blocked at the
+ledger, not at the transport, and the blocking keys are **deliberate** quarantines that the
+original chain spec marked as needing reviewer sign-off (`web/GO-GENERATION-CHAIN-SPEC.md:151`).
+
+| Gate | Location | Blocks | Minimal safe widening |
+|---|---|---|---|
+| `sourceManifest.agentSession` | `store/generation_ledger.go:434-438` | all 8 `agent-generation:*` | accept only when `operation == "agent-round"` and the companion hash matches |
+| `sourceManifest.graphGenerationContext` / `finalizationGenerationSlotKey` | same | all 10 `graph-generation:*` + `finalization-generation:*` (checked in `mutableRoot` too, so even `cancel` fails) | accept only for the five documented operation strings with a hash-matched companion key |
+| `usage_receipt_json` key allowlist | `:495-501` | `graph-generation:confirm`, `finalization-generation:commit` (+ the four agent tool ops) | add `graphEffects` / `finalizationEffect` behind the same operation predicate |
+| `AgentToolNames != nil` | `generation/service.go:259-263`, `:289-291` | `agent-generation:round`, `:resume` | accept a non-nil slice only for the agent purpose |
+
+Beyond the gates, both families need real new work rather than wiring:
+`GenerationLedger.RecordEffect` (one write method shared by six operations across two families),
+a slot-keyed run lookup for finalization, agent-protocol parsing, and the graph/finalization
+task builders and result parsers, none of which exist in Go.
+
+**No traffic is switched and the production container is untouched, so an unwidened gate is
+not a regression: it is the current, tested 501 behaviour.**
+
