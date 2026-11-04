@@ -511,3 +511,14 @@ Note for the next batch of this family: `store.PostHistory` exists only as a `*s
 (`internal/store/posthistory.go:26-33`) with no transaction-read variant, so it cannot be served
 through `syntheticReadSurface.readTx`. It is served the way `NewRecovery`/`NewSummary` are instead.
 
+### 2026-11-04 — narrative and consistency reads bound (durable 69 → 72)
+
+`BindNarrativeReads` (`internal/transport/narrative_read.go`) binds `db:narrative-thread-list`,
+`db:narrative-thread-list-relevant` and `db:consistency-exemption-list`. The six writes in that
+family stay unbound and keep failing closed. CI green at `7b71f0cc`.
+
+The arity table is the part worth copying for the next batch: the two arity-2 names carry the path at
+index 0, while `-list-relevant` is arity 3 with a `map[string]any` input at 0 and the path at 1
+(`internal/transport/narrative.go:22`). Getting that wrong is invisible to any test that only
+asserts "not 501" - which is why each batch lands with a positive assertion through the durable lane.
+
