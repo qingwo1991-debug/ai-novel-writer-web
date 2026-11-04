@@ -570,3 +570,24 @@ write. CI green at `c10f6a4b`.
 **Do not pair `BindPlotTreeReads` with `BindPlotTree`** - the transport binder already covers this
 name, and the duplicate would be a fatal `OPERATION_ALREADY_BOUND` at startup, not a test failure.
 
+### 2026-11-04 — audit: there are no stub operations to collect
+
+Before starting the write families I checked whether any of the 281 channels are stubs whose migration
+would be free. All 281 have a literal registration; **277 do real work**, and exactly **4 are
+unconditional refusals**:
+
+| operation | original | note |
+|---|---|---|
+| `db:blueprint-update-notes` | `db-controller.ts:636/640` | `GENERATION_FINALIZATION_ADMISSION_REQUIRED` |
+| `db:continuity-save-finalized` | `db-controller.ts:797/800` | same code |
+| `db:continuity-save-character-state-candidates` | `db-controller.ts:806/809` | same code |
+| `db:plot-tree-save` | `db-controller.ts:886/894` | `GENERATION_GRAPH_ADMISSION_REQUIRED` |
+
+All four are admission gates: the real write happens inside the main generation transaction, so these
+channels must keep refusing. Verified that Go already mirrors them - `internal/transport/summary.go:125`
+refuses the two continuity writes, and the blueprint/plot-tree transport binders refuse theirs.
+
+Consequence for planning: **there is no shortcut batch.** The remaining ~200 operations are real work,
+not stubs waiting to be declared done. A Go handler that "succeeds" where the original refuses is a
+divergence in the dangerous direction, so this four-row table is also the checklist to guard against it.
+
