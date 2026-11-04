@@ -55,7 +55,11 @@ jobs:
           go mod download
           gofmt -w ./cmd ./internal
           git diff --binary -- . > /tmp/go-format.patch
-          go test -run '^$' ./...
+          if ! out=$(go test -run '^$' ./... 2>&1); then
+            printf '%s\n' "$out" | tail -60
+            printf '::error title=compile failure::%s\n' "$(printf '%s' "$out" | grep -E '\.go:[0-9]+:' | head -4 | tr '\n' ' ')"
+            exit 1
+          fi
       - name: Static analysis independent of oracle generation
         run: go vet ./...
       - name: Upload formatting evidence even on compilation failure
