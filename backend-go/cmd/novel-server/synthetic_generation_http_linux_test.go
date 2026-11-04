@@ -472,6 +472,13 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%s is still unmigrated: %d %s", operation, response.Code, response.Body.String())
 		}
+		// The family channels take `{ handle }`, not the bare handle. Rejecting
+		// the envelope would surface as a REQUEST_INVALID code, and the run it
+		// names does not exist, so reaching the run lookup is the proof that the
+		// shape was understood.
+		if body := response.Body.String(); strings.Contains(body, "REQUEST_INVALID") {
+			t.Fatalf("%s rejected the { handle } envelope: %d %s", operation, response.Code, body)
+		}
 	}
 
 	// --- credentials never leak into any DTO or error body. ---
