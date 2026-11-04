@@ -625,3 +625,18 @@ names. Also note `db:consistency-exemption-revoke` reports success even when not
 mirrors the original (`Narrative.RevokeExemption` discards its result at `internal/store/narrative.go:305`),
 so it was preserved rather than "fixed".
 
+### 2026-11-04 — blueprint writes bound (durable 87 → 91)
+
+`BindBlueprintWrites` binds `db:blueprint-upsert`, `-upsert-many`, `-delete` and `-commit-range`.
+`commit-range` was bound too: it is a single store call (`internal/store/blueprints.go:277`) that owns
+the range write, both operation rows and the read-back proof inside its own `immediate` transaction.
+`db:blueprint-update-notes` is still deliberately refused - the original refuses it unconditionally.
+CI green at `ad1bab63`.
+
+`Upsert`, `UpsertMany` and `Delete` return only an error, so **deleting an absent chapter reports
+success**, exactly as the original does. That is preserved, not fixed; if a caller ever needs
+"deleted nothing" to be visible, the store has to grow a rows-affected return first.
+
+The wire shape here matches the existing Go `BindBlueprints` binder (HTTP 200 with a DTO on failure),
+so this batch adds no new divergence on top of the one already listed as OPEN in the gap matrix.
+
