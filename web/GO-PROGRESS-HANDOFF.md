@@ -940,3 +940,30 @@ populate. Pinned at 501 by assertions.
 One compile fix this batch: `fail` in `finalization.go` is `func(code string) (any, error)`, so
 `return fail(x), nil` is a two-value-in-single-value error. Fixed 29 call sites.
 
+### 2026-11-04 — `db:character-roster-commit` needs a subsystem, not a store method
+
+Investigated, then stopped before writing code. The evidence:
+
+On this lane's baseline (v7, which carries `character_identity_meta`), the original never reaches the
+generation-freshness branch: `CharacterRosterRepository.commit` refuses identity-schema databases with
+`CHARACTER_ID_WRITE_REQUIRED` at `electron/repositories/character-roster-repository.ts:984`, and the
+`assertGenerationSourcesCurrent` thunk (`db-controller.ts:706`) sits *after* that at `:1012`. So the only
+reachable positive path is the **author branch** (`db-controller.ts:699-705` ->
+`electron/services/character-roster-author.ts:63`), which rejects `generationRunHandle` outright and
+depends on `commitCharacterIdentities` (`character-roster-repository.ts:1168-1273`): approvals, aliases,
+`static_provenance`, proposals and a projection.
+
+Go has no counterpart - **no production code writes `characters` at all**. Anything bound here would
+either exercise the branch the original refuses or fake the identity envelope.
+
+**So this is a subsystem gap, not a missing store method.** Sizing it honestly: one store method is not
+enough; it needs the identity commit path (5+ tables, a projection, proposal handling) before any of the
+character-write operations can be honest. The existing 501 assertion
+(`synthetic_durable_http_linux_test.go:392-411`) stays correct and stays.
+
+**Two subsystem-scale items now bound the remaining work, and both should be scheduled deliberately
+rather than discovered again mid-batch:**
+1. character identity write path - unblocks `db:character-roster-commit` and the
+   `character-proposal` / `finalized-character` / `character-avatar` families (~15 operations);
+2. LanceDB native store - unblocks the `kb` family (~18 operations); `lancenative` is still a stub.
+
