@@ -23,6 +23,12 @@ else in the graph and finalization families waits behind it.
    into the finalization family.
 5. Only then bind `graph-generation:begin` / `execute` / `confirm` and the finalization chain.
 
+For the plot kind, the current sources are already readable: `internal/store/plottree.go` holds the
+`PlotTree` accessors and `plotRead`/`plotValidateStored` produce the same bundle the task builder
+consumes. The hazard is not reading them but **hashing them identically** to the frozen
+`targetBaselineHash`; a differently-shaped derivation still fails closed, so it shows up as a
+permanent `conflict` rather than as data loss. Reuse the existing encoder - do not add a second one.
+
 Two rules that were learned the hard way and must not be relaxed:
 
 - **A bound operation needs a positive assertion through the durable admission path.** A "not 501"
