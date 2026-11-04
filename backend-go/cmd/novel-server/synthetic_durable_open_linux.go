@@ -366,6 +366,15 @@ func (s *syntheticDurableOpen) BeginSummary(ctx context.Context, caller transpor
 	return store.NewSummary(db), release, nil
 }
 
+// BeginReviewRevisions is the durable lane's review and revision repository.
+func (s *syntheticDurableOpen) BeginReviewRevisions(ctx context.Context, caller transport.Caller, raw any) (*store.ReviewRevisions, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewReviewRevisions(db), release, nil
+}
+
 // OpenProject maps a browser project path to the exact process-local catalog
 // key of the created synthetic project, then opens it for durable editing.
 // The path is never passed to the runtime and never opens a filesystem target.
@@ -537,6 +546,12 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	}
 	// Continuity and summary snapshots share the same durable author admission.
 	if err := server.BindSummary(durable); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	// Review and revision writes keep their source CAS in the repository; this
+	// binding adds only the operations the editor read binders leave unbound.
+	if err := server.BindReviewRevisionRemainder(durable); err != nil {
 		cleanup()
 		return nil, nil, err
 	}

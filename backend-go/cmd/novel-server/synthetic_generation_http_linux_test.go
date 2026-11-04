@@ -421,6 +421,21 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		t.Fatalf("latest summary = %d %s", latestSummary.Code, latestSummary.Body.String())
 	}
 
+	// --- review and revision writes reach the repository through the lane. ---
+	nextIndex := rpc("db:revision-next-index", []any{float64(draftID), recoveryProjectPath, expected})
+	if nextIndex.Code != http.StatusOK || !strings.Contains(nextIndex.Body.String(), `"result"`) {
+		t.Fatalf("revision next index = %d %s", nextIndex.Code, nextIndex.Body.String())
+	}
+	// A create without the exact expected source must be refused by the
+	// repository's own CAS, which proves the binding, lease and provider path.
+	unprotected := rpc("db:revision-create", []any{map[string]any{
+		"baseDraftId": float64(draftID), "revisionType": "refine", "content": "改稿", "wordCount": float64(2),
+	}, recoveryProjectPath, expected})
+	if unprotected.Code != http.StatusOK || !strings.Contains(unprotected.Body.String(), `"success":false`) ||
+		!strings.Contains(unprotected.Body.String(), "SOURCE_DRAFT_CHANGED") {
+		t.Fatalf("unprotected revision create = %d %s", unprotected.Code, unprotected.Body.String())
+	}
+
 	// --- all 32 non-S1 generation-family operations stay unmigrated. ---
 	unmigrated := append([]string{
 		"generation:begin-batch", "generation:commit-draft", "generation:compose-visible",

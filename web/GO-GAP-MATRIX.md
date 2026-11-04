@@ -3,7 +3,7 @@
 Baseline: `HEAD=6f1bc572` == `origin/main`, CI run `41782708522` fully green (S1 generation lane live)
 (all three *Go backend migration* jobs). Durable author write lane landed and CI-green
 (`54b5b754` bridge + HTTP test, `3bace738` open-error redaction, `9cc21933` docs), and it
-serves **52 operations** over real HTTP.
+serves **61 operations** over real HTTP.
 
 Current stopping point, what is deliberately quarantined and the exact resume plan:
 **`web/GO-PROGRESS-HANDOFF.md`**. The counts below are unchanged by that checkpoint: the
@@ -23,7 +23,7 @@ as unbound.
 
 | Lane | Ops | Bindings |
 |---|---|---|
-| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go`, from `main.go:116-117`) | **52** | `BindSummary` (6: `db:get-latest-summary`, `db:save-summary-snapshot`, `db:continuity-list-before`, `-read-source`, `-save-finalized`, `-save-character-state-candidates`; served by `syntheticDurableOpen.BeginSummary` → `authorruntime.SummaryRepositoryDurable`) + `BindRecovery` (4: `db:recovery-candidate-record`, `-list`, `-update`, `-resolve`; served by `syntheticDurableOpen.BeginRecovery` → `authorruntime.RecoveryRepositoryDurable`) + `BindGeneration` (11: `generation:begin`, `generation:execute`, `generation:read`, `generation:list`, `generation:pause`, `generation:cancel`, `generation:resume`, `generation:restart`, `generation:discard-candidate`, `generation:bind-material-decision`, `generation:retry-draft-short-outline`; served by `synthetic_generation_linux.go` over the real `internal/generation` + `generationowner` services with a registry-gated model dispatch) + `BindNavigation` + `BindProjects` (7: `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open`) + 8 disjoint editor read binders landed in `af31c463` (20: 8 draft reads, `project:recent-list`, `fs:list-dir`, `project:overview-current`, `fs:read-json`, `db:project-core-get`, `db:blueprint-get-all`, `db:revision-get-pending`, `db:revision-list`, `db:review-list`, `db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) + `BindCharacterLiveReads` (3: `db:character-get-all`, `db:character-roster-read`, `character-identity:read`; served by `syntheticDurableOpen.ReadCharactersJSON` → `authorruntime.ReadCharactersJSONDurable` on the admitted author DB) + `BindDraftLiveWrites` (1: `db:draft-update-content`; served by `syntheticDurableOpen.CommitDraftContent` → `authorruntime.CommitDraftCASDurable` → `store.Drafts.UpdateContentIfCurrent`, with the lease rotated in place on the same `*admittedAuthor`) |
+| **durable** (`migrationHandlerWithDurable`, `synthetic_durable_open_linux.go`, from `main.go:116-117`) | **61** | `BindReviewRevisionRemainder` (9: `db:review-create`, `db:review-get-latest`, `db:review-next-index`, `db:revision-create`, `db:revision-replace-pending`, `db:revision-next-index`, `db:revision-merge`, `db:revision-mark-merged`, `db:revision-mark-discarded`; the whole review surface already exists as `BindReviewRevisions`, but five of its reads are served by the editor binders, so the durable lane binds exactly the remainder) + `BindSummary` (6: `db:get-latest-summary`, `db:save-summary-snapshot`, `db:continuity-list-before`, `-read-source`, `-save-finalized`, `-save-character-state-candidates`; served by `syntheticDurableOpen.BeginSummary` → `authorruntime.SummaryRepositoryDurable`) + `BindRecovery` (4: `db:recovery-candidate-record`, `-list`, `-update`, `-resolve`; served by `syntheticDurableOpen.BeginRecovery` → `authorruntime.RecoveryRepositoryDurable`) + `BindGeneration` (11: `generation:begin`, `generation:execute`, `generation:read`, `generation:list`, `generation:pause`, `generation:cancel`, `generation:resume`, `generation:restart`, `generation:discard-candidate`, `generation:bind-material-decision`, `generation:retry-draft-short-outline`; served by `synthetic_generation_linux.go` over the real `internal/generation` + `generationowner` services with a registry-gated model dispatch) + `BindNavigation` + `BindProjects` (7: `project:open`, `project:save`, `project:update-config`, `project:get-runtime-context`, `db:close`, `official-homepage:open`, `model-provider-resource:open`) + 8 disjoint editor read binders landed in `af31c463` (20: 8 draft reads, `project:recent-list`, `fs:list-dir`, `project:overview-current`, `fs:read-json`, `db:project-core-get`, `db:blueprint-get-all`, `db:revision-get-pending`, `db:revision-list`, `db:review-list`, `db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) + `BindCharacterLiveReads` (3: `db:character-get-all`, `db:character-roster-read`, `character-identity:read`; served by `syntheticDurableOpen.ReadCharactersJSON` → `authorruntime.ReadCharactersJSONDurable` on the admitted author DB) + `BindDraftLiveWrites` (1: `db:draft-update-content`; served by `syntheticDurableOpen.CommitDraftContent` → `authorruntime.CommitDraftCASDurable` → `store.Drafts.UpdateContentIfCurrent`, with the lease rotated in place on the same `*admittedAuthor`) |
 | read-only (`main.go:315-362`) | 28 | 8 draft reads + `db:draft-update-content` CAS (`syntheticReadOpen.CommitDraftContent` → `authorruntime.CommitDraftCAS`), character reads, editor reads, `project:recent-list`, `fs:list-dir`, `fs:read-json`, `project:overview-current` |
 | model (`main.go:275-278`) | 9 | config/startup/`llm:list-models`/`llm:save-model`/`llm:delete-model` |
 
@@ -84,7 +84,7 @@ admission:
 
 | Domain | Total | Bound | Durable | Unbound (501) |
 |---|---:|---:|---:|---:|
-| db | 103 | 71 | 11 | 22 |
+| db | 103 | 71 | 20 | 12 |
 | generation | 23 | 0 | 11 | 12 |
 | llm | 16 | 3 | 0 | 13 |
 | kb | 19 | 5 | 0 | 14 |
@@ -101,7 +101,7 @@ admission:
 | finalized-character | 5 | 0 | 0 | 5 |
 | chapter / character-avatar / editor-inline / review-revision | 4 each | 0 | 0 | 16 |
 | prompt / startup / character-identity / config / model-provider-resource / official-homepage | — | all | nav+startup | 0 |
-| **TOTAL** | **281** | **99** | **52** | **130** |
+| **TOTAL** | **281** | **99** | **61** | **121** |
 
 ## Runtime exists but no binder (Tier D gating)
 

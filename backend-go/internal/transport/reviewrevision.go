@@ -14,9 +14,8 @@ import (
 type ReviewRevisionProvider interface{BeginReviewRevisions(context.Context,Caller,any)(*store.ReviewRevisions,func(),error)}
 type ReviewRevisionProviderFunc func(context.Context,Caller,any)(*store.ReviewRevisions,func(),error)
 func(f ReviewRevisionProviderFunc)BeginReviewRevisions(ctx context.Context,c Caller,expected any)(*store.ReviewRevisions,func(),error){if f==nil{return nil,nil,errors.New("REVIEW_REVISION_PROVIDER_REQUIRED")};return f(ctx,c,expected)}
-func(s *Server)BindReviewRevisions(provider ReviewRevisionProvider)error{
+func(s *Server)bindReviewRevisions(provider ReviewRevisionProvider,names []string)error{
  if provider==nil{return errors.New("REVIEW_REVISION_PROVIDER_REQUIRED")}
- names:=[]string{"db:review-create","db:review-list","db:review-get-latest","db:review-get-full","db:review-next-index","db:revision-create","db:revision-replace-pending","db:revision-list","db:revision-get-pending","db:revision-get-full","db:revision-next-index","db:revision-merge","db:revision-mark-merged","db:revision-mark-discarded"}
  handlers:=make(map[string]Operation,len(names))
  for _,name:=range names{handlers[name]=func(ctx context.Context,caller Caller,args []any)(any,error){
   mutating:=name=="db:review-create"||name=="db:revision-create"||name=="db:revision-replace-pending"||name=="db:revision-merge"||name=="db:revision-mark-merged"||name=="db:revision-mark-discarded"
@@ -65,3 +64,32 @@ func validateReviewRevisionInput(name string,input map[string]any)error{
  value,exists:=input["expectedSource"];if !exists||value==nil{return nil};source,ok:=value.(map[string]any);if !ok{return store.ErrSourceDraftChanged};for _,key:=range []string{"id","chapterNumber","version"}{if _,ok:=draftSafeInteger(source[key],1);!ok{return store.ErrSourceDraftChanged}};for _,key:=range []string{"status","content"}{if _,ok:=source[key].(string);!ok{return store.ErrSourceDraftChanged}};return nil
 }
 func reviewRevisionWire(value any)any{switch value:=value.(type){case []byte:data:=make([]int,len(value));for i,b:=range value{data[i]=int(b)};return map[string]any{"type":"Buffer","data":data};case map[string]any:if value==nil{return nil};result:=make(map[string]any,len(value));for key,item:=range value{result[key]=reviewRevisionWire(item)};return result;case []map[string]any:result:=make([]any,len(value));for i,item:=range value{result[i]=reviewRevisionWire(item)};return result;case []any:result:=make([]any,len(value));for i,item:=range value{result[i]=reviewRevisionWire(item)};return result;default:return value}}
+
+// reviewRevisionOperations is the inventoried review/revision surface.
+var reviewRevisionOperations = []string{
+	"db:review-create", "db:review-list", "db:review-get-latest", "db:review-get-full",
+	"db:review-next-index", "db:revision-create", "db:revision-replace-pending",
+	"db:revision-list", "db:revision-get-pending", "db:revision-get-full",
+	"db:revision-next-index", "db:revision-merge", "db:revision-mark-merged",
+	"db:revision-mark-discarded",
+}
+
+// reviewRevisionRemainderOperations are the inventoried operations that the
+// read-only editor binders do not already serve. Binding the whole surface would
+// double-bind those reads, so the durable lane takes exactly this remainder.
+var reviewRevisionRemainderOperations = []string{
+	"db:review-create", "db:review-get-latest", "db:review-next-index",
+	"db:revision-create", "db:revision-replace-pending", "db:revision-next-index",
+	"db:revision-merge", "db:revision-mark-merged", "db:revision-mark-discarded",
+}
+
+// BindReviewRevisions binds every inventoried review/revision operation.
+func (s *Server) BindReviewRevisions(provider ReviewRevisionProvider) error {
+	return s.bindReviewRevisions(provider, reviewRevisionOperations)
+}
+
+// BindReviewRevisionRemainder binds only what the editor read binders leave
+// unbound, so the durable lane can add the write surface without collisions.
+func (s *Server) BindReviewRevisionRemainder(provider ReviewRevisionProvider) error {
+	return s.bindReviewRevisions(provider, reviewRevisionRemainderOperations)
+}
