@@ -225,9 +225,26 @@ func syntheticMap(value any) map[string]any {
 	return nil
 }
 
+// syntheticSlice normalises the slice shapes the ledger and the browser
+// contract actually produce. The ledger returns typed slices (for example
+// []map[string]any for budget attempts), so a bare []any assertion would
+// silently project an empty list.
 func syntheticSlice(value any) []any {
-	if values, ok := value.([]any); ok {
+	switch values := value.(type) {
+	case []any:
 		return values
+	case []map[string]any:
+		out := make([]any, len(values))
+		for index, item := range values {
+			out[index] = item
+		}
+		return out
+	case []string:
+		out := make([]any, len(values))
+		for index, item := range values {
+			out[index] = item
+		}
+		return out
 	}
 	return nil
 }

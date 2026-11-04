@@ -43,8 +43,8 @@ func run() error {
 	modelOrigins := flag.String("synthetic-model-origins", "", "comma-separated trusted HTTP(S) origins for synthetic model saves")
 	readSchema := flag.String("synthetic-read-schema-contract", "", "trusted SQLite contract for disposable read-only project opens")
 	durableDir := flag.String("synthetic-durable-dir", "", "optional private disposable library for a real synthetic durable author project")
-	durableGlobalDir := flag.String("synthetic-durable-global-dir", "", "RESERVED (not yet wired): private trusted model config root for the planned durable generation lane")
-	durableModelOrigins := flag.String("synthetic-durable-model-origins", "", "RESERVED (not yet wired): comma-separated trusted HTTP(S) origins for the planned durable generation lane")
+	durableGlobalDir := flag.String("synthetic-durable-global-dir", "", "optional private trusted model config root for the durable generation lane")
+	durableModelOrigins := flag.String("synthetic-durable-model-origins", "", "comma-separated trusted HTTP(S) origins for the durable generation lane")
 	flag.Parse()
 	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
 		return errors.New("migration scaffold refuses production mode and data mounts")
