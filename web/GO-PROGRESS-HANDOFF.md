@@ -121,3 +121,24 @@ Two concrete defects found on the way, in order:
   author volume `/root/AI/ai-novel-writer-data`, compose
   `--env-file .env -f docker/compose.web.yaml` (never read `.env`), pre-migration
   backup at `/root/AI/ai-novel-writer-backups/pre-native-20261101T235846Z/`.
+
+## Next concrete increment (ready to wire, no new runtime needed)
+
+`internal/transport/recovery.go` already contains `Server.BindRecovery` with the exact four
+inventoried candidate operations (`db:recovery-candidate-record` arity 3/path 1, `-list` 2/0,
+`-update` 4/2, `-resolve` 4/2) plus `internal/transport/recovery_test.go` covering the envelopes
+and the no-other-authority rule. `internal/store/recovery.go` already implements
+`Record` / `ListPending` / `UpdatePending` / `Resolve`. The only missing piece is a
+`RecoveryProvider` implementation in the durable lane:
+
+```go
+func (s *syntheticDurableOpen) BeginRecovery(ctx, caller, raw any) (*store.Recovery, func(), error)
+```
+
+It must follow the exact shape of `syntheticDurableOpen.ReadCharactersJSON` (lines ~255-274):
+parse the frozen context, take `s.mu`, delegate to a new
+`authorruntime` durable helper that admits the author project and hands back `store.NewRecovery(db)`
+with a release that keeps the admitted project stable for the whole repository call — mirroring
+`ReadCharactersJSONDurable` / `CommitDraftCASDurable`. Then add the `server.BindRecovery(...)`
+line next to `BindGeneration` in `synthetic_durable_open_linux.go` and count 46 durable operations.
+
