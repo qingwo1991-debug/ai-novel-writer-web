@@ -50,3 +50,33 @@ func TestGlOrdinaryBindingScopesFamilyKeysToTheirOperation(t *testing.T) {
 		}
 	}
 }
+
+// The receipt keys are only spellable for the operation that owns them, and the
+// eight original keys plus every unknown key keep the original refusal.
+func TestGlEffectKeyAllowedStaysOperationScoped(t *testing.T) {
+	admitted := []struct{ key, operation string }{
+		{"graphEffects", "plot-tree-snapshot"},
+		{"graphEffects", "narrative-thread-plan-candidate"},
+		{"graphEffects", "narrative-thread-event-candidate"},
+		{"graphEffects", "finalized-chapter-notes"},
+		{"finalizationEffect", "finalized-character-state"},
+	}
+	for _, c := range admitted {
+		if !glEffectKeyAllowed(c.key, c.operation) {
+			t.Fatalf("%s must be allowed for %s", c.key, c.operation)
+		}
+	}
+	refused := []struct{ key, operation string }{
+		{"graphEffects", "chapter-draft"},
+		{"graphEffects", "finalized-character-state"},
+		{"finalizationEffect", "plot-tree-snapshot"},
+		{"finalizationEffect", "chapter-draft"},
+		{"result", "plot-tree-snapshot"},
+		{"graphEffect", "plot-tree-snapshot"},
+	}
+	for _, c := range refused {
+		if glEffectKeyAllowed(c.key, c.operation) {
+			t.Fatalf("%s must stay refused for %s", c.key, c.operation)
+		}
+	}
+}

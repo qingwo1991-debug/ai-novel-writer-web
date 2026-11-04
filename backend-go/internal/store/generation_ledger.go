@@ -265,7 +265,7 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	args = normalized.([]any)
 	// Unknown workflows are errors, never successful no-ops.
 	read := method == "get" || method == "budget" || method == "attemptCount" || method == "hasInFlight" || method == "hasNonCancelledAttempt" || method == "findInvocation" || method == "receipt"
-	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate"
+	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect"
 	if !read && !write {
 		return nil, glError("GENERATION_OPERATION_UNSUPPORTED")
 	}
@@ -439,6 +439,24 @@ func glFamilyManifestAllowed(key, operation string) bool {
 	return false
 }
 
+// glEffectKeyAllowed is the narrow widening of the receipt key allowlist. An
+// effect key is legal only for the operation whose domain write produced it, so
+// an ordinary generation attempt still cannot carry a graph or finalization
+// effect even though the keys are now spellable.
+func glEffectKeyAllowed(key, operation string) bool {
+	switch key {
+	case "graphEffects":
+		switch operation {
+		case "plot-tree-snapshot", "narrative-thread-plan-candidate",
+			"narrative-thread-event-candidate", "finalized-chapter-notes":
+			return true
+		}
+	case "finalizationEffect":
+		return operation == "finalized-character-state"
+	}
+	return false
+}
+
 func glPlanning(operation string) bool {
 	return strings.Contains(operation, "planning") || strings.Contains(operation, "blueprint") || strings.Contains(operation, "plot-outline")
 }
@@ -492,6 +510,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 	if err != nil {
 		return err
 	}
+	effectKeys := map[string]bool{}
 	for _, run := range runs {
 		if g.frozen != nil && g.frozen("generation_runs", glText(run["run_id"])) {
 			return glError("PORTABLE_RUNTIME_FROZEN")
@@ -502,6 +521,11 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		}
 		if err := glOrdinaryBinding(binding); err != nil {
 			return err
+		}
+		for _, key := range []string{"graphEffects", "finalizationEffect"} {
+			if glEffectKeyAllowed(key, glText(glMap(binding["sourceManifest"])["operation"])) {
+				effectKeys[key] = true
+			}
 		}
 	}
 	rows, err := rrMaps(ctx, conn, "SELECT attempt_id,usage_receipt_json FROM generation_attempts WHERE root_action_id=? ORDER BY rowid", rootID)
@@ -519,6 +543,10 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		for key := range usage {
 			switch key {
 			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result":
+			case "graphEffects", "finalizationEffect":
+				if !effectKeys[key] {
+					return glError("GENERATION_EFFECT_UNSUPPORTED")
+				}
 			default:
 				return glError("GENERATION_EFFECT_UNSUPPORTED")
 			}
@@ -1137,6 +1165,46 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 		}
 		_, err = conn.ExecContext(ctx, "UPDATE generation_artifacts SET status='discarded' WHERE artifact_id=?", text(0))
 		return nil, err
+	// RecordEffect is how a graph or finalization run publishes the domain effect
+	// it produced. It patches exactly one named receipt key, refuses every key the
+	// run's own operation does not own, and is idempotent: replaying the same
+	// [key, value] leaves the row untouched.
+	case "recordEffect":
+		run, err := g.get(ctx, conn, text(0))
+		if err != nil {
+			return nil, err
+		}
+		if err := g.mutableRun(ctx, conn, text(0)); err != nil {
+			return nil, err
+		}
+		key := text(2)
+		binding := glMap(run["binding"])
+		if !glEffectKeyAllowed(key, glText(glMap(binding["sourceManifest"])["operation"])) {
+			return nil, glError("GENERATION_EFFECT_UNSUPPORTED")
+		}
+		row, err := glOne(ctx, conn, "SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=?", "GENERATION_ATTEMPT_MISSING", text(1))
+		if err != nil {
+			return nil, err
+		}
+		current, err := glStored(row["usage_receipt_json"])
+		if err != nil {
+			return nil, err
+		}
+		if existing, ok := current[key]; ok {
+			before, beforeErr := json.Marshal(existing)
+			after, afterErr := json.Marshal(arg(3))
+			if beforeErr == nil && afterErr == nil && string(before) == string(after) {
+				return g.receipt(ctx, conn, text(0), nil)
+			}
+		}
+		encoded, err := glPatch(row["usage_receipt_json"], map[string]any{key: arg(3)})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := conn.ExecContext(ctx, "UPDATE generation_attempts SET usage_receipt_json=? WHERE attempt_id=?", encoded, text(1)); err != nil {
+			return nil, err
+		}
+		return g.receipt(ctx, conn, text(0), nil)
 	case "replaceUnstartedBinding", "resume":
 		// replace validates the next frozen binding before reading the run in
 		// the original; preserve that error precedence even for missing runs.
