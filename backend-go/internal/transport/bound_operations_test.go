@@ -25,6 +25,11 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			},
 		},
 		{
+			name: "graph-generation",
+			bind: func(s *Server) error { return s.BindGraphGeneration(&GraphGenerationProvider{}) },
+			want: []string{"graph-generation:read"},
+		},
+		{
 			name: "review-revisions",
 			bind: func(s *Server) error {
 				return s.BindReviewRevisions(ReviewRevisionProviderFunc(nil))

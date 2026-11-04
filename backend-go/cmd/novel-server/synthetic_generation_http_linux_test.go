@@ -450,16 +450,33 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		"finalization-generation:begin", "finalization-generation:commit",
 		"finalization-generation:execute", "finalization-generation:read",
 		"graph-generation:begin", "graph-generation:confirm",
-		"graph-generation:execute", "graph-generation:read",
+		"graph-generation:execute",
 		"import-generation:execute", "import-generation:read",
 	}...)
-	if len(unmigrated) != 30 {
-		t.Fatalf("unmigrated list = %d, want 30", len(unmigrated))
+	if len(unmigrated) != 29 {
+		t.Fatalf("unmigrated list = %d, want 29", len(unmigrated))
 	}
 	for _, operation := range unmigrated {
 		response := rpc(operation, []any{expected})
 		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%s = %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
+		}
+	}
+
+	// --- graph-generation:read is bound: it validates the `{ handle }` envelope
+	// and then refuses a run that does not exist, which is proof the request
+	// shape and the context lookup both ran. ---
+	{
+		response := rpc("graph-generation:read", []any{map[string]any{"handle": map[string]any{
+			"projectId": "synthetic-project", "epoch": "synthetic-epoch",
+			"rootActionId": "missing-root", "runId": "missing-run",
+		}}, expected})
+		body := response.Body.String()
+		if response.Code == http.StatusNotImplemented || strings.Contains(body, "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("graph-generation:read is still unmigrated: %d %s", response.Code, body)
+		}
+		if strings.Contains(body, "REQUEST_INVALID") {
+			t.Fatalf("graph-generation:read rejected the { handle } envelope: %d %s", response.Code, body)
 		}
 	}
 

@@ -537,6 +537,13 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			cleanup()
 			return nil, nil, err
 		}
+		// The graph family shares the same durable admission but not the same
+		// request shape: its channels carry `{ handle }`, so it binds through its
+		// own row set on top of the same adapter.
+		if err := server.BindGraphGeneration(&transport.GraphGenerationProvider{Read: provider.GraphRead}); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
 	}
 	// The four recovery candidate operations share the durable author admission:
 	// their repository writes the author's own database, never a renderer path.

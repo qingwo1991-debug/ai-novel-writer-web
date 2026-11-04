@@ -38,12 +38,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 	if provider == nil {
 		return errors.New("GENERATION_PROVIDER_REQUIRED")
 	}
-	operations := []struct {
-		name     string
-		arity    int
-		mutating bool
-		call     func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error)
-	}{
+	operations := []generationOperation{
 		{"generation:begin", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
 			if provider.Begin == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
@@ -93,7 +88,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			if provider.Cancel == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
 			}
-			handle, err := familyCancelHandle(args[0], "GENERATION_GRAPH_REQUEST_INVALID")
+			handle, err := familyRequestHandle(args[0], "GENERATION_GRAPH_REQUEST_INVALID")
 			if err != nil {
 				return nil, err
 			}
@@ -103,7 +98,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			if provider.Cancel == nil {
 				return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
 			}
-			handle, err := familyCancelHandle(args[0], "GENERATION_FINALIZATION_REQUEST_INVALID")
+			handle, err := familyRequestHandle(args[0], "GENERATION_FINALIZATION_REQUEST_INVALID")
 			if err != nil {
 				return nil, err
 			}
@@ -134,6 +129,24 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			return provider.RetryDraftShortOutline(ctx, caller, expected, args[0])
 		}},
 	}
+	return s.bindGenerationOperations(operations)
+}
+
+// generationOperation is one generation-family binding. The shared adapter below
+// is what makes every operation in the family answer with the same envelopes, so
+// the graph binder reuses it instead of copying the rules.
+type generationOperation struct {
+	name     string
+	arity    int
+	mutating bool
+	call     func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error)
+}
+
+// bindGenerationOperations installs the family adapter. Wire arity is the
+// request arity plus the frozen expected context, and every failure - argument
+// shape or operation body - leaves through generationFailure so a mutating op
+// answers with its business DTO and a read op with its HTTP error.
+func (s *Server) bindGenerationOperations(operations []generationOperation) error {
 	handlers := make(map[string]Operation, len(operations))
 	for _, operation := range operations {
 		name, arity, mutating := operation.name, operation.arity, operation.mutating
@@ -216,7 +229,7 @@ func generationSymbolicCode(err error) string {
 	return code
 }
 
-// familyCancelHandle unwraps the `{ handle }` envelope the graph and finalization
+// familyRequestHandle unwraps the `{ handle }` envelope the graph and finalization
 // families use. It is not the same wire shape as `generation:cancel`, which
 // takes the handle itself: the renderer sends `{ handle: view.handle }` for the
 // family channels (src/services/graph-generation.ts:40,
@@ -224,7 +237,7 @@ func generationSymbolicCode(err error) string {
 // request carrying a key other than `handle` before it looks at the run.
 // Passing the envelope straight through would make every real call fail while a
 // test that only checks "not 501" still passed.
-func familyCancelHandle(value any, invalidCode string) (any, error) {
+func familyRequestHandle(value any, invalidCode string) (any, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
 		return nil, errors.New(invalidCode)
