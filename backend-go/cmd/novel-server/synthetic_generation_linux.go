@@ -306,12 +306,23 @@ func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller
 	if caller.SessionID == "" || caller.ClientID == "" {
 		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, projectsession.ErrContext
 	}
-	ledger, db, done, err := s.lifecycle.BeginGenerationLedgerDB(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, contextValue)
+	ledger, db, refresh, done, err := s.lifecycle.BeginGenerationLedgerDB(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, contextValue)
 	if err != nil {
 		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, err
 	}
+	// The ledger writes the author's own database, so the permit must adopt the
+	// committed identity before the fence is observed again. Composing the
+	// refresh into the single release covers every operation exactly once; a
+	// refresh that itself fails leaves the evidence untouched, so the next
+	// operation is refused rather than silently admitted.
+	release := func() {
+		if refresh != nil {
+			_ = refresh(ctx)
+		}
+		done()
+	}
 	scope := generationowner.Scope{Caller: caller.SessionID, Session: caller.SessionID, Tab: caller.ClientID, Project: contextValue.ProjectID, Epoch: contextValue.LeaseID}
-	return contextValue, scope, ledger, db, done, nil
+	return contextValue, scope, ledger, db, release, nil
 }
 
 // syntheticHandle is the browser run handle (projectId/epoch/rootActionId/runId).
