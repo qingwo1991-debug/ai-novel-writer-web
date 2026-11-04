@@ -146,9 +146,9 @@ func writeJSONReflect(builder *strings.Builder, value reflect.Value) error {
 	case reflect.Struct:
 		return writeJSONStruct(builder, value)
 	case reflect.Map:
-		return errors.New("GRAPHGEN_UNSUPPORTED_JSON_VALUE: Go map values cannot mirror JSON.stringify key order")
+		return fmt.Errorf("%w: Go map values cannot mirror JSON.stringify key order", ErrUnsupportedJSONValue)
 	default:
-		return errors.New("GRAPHGEN_UNSUPPORTED_JSON_VALUE: unsupported Go kind " + value.Kind().String())
+		return fmt.Errorf("%w: unsupported Go kind %s", ErrUnsupportedJSONValue, value.Kind().String())
 	}
 	return nil
 }

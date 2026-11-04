@@ -244,7 +244,7 @@ func TestParseNarrativeThreadEventCandidatesRejectsInvalidOutput(t *testing.T) {
 		},
 		{
 			name: "planned is not an event type",
-			content: `{"candidates":[{"type":"planned","evidence":"她没有声张","` +
+			content: `{"candidates":[{"type":"planned","evidence":"她没有声张",` +
 				`"reason":"非法事件类型。"}]}`,
 		},
 		{
