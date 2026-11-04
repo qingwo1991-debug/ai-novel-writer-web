@@ -415,3 +415,30 @@ sourceStatus, effects}`. CI green at `19241d65`.
   until the binding rebuild lands — that rebuild is the gate in front of the whole finalization
   family, not a detail of `read`.
 
+### 2026-11-04 — security review of the durable lane additions (two real defects)
+
+Reviewed the code added over the last rounds rather than only writing more of it. Both findings were
+mine, both were green in CI, and both sit in `recordEffect`, the ledger write that stores
+`graphEffects` and `finalizationEffect`:
+
+1. **Cross-run effect write.** The attempt lookup was
+   `SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=?` — no `run_id` scope. A
+   caller able to mutate one run could pass an attempt id belonging to a *different* run and have an
+   effect written into it, which is precisely the cross-run contamination the operation-scoped
+   allowlist is supposed to prevent. Now scoped with `AND run_id=?`.
+2. **Receipt returned for the wrong identity.** `g.receipt(ctx, conn, text(0), nil)` passed the
+   *run* id where the function expects an *attempt* id, so the call would fail with
+   `GENERATION_ATTEMPT_MISSING` after a successful write - an operation that mutates and then
+   reports failure. Both call sites now pass `text(1)`.
+
+Also checked, no issue:
+- `draftSaveFailure` sanitises a code to `REQUEST_FAILED` unless it matches `[A-Z][A-Z0-9_]*`, so
+  routing operation-body errors through the lane envelope does not leak SQLite text or paths.
+- `syntheticGraphAttemptIDs` and the receipt lookup are parameterised; no string-built SQL.
+- `familyRequestHandle` rejects any envelope key other than `handle`.
+
+**Gap:** neither defect has a regression test, because exercising `recordEffect` needs a run seeded
+through `open` with a full `GLBinding`. `internal/generation/contract_test.go` already builds exactly
+that fixture against real SQLite, so the test belongs there; until it exists these fixes are verified
+by inspection only.
+
