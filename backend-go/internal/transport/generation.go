@@ -95,7 +95,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			}
 			handle, err := familyCancelHandle(args[0], "GENERATION_GRAPH_REQUEST_INVALID")
 			if err != nil {
-				return nil, err
+				return fail(err)
 			}
 			return provider.Cancel(ctx, caller, expected, handle)
 		}},
@@ -105,7 +105,7 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 			}
 			handle, err := familyCancelHandle(args[0], "GENERATION_FINALIZATION_REQUEST_INVALID")
 			if err != nil {
-				return nil, err
+				return fail(err)
 			}
 			return provider.Cancel(ctx, caller, expected, handle)
 		}},
