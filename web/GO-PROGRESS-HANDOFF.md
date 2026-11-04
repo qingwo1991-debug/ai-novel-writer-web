@@ -347,3 +347,23 @@ the renderer's call site, not against the contract's type signature.** The contr
 `args: [{ handle }]` for one family and `args: [handle]` for the other, and a test that only checks
 "not 501" cannot tell the two apart.
 
+### 2026-11-04 — graph context validation, and an honest reversal
+
+`syntheticGraphContext` now verifies a frozen graph run and rebuilds its task: kind↔operation,
+context digest, project, origin epoch, key, creation time, the doubly-frozen input, the stored task
+digest, and the rebuilt task digest. Five tests pin the accepted case and four refusals (tampered
+context, tampered task, another project, disagreeing input copies). CI green at `f96bd25f`.
+
+**Reversal:** `graphgen.CanonicalJSON`/`CanonicalHash` from the previous round were removed. They
+were correct and tested, but `cmd/novel-server` already had `syntheticCanonical` + `syntheticHash`
+(the lane's own sorted-key formatter), and the single-writer decision — the same decision that
+made the encoder possible — makes that existing helper sufficient. Keeping both would have left two
+canonicalisation conventions in one process, which is exactly how two "identical" hashes stop
+matching. The round's real product was the analysis; the code turned out redundant.
+
+`syntheticGraphDigest` normalises a value through `encoding/json` before hashing, so a struct and
+the map it decodes to digest identically — that is what makes "rebuilt task equals stored task"
+checkable at all.
+
+Next: `begin` writes these manifests and `read` projects them; both call `syntheticGraphContext`.
+
