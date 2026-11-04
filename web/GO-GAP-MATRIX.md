@@ -123,31 +123,27 @@ Note: `internal/importpreview/` is an **empty directory** — import-run preview
 and `store.Drafts` has **no** create/delete methods (drafts.go is read+update only).
 
 
-### Bound is not the same as exercised
+### Bound vs exercised through the admission lane
 
-Of the **63** operations the durable lane binds, only **32** are actually invoked end to end by
-the synthetic HTTP test; the rest are bound and pinned but never observed succeeding over real
-HTTP. That distinction matters because the failures this migration has hit so far were all of the
-"bound, looked fine, did nothing" kind:
+Two different coverage numbers, and the difference is what has actually caught bugs:
 
-- `ListRuns` leaked an open read transaction, and the second generation run in the same session
-  could never start.
-- `syntheticSlice` silently projected budget diagnostics to empty, so the test panicked on an
-  empty list rather than on a wrong value.
+- **73** operation names appear in `internal/transport` tests, which run against a real in-memory
+  SQLite store and real envelopes. That is genuine behavioural coverage.
+- **32** operations are invoked end to end through the *durable* lane — real HTTP, real author
+  admission, real lease, real ledger — in `cmd/novel-server`.
+
+Neither number means the operation is safe, but only the second exercises the layer where every
+real defect of this migration has lived:
+
+- `ListRuns` leaked an open read transaction, so the second generation run in a session could
+  never start. Transport tests cannot see it: they never open two runs on one pool.
+- `syntheticSlice` silently projected budget diagnostics to empty.
 - `pause` read `result["run"]` from a call that returns a budget map, so a committed operation
   reported `GENERATION_RUN_NOT_FOUND`.
 - `BindReviewRevisions` bound fourteen operations that were never wired, and every test passed.
 
-So the acceptance bar for each batch is **a positive assertion over real HTTP**, not a 501
-assertion and not a unit test against a stub. The unwired remainder is:
+So the acceptance bar for a new family batch is a **positive assertion through the durable
+admission path**, not a 501 assertion and not a transport-layer stub test. The two family
+cancels are currently the weakest: they are asserted only to stop answering 501, not to actually
+cancel a run.
 
-| Bound but unexercised | Count |
-|---|---|
-| `db:recovery-*` (4) | 1 exercised |
-| `db:*summary*` / `db:continuity-*` (6) | 1 exercised |
-| `db:revision-*` / `db:review-*` (9) | 2 exercised |
-| editor and character reads (23) | 5 exercised |
-| `graph-generation:cancel`, `finalization-generation:cancel` (2) | 0 — only "not 501" |
-
-Closing this is cheap and independent of new feature work: each one needs a seeded fixture row
-and one `rpc(...)` assertion. It should be done before the family work adds more surface.
