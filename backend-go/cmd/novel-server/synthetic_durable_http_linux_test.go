@@ -711,12 +711,12 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		}
 		return wire.Result
 	}
-	// coreWrite sends a mutation with the frozen context appended and returns the
-	// DTO itself, so a refusal can be asserted instead of being fatal'd by read
-	// style decoding.
-	coreWrite := func(operation string, args []any, path string, ctx any) map[string]any {
+	// coreWrite sends a mutation and returns the DTO itself, so a refusal can be
+	// asserted instead of being fatal'd by read style decoding. The call sites
+	// pass the frozen context as an element of args, exactly like rpc does.
+	coreWrite := func(operation string, args []any) map[string]any {
 		t.Helper()
-		response := rpc(operation, []any{args[0], path, ctx})
+		response := rpc(operation, args)
 		var wire struct {
 			Result map[string]any `json:"result"`
 		}
