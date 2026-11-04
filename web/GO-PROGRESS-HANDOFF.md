@@ -251,3 +251,25 @@ written, never wired, or wired into a collision, and every test still passed —
 `graphGenerationContext` plus its three hashes, so the acceptance test has to seed that manifest
 through the ledger directly. `begin` follows, and it is the batch that also needs the request-shape
 widening (`syntheticParseSelection` still rejects `input`/`slot`/`artifact`/`index`).
+
+### 2026-11-04 — independent review of the graphgen port
+
+The port was verified rather than trusted:
+
+- **Prompt literals** — a separate extractor (not the porting agent's) normalised both sides
+  (removing `${…}`/`%d` interpolation and all whitespace) and compared every literal: 11 long
+  literals, 11 exact matches, including all six system prompts in both languages. This is the
+  check that matters, because a reflowed template changes model behaviour without failing any
+  behavioural test.
+- **Panic surface** — the derivation sorts and indexes `Sources[0]`, `sortedEvents[0]` and
+  `Tracks[0].Events[0].Sources[0]`. Each site was traced: every candidate is constructed with
+  exactly one source, `sortedEvents` is guarded non-empty before use, and the fence match is
+  nil-checked before `fenced[1]`. The four `MustEncodeJSON` calls all encode
+  `PlotTreeSourceReference` structs, never a Go map, so the panic branch is unreachable from
+  model output.
+- **Untrusted input** — the parsers and derivation receive raw model output. They bound text
+  through the ported UTF-16 budgets and never index without a length guard, so malformed or
+  hostile completions fail with a sentinel error rather than a panic.
+
+The two divergences that remain reachable are recorded above (surrogate splitting at an exact
+cut point, and `Date.parse` approximated by a fixed layout list).
