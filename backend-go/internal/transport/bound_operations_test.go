@@ -18,7 +18,7 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			name: "generation",
 			bind: func(s *Server) error { return s.BindGeneration(&GenerationProvider{}) },
 			want: []string{
-				"finalization-generation:cancel", "generation:bind-material-decision", "generation:begin",
+				"finalization-generation:cancel", "generation:begin", "generation:bind-material-decision",
 				"generation:cancel", "generation:discard-candidate", "generation:execute", "generation:list",
 				"generation:pause", "generation:read", "generation:restart", "generation:resume",
 				"generation:retry-draft-short-outline", "graph-generation:cancel",
