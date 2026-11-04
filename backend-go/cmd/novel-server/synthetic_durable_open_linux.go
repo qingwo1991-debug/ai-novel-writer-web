@@ -387,6 +387,20 @@ func (s *syntheticDurableOpen) BeginPostHistory(ctx context.Context, caller tran
 	return store.NewPostHistory(db), release, nil
 }
 
+// BeginNarrative is the durable lane's narrative thread and consistency
+// exemption repository. Only the three reads are bound to it (thread list,
+// relevant thread list, exemption list); the six mutating names stay unbound,
+// so this lane can never plan, update, delete or confirm a thread or save or
+// revoke an exemption. The repository borrows the admitted author database and
+// never a path.
+func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transport.Caller, raw any) (*store.Narrative, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewNarrative(db), release, nil
+}
+
 // OpenProject maps a browser project path to the exact process-local catalog
 // key of the created synthetic project, then opens it for durable editing.
 // The path is never passed to the runtime and never opens a filesystem target.
@@ -520,6 +534,10 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		// author database. This binds only the five reads; the four mutating
 		// names in that family stay unbound and keep failing closed.
 		func() error { return server.BindPostHistoryReads(durable) },
+		// Narrative thread and consistency exemption reads run on the same
+		// admitted author database. This binds only the three reads; the six
+		// mutating names in that family stay unbound and keep failing closed.
+		func() error { return server.BindNarrativeReads(durable) },
 	} {
 		if err := bind(); err != nil {
 			cleanup()

@@ -201,6 +201,45 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 			t.Fatalf("durable %s absent shape mismatch: %d %s", absentRead.name, absentRec.Code, absentRec.Body.String())
 		}
 	}
+	// The three narrative thread and consistency exemption reads are served
+	// from the same admitted author database under the same frozen lease. The
+	// synthetic project has no planned thread and no exemption, so both list
+	// reads return a real empty list, never an error.
+	for _, emptyRead := range []struct {
+		name string
+		args []any
+	}{
+		{"db:narrative-thread-list", []any{projectPath, expected}},
+		{"db:narrative-thread-list-relevant", []any{map[string]any{"title": "开场钩子", "chapterNumber": 1, "characters": []any{"甲"}}, projectPath, expected}},
+		{"db:consistency-exemption-list", []any{projectPath, expected}},
+	} {
+		narrativeRec := rpc(emptyRead.name, emptyRead.args)
+		var narrativeWire struct {
+			Result []any `json:"result"`
+		}
+		if err := json.Unmarshal(narrativeRec.Body.Bytes(), &narrativeWire); err != nil || narrativeRec.Code != http.StatusOK || narrativeWire.Result == nil || len(narrativeWire.Result) != 0 {
+			t.Fatalf("durable %s should be an empty list: %d %s", emptyRead.name, narrativeRec.Code, narrativeRec.Body.String())
+		}
+	}
+	// The six mutating names in the narrative thread and consistency exemption
+	// family stay unbound on this lane: the registry exposes them, so the 501
+	// is the durable binding, not a 404.
+	for _, unboundWrite := range []struct {
+		name string
+		args []any
+	}{
+		{"db:narrative-thread-plan-create", []any{map[string]any{"title": "线", "type": "goal", "authorIntent": "意图", "targetStartChapter": 1, "targetEndChapter": 3}, projectPath, expected}},
+		{"db:narrative-thread-plan-update", []any{1, map[string]any{}, projectPath, expected}},
+		{"db:narrative-thread-plan-delete", []any{1, projectPath, expected}},
+		{"db:narrative-thread-event-confirm", []any{map[string]any{"type": "planted", "evidence": "证据", "reason": "理由"}, projectPath, expected}},
+		{"db:consistency-exemption-save", []any{"stable.fact", "理由", projectPath, expected}},
+		{"db:consistency-exemption-revoke", []any{"stable.fact", projectPath, expected}},
+	} {
+		writeRec := rpc(unboundWrite.name, unboundWrite.args)
+		if writeRec.Code != http.StatusNotImplemented || !strings.Contains(writeRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("mutating narrative name %s was bound on the durable lane: %d %s", unboundWrite.name, writeRec.Code, writeRec.Body.String())
+		}
+	}
 	// The four mutating names in the same family stay unbound on this lane: the
 	// registry exposes them, so the 501 is the durable binding, not a 404.
 	unboundRec := rpc("db:post-process-create-run", []any{map[string]any{}, projectPath, expected})
