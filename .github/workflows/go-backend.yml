@@ -452,6 +452,11 @@ jobs:
         run: |
           set -o pipefail
           go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl
+          status=$?
+          if test "$status" -ne 0; then
+            printf '::error title=go test failures::%s\n' "$(grep -E '"(Action)":"fail"|_test\.go:[0-9]+:' /tmp/go-tests.jsonl | tail -4 | tr '"' "'" | tr '\n' ' ' | cut -c1-900)"
+          fi
+          exit "$status"
       - name: Race detector (synthetic temporary databases only)
         id: race-tests
         if: ${{ !cancelled() && steps.unit-tests.outcome == 'success' && steps.remaining-contracts.outcome == 'success' }}
