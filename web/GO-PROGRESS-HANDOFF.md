@@ -310,3 +310,11 @@ both directions, which also makes the on-disk shape obvious at a glance.
 Note the knock-on effect: this same raw-text requirement will apply to `graph-generation:execute`
 (the task hash) and to `finalization-generation:*` (slot hash), so solving it once unblocks the
 whole family rather than one operation.
+
+**Implemented:** `graphgen.CanonicalJSON` / `graphgen.CanonicalHash` now provide that single
+canonical form — object keys sorted at every level, array order preserved, leaf encoding unchanged
+(so the JavaScript number, string and escape rules still hold). `EncodeJSON` keeps refusing Go
+maps; the graph lane canonicalises instead of guessing an order. Five pinning tests cover
+per-level sorting, stability across map iteration, array-order preservation, construction-shape
+independence, and unencodable leaves. Nothing consumes it yet: `graph-generation:read` is the first
+caller, and it must verify with exactly this function.
