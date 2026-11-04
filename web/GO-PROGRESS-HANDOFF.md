@@ -499,3 +499,15 @@ can re-read the frozen fact, and `conflict` otherwise:
 Choosing "wrong but visible" over "permissive but invisible" is the point: confirmation writes over
 work the author already has, so an unverifiable state must read as changed. CI green at `db815fd6`.
 
+### 2026-11-04 — post-process and LLM ledger reads bound (durable 64 → 69)
+
+`BindPostHistoryReads` (`internal/transport/posthistory_read.go`) binds the five **read** members of
+that family - `db:post-process-get-latest-run`, `-get-steps`, `-is-all-passed`, `db:get-llm-stats`,
+`db:get-llm-history` - through `BeginPostHistory` on the admitted author database. The four mutating
+names (`create-run`, `mark-step-ok`, `mark-step-failed`, `log-llm-call`) stay unbound and keep
+failing closed; the HTTP test asserts both directions. CI green at `6c008577`, first attempt.
+
+Note for the next batch of this family: `store.PostHistory` exists only as a `*sql.DB` repository
+(`internal/store/posthistory.go:26-33`) with no transaction-read variant, so it cannot be served
+through `syntheticReadSurface.readTx`. It is served the way `NewRecovery`/`NewSummary` are instead.
+
