@@ -745,3 +745,31 @@ step and add a `go build ./...` (or `go vet ./...` output check) as its own earl
 non-compiling test package fails loudly instead of being masked three steps downstream. Every round
 spent on this was spent fighting the masking, not the code.
 
+### 2026-11-04 — project-core assertions compile; two CI channels added
+
+Root cause of the multi-round red, finally: the batch's own helper was wrong. `coreWrite` was called as
+`coreWrite("db:project-core-update", []any{map[string]any{...}, projectPath, expected})` - the frozen
+context was written **inside** the argument list, so the call had two arguments while the declared
+closure took four. The package never compiled, and `go test -json` reports that as `[build failed]`
+text, never as an `Action: fail` record, which is why every log-based diagnosis looked clean.
+
+Fixed: `coreWrite` takes `(operation string, args []any)` and passes `args` straight to `rpc`, and the
+duplicate `coreRow` I had added was removed. **Job 1 (compile gate) is green at `b9608c2e`.**
+
+Two CI channels were added because `gh run view --log` now returns `zip: not a valid zip file` and
+`gh api .../logs` returns an unreadable zip for this repo:
+
+1. the compile gate now emits a `::error title=compile failure::` annotation with the first four
+   `file:line:col` messages;
+2. the unit-test step emits `::error title=go test failures::` with the last four fail records.
+
+Read them with:
+
+    ids=$(gh api repos/.../commits/$(git rev-parse HEAD)/check-runs --jq '.check_runs[]|select(.conclusion=="failure")|.id')
+    for i in $ids; do gh api repos/.../check-runs/$i/annotations --jq '.[].message'; done
+
+**Open:** job 2 fails at or before its test step with `Failed to restore: Cache service responded with
+400` - a GitHub cache infra error, reproducible on every rerun right now. Job 1 proves the code
+compiles; the runtime assertion for the two project-core writes is still **unproven**. Retry job 2 when
+the cache service recovers, then read the annotation.
+
