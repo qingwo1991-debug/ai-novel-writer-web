@@ -127,19 +127,19 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 		handlers[name] = func(ctx context.Context, caller Caller, args []any) (any, error) {
 			fail := func(code string) (any, error) { return finalizationFailure(name, code), nil }
 			if len(args) != arity {
-				return fail(finalizationMissingCode(name)), nil
+				return fail(finalizationMissingCode(name))
 			}
 			expected, err := draftExpectedContext(args, arity-1)
 			if err != nil {
-				return fail("PROJECT_SESSION_REQUIRED"), nil
+				return fail("PROJECT_SESSION_REQUIRED")
 			}
 			if pathIndex >= 0 {
 				path, ok := args[pathIndex].(string)
 				if !ok || path == "" || !utf8.ValidString(path) {
-					return fail("PROJECT_CONTEXT_REQUIRED"), nil
+					return fail("PROJECT_CONTEXT_REQUIRED")
 				}
 				if path != expected["projectPath"] {
-					return fail("PROJECT_CONTEXT_CHANGED"), nil
+					return fail("PROJECT_CONTEXT_CHANGED")
 				}
 			}
 			switch name {
@@ -150,17 +150,17 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				// malformed snapshot never opens a repository.
 				candidate, ok := args[0].(map[string]any)
 				if !ok || candidate == nil {
-					return fail("FINALIZATION_SNAPSHOT_INVALID"), nil
+					return fail("FINALIZATION_SNAPSHOT_INVALID")
 				}
 				snapshot, ok := finalizationSnapshotOf(candidate)
 				if !ok {
-					return fail("FINALIZATION_SNAPSHOT_INVALID"), nil
+					return fail("FINALIZATION_SNAPSHOT_INVALID")
 				}
 				if snapshot.projectPath != expected["projectPath"] || !finalizationContextMatches(snapshot.session, expected) {
-					return fail("FINALIZATION_SNAPSHOT_SESSION_MISMATCH"), nil
+					return fail("FINALIZATION_SNAPSHOT_SESSION_MISMATCH")
 				}
 				if ctx == nil {
-					return fail("FINALIZATION_OPERATION_FAILED"), nil
+					return fail("FINALIZATION_OPERATION_FAILED")
 				}
 				// The id, the hash and the portable target name are server facts
 				// the original mints from the frozen request
@@ -169,7 +169,7 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				// scan for a collision and the preferred name is frozen as-is.
 				finalizationID, idErr := finalizationRandomID()
 				if idErr != nil {
-					return fail("FINALIZATION_OPERATION_FAILED"), nil
+					return fail("FINALIZATION_OPERATION_FAILED")
 				}
 				input := store.FinalizationCommitInput{
 					FinalizationID:  finalizationID,
@@ -187,10 +187,10 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 					defer release()
 				}
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if repository == nil || release == nil {
-					return fail("FINALIZATION_PROVIDER_UNAVAILABLE"), nil
+					return fail("FINALIZATION_PROVIDER_UNAVAILABLE")
 				}
 				// The service itself decides the conflict, so the conflict it
 				// returns is bare (:110-116) while the same code thrown out of
@@ -198,7 +198,7 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				// both envelopes exactly as the original produces them.
 				existing, err := repository.GetByDraftID(ctx, input.DraftID)
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if existing != nil && !finalizationFrozenSame(existing, input) {
 					return finalizationBareFailure(name, "FINALIZATION_COMMIT_CONFLICT"), nil
@@ -207,14 +207,14 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				if record == nil {
 					proof, proofOK := finalizationProof(expected, "commit")
 					if !proofOK {
-						return fail("FINALIZATION_OWNER_REQUIRED"), nil
+						return fail("FINALIZATION_OWNER_REQUIRED")
 					}
 					proof.DraftID = input.DraftID
 					proof.FinalizationID = input.FinalizationID
 					proof.ContentHash = input.ContentHash
 					committed, commitErr := repository.CommitWithOwnerProof(ctx, input, proof)
 					if commitErr != nil {
-						return fail(finalizationCode(commitErr)), nil
+						return fail(finalizationCode(commitErr))
 					}
 					record = committed
 				}
@@ -226,24 +226,24 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				// :163-168).
 				finalizationID, ok := args[0].(string)
 				if !ok || finalizationID == "" || !utf8.ValidString(finalizationID) {
-					return fail("FINALIZATION_COMMIT_ID_REQUIRED"), nil
+					return fail("FINALIZATION_COMMIT_ID_REQUIRED")
 				}
 				if ctx == nil {
-					return fail("FINALIZATION_OPERATION_FAILED"), nil
+					return fail("FINALIZATION_OPERATION_FAILED")
 				}
 				repository, release, err := provider.BeginFinalization(ctx, caller, expected)
 				if release != nil {
 					defer release()
 				}
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if repository == nil || release == nil {
-					return fail("FINALIZATION_PROVIDER_UNAVAILABLE"), nil
+					return fail("FINALIZATION_PROVIDER_UNAVAILABLE")
 				}
 				record, err := repository.Get(ctx, finalizationID)
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if record == nil {
 					return finalizationBareFailure(name, "FINALIZATION_COMMIT_NOT_FOUND"), nil
@@ -260,42 +260,42 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				// itself. No document identity is minted or inferred here.
 				draftID, ok := draftSafeInteger(args[0], 1)
 				if !ok {
-					return fail("FINALIZATION_INPUT_INVALID"), nil
+					return fail("FINALIZATION_INPUT_INVALID")
 				}
 				documentID, ok := args[1].(string)
 				if !ok {
-					return fail("FINALIZATION_INPUT_INVALID"), nil
+					return fail("FINALIZATION_INPUT_INVALID")
 				}
 				if ctx == nil {
-					return fail("FINALIZATION_OPERATION_FAILED"), nil
+					return fail("FINALIZATION_OPERATION_FAILED")
 				}
 				// The original repository trims the identity before storing it
 				// (electron/repositories/finalization-repository.ts:420-424), so
 				// the trimmed value is what the proof freezes.
 				documentID = finalizationTrim(documentID)
 				if documentID == "" {
-					return fail("FINALIZATION_COMMIT_KNOWLEDGE_DOCUMENT_REQUIRED"), nil
+					return fail("FINALIZATION_COMMIT_KNOWLEDGE_DOCUMENT_REQUIRED")
 				}
 				repository, release, err := provider.BeginFinalization(ctx, caller, expected)
 				if release != nil {
 					defer release()
 				}
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if repository == nil || release == nil {
-					return fail("FINALIZATION_PROVIDER_UNAVAILABLE"), nil
+					return fail("FINALIZATION_PROVIDER_UNAVAILABLE")
 				}
 				existing, err := repository.GetByDraftID(ctx, draftID)
 				if err != nil {
-					return fail(finalizationCode(err)), nil
+					return fail(finalizationCode(err))
 				}
 				if existing == nil {
-					return fail("FINALIZATION_COMMIT_NOT_FOUND"), nil
+					return fail("FINALIZATION_COMMIT_NOT_FOUND")
 				}
 				proof, proofOK := finalizationProof(expected, "knowledge-link")
 				if !proofOK {
-					return fail("FINALIZATION_OWNER_REQUIRED"), nil
+					return fail("FINALIZATION_OWNER_REQUIRED")
 				}
 				proof.DraftID = draftID
 				proof.FinalizationID = existing.FinalizationID
@@ -303,7 +303,7 @@ func (s *Server) BindFinalization(provider FinalizationProvider) error {
 				proof.KnowledgeDocumentID = documentID
 				linked, linkErr := repository.LinkKnowledgeDocumentWithOwnerProof(ctx, draftID, documentID, proof)
 				if linkErr != nil {
-					return fail(finalizationCode(linkErr)), nil
+					return fail(finalizationCode(linkErr))
 				}
 				return map[string]any{"success": true, "finalization": finalizationRecordWire(linked)}, nil
 			}
