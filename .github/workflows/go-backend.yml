@@ -458,6 +458,8 @@ jobs:
             grep '"Action":"fail"' /tmp/go-tests.jsonl | grep -o '"Package":"[^"]*"' | sed 's/.*\///' | sort -u | while read -r pkg; do
               printf '::error title=failed package::%s\n' "$pkg"
             done
+            firstpkg=$(grep '"Action":"fail"' /tmp/go-tests.jsonl | head -1 | grep -o '"Package":"[^"]*"' | cut -d'"' -f4)
+            printf '::error title=assertion text::%s\n' "$(grep '"Action":"output"' /tmp/go-tests.jsonl | grep "\"Package\":\"$firstpkg\"" | grep -o '_test\.go:[0-9]*:[^"]*' | head -3 | tr '\n' ' ' | cut -c1-700)"
           fi
           exit "$status"
       - name: Race detector (synthetic temporary databases only)
