@@ -406,9 +406,12 @@ func (s *syntheticDurableOpen) BeginReviewRevisions(ctx context.Context, caller 
 }
 
 // BeginPostHistory is the durable lane's post-process receipt and LLM call
-// ledger repository. Only the five reads are bound to it; the four mutating
-// names stay unbound, so this lane can never create a run or write a step.
-// The repository borrows the admitted author database and never a path.
+// ledger repository. All nine names in that family are bound to it: the five
+// reads by BindPostHistoryReads and the four mutations (create-run,
+// mark-step-ok, mark-step-failed, log-llm-call) by BindPostHistoryWrites. The
+// repository borrows the admitted author database and never a path; its writes
+// commit on that handle and the permit is refreshed on release, exactly like the
+// draft CAS.
 func (s *syntheticDurableOpen) BeginPostHistory(ctx context.Context, caller transport.Caller, raw any) (*store.PostHistory, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
 	if err != nil {
@@ -608,9 +611,14 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		func() error { return server.BindEditorReviewFullReads(durable) },
 		func() error { return server.BindEditorReviewCycleAbsentRead(durable) },
 		// Post-process receipt and LLM ledger reads run on the same admitted
-		// author database. This binds only the five reads; the four mutating
-		// names in that family stay unbound and keep failing closed.
+		// author database. The four mutating names in that family are bound
+		// separately just below, so this family is served completely.
 		func() error { return server.BindPostHistoryReads(durable) },
+		// The four mutating names write that same admitted author database
+		// through the same borrow-and-refresh permit path the draft CAS uses:
+		// one admitted handle per request, refreshed before the fence is
+		// observed again, never a database path.
+		func() error { return server.BindPostHistoryWrites(durable) },
 		// Narrative thread and consistency exemption reads run on the same
 		// admitted author database. This binds only the three reads; the six
 		// mutating names in that family stay unbound and keep failing closed.

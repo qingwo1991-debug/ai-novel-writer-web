@@ -449,12 +449,9 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 			t.Fatalf("mutating narrative name %s was bound on the durable lane: %d %s", unboundWrite.name, writeRec.Code, writeRec.Body.String())
 		}
 	}
-	// The four mutating names in the same family stay unbound on this lane: the
-	// registry exposes them, so the 501 is the durable binding, not a 404.
-	unboundRec := rpc("db:post-process-create-run", []any{map[string]any{}, projectPath, expected})
-	if unboundRec.Code != http.StatusNotImplemented || !strings.Contains(unboundRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatal("mutating ledger name was bound on the durable lane", unboundRec.Code, unboundRec.Body.String())
-	}
+	// The four mutating names in the same family are bound by
+	// BindPostHistoryWrites against the same admitted author database, so they
+	// are exercised further down once the draft CAS has rotated the lease.
 	// A stale frozen context is rejected before any write reaches the database.
 	staleExpected := map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}
 	stale := rpc("project:save", []any{id, map[string]any{"id": id, "sessionLease": "forged-lease", "path": projectPath, "name": "骗写"}, projectPath, staleExpected})
@@ -606,6 +603,153 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	}
 	if got := durableProjectName(t, database); got != savedNameAfterCAS {
 		t.Fatalf("save after draft CAS did not persist: %q", got)
+	}
+	// The four mutating post-process and LLM ledger names are bound to the same
+	// admitted author database through the same borrow-and-refresh write path as
+	// the draft CAS: one run is created, one critical step is marked ok, one
+	// optional step is marked failed and one LLM call is appended. Every write
+	// must report success, and every committed row is read back through the
+	// already bound post-process and ledger reads.
+	mutate := func(operation string, args []any) map[string]any {
+		t.Helper()
+		response := rpc(operation, args)
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable %s decode failed: %d %s %v", operation, response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	runInput := map[string]any{
+		"triggerSourceType": "arch_extract",
+		"triggerSourceId":   "synthetic-durable-source",
+		"sourceLabel":       "合成跑批",
+		"steps": []any{
+			map[string]any{"key": "knowledge", "label": "知识投影", "critical": true},
+			map[string]any{"key": "optional", "label": "可选投影", "critical": false},
+		},
+	}
+	created := mutate("db:post-process-create-run", []any{runInput, projectPath, freshSession})
+	if created["success"] != true || created["error"] != nil {
+		t.Fatalf("durable create-run reported failure: %v", created)
+	}
+	runID, _ := created["id"].(string)
+	if len(runID) != 36 || runID[14] != '4' {
+		t.Fatalf("durable create-run did not mint a secure v4 run id: %q", runID)
+	}
+	for _, write := range []struct {
+		name string
+		args []any
+	}{
+		{"db:post-process-mark-step-ok", []any{runID, "knowledge", projectPath, freshSession}},
+		{"db:post-process-mark-step-failed", []any{runID, "optional", "可选步骤失败", projectPath, freshSession}},
+		{"db:log-llm-call", []any{map[string]any{
+			"modelId": "synthetic-durable-model", "modelName": "Synthetic durable",
+			"purpose": "write", "promptTokens": 12, "completionTokens": 34,
+			"totalTokens": 46, "durationMs": 7, "success": true,
+		}, projectPath, freshSession}},
+	} {
+		result := mutate(write.name, write.args)
+		if result["success"] != true || result["error"] != nil {
+			t.Fatalf("durable %s reported failure: %v", write.name, result)
+		}
+	}
+	latest := rpc("db:post-process-get-latest-run", []any{"arch_extract", "synthetic-durable-source", projectPath, freshSession})
+	var latestWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(latest.Body.Bytes(), &latestWire); err != nil || latest.Code != http.StatusOK {
+		t.Fatal("durable post-process-get-latest-run decode failed", latest.Code, latest.Body.String(), err)
+	}
+	run := latestWire.Result
+	if run == nil || run["id"] != runID || run["triggerSourceId"] != "synthetic-durable-source" ||
+		run["sourceLabel"] != "合成跑批" || run["allCriticalPassed"] != true {
+		t.Fatal("durable post-process-get-latest-run did not return the committed run", latest.Body.String())
+	}
+	persistedSteps := rpc("db:post-process-get-steps", []any{runID, projectPath, freshSession})
+	var stepsWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(persistedSteps.Body.Bytes(), &stepsWire); err != nil || persistedSteps.Code != http.StatusOK || len(stepsWire.Result) != 2 {
+		t.Fatal("durable post-process-get-steps did not return the two steps", persistedSteps.Code, persistedSteps.Body.String(), err)
+	}
+	knowledge, optional := stepsWire.Result[0], stepsWire.Result[1]
+	if knowledge["stepKey"] != "knowledge" || knowledge["ok"] != true || knowledge["errorMsg"] != "" ||
+		knowledge["attemptCount"] != float64(1) || knowledge["completedAt"] == "" {
+		t.Fatal("durable knowledge step was not marked ok", persistedSteps.Body.String())
+	}
+	if optional["stepKey"] != "optional" || optional["ok"] != false || optional["errorMsg"] != "可选步骤失败" ||
+		optional["attemptCount"] != float64(1) || optional["completedAt"] != "" {
+		t.Fatal("durable optional step was not marked failed", persistedSteps.Body.String())
+	}
+	ledger := rpc("db:get-llm-history", []any{nil, projectPath, freshSession})
+	var ledgerWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(ledger.Body.Bytes(), &ledgerWire); err != nil || ledger.Code != http.StatusOK || len(ledgerWire.Result) != 1 {
+		t.Fatal("durable get-llm-history did not return the logged call", ledger.Code, ledger.Body.String(), err)
+	}
+	call := ledgerWire.Result[0]
+	if call["modelId"] != "synthetic-durable-model" || call["purpose"] != "write" ||
+		call["totalTokens"] != float64(46) || call["finishReason"] != "stop" {
+		t.Fatal("durable logged llm call wire mismatch", ledger.Body.String())
+	}
+	for _, body := range []string{latest.Body.String(), persistedSteps.Body.String(), ledger.Body.String()} {
+		if strings.Contains(body, projectPath) || strings.Contains(body, durableDir) {
+			t.Fatal("durable post-process write readback leaked a filesystem path", body)
+		}
+	}
+	// A refused create is reported as a refusal and leaves no partial row: the
+	// store rejects the malformed step list before its transaction opens, so no
+	// run header row exists and the readback is the absent shape.
+	refusedRun := mutate("db:post-process-create-run", []any{map[string]any{
+		"triggerSourceType": "arch_extract",
+		"triggerSourceId":   "synthetic-durable-refused",
+		"sourceLabel":       "拒绝",
+		"steps":             []any{map[string]any{"key": "knowledge"}},
+	}, projectPath, freshSession})
+	if refusedRun["success"] != false || refusedRun["error"] != "Error: POST_HISTORY_INPUT_INVALID" {
+		t.Fatalf("refused create-run was not reported as a refusal: %v", refusedRun)
+	}
+	absentRun := rpc("db:post-process-get-latest-run", []any{"arch_extract", "synthetic-durable-refused", projectPath, freshSession})
+	var absentRunWire struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(absentRun.Body.Bytes(), &absentRunWire); err != nil || absentRun.Code != http.StatusOK || string(absentRunWire.Result) != "null" {
+		t.Fatal("refused create-run left a partial run row", absentRun.Code, absentRun.Body.String(), err)
+	}
+	// A refused step update rolls its transaction back and keeps the committed
+	// step rows exactly as they were.
+	refusedStep := mutate("db:post-process-mark-step-ok", []any{runID, "absent", projectPath, freshSession})
+	if refusedStep["success"] != false || refusedStep["error"] != "Error: POST_PROCESS_STEP_NOT_FOUND" {
+		t.Fatalf("refused mark-step-ok was not reported as a refusal: %v", refusedStep)
+	}
+	// The ledger keeps its unusual refusal shape: a bare {"success":false} with
+	// no error code at all.
+	refusedCall := rpc("db:log-llm-call", []any{map[string]any{"modelId": "synthetic-durable-model"}, projectPath, freshSession})
+	if refusedCall.Code != http.StatusOK || !bytes.Contains(refusedCall.Body.Bytes(), []byte(`"success":false`)) ||
+		bytes.Contains(refusedCall.Body.Bytes(), []byte(`"error"`)) {
+		t.Fatal("refused log-llm-call gained an error code", refusedCall.Code, refusedCall.Body.String())
+	}
+	// A forged frozen context is refused before the borrow, so it cannot write.
+	forged := mutate("db:post-process-create-run", []any{map[string]any{
+		"triggerSourceType": "arch_extract",
+		"triggerSourceId":   "synthetic-durable-forged",
+		"sourceLabel":       "伪造",
+		"steps":             []any{},
+	}, projectPath, map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath}})
+	forgedError, _ := forged["error"].(string)
+	if forged["success"] != false || !strings.HasPrefix(forgedError, "Error: ") || strings.Contains(forgedError, projectPath) {
+		t.Fatalf("forged frozen context was not refused symbolically: %v", forged)
+	}
+	// No refused write left a partial row anywhere: one run, two steps, one call.
+	var runRows, stepRows, callRows int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM post_process_runs", &runRows)
+	durableQuery(t, database, "SELECT COUNT(*) FROM post_process_steps", &stepRows)
+	durableQuery(t, database, "SELECT COUNT(*) FROM llm_calls", &callRows)
+	if runRows != 1 || stepRows != 2 || callRows != 1 {
+		t.Fatalf("refused post-process writes left partial rows: %d runs, %d steps, %d calls", runRows, stepRows, callRows)
 	}
 	// Recent navigation exposes only the one synthetic project, never a key.
 	recentRec := rpc("project:recent-list", []any{})
