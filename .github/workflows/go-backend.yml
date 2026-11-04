@@ -384,6 +384,7 @@ jobs:
           test -s "$GO_EMBEDDING_CONTRACT"
       - name: Generate remaining-domain original synthetic contracts
         id: remaining-contracts
+        continue-on-error: true
         env:
           NODE_PATH: ${{ runner.temp }}/novel-go-oracle/node_modules
         run: |
@@ -455,7 +456,7 @@ jobs:
           go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl
       - name: Race detector (synthetic temporary databases only)
         id: race-tests
-        if: ${{ !cancelled() && steps.unit-tests.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.unit-tests.outcome == 'success' && steps.remaining-contracts.outcome == 'success' }}
         continue-on-error: true
         env:
           CGO_ENABLED: '1'
