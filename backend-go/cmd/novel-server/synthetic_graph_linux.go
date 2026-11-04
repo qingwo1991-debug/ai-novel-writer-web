@@ -117,11 +117,11 @@ func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLed
 		return "conflict", nil
 	}
 	if syntheticString(contextValue["kind"]) != "event" {
-		return "conflict", nil
+		return syntheticGraphFreshness("", "", ""), nil
 	}
 	source := syntheticMap(contextValue["source"])
 	if source == nil || syntheticString(source["contentHash"]) == "" {
-		return "conflict", nil
+		return syntheticGraphFreshness("event", "", ""), nil
 	}
 	var current string
 	err = db.QueryRowContext(ctx,
@@ -136,8 +136,18 @@ func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLed
 		}
 		return "", err
 	}
-	if current == syntheticString(source["contentHash"]) {
-		return "current", nil
+	return syntheticGraphFreshness("event", current, syntheticString(source["contentHash"])), nil
+}
+
+// syntheticGraphFreshness is the decision rule on its own, so the fail-closed
+// direction can be pinned by a test that needs no database. `kind` is empty for
+// the kinds whose current state is not re-derived yet.
+func syntheticGraphFreshness(kind, currentHash, frozenHash string) string {
+	if kind != "event" || currentHash == "" || frozenHash == "" {
+		return "conflict"
 	}
-	return "conflict", nil
+	if currentHash == frozenHash {
+		return "current"
+	}
+	return "conflict"
 }
