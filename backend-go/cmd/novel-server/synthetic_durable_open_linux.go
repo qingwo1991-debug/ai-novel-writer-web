@@ -439,12 +439,15 @@ func (s *syntheticDurableOpen) BeginNarrative(ctx context.Context, caller transp
 }
 
 // BeginBlueprints is the durable lane's blueprint and character-sync
-// repository. Only the three reads are bound to it (chapter blueprint get,
-// character-sync get, pending character-sync list); db:blueprint-get-all is
-// already served by the editor stage read binder, and the five mutating names
-// stay unbound, so this lane can never upsert, commit a range, delete a chapter
-// blueprint or rewrite notes. The repository borrows the admitted author
-// database and never a path.
+// repository. The three reads (chapter blueprint get, character-sync get,
+// pending character-sync list) are bound by BindBlueprintReads and the four
+// mutating names a single store method already expresses (upsert, upsert-many,
+// delete, commit-range) by BindBlueprintWrites, so this family is served except
+// db:blueprint-get-all, which is already served by the editor stage read
+// binder, and db:blueprint-update-notes, which stays unbound because the
+// original refuses it unconditionally. Both halves borrow the admitted author
+// database and never a path; a write commits on that handle and the permit is
+// refreshed on release, exactly like the draft CAS and the other write binders.
 func (s *syntheticDurableOpen) BeginBlueprints(ctx context.Context, caller transport.Caller, raw any) (*store.Blueprints, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
 	if err != nil {
@@ -635,9 +638,16 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		func() error { return server.BindNarrativeWrites(durable) },
 		// Blueprint and character-sync reads run on the same admitted author
 		// database. This binds only the three reads; db:blueprint-get-all is
-		// already bound by BindEditorStageReads above, and the five mutating
-		// names in that family stay unbound and keep failing closed.
+		// already bound by BindEditorStageReads above, so it must not be bound
+		// here as well.
 		func() error { return server.BindBlueprintReads(durable) },
+		// The four mutating blueprint names write that same admitted author
+		// database through the same borrow-and-refresh permit path the draft CAS
+		// and the other write binders use: one admitted handle per request,
+		// refreshed before the fence is observed again, never a database path.
+		// db:blueprint-update-notes is not among them: the original refuses it
+		// unconditionally, so it stays unbound and keeps failing closed.
+		func() error { return server.BindBlueprintWrites(durable) },
 		// The plot tree read runs on the same admitted author database. This
 		// binds only db:plot-tree-read; db:plot-tree-save and
 		// db:plot-tree-clear are mutations and stay unbound, so both keep

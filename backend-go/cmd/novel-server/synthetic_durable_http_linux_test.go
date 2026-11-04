@@ -352,26 +352,169 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if keptPlot := rpc("db:plot-tree-read", []any{projectPath, expected}); keptPlot.Code != http.StatusOK || !strings.Contains(keptPlot.Body.String(), `"snapshot":null`) {
 		t.Fatal("unbound plot tree mutation changed the author database", keptPlot.Code, keptPlot.Body.String())
 	}
-	// The five mutating names in the blueprint family stay unbound on this lane:
-	// the registry exposes them, so the 501 is the durable binding, not a 404.
-	for _, unboundWrite := range []struct {
-		name string
-		args []any
-	}{
-		{"db:blueprint-upsert", []any{map[string]any{"chapterNumber": 2, "title": "绑定写入"}, projectPath, expected}},
-		{"db:blueprint-upsert-many", []any{[]any{map[string]any{"chapterNumber": 3, "title": "绑定批量"}}, projectPath, expected}},
-		{"db:blueprint-delete", []any{1, projectPath, expected}},
-		{"db:blueprint-commit-range", []any{map[string]any{"mode": "full", "operationId": "durable-unbound-range", "blueprints": []any{}}, projectPath, expected}},
-		{"db:blueprint-update-notes", []any{1, map[string]any{"notes": "绑定"}, projectPath, expected}},
-	} {
-		writeRec := rpc(unboundWrite.name, unboundWrite.args)
-		if writeRec.Code != http.StatusNotImplemented || !strings.Contains(writeRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("mutating blueprint name %s was bound on the durable lane: %d %s", unboundWrite.name, writeRec.Code, writeRec.Body.String())
+	// The four mutating blueprint names BindBlueprintWrites binds (upsert,
+	// upsert-many, delete, commit-range) write the same admitted author database
+	// through the same borrow-and-refresh write path as the draft CAS and the
+	// post-process and narrative writes. Every write is performed over the real
+	// HTTP handler and read back through the already bound db:blueprint-get, so
+	// what is asserted is the persisted state, not only the write receipt.
+	// db:blueprint-update-notes is deliberately NOT bound: the original refuses
+	// it unconditionally (electron/controllers/db-controller.ts:636), so the 501
+	// below is the durable binding mirroring that refusal.
+	blueprintWrite := func(operation string, args []any) map[string]any {
+		t.Helper()
+		response := rpc(operation, args)
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("durable %s decode failed: %d %s %v", operation, response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), projectPath) || strings.Contains(response.Body.String(), durableDir) {
+			t.Fatalf("durable %s leaked a filesystem path: %s", operation, response.Body.String())
+		}
+		return wire.Result
+	}
+	// A failed write is a business result at HTTP 200 carrying the symbolic
+	// code, never a success and never a bare transport error.
+	requireBlueprintRefusal := func(operation string, args []any, want string) {
+		t.Helper()
+		refused := blueprintWrite(operation, args)
+		if refused["success"] != false || refused["error"] != want {
+			t.Fatalf("durable %s was not reported as a refusal: %v", operation, refused)
 		}
 	}
-	// The refused delete and commit-range left the seeded chapter untouched.
-	if kept := rpc("db:blueprint-get", []any{1, projectPath, expected}); kept.Code != http.StatusOK || !strings.Contains(kept.Body.String(), syntheticDurableBlueprintTitle) {
-		t.Fatal("unbound blueprint mutation changed the author database", kept.Code, kept.Body.String())
+	// blueprintChapter reads one chapter back through the already bound read; a
+	// nil row is the original's absent shape.
+	blueprintChapter := func(chapter float64) map[string]any {
+		t.Helper()
+		response := rpc("db:blueprint-get", []any{chapter, projectPath, expected})
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("durable blueprint-get %v decode failed: %d %s %v", chapter, response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), projectPath) || strings.Contains(response.Body.String(), durableDir) {
+			t.Fatalf("durable blueprint-get %v leaked a filesystem path: %s", chapter, response.Body.String())
+		}
+		return wire.Result
+	}
+	const upsertedTitle = "单章写入标题"
+	upserted := blueprintWrite("db:blueprint-upsert", []any{map[string]any{
+		"chapterNumber": 2, "title": upsertedTitle, "role": "main", "purpose": "单章目的",
+		"keyEvents": "单章事件", "characters": []any{"甲"}, "suspenseHook": "单章悬念",
+		"userGuidance": "", "notes": "", "notesUpdatedAt": "",
+	}, projectPath, expected})
+	if upserted["success"] != true || upserted["error"] != nil {
+		t.Fatalf("durable blueprint-upsert reported failure: %v", upserted)
+	}
+	if row := blueprintChapter(2); row == nil || row["title"] != upsertedTitle ||
+		row["chapterNumber"] != float64(2) || row["role"] != "main" {
+		t.Fatalf("durable blueprint-upsert was not persisted: %v", row)
+	}
+	// The batch write commits both chapters, and both are readable individually.
+	manyWritten := blueprintWrite("db:blueprint-upsert-many", []any{[]any{
+		map[string]any{"chapterNumber": 3, "title": "批量第三章", "role": "main", "characters": []any{"甲"}},
+		map[string]any{"chapterNumber": 4, "title": "批量第四章", "role": "supporting", "characters": []any{"乙"}},
+	}, projectPath, expected})
+	if manyWritten["success"] != true || manyWritten["error"] != nil {
+		t.Fatalf("durable blueprint-upsert-many reported failure: %v", manyWritten)
+	}
+	if row := blueprintChapter(3); row == nil || row["title"] != "批量第三章" {
+		t.Fatalf("durable blueprint-upsert-many was not persisted: %v", row)
+	}
+	if row := blueprintChapter(4); row == nil || row["title"] != "批量第四章" || row["role"] != "supporting" {
+		t.Fatalf("durable blueprint-upsert-many was not persisted: %v", row)
+	}
+	// The delete removes exactly the named chapter: it is gone from the read and
+	// the chapters it did not name are untouched.
+	deleted := blueprintWrite("db:blueprint-delete", []any{3, projectPath, expected})
+	if deleted["success"] != true || deleted["error"] != nil {
+		t.Fatalf("durable blueprint-delete reported failure: %v", deleted)
+	}
+	if row := blueprintChapter(3); row != nil {
+		t.Fatalf("deleted chapter blueprint is still readable: %v", row)
+	}
+	if row := blueprintChapter(1); row == nil || row["title"] != syntheticDurableBlueprintTitle || row["notes"] != "作者摘要" {
+		t.Fatalf("durable blueprint-delete changed an unnamed chapter: %v", row)
+	}
+	// db:blueprint-commit-range is one store call that owns the whole range
+	// commit, including the character-sync operation row and the read-back proof
+	// of every committed column, so the durable lane binds it as-is. The input
+	// carries full blueprint objects because the store re-reads what it
+	// committed and refuses on any mismatch.
+	const rangeTitle = "范围提交第五章"
+	committedRange := blueprintWrite("db:blueprint-commit-range", []any{map[string]any{
+		"mode": "replace-range", "operationId": "durable-range-1",
+		"startChapter": 5, "endChapter": 5,
+		"blueprints": []any{map[string]any{
+			"chapterNumber": 5, "title": rangeTitle, "role": "main", "purpose": "范围目的",
+			"keyEvents": "范围事件", "characters": []any{"乙"}, "suspenseHook": "范围悬念",
+			"userGuidance": "", "notes": "", "notesUpdatedAt": "",
+		}},
+	}, projectPath, expected})
+	if committedRange["success"] != true || committedRange["error"] != nil {
+		t.Fatalf("durable blueprint-commit-range reported failure: %v", committedRange)
+	}
+	receipt, _ := committedRange["receipt"].(map[string]any)
+	if receipt == nil || receipt["operationId"] != "durable-range-1" || receipt["mode"] != "replace-range" || receipt["idempotent"] != false {
+		t.Fatalf("durable blueprint-commit-range receipt malformed: %v", committedRange)
+	}
+	if chapters, _ := receipt["chapterNumbers"].([]any); len(chapters) != 1 || chapters[0] != float64(5) {
+		t.Fatalf("durable blueprint-commit-range chapter numbers malformed: %v", committedRange)
+	}
+	if syncOperation, _ := receipt["characterSyncOperation"].(map[string]any); syncOperation == nil ||
+		syncOperation["operationId"] != "blueprint-sync-durable-range-1" || syncOperation["status"] != "pending" {
+		t.Fatalf("durable blueprint-commit-range did not record the character sync operation: %v", committedRange)
+	}
+	if row := blueprintChapter(5); row == nil || row["title"] != rangeTitle {
+		t.Fatalf("durable blueprint-commit-range was not persisted: %v", row)
+	}
+	// A rejected write must not report success and must leave no partial row.
+	// The batch is atomic: the store rejects the null chapter title on its second
+	// insert and rolls the whole transaction back, so the first item is not
+	// committed either.
+	requireBlueprintRefusal("db:blueprint-upsert-many", []any{[]any{
+		map[string]any{"chapterNumber": 6, "title": "回滚第六章"},
+		map[string]any{"chapterNumber": 7, "title": nil},
+	}, projectPath, expected}, "Error: BLUEPRINT_OPERATION_FAILED")
+	for _, chapter := range []float64{6, 7} {
+		if row := blueprintChapter(chapter); row != nil {
+			t.Fatalf("refused blueprint-upsert-many left a partial row for chapter %v: %v", chapter, row)
+		}
+	}
+	// A chapter key the store cannot bind is refused symbolically and deletes
+	// nothing, and a range whose mode the store rejects is refused before any
+	// write, leaving the committed chapter exactly as it was.
+	requireBlueprintRefusal("db:blueprint-delete", []any{true, projectPath, expected}, "Error: BLUEPRINT_OPERATION_FAILED")
+	requireBlueprintRefusal("db:blueprint-commit-range", []any{map[string]any{
+		"mode": "append-by-chapter", "operationId": "durable-range-refused",
+		"startChapter": 5, "endChapter": 5, "blueprints": []any{map[string]any{"chapterNumber": 5}},
+	}, projectPath, expected}, "Error: BLUEPRINT_COMMIT_MODE_INVALID")
+	if row := blueprintChapter(1); row == nil || row["title"] != syntheticDurableBlueprintTitle {
+		t.Fatalf("refused blueprint writes changed the seeded chapter: %v", row)
+	}
+	if row := blueprintChapter(5); row == nil || row["title"] != rangeTitle {
+		t.Fatalf("refused blueprint writes changed the committed range: %v", row)
+	}
+	// db:blueprint-update-notes stays unbound on this lane: the registry exposes
+	// it, so the 501 is the durable binding, not a 404, and the refusal rewrites
+	// nothing.
+	notesRec := rpc("db:blueprint-update-notes", []any{1, map[string]any{"notes": "绑定"}, projectPath, expected})
+	if notesRec.Code != http.StatusNotImplemented || !strings.Contains(notesRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("db:blueprint-update-notes was bound on the durable lane: %d %s", notesRec.Code, notesRec.Body.String())
+	}
+	if row := blueprintChapter(1); row == nil || row["notes"] != "作者摘要" {
+		t.Fatalf("refused blueprint-update-notes changed the seeded chapter: %v", row)
+	}
+	// Exactly the committed writes are present: the seeded chapter, the single
+	// upsert, the surviving batch chapter and the committed range. Nothing a
+	// refused call touched exists.
+	var blueprintTableRows int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM blueprints", &blueprintTableRows)
+	if blueprintTableRows != 4 {
+		t.Fatalf("durable blueprint writes left the wrong row count: %d", blueprintTableRows)
 	}
 	// The prompt template and installed-skill reads are served from the lane's
 	// pinned private config root. Both names take no argument at all, so the
