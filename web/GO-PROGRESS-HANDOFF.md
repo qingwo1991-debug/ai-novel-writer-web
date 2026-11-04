@@ -4,6 +4,25 @@ Written at a deliberate stopping point (the user asked to wrap up this phase, pu
 everything, and resume later). Everything below is committed and pushed; `main` is
 CI-green. Nothing here claims the migration is complete.
 
+## S1 generation lane: RESOLVED (2026-11-04)
+
+The eleven migrated `generation:*` operations are now bound in the durable lane and the
+fake-dispatch HTTP contract test (`TestSyntheticGenerationHTTPDurableLane`) passes in CI
+(`6f1bc572`, run `41782708522`, all three jobs green). Three real defects were fixed on the way:
+
+1. `store.GenerationLedger.ListRuns` set `committed = true` and returned **without issuing
+   COMMIT**, so the pooled connection kept an open read transaction and the next operation on
+   that database failed with `cannot start a transaction within a transaction`. This bit a
+   second run in the same session and would have bitten production identically.
+2. `syntheticSlice` only accepted `[]any`, while the ledger returns budget attempts as
+   `[]map[string]any`, so every projection (diagnostics, candidates, artifacts) was silently
+   empty even though execute settled correctly.
+3. `stopRun`/`Resume` projected `result["run"]`, but `generation.Service.Pause/Cancel` returns
+   the post-stop **budget** map, not the run; both now re-read the run from the ledger.
+
+Remaining generation-family work: 12 `generation:*` (batch/composition/preparation),
+8 `agent-generation:*`, 5 `graph-generation:*`, 5 `finalization-generation:*`.
+
 ## Where `main` stands
 
 - `HEAD = 059c57a2` == `origin/main`, clean tree.
