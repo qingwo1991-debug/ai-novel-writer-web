@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -914,9 +913,6 @@ func syntheticRequireRun(ctx context.Context, ledger *store.GenerationLedger, sc
 	manifest := syntheticMap(binding["sourceManifest"])
 	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
 		binding["projectId"] != scope.Project || binding["epoch"] != scope.Epoch || manifest == nil {
-		log.Printf("requireRun mismatch runRoot=%#v handleRoot=%#v runID=%#v handleRunID=%#v proj=%#v scopeProj=%#v epoch=%#v scopeEpoch=%#v manifestNil=%v",
-			run["rootActionId"], handle.RootActionID, run["runId"], handle.RunID,
-			binding["projectId"], scope.Project, binding["epoch"], scope.Epoch, manifest == nil)
 		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
 	}
 	return run, binding, manifest, nil
@@ -1338,16 +1334,21 @@ func (s *syntheticGeneration) stopRun(ctx context.Context, caller transport.Call
 	if err != nil {
 		return nil, err
 	}
-	var result map[string]any
 	if cancelRoot {
-		result, err = service.Cancel(ctx, syntheticString(run["rootActionId"]))
+		_, err = service.Cancel(ctx, syntheticString(run["rootActionId"]))
 	} else {
-		result, err = service.Pause(ctx, syntheticString(run["rootActionId"]))
+		_, err = service.Pause(ctx, syntheticString(run["rootActionId"]))
 	}
 	if err != nil {
 		return nil, err
 	}
-	return s.viewOf(ctx, ledger, db, result["run"])
+	// The ordinary service returns the post-stop budget, not the run, so the
+	// projection starts from a fresh ledger read of the same run.
+	current, err := syntheticCall(ctx, ledger, "get", handle.RunID)
+	if err != nil {
+		return nil, err
+	}
+	return s.viewOf(ctx, ledger, db, current)
 }
 
 // Resume continues a paused run by storing the current (unchanged) frozen
@@ -1377,11 +1378,14 @@ func (s *syntheticGeneration) Resume(ctx context.Context, caller transport.Calle
 	if err != nil {
 		return nil, err
 	}
-	result, err := service.Resume(ctx, syntheticString(run["runId"]), nextRaw)
+	if _, err := service.Resume(ctx, syntheticString(run["runId"]), nextRaw); err != nil {
+		return nil, err
+	}
+	current, err := syntheticCall(ctx, ledger, "get", handle.RunID)
 	if err != nil {
 		return nil, err
 	}
-	return s.viewOf(ctx, ledger, db, result["run"])
+	return s.viewOf(ctx, ledger, db, current)
 }
 
 // Restart opens a replacement run from the new selection (the original begins
