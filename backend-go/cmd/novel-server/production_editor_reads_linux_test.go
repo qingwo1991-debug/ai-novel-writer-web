@@ -599,12 +599,14 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
 	}
 
-	// The execution half and the three config setters are not installed here, so
-	// they keep answering the lane's fail-closed 501 instead of a fake success.
-	// generation:begin is bound by the run-admission binder and is asserted by
-	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease instead.
+	// The rest of the execution family and the three config setters are not
+	// installed here, so they keep answering the lane's fail-closed 501 instead of
+	// a fake success. generation:begin and generation:execute are the two bound
+	// names: the run admission is asserted by
+	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease and dispatch by
+	// TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
 	for _, operation := range []string{
-		"generation:execute", "generation:cancel",
+		"generation:cancel",
 		"llm:set-stage-model", "llm:set-default-model", "llm:set-default-embedding-model", "llm:save-model",
 	} {
 		if response := author.call(t, operation, []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
@@ -699,13 +701,14 @@ func productionEditorBeginRefusal(t *testing.T, label string, response *httptest
 	return body.Result.Error
 }
 
-// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease is the one run
-// admission this lane owns. generation:begin must answer 200 over a real
-// admitted project (not the fail-closed 501), write the ledger root budget row
-// and the run row the reused S1 admission writes, hand back a run whose budget
-// projection reads back through generation:read, refuse a stale lease, and leave
-// the author database byte-identical after a malformed call. It must not
-// dispatch: the run it opens has no attempt, and generation:execute stays 501.
+// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease is the run admission
+// this lane owns. generation:begin must answer 200 over a real admitted project
+// (not the fail-closed 501), write the ledger root budget row and the run row the
+// reused S1 admission writes, hand back a run whose budget projection reads back
+// through generation:read, refuse a stale lease, and leave the author database
+// byte-identical after a malformed call. Opening a run dispatches nothing: the run
+// it opens has no attempt until generation:execute is called, and dispatch itself
+// is asserted by TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
 func TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease(t *testing.T) {
 	root, projectPath, contract, _, generation := productionEditorReadsRoot(t)
 	productionCommitGenerationPurpose(t, root, productionTestModelID)
@@ -849,9 +852,27 @@ func TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease(t *testing.T) {
 		t.Fatalf("generation:list returned %d runs; want the seeded run and the one admitted run: %v", len(runs), runs)
 	}
 
-	// The dispatch half is still not this lane's: execute keeps failing closed.
-	if response := author.call(t, "generation:execute", []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
-		!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("generation:execute answered %d instead of the lane's fail-closed 501: %s", response.Code, response.Body.String())
+	// generation:execute is bound in this lane, so this request is answered by the
+	// lane's own fence instead of the fail-closed 501. The handle names a run this
+	// ledger never admitted, so the fence refuses before any attempt row and before
+	// any dispatch: this test never dials a provider, and the dispatch itself is
+	// asserted by TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist
+	// through the executor's injectable seam.
+	unknown := map[string]any{
+		"projectId": handle["projectId"], "epoch": frozen["leaseId"],
+		"rootActionId": "root-never-issued", "runId": "run-never-issued",
+	}
+	unboundRequest := map[string]any{
+		"handle":          unknown,
+		"invocationNonce": "production-execute-unknown-nonce",
+		"task": map[string]any{
+			"purpose":  "chapter-draft",
+			"output":   "visible-text",
+			"messages": []any{map[string]any{"role": "user", "content": "续写第一章"}},
+		},
+	}
+	if response := author.call(t, "generation:execute", []any{unboundRequest, frozen}); response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `"success":false`) {
+		t.Fatalf("generation:execute answered %d instead of the lane's business refusal: %s", response.Code, response.Body.String())
 	}
 }

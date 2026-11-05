@@ -70,6 +70,25 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			want: []string{},
 		},
 		{
+			// The dispatch half is its own one-name binder: a lane that owns
+			// dispatch registers exactly generation:execute, never the rest of
+			// the execution family.
+			name: "generation-execute",
+			bind: func(s *Server) error {
+				return s.BindGenerationExecute(&GenerationProvider{
+					Execute: func(context.Context, Caller, map[string]any, any) (any, error) { return nil, nil },
+				})
+			},
+			want: []string{"generation:execute"},
+		},
+		{
+			// No executor to lend installs nothing, so generation:execute stays
+			// at 501 rather than becoming a handler that could only refuse.
+			name: "generation-execute-unlent",
+			bind: func(s *Server) error { return s.BindGenerationExecute(&GenerationProvider{}) },
+			want: []string{},
+		},
+		{
 			name: "graph-generation",
 			bind: func(s *Server) error { return s.BindGraphGeneration(&GraphGenerationProvider{}) },
 			want: []string{"graph-generation:read"},

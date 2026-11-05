@@ -6,33 +6,40 @@ import (
 	"context"
 	"errors"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// errProductionGenerationBeginUnavailable is the symbolic refusal for a lane
-// whose admitted runtime or committed model configuration is missing. It is a
-// fixed code: no committed value, path or credential is formatted into it.
-var errProductionGenerationBeginUnavailable = errors.New("PRODUCTION_GENERATION_BEGIN_UNAVAILABLE")
+// errProductionGenerationUnavailable is the symbolic refusal for a lane whose
+// admitted runtime or committed model configuration is missing. It is a fixed
+// code: no committed value, path or credential is formatted into it.
+var errProductionGenerationUnavailable = errors.New("PRODUCTION_GENERATION_UNAVAILABLE")
 
-// productionGenerationBegin is generation:begin in the production lane: the
-// reduced S1 run admission the verified synthetic lane already implements, lent
-// to this lane behind one extra gate.
+// errProductionGenerationExecuteUnavailable is the symbolic refusal for a lane
+// that admitted no executor, which happens only when the committed config named
+// no origin. It is a second fence behind ModelEgress, never a default-allow path.
+var errProductionGenerationExecuteUnavailable = errors.New("PRODUCTION_GENERATION_EXECUTE_UNAVAILABLE")
+
+// productionGeneration is the production lane's generation owner: the reduced S1
+// run admission (generation:begin) and the one dispatch name this lane now binds
+// (generation:execute), both lent from the verified synthetic lane behind the same
+// committed gates.
 //
-// It reuses syntheticGeneration.Begin verbatim, so the ledger rows it writes (the
-// root budget row, then the run row), the frozen source manifest, the nine
-// binding hashes and the canonical budget are exactly what the lane that proved
-// them writes. Opening a run reserves no tokens, marks no attempt dispatched and
-// constructs no provider client: this binder installs no executor, so
-// generation:execute and the other eleven execution names still fail closed at
-// GO_OPERATION_NOT_MIGRATED.
+// It reuses syntheticGeneration verbatim, so the ledger rows begin writes (the root
+// budget row, then the run row), the frozen source manifest, the nine binding
+// hashes, the canonical budget and the ordinary dispatch service are exactly what
+// the lane that proved them uses. The executor is the generationowner.Executor
+// built here - registry, plaintext credential seam and the lane's committed
+// model-egress policy - and it is the only executor this lane has. DispatchFunc
+// stays nil unless the lane was opened with the synthetic test seam, so a real
+// deployment can only leave through egress.Client.Do.
 //
-// The gate refuses before the admission is attempted whenever the committed
-// config the model profile is read from, or the committed model-egress policy a
-// future executor would have to dial through, is unavailable. Holding that policy
-// is still not dispatch.
-type productionGenerationBegin struct {
+// Both gates refuse before the reused admission is attempted whenever the
+// committed config the model profile is read from, or the committed model-egress
+// policy, is unavailable.
+type productionGeneration struct {
 	open  *productionOpen
 	inner *syntheticGeneration
 }
@@ -40,26 +47,58 @@ type productionGenerationBegin struct {
 // Begin answers generation:begin for the frozen browser session. A malformed
 // argument is refused by the reused admission before it touches the database, so
 // it changes nothing.
-func (b *productionGenerationBegin) Begin(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
-	if b == nil || b.open == nil || b.inner == nil {
-		return nil, errProductionGenerationBeginUnavailable
+func (g *productionGeneration) Begin(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	if g == nil || g.open == nil || g.inner == nil {
+		return nil, errProductionGenerationUnavailable
 	}
-	if _, err := b.open.ModelEgress(); err != nil {
+	if _, err := g.open.ModelEgress(); err != nil {
 		return nil, err
 	}
-	return b.inner.Begin(ctx, caller, expected, arg)
+	return g.inner.Begin(ctx, caller, expected, arg)
 }
 
-// newProductionGenerationBegin builds the run admission over the already admitted
-// author runtime and the committed global config this lane pinned at startup. The
-// model profiles it reads are the same private store llm reads project, and the
-// live lease it revalidates is the durable project session this process holds. A
-// lane with nothing to lend returns an error instead of a provider, so
-// generation:begin keeps failing closed rather than becoming a handler that can
-// only refuse.
-func newProductionGenerationBegin(open *productionOpen) (*productionGenerationBegin, error) {
+// Execute answers generation:execute for the frozen browser session: the dispatch
+// half of the same admitted run. The egress gate comes first, so a lane with no
+// committed allowlist refuses symbolically and never dispatches without a
+// boundary. It then reuses syntheticGeneration.Execute verbatim, which re-admits
+// the live lease, resolves the begin-time model lease, rebuilds and
+// re-fingerprints the frozen sources and hands the prepared Frozen to the shared
+// generationowner.OrdinaryService.
+//
+// That service owns the ledger ordering this lane inherits: it writes the attempt
+// row (reserve), marks it dispatched and only then calls the executor, so a run
+// that never reserved an attempt can never dispatch. A dispatch failure - a
+// credential refusal, an origin outside the allowlist, a provider error - settles
+// that same attempt as failed, and the receipt reports the failure instead of a
+// completed candidate.
+func (g *productionGeneration) Execute(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	if g == nil || g.open == nil || g.inner == nil {
+		return nil, errProductionGenerationUnavailable
+	}
+	if _, err := g.open.ModelEgress(); err != nil {
+		return nil, err
+	}
+	if g.inner.executor == nil {
+		return nil, errProductionGenerationExecuteUnavailable
+	}
+	return g.inner.Execute(ctx, caller, expected, arg)
+}
+
+// newProductionGeneration builds the run admission and the executor over the
+// already admitted author runtime and the committed global config this lane pinned
+// at startup. The model profiles it reads are the same private store llm reads
+// project, and the live lease it revalidates is the durable project session this
+// process holds. A lane with nothing to lend returns an error instead of a
+// provider, so generation:begin and generation:execute keep failing closed rather
+// than becoming handlers that could only refuse.
+//
+// dispatch is the executor's injectable dispatch seam and is synthetic-only:
+// production main.go passes nil, so the sole network client is the committed
+// egress policy. A lane opened without a committed origin still binds both names,
+// and Execute refuses with the policy's own symbolic code instead of widening.
+func newProductionGeneration(open *productionOpen, server *transport.Server, dispatch generation.Dispatch) (*productionGeneration, error) {
 	if open == nil {
-		return nil, errProductionGenerationBeginUnavailable
+		return nil, errProductionGenerationUnavailable
 	}
 	open.mu.Lock()
 	durable := open.durable
@@ -67,14 +106,14 @@ func newProductionGenerationBegin(open *productionOpen) (*productionGenerationBe
 	closed := open.closed
 	open.mu.Unlock()
 	if closed || durable == nil || config == nil {
-		return nil, errProductionGenerationBeginUnavailable
+		return nil, errProductionGenerationUnavailable
 	}
 	durable.mu.Lock()
 	lifecycle := durable.lifecycle
 	durableClosed := durable.closed
 	durable.mu.Unlock()
 	if durableClosed || lifecycle == nil {
-		return nil, errProductionGenerationBeginUnavailable
+		return nil, errProductionGenerationUnavailable
 	}
 	loadModel := func(_ context.Context, modelID string) (generationowner.Profile, bool, error) {
 		records, err := config.ListPrivateModels()
@@ -121,8 +160,22 @@ func newProductionGenerationBegin(open *productionOpen) (*productionGenerationBe
 	}
 	inner := &syntheticGeneration{
 		lifecycle: lifecycle,
+		server:    server,
 		registry:  registry,
 		loadModel: loadModel,
 	}
-	return &productionGenerationBegin{open: open, inner: inner}, nil
+	// The one executor, built the way the synthetic lane builds it: the same
+	// registry the admission uses, the documented plaintext credential seam and the
+	// committed model-egress policy productionOpen derived at startup. No policy
+	// means no executor: Execute refuses with the policy's own code rather than
+	// running with a nil Egress.
+	if policy, egressErr := open.ModelEgress(); egressErr == nil {
+		inner.executor = &generationowner.Executor{
+			Registry:      registry,
+			SecretStorage: generationowner.PlaintextCredential{},
+			Egress:        policy,
+			DispatchFunc:  dispatch,
+		}
+	}
+	return &productionGeneration{open: open, inner: inner}, nil
 }

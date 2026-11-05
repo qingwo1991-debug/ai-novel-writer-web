@@ -16,6 +16,7 @@ import (
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globaladmission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globalconfig"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/policy"
@@ -86,6 +87,12 @@ func productionLayoutFor(raw string) (productionLayout, error) {
 type productionConfig struct {
 	Schema           admission.SchemaContract
 	MaxDatabaseBytes int64
+	// Dispatch is the generation executor's injectable dispatch seam. It is
+	// synthetic-only: production main.go leaves it nil, so a real dispatch can
+	// only leave through the committed model-egress policy. A test that sets it
+	// feeds a deterministic provider response instead of dialing, which is why it
+	// is wired into the executor in the same place the lane is built.
+	Dispatch generation.Dispatch
 }
 
 // productionProject is one library entry whose database was admitted as a
@@ -120,11 +127,12 @@ type productionOpen struct {
 	// durable is the author runtime plus its transport adapter. It is nil only
 	// while startup is still admitting projects, or after Close.
 	durable *productionDurableOpen
-	// modelEgress is the committed model-egress policy a future generation
-	// executor must dispatch through. It is nil when the committed config names no
-	// usable origin; modelEgressErr then keeps the symbolic refusal (never a
-	// committed value) for diagnostics. Granting the policy is not granting
-	// generation: no provider client is constructed and no execution name is bound.
+	// modelEgress is the committed model-egress policy the generation executor
+	// dispatches through. It is nil when the committed config names no usable
+	// origin; modelEgressErr then keeps the symbolic refusal (never a committed
+	// value) for diagnostics. Granting the policy is not granting generation by
+	// itself: it is one input to the executor the generation owner builds, and a
+	// nil policy leaves that executor unbuilt so generation:execute refuses.
 	modelEgress    *productionModelEgress
 	modelEgressErr error
 	closed         bool
@@ -186,18 +194,19 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 			PreservedUnknownCount: ready.PreservedUnknownCount,
 		},
 	})
-	// The model-egress policy a future generation executor must use is derived
-	// once, here, from the committed global generation this lane already pinned:
-	// the config document's explicit modelOrigins allowlist, else the origins of
-	// the committed model endpoints. It grants no dispatch by itself - no provider
-	// client, request or executor is created - and the generation execution names
-	// stay unbound. An absent, unreadable or malformed origin list is an optional
-	// provider field: it never fails startup and never widens to default-allow. The
-	// refusal code is logged; the rejected values are not.
+	// The model-egress policy the generation executor dispatches through is
+	// derived once, here, from the committed global generation this lane already
+	// pinned: the config document's explicit modelOrigins allowlist, else the
+	// origins of the committed model endpoints. It grants no dispatch by itself -
+	// no provider client or request is created, and the executor that uses it is
+	// built only when a generation request arrives. An absent, unreadable or
+	// malformed origin list is an optional provider field: it never fails startup
+	// and never widens to default-allow. The refusal code is logged; the rejected
+	// values are not.
 	egressPlan, egressErr := productionModelEgressPlan(open.config)
 	if egressErr != nil {
 		open.modelEgressErr = egressErr
-		log.Printf("novel-server: production model egress unavailable (%v); generation execution stays unbound", egressErr)
+		log.Printf("novel-server: production model egress unavailable (%v); generation:execute will refuse", egressErr)
 	} else {
 		open.modelEgress = egressPlan
 		log.Printf("novel-server: production model egress restricted to %d committed origin(s)", len(egressPlan.origins))
@@ -360,13 +369,13 @@ func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller)
 	return result, nil
 }
 
-// ModelEgress is the committed model-egress policy a future generation executor
-// must dispatch through. It is deliberately not reachable from any browser
-// operation: this lane still owns no dispatch seam, so the generation dispatch
-// names keep failing closed at GO_OPERATION_NOT_MIGRATED even when a policy
-// exists - generation:begin only opens a run and never dials it. A nil client
-// with a symbolic refusal means the committed config named no usable origin,
-// which is never widened into a default-allow policy.
+// ModelEgress is the committed model-egress policy the generation executor
+// dispatches through, and the gate generation:begin and generation:execute read
+// before they touch a run. It is deliberately not reachable from any browser
+// operation as a value: no operation returns it, and the only client that can use
+// it is the executor's native dispatch. A nil client with a symbolic refusal
+// means the committed config named no usable origin, which is never widened into
+// a default-allow policy and never becomes a dispatch of its own.
 func (p *productionOpen) ModelEgress() (*egress.Client, error) {
 	if p == nil {
 		return nil, errProductionModelEgressUnavailable
@@ -515,26 +524,30 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// reads. generation:list and generation:read project the author's own ledger
 	// rows under the live lease (SELECT-only, no provider call), and the four
 	// llm reads answer from the committed global generation this lane already
-	// pinned. Every dispatch name stays unbound: the committed model-egress policy
-	// above is a dispatch boundary a future executor must dial through, but this
-	// lane still owns no executor and no dispatch seam, so execute/resume and the
-	// six llm setters keep failing closed at GO_OPERATION_NOT_MIGRATED rather than
-	// being installed as handlers that could only refuse.
+	// pinned. Every other dispatch name stays unbound, so resume/restart/pause and
+	// the six llm setters keep failing closed at GO_OPERATION_NOT_MIGRATED rather
+	// than being installed as handlers that could only refuse.
 	//
-	// generation:begin is the one run-admission name this lane now owns, and it
-	// is the identical reduced admission the verified synthetic lane implements
-	// (production_generation_begin_linux.go): it opens a ledger run under the live
-	// lease from the committed config and writes the root budget row and the run
-	// row. It reserves no attempt, marks nothing dispatched and constructs no
-	// provider client, so generation:execute and the other dispatch names below
-	// stay unbound and keep failing closed.
-	if begin, beginErr := newProductionGenerationBegin(open); beginErr == nil {
-		if bindErr := server.BindGenerationBegin(&transport.GenerationProvider{Begin: begin.Begin}); bindErr != nil {
+	// This lane owns exactly two generation names, both through the one reduced
+	// owner the verified synthetic lane implements
+	// (production_generation_begin_linux.go): generation:begin opens a ledger run
+	// under the live lease from the committed config and writes the root budget row
+	// and the run row, and generation:execute dispatches that admitted run through
+	// the generationowner.Executor, whose sole network client is the committed
+	// model-egress policy built above. The executor's dispatch seam is nil unless
+	// this lane was opened with the synthetic one, so a real deployment cannot dial
+	// past the allowlist.
+	if owner, ownerErr := newProductionGeneration(open, server, config.Dispatch); ownerErr == nil {
+		if bindErr := server.BindGenerationBegin(&transport.GenerationProvider{Begin: owner.Begin}); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+		if bindErr := server.BindGenerationExecute(&transport.GenerationProvider{Execute: owner.Execute}); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
 	} else {
-		log.Printf("novel-server: production generation begin unavailable (%v); generation:begin stays unbound", beginErr)
+		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
 	for _, bind := range []func() error{
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },

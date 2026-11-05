@@ -11,12 +11,12 @@ import "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/tran
 // admitted project database: the run list, and one run view including its
 // attempt/budget diagnostics. Neither one reserves an attempt, touches a model
 // profile, opens an egress endpoint or dispatches to a provider, so this lane can
-// answer them while its execution half stays unbound. The lane does derive a real
-// model-egress policy from the committed config
-// (production_model_egress_linux.go) and keeps it for a future executor, and
-// generation:begin opens a run against it (production_generation_begin_linux.go),
-// but the lane still owns no executor and no dispatch seam, so execute/resume
-// stay unbound.
+// answer them while the execution family stays mostly unbound. The lane does
+// derive a real model-egress policy from the committed config
+// (production_model_egress_linux.go) and builds its one executor from it, and it
+// owns generation:begin and generation:execute over that executor
+// (production_generation_begin_linux.go), but every other execution name
+// (resume/restart/pause/cancel and the candidate mutations) stays unbound.
 //
 // The projection is reused verbatim from the durable S1 provider instead of being
 // rewritten, so the browser receives the same MainGenerationRunView the verified

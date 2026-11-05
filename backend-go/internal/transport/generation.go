@@ -185,6 +185,28 @@ func (s *Server) BindGenerationBegin(provider *GenerationProvider) error {
 	})
 }
 
+// BindGenerationExecute installs exactly one execution name, generation:execute,
+// and nothing else. It exists because a lane can own dispatch (one committed
+// model-egress boundary and one executor) without owning the rest of the
+// execution family: cancel, pause, resume, restart and the candidate mutations
+// stay unbound and keep failing closed at GO_OPERATION_NOT_MIGRATED rather than
+// being installed as handlers that could only refuse. A nil provider, or one with
+// no Execute, installs nothing and is not an error.
+//
+// The installed handler shares the family adapter, so the wire arity (the request
+// plus the frozen expected context), the three-key session fence and the mutating
+// business DTO are identical to generation:execute in BindGeneration.
+func (s *Server) BindGenerationExecute(provider *GenerationProvider) error {
+	if provider == nil || provider.Execute == nil {
+		return nil
+	}
+	return s.bindGenerationOperations([]generationOperation{
+		{"generation:execute", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Execute(ctx, caller, expected, args[0])
+		}},
+	})
+}
+
 // generationOperation is one generation-family binding. The shared adapter below
 // is what makes every operation in the family answer with the same envelopes, so
 // the graph binder reuses it instead of copying the rules.

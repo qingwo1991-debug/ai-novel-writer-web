@@ -333,10 +333,13 @@ func TestProductionLaneRefusesAbsentOrMalformedOriginWithoutFailingStartup(t *te
 	}
 }
 
-// TestProductionModelEgressDoesNotBindGenerationExecution proves the policy is
-// only a dispatch boundary: with an origin committed, every generation dispatch
-// name still fails closed and the committed-state reads keep answering.
-func TestProductionModelEgressDoesNotBindGenerationExecution(t *testing.T) {
+// TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution proves the
+// policy is only a dispatch boundary: with an origin committed, every generation
+// name the lane does not own still fails closed and the committed-state reads keep
+// answering. generation:execute is the one dispatch name the lane does own, so it
+// is excluded here and asserted by
+// TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
+func TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution(t *testing.T) {
 	root := syntheticProductionDataDir(t)
 	productionCommitModelOrigins(t, root, []string{"https://api.example.invalid:8443"})
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root, productionConfig{
@@ -347,11 +350,12 @@ func TestProductionModelEgressDoesNotBindGenerationExecution(t *testing.T) {
 	}
 	defer cleanup()
 	author := newProductionDurableClient(t, handler, productionTestTab)
-	// generation:begin is the one admitted run-admission name and is asserted by
-	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease; every name that
-	// would dispatch stays unbound even with a policy in place.
+	// generation:begin is the admitted run-admission name (asserted by
+	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease) and
+	// generation:execute the admitted dispatch name; every other name stays
+	// unbound even with a policy in place.
 	for _, operation := range []string{
-		"generation:bind-material-decision", "generation:execute",
+		"generation:bind-material-decision",
 		"generation:pause", "generation:cancel", "generation:resume", "generation:restart",
 		"generation:discard-candidate", "generation:retry-draft-short-outline",
 		"graph-generation:cancel", "finalization-generation:cancel",

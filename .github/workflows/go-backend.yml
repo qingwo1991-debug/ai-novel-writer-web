@@ -1008,7 +1008,7 @@ jobs:
             "$(jq -nc --argjson ctx "$stale_ctx" --argjson handle "$run_handle" '{args: [$handle, $ctx]}')" \
             "$work/stale-generation-read.json"
 
-          # What this lane does not own stays fail-closed: the execution half and
+          # What this lane does not own stays fail-closed: generation:cancel and
           # the three llm setters answer 501 GO_OPERATION_NOT_MIGRATED rather than
           # a handler that could only refuse.
           expect_not_migrated() {
@@ -1035,13 +1035,50 @@ jobs:
               exit 1
             fi
           }
-          for operation in generation:execute generation:cancel \
+          # generation:execute is bound now, so a bound name must answer through
+          # the mutating family envelope (HTTP 200, result.success false) instead
+          # of the 501 above. The journey sends a well-formed request, so a name
+          # that is still unbound - or one that answers INVALID_ARGUMENTS - fails
+          # here instead of passing by accident.
+          expect_business_refusal() {
+            local operation=$1
+            local body=$2
+            local output=$3
+            local code
+            code=$(curl --silent --show-error --output "$output" --write-out '%{http_code}' \
+              --request POST "$base/api/operations/$operation" \
+              --header "X-Novel-User: $author" \
+              --header "X-Client-Id: $client" \
+              --header "X-CSRF-Token: $csrf" \
+              --header "Origin: $base" \
+              --header 'Content-Type: application/json' \
+              --cookie "$session" \
+              --data-binary "$body")
+            printf '%s -> %s (refused by the lane)\n' "$operation" "$code" | tee -a "$work/refusals.txt"
+            if test "$code" != 200; then
+              printf '::error title=%s answered %s instead of the 200 business envelope::%s\n' "$operation" "$code" "$(head -c 600 "$output")"
+              exit 1
+            fi
+            if ! jq -e '.result.success == false and (.result.error | startswith("Error: "))' "$output" > /dev/null; then
+              printf '::error title=%s did not refuse through the lane envelope::%s\n' "$operation" "$(head -c 600 "$output")"
+              exit 1
+            fi
+          }
+          for operation in generation:cancel \
             llm:set-stage-model llm:set-default-model llm:set-default-embedding-model llm:save-model; do
             expect_not_migrated "$operation" \
               "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" \
                 '{args: [$handle, "synthetic-model", $ctx]}')" \
               "$work/not-migrated-${operation//:/-}.json"
           done
+          # The dispatch name is bound, so the journey expects its own fence. The
+          # handle is the fixture's historical run, whose lease this session never
+          # held, so the refusal lands before any ledger row and long before any
+          # provider call: this journey never reaches a real provider.
+          expect_business_refusal generation:execute \
+            "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" \
+              '{args: [{handle: $handle, invocationNonce: "ci-execute-refusal", task: {purpose: "chapter-draft", output: "visible-text", messages: [{role: "user", content: "synthetic execution refusal"}]}}, $ctx]}')" \
+            "$work/execute-refusal.json"
           printf 'generation reads: 1 settled run (%s, epoch %s), 1 diagnostic, nonReplayable; models: %s + %s\n' \
             "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id" \
             | tee -a "$work/statuses.txt"
@@ -1081,9 +1118,10 @@ jobs:
               "$(jq -r '.error.code' "$work/stale-character-get-all.json")" \
               "$(jq -r '.error.code' "$work/stale-overview.json")"
             printf -- '- `generation:list` and `generation:read` returned the one settled run the fixture committed (`%s`, epoch `%s`) with 1 budget diagnostic and `nonReplayable` set, and `llm:list-models`, `llm:get-stage-models`, `llm:get-default-model` and `llm:get-default-embedding-model` returned the committed model configuration (`%s`, `%s`).\n' "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id"
-            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`), and `generation:execute`, `generation:cancel` and the three `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
+            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`); `generation:execute` is bound and refused the committed fixture run with `%s` before any ledger row or provider call, while `generation:cancel` and the three `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
               "$(jq -r '.error.code' "$work/stale-generation-list.json")" \
-              "$(jq -r '.error.code' "$work/stale-generation-read.json")"
+              "$(jq -r '.error.code' "$work/stale-generation-read.json")" \
+              "$(jq -r '.result.error' "$work/execute-refusal.json")"
             printf 'Body seeded into the v7 database: `%s`\n\n' "$seed"
             printf 'Body saved through the browser operation: `%s`\n\n' "$saved"
             printf 'Body read back from the container over HTTP: `%s`\n\n' "$readback"
