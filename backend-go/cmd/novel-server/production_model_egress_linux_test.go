@@ -356,7 +356,7 @@ func TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution(t *test
 	// unbound even with a policy in place.
 	for _, operation := range []string{
 		"generation:bind-material-decision",
-		"generation:pause", "generation:cancel", "generation:resume", "generation:restart",
+		"generation:restart",
 		"generation:discard-candidate", "generation:retry-draft-short-outline",
 		"graph-generation:cancel", "finalization-generation:cancel",
 	} {

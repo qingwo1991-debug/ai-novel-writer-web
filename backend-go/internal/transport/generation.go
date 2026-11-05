@@ -207,6 +207,42 @@ func (s *Server) BindGenerationExecute(provider *GenerationProvider) error {
 	})
 }
 
+// BindGenerationLifecycle installs the three lifecycle names that stop or hold an
+// admitted run without dialing a provider: generation:cancel, generation:pause and
+// generation:resume. generation:restart is deliberately absent - it re-dispatches,
+// so it belongs with the execution family and its egress fence, not here.
+//
+// Each name is installed only when its provider field is non-nil, so a lane that
+// cannot honestly stop a run keeps failing closed at GO_OPERATION_NOT_MIGRATED
+// instead of installing a handler that could only refuse. The handlers share the
+// family adapter, so wire arity, the three-key session fence and the mutating DTO
+// are identical to the rest of the family.
+func (s *Server) BindGenerationLifecycle(provider *GenerationProvider) error {
+	if provider == nil {
+		return nil
+	}
+	operations := []generationOperation{}
+	if provider.Cancel != nil {
+		operations = append(operations, generationOperation{"generation:cancel", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Cancel(ctx, caller, expected, args[0])
+		}})
+	}
+	if provider.Pause != nil {
+		operations = append(operations, generationOperation{"generation:pause", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Pause(ctx, caller, expected, args[0])
+		}})
+	}
+	if provider.Resume != nil {
+		operations = append(operations, generationOperation{"generation:resume", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Resume(ctx, caller, expected, args[0])
+		}})
+	}
+	if len(operations) == 0 {
+		return nil
+	}
+	return s.bindGenerationOperations(operations)
+}
+
 // generationOperation is one generation-family binding. The shared adapter below
 // is what makes every operation in the family answer with the same envelopes, so
 // the graph binder reuses it instead of copying the rules.

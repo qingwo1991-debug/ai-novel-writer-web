@@ -546,6 +546,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:cancel, generation:pause and generation:resume settle or advance
+		// an admitted run through the ledger and dial nothing, so the same owner lends
+		// them under the same committed gates. generation:restart is deliberately not
+		// among them: it begins a replacement run with its own admission path.
+		if bindErr := server.BindGenerationLifecycle(&transport.GenerationProvider{Cancel: owner.Cancel, Pause: owner.Pause, Resume: owner.Resume}); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}

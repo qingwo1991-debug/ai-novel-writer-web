@@ -608,7 +608,6 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease and dispatch by
 	// TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
 	for _, operation := range []string{
-		"generation:cancel",
 		"llm:set-stage-model", "llm:set-default-model", "llm:set-default-embedding-model", "llm:save-model",
 	} {
 		if response := author.call(t, operation, []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
