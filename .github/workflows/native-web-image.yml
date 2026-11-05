@@ -217,3 +217,24 @@ jobs:
           test -n "$digest"
           printf '### Native Web image\n\n- Platform: `linux/amd64`\n- Revision: `%s`\n- Immutable pull: `%s`\n- Rolling tag: `%s:latest`\n\nNo deployment was performed.\n' \
             "$REVISION" "$digest" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+      # The smoke-tested image is also exported as an artifact so it can be
+      # loaded without registry credentials. GHCR needs the read:packages scope
+      # to pull; a repository-scoped token can download artifacts, which keeps
+      # local verification possible without widening anyone's token.
+      - name: Export the tested image as an artifact
+        shell: bash
+        env:
+          REVISION: ${{ steps.image.outputs.revision }}
+        run: |
+          set -euo pipefail
+          out="native-web-image-$REVISION.tar.gz"
+          docker save native-web:ci | gzip -1 > "$out"
+          ls -l "$out"
+          printf 'IMAGE_ARTIFACT=%s\n' "$out" >> "$GITHUB_ENV"
+      - name: Upload the image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-web-image
+          path: native-web-image-*.tar.gz
+          retention-days: 7
+          compression-level: 0
