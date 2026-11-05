@@ -1863,3 +1863,30 @@ A batch that binds nothing must not leave files behind: two `production_cloudbac
 containing only assertions that eight names answer 501. They were discarded. A file named after a family
 implies that family is served; that implication is worse than the absence of the file.
 
+**`cloud-backup` prerequisite list** (itemised by the agent that triaged it; `cloud-backup:view` needs 0-2,
+`list` adds 3-4, everything else adds 5 and/or 6):
+
+0. An authoritative data root. The desktop writes `cloud-backup-bindings.json`
+   (`cloud-project-binding-store.ts:7`) and `cloud-backup-credentials.json`
+   (`cloud-credential-store.ts:10`) under Electron's global root; `productionLayout`
+   (`production_open_linux.go:56-82`) has no cloud record and no such tree. Decide which tree a server
+   deployment reads, or nothing below has a source.
+1. A binding-store reader: version-1 `{bindings:[...]}` validation (exact keys,
+   `unconfigured|writable|origin-readonly`, revision, <=256 parent ids, `SAFE_ID`, 10k cap) with the same
+   serialization `withCloudMetadataLock` gives the desktop, so a read never sees a half-written document.
+2. A credential store and a persistence decision: account index (`accountId -> endpoint/username/
+   persistence`), `NormalizeEndpoint` (`internal/webdav/paths.go:15`), sealing through
+   `internal/secrets.Storage` with a real key source (`keyfile_linux.go` exists, nothing wires it). OS
+   `safeStorage` does not exist on a server, so persistence becomes `server-encrypted` and that fact is
+   visible in `CloudBackupAccountView`; `resolveSecret` stays in-process (the view needs only "does a secret
+   resolve", never the secret).
+3. An endpoint-account resolver at request time: the args carry only `localEndpointAccountId`, and the lane
+   must build `webdav.Account{Endpoint,Username,Secret}` in process. No DTO may carry the secret.
+4. A DAV dispatch seam: `webdav.New` refuses to exist without `Dispatch` + `Authorize`
+   (`internal/webdav/client.go:20-27,53-56`) - redirect-disabled transport, DNS pinning, exact-origin and
+   proxy policy. Precedent to copy: `production_model_egress_linux.go`.
+5. Write-side stores: `markAccountUnconfigured` plus credential clear, and `saveWritable`/
+   `saveOriginReadonly` with revision CAS, under one writer.
+6. Lifecycle and archive plumbing: an in-flight registry keyed by `operationId` with abort, plus
+   `exportPortableProject`/`restorePortableProject` and `targetGrantId` resolution.
+
