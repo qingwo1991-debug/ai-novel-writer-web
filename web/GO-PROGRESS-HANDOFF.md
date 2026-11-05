@@ -1488,3 +1488,35 @@ CI evidence rather than a claim.
 overview, navigation, reviews, generation) are absent, and no real author data has been through this lane.
 Switching the production deployment is still wrong.
 
+### 2026-11-05 — the editor's reads arrive in production (24 operations)
+
+Green: `dd4a43da`.
+
+Seven more operations answer 200 in the production lane, bound at `production_open_linux.go:448-451`:
+`db:character-get-all`, `db:character-roster-read`, `character-identity:read`, `db:project-core-get`,
+`db:blueprint-get-all`, `db:blueprint-get`, `project:overview-current`. Each read re-proves the permit and
+the pinned handle identity **before and after** a rolled-back read-only transaction
+(`durable_editor_reads_linux.go:67`), so a stale, foreign or absent lease refuses before SQL runs, and a
+database that failed the pinned v7 admission is never opened.
+
+**Two refusals that matter more than the successes.** `db:blueprint-character-sync-get` and
+`-list-pending` stay 501: `store.Blueprints.GetSync`/`PendingSync` run an `INSERT OR IGNORE` backfill
+before selecting, a hidden write that would break both the read-only invariant and the handle's content
+identity. Faking them would have been easy and wrong. `fs:list-dir` also stays 501 - there is no confined
+production provider.
+
+**A shared-code defect fixed while wiring this:** `blueprintReadError` was flattening lease refusals
+(`PROJECT_SESSION_NOT_OWNED`/`STALE`/`CONTEXT_REQUIRED`/`REQUIRED`, `AUTHOR_WRITE_STALE`,
+`PROJECT_NOT_OPEN`) into a generic `BLUEPRINT_OPERATION_FAILED`, which would have told an author "the
+operation failed" instead of "another window has this project". The read family now passes the real codes
+through.
+
+**Tests:** a live production fixture with seeded character/blueprint/core/overview rows; each of the seven
+asserted 200 **with the seeded values**, the three unbound ones asserted still 501, and all seven asserted
+to refuse a foreign tab, a stale lease and an absent lease - with the database bytes byte-identical after
+both the reads and the refusals. The container journey now calls all seven and asserts real values
+(`totalWords`, `excerpt` against the post-save body).
+
+**Still 501 and still the reason not to switch:** 257 of 281 operations, including generation, review,
+finalisation, import/export, knowledge base, MCP, and the folder dialogs.
+
