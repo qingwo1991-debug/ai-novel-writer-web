@@ -21,13 +21,16 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
 // NOVEL_DATA_ROOT is the author data mount the shipped web gateway already uses.
 // Every path below is derived from it in the same way, so a data directory the
 // existing gateway wrote is admitted unchanged.
-// This lane never creates a directory, a database or a migration journal: the
-// only writes it makes are inside the private staging workspace it owns.
+// This lane never creates a project directory, a database or a migration
+// journal: it creates the persistent writer-lease entry the shipped gateway also
+// creates, the private scratch workspace it owns, and it writes author data only
+// through the admitted author runtime while that lease is held.
 const (
 	productionLibraryDirectory = "workspaces"
 	productionConfigDirectory  = "config"
@@ -37,8 +40,8 @@ const (
 	// productionMaxDatabaseBytes bounds one staged author database copy. It is
 	// the same 64 MiB budget the durable synthetic lane admits.
 	productionMaxDatabaseBytes = 64 << 20
-	// productionStartupTimeout bounds the whole read-only startup admission,
-	// including one staged copy per library project.
+	// productionStartupTimeout bounds the whole startup admission, including one
+	// staged copy per library project.
 	productionStartupTimeout = 5 * time.Minute
 	// productionRecentLimit matches the shipped recent-project shelf bound.
 	productionRecentLimit = 20
@@ -91,14 +94,16 @@ type productionProject struct {
 	evidence admission.Evidence
 }
 
-// productionOpen is the read-only production lane. It pins the completed global
-// data migration, owns the author library, and answers only the operations that
-// read real state: startup/config from the committed generation, the recent
-// shelf and the library chooser from admitted author databases.
+// productionOpen is the production lane. It pins the completed global data
+// migration, owns the author library under one exclusive writer lease, and
+// answers the operations that read real state (startup/config from the committed
+// generation, the recent shelf, the library chooser) plus the project lifecycle
+// and the draft reads/writes the durable author runtime serves on the author's
+// own database.
 //
-// It is deliberately not a project lifecycle: no author database stays open, no
-// project capability is issued, and project:open / project:create / db:draft-*
-// keep failing closed at GO_OPERATION_NOT_MIGRATED.
+// Every admitted project is openable through the runtime; everything this build
+// does not implement (creation, import, generation, the remaining editor reads)
+// still fails closed at GO_OPERATION_NOT_MIGRATED.
 type productionOpen struct {
 	mu       sync.Mutex
 	layout   productionLayout
@@ -108,7 +113,13 @@ type productionOpen struct {
 	library  *projectfs.Library
 	scratch  string
 	projects []productionProject
-	closed   bool
+	// held is the exclusive legacy writer lease this process took before
+	// touching any author database. It is nil once the durable runtime owns it.
+	held *writerlock.Lock
+	// durable is the author runtime plus its transport adapter. It is nil only
+	// while startup is still admitting projects, or after Close.
+	durable *productionDurableOpen
+	closed  bool
 }
 
 // openProduction admits a real author data directory, or fails closed with a
@@ -121,20 +132,27 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 	if err := requirePhysicalDirectory(layout.dataRoot); err != nil {
 		return nil, err
 	}
-	// The production entrypoint holds the util-linux flock on
-	// $NOVEL_DATA_ROOT/.native-web.gateway.lock for the process lifetime
-	// (docker/web-entrypoint.sh), so this process inherits that exclusion instead
-	// of re-acquiring the same inode, which would fail closed. exclusive is a
-	// trusted claim made by main; no request field can reach it.
+	// One cooperating writer per data root. This takes the same util-linux flock
+	// entry the shipped gateway uses, before any author database is read or
+	// written, and holds it for the process lifetime: a second server on this
+	// mount is refused here instead of racing this one. The Go image entrypoint
+	// runs the binary directly, so the lease is acquired rather than inherited;
+	// a container that already holds this entry (an outer flock) is refused.
+	held, err := writerlock.AcquireLegacy(layout.dataRoot)
+	if err != nil {
+		return nil, fmt.Errorf("production writer lease: %w", err)
+	}
+	// exclusive is a trusted claim made by main; no request field can reach it.
 	global, err := globaladmission.PinCompleted(ctx, globaladmission.Roots{
 		LegacySource:    layout.legacySource,
 		CanonicalTarget: layout.canonicalTarget,
 		UserData:        layout.migrationRoot,
 	}, true)
 	if err != nil {
+		_ = held.Close()
 		return nil, fmt.Errorf("production global data: %w", err)
 	}
-	open := &productionOpen{layout: layout, global: global}
+	open := &productionOpen{layout: layout, global: global, held: held}
 	fail := func(cause error) (*productionOpen, error) {
 		_ = open.Close()
 		return nil, cause
@@ -195,6 +213,19 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 	}
 	open.projects = admitted
 	log.Printf("novel-server: admitted %d of %d author projects from %s", len(admitted), len(listed), open.layout.libraryRoot)
+	// The author runtime is installed last, over the already admitted library,
+	// and takes over the writer lease this function has held since the top. A
+	// failure here closes the runtime (and therefore the lease) before returning.
+	durable, err := newProductionDurable(open.library, open.layout, open.scratch, held, config, admitted)
+	if err != nil {
+		if errors.Is(err, errProductionLeaseRetained) {
+			// Never release a lease whose runtime could not close every handle.
+			open.held = nil
+		}
+		return fail(fmt.Errorf("production author runtime: %w", err))
+	}
+	open.held = nil
+	open.durable = durable
 	return open, nil
 }
 
@@ -318,8 +349,17 @@ func (p *productionOpen) Close() error {
 	workspace := p.scratch
 	p.scratch = ""
 	library, config, global := p.library, p.config, p.global
+	durable, held := p.durable, p.held
 	p.mu.Unlock()
 	var result error
+	// The admitted runtime closes every open author database and then releases
+	// the writer lease. A runtime that cannot confirm that keeps the lease until
+	// the process exits instead of handing the data root to a second writer.
+	if durable != nil {
+		result = errors.Join(result, durable.Close())
+	} else if held != nil {
+		result = errors.Join(result, held.Close())
+	}
 	if library != nil {
 		result = errors.Join(result, library.Close())
 	}
@@ -366,17 +406,41 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
-	// A real author data directory is admitted read-only this round, so only the
-	// read and acknowledgement half of the global config family is published.
-	// config:set would write the author's committed generation and keeps failing
-	// closed at GO_OPERATION_NOT_MIGRATED until a lane owns that write.
+	// A real author data directory still serves only the read and acknowledgement
+	// half of the global config family. config:set would write the author's
+	// committed generation and keeps failing closed at GO_OPERATION_NOT_MIGRATED
+	// until a lane owns that write.
 	if bindErr := server.BindGlobalConfigReads(open.config, open.startup); bindErr != nil {
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
+	// The project lifecycle over the durable author runtime: project:open,
+	// db:close, project:get-runtime-context, project:save and project:update-config.
+	// BindProjects is the only binder that publishes project:open; it also binds
+	// project:recent-list and project:recent-remove only when the provider
+	// implements the optional catalog interfaces, which productionDurableOpen
+	// does not — the shelf stays with the explicitly bound handler below.
+	if bindErr := server.BindProjects(open.durable); bindErr != nil {
+		_ = open.Close()
+		return nil, nil, bindErr
+	}
+	// The draft surface, in three disjoint binders: the eight live draft reads,
+	// the single full-body CAS save, and the three self-contained author
+	// mutations (create, update-status, delete). Nothing here overlaps the
+	// lifecycle names above, so no operation is ever double-bound.
+	for _, bind := range []func() error{
+		func() error { return server.BindDraftLiveReads(open.durable) },
+		func() error { return server.BindDraftLiveWrites(open.durable) },
+		func() error { return server.BindDraftAuthorWrites(open.durable) },
+	} {
+		if bindErr := bind(); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+	}
 	// project:recent-list is bound on its own: the editor navigation family would
-	// also publish fs:list-dir, which needs a live project lease this lane can
-	// never issue because project:open is not admitted.
+	// also publish fs:list-dir (which has no confined production provider yet)
+	// and would rebind project:recent-list (OPERATION_ALREADY_BOUND).
 	if bindErr := server.Bind("project:recent-list", func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 		if len(args) != 0 {
 			return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")

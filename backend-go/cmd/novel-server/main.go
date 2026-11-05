@@ -141,9 +141,11 @@ func run() error {
 	var handler http.Handler
 	var cleanup func()
 	if dataRoot != "" {
-		// A real data directory: admit the committed global generation and every
-		// current-schema author database read-only, then serve startup/config/
-		// library reads. Everything else keeps returning GO_OPERATION_NOT_MIGRATED.
+		// A real data directory: take the exclusive writer lease, admit the
+		// committed global generation and every current-schema author database,
+		// then serve startup/config/library reads plus the project lifecycle and
+		// draft reads/writes over the author's own databases. Every operation this
+		// build does not implement keeps returning GO_OPERATION_NOT_MIGRATED.
 		handler, cleanup, err = productionHandler(registry, *address, *staticDir, dataRoot)
 	} else if *durableDir != "" {
 		handler, cleanup, err = migrationHandlerWithDurable(registry, *address, *staticDir, *durableDir, *durableConfig)
@@ -162,7 +164,7 @@ func run() error {
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	if dataRoot != "" {
-		log.Printf("Go production read lane at %s over the configured NOVEL_DATA_ROOT; unported operations keep failing closed", *address)
+		log.Printf("Go production lane at %s over the configured NOVEL_DATA_ROOT: exclusive writer lease held, project lifecycle and draft reads/writes served from the author databases; unported operations keep failing closed", *address)
 	} else {
 		log.Printf("Go migration scaffold at %s; author writes only in private synthetic lanes; no Node fallback; not production-ready", *address)
 	}

@@ -338,11 +338,34 @@ func TestProductionLaneServesStartupConfigAndLibrary(t *testing.T) {
 	if len(libraryWire.Projects) != 1 || libraryWire.Projects[0]["name"] != "current-novel" {
 		t.Fatalf("/api/library did not serve exactly the admitted author database: %s", library.Body.String())
 	}
-	// Everything this round does not own stays fail-closed over real data.
-	for _, operation := range []string{"project:create", "project:open", "db:draft-list", "config:set"} {
+	// What this lane still does not own stays fail-closed over real data.
+	for _, operation := range []string{"project:create", "config:set"} {
 		response := rpc(operation, []any{})
 		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%s did not fail closed: %d %s", operation, response.Code, response.Body.String())
 		}
+	}
+	// The project lifecycle and the draft surface are bound here now, so they must
+	// be answered instead of 501. This project has no project_core row, so a
+	// successful open would be a false ready-editor claim; the lane must refuse it
+	// through the same envelope the browser already understands.
+	openResponse := rpc("project:open", []any{filepath.Join(root, productionLibraryDirectory, "current-novel"), "open-token", nil})
+	if openResponse.Code != http.StatusOK {
+		t.Fatalf("project:open is not served by the production lane: %d %s", openResponse.Code, openResponse.Body.String())
+	}
+	var openWire struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(openResponse.Body.Bytes(), &openWire); err != nil {
+		t.Fatalf("project:open envelope: %v %s", err, openResponse.Body.String())
+	}
+	if openWire.Result.Success || openWire.Result.Error == "" {
+		t.Fatalf("project:open reported a usable editor over a database with no project_core row: %s", openResponse.Body.String())
+	}
+	if response := rpc("db:draft-list", []any{}); response.Code != http.StatusBadRequest {
+		t.Fatalf("db:draft-list is not served by the production lane: %d %s", response.Code, response.Body.String())
 	}
 }
