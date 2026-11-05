@@ -64,17 +64,26 @@ const productionFixtureSource = `{"chapterNumber":1,"title":"` + productionFixtu
 	`","role":"","purpose":"","keyEvents":"","characters":[],"suspenseHook":"","userGuidance":""}`
 
 // productionFixtureSchema is the smallest real schema these nine writes touch. The
-// reviews table carries the fixture's own write guard: CHECK (base_draft_id <> 4)
+// reviews table carries the fixture's own write guard: CHECK (base_draft_id != 4)
 // lets a review of draft 4 pass every transport and store pre-check, insert its
 // body, and then fail INSIDE the store's BEGIN IMMEDIATE transaction, so the
 // rollback - not an early refusal - is what the byte-identity assertion measures.
+//
+// The guard is spelled "!=" and never "<>": the admission verifier encodes
+// sqlite_master with JSON.stringify escaping (internal/admission/snapshot.go
+// appendJSString), which leaves "<" and ">" literal, while encoding/json turns
+// them into \u003c and \u003e. A "<>" in this text would therefore fingerprint the
+// same database two different ways and the fixture's own project would be
+// rejected as SCHEMA_UNRECOGNIZED before a single write ran. SQLite treats "!="
+// and "<>" identically, and this file's DDL stays free of every character the
+// two encoders disagree about.
 var productionFixtureSchema = []string{
 	"CREATE TABLE blueprints (chapter_number INTEGER PRIMARY KEY, title TEXT, role TEXT, purpose TEXT, key_events TEXT, characters TEXT, suspense_hook TEXT, user_guidance TEXT, notes TEXT, notes_updated_at TEXT)",
 	"CREATE TABLE contents (id INTEGER PRIMARY KEY, body TEXT)",
 	"CREATE TABLE drafts (id INTEGER PRIMARY KEY, chapter_number INTEGER, version INTEGER, status TEXT, source TEXT, content_id INTEGER, word_count INTEGER, source_dependencies TEXT, created_at TEXT, updated_at TEXT)",
 	"CREATE TABLE project_core (id TEXT PRIMARY KEY, project_name TEXT, writing_language TEXT, genre TEXT, sub_genre TEXT, target_audience INTEGER, total_chapters INTEGER, words_per_chapter INTEGER, creative_strategy TEXT, narrative_thread_dormant_threshold INTEGER, plot_structure TEXT, narrative_pov TEXT, core_outline TEXT, world_setting TEXT, golden_finger TEXT, protagonist_profile TEXT, global_guidance TEXT, writing_style TEXT, reference_works TEXT, character_states TEXT, created_at TEXT, updated_at TEXT)",
 	"CREATE TABLE recovery_candidates (candidate_id TEXT PRIMARY KEY, run_id TEXT, step_id TEXT, project_id TEXT, chapter_number INTEGER, chapter_title TEXT, source_snapshot TEXT, source_hash TEXT, source_draft_id INTEGER, source_draft_version INTEGER, source_draft_identity_captured INTEGER, visible_text TEXT, content_hash TEXT, failure_code TEXT, failure_reason TEXT, replaces_candidate_id TEXT, status TEXT, resolved_at TEXT, created_at TEXT)",
-	"CREATE TABLE reviews (id INTEGER PRIMARY KEY, base_draft_id INTEGER, review_index INTEGER, content_id INTEGER, created_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT, CHECK (base_draft_id <> 4))",
+	"CREATE TABLE reviews (id INTEGER PRIMARY KEY, base_draft_id INTEGER, review_index INTEGER, content_id INTEGER, created_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT, CHECK (base_draft_id != 4))",
 	"CREATE TABLE revisions (id INTEGER PRIMARY KEY, base_draft_id INTEGER, revision_index INTEGER, revision_type TEXT, status TEXT, merged_to_draft_id INTEGER, user_prompt TEXT, review_source_id INTEGER, content_id INTEGER, word_count INTEGER, created_at TEXT, updated_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT)",
 }
 
@@ -86,6 +95,14 @@ func productionFixtureContract(t *testing.T) admission.SchemaContract {
 	const prefix = "CREATE TABLE "
 	entries := make([]productionSchemaEntry, 0, len(productionFixtureSchema))
 	for _, statement := range productionFixtureSchema {
+		// json.Marshal escapes "<", ">" and "&" as \u003c, \u003e and \u0026;
+		// the verifier's sqlite_master encoder (internal/admission/snapshot.go
+		// appendJSString) leaves them literal. One of these in the DDL would
+		// fingerprint the same file two ways and every project would be refused
+		// as SCHEMA_UNRECOGNIZED, so the fixture says so here instead.
+		if strings.ContainsAny(statement, "<>&") {
+			t.Fatalf("schema statement holds a character the verifier encodes differently from encoding/json: %s", statement)
+		}
 		if !strings.HasPrefix(statement, prefix) {
 			t.Fatalf("unparseable schema statement: %s", statement)
 		}
