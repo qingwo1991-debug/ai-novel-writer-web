@@ -1390,3 +1390,33 @@ that exists, operation counts are meaningless and the deployment cannot be hande
 
 This supersedes the "137 of 281" framing everywhere it appears above.
 
+### 2026-11-05 — a production lane exists at last: `NOVEL_DATA_ROOT`
+
+Green: `46fb2972`.
+
+**The gap that was measured last round is now partly closed.** `main.go` previously refused every data
+mount (`:49-51`) and served only auth/bootstrap/health. Now `NOVEL_DATA_ROOT` selects a real lane
+(`production_open_linux.go`, 418 lines + 348 test), and `NODE_ENV=production` **without** a data root is
+refused rather than silently degraded.
+
+**What a data root must contain:** `config/ai-novel-writer/.migration/receipt.json`,
+`generations/<uuid>/config.json`, a distinct `config/ai-novel-writer-web-runtime`, optional
+`legacy-global`, and `workspaces/<name>/.ai-novel/{project.json,project.db}`. It **creates nothing** - no
+`MkdirAll`, no `WriteFile`. Each project database is byte-copied into a private 0700 scratch directory and
+verified against the pinned v7 contract; **the author's database is never opened in place**. An
+inadmissible library or a missing receipt is a hard startup failure, which is the right default for a
+server that must not damage manuscripts.
+
+**Now 200 in production:** `startup:get-state`, `startup:appearance-ack`, `config:get`,
+`project:recent-list`, `GET /api/library`, static/bootstrap/health, and the two fixed external-link
+intents. These are real reads of the receipt, `config.json`, and DB-verified projects - not fixtures.
+
+**Still 501, and this is the honest boundary:** `project:create`, `project:open`, `db:draft-*` and
+`fs:list-*`, because there is no project catalog, no lease/peek/lifecycle provider, and no author-runtime
+publication path outside the synthetic lanes. Also `config:set`, which would write into the real
+generation directory.
+
+**So the browser still cannot write a novel**, but it can now get past the startup screen and list a real
+library - which is the first time any production behaviour has worked. The next layer is the same shape:
+catalog + lease + author-runtime publication for the real data root, not more synthetic binders.
+
