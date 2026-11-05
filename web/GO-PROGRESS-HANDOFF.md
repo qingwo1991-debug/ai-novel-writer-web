@@ -1356,3 +1356,37 @@ namespace.
 **Cost:** the image and the exported artifact grow by roughly 96 MB, most of it the CJK font files under
 `public/fonts`. The container job's timeout went 15 -> 25 minutes for the cold `pnpm install` + Vite build.
 
+### 2026-11-05 — ACCEPTANCE FINDING: the shipped image serves 279 of 281 operations as 501
+
+Measured by replaying the frontend's real call sequence against the actual image (`novel-go:migration-ci`,
+no special flags). This outranks every progress number recorded above.
+
+**Startup.** `GET /` 200, `/api/bootstrap` 200, `/api/events` 200 (SSE). Then `startup:get-state` ->
+**501**, which blocks `RendererStartup`, so `App` never mounts. The user sees the "Startup is incomplete"
+screen and nothing downstream is reachable.
+
+**Create / write / save.** `dialog:select-folder` 501 -> no parent grant, so create stays disabled in the
+UI; `project:create` 501 (and it has **no Go handler at all**, not merely unbound); `project:open` 501;
+`db:draft-list`, `db:draft-get-full`, `db:draft-create`, `db:draft-update-content`,
+`db:blueprint-get-all` all 501. `POST /api/release` is 501 `GO_ROUTE_NOT_MIGRATED`.
+
+**Inventory sweep:** 279/281 operations answer 501 as shipped. Adding `-synthetic-library-dir`,
+`-synthetic-global-dir`, `-synthetic-model-origins` brings 9 more online (`startup:*`, `config:get/set`,
+the three `llm` model names). **The "137 durable" figure is a synthetic test lane, not production
+behaviour** - it requires flags and synthetic databases, and without them the same binary serves almost
+nothing. The earlier claim that 144 remain was wrong; the real number is 279.
+
+**Two protocol-level defects, independent of unimplemented operations:**
+1. the frontend bundle sends only `X-Client-Id` / `X-CSRF-Token`; the server requires proxy-injected
+   `X-Novel-User` on **every** route, so served by its own entrypoint the app 401s everywhere. The image
+   alone cannot serve the frontend - the authenticating proxy is mandatory, not optional.
+2. browser dialogs go through `/api/dialogs/<id>`, a route that does not exist server-side (501
+   `GO_ROUTE_NOT_MIGRATED`), so folder/library choosing has no backend at all.
+
+**What this means for the plan.** The remaining work is not "bind another family". There is a missing
+layer: a **production (non-synthetic) repository and admission path** that turns the same store code on
+for a real data directory without the test-only flags, plus the routes the browser actually calls. Until
+that exists, operation counts are meaningless and the deployment cannot be handed to anyone.
+
+This supersedes the "137 of 281" framing everywhere it appears above.
+
