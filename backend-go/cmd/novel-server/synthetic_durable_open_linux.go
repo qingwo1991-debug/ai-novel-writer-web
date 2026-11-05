@@ -496,6 +496,28 @@ func (s *syntheticDurableOpen) BeginFinalization(ctx context.Context, caller tra
 	return store.NewFinalizationOutbox(db, scope, durableFinalizationOwner{expected: expected}), release, nil
 }
 
+// BeginImportRuns is the durable lane's import-run bookkeeping repository. The
+// ten bound names read and advance the stage/lease/checkpoint rows an earlier
+// app version already wrote (db:import-run-get, -list-resumable, -list-chapters,
+// -start-resume, -renew-execution, -request-cancel, -cancel-at-boundary,
+// -complete-batch, -advance-stage, -complete). Every one of them is plain SQLite
+// work on the admitted author database: none opens a source file, a knowledge
+// store or a generation graph, and none rotates the frozen lease.
+//
+// Run creation stays out of scope on purpose. prepare-inspection, author-preview,
+// finalize-parsing and restart mint the run rows themselves and need the tab-bound
+// in-memory inspection owner or the generation-source proof; the effect receipts
+// need authoritative readback from the global-facts, blueprint-range and
+// finalized-draft repositories. Those ten names therefore keep failing closed at
+// GO_OPERATION_NOT_MIGRATED instead of being approximated here.
+func (s *syntheticDurableOpen) BeginImportRuns(ctx context.Context, caller transport.Caller, raw any) (*store.ImportRuns, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewImportRuns(db), release, nil
+}
+
 // durableFinalizationOwner is the trusted owner proof verifier of that
 // repository. It binds the opaque proof to this exact captured project and lease
 // and refuses any mutation whose action or frozen values differ from the ones the
@@ -958,6 +980,14 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 	// Review and revision writes keep their source CAS in the repository; this
 	// binding adds only the operations the editor read binders leave unbound.
 	if err := server.BindReviewRevisionRemainder(durable); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	// The import-run bookkeeping advances and inspects the durable import state
+	// machine on that same admitted author database. Run CREATION (parsing,
+	// inspection, restart) and the effect receipts stay unbound: they need owners
+	// this lane does not hold, so they keep failing closed.
+	if err := server.BindImportRuns(durable); err != nil {
 		cleanup()
 		return nil, nil, err
 	}

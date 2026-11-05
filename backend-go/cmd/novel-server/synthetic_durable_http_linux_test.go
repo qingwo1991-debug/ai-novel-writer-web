@@ -113,6 +113,10 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	// One authored blueprint row is seeded too, so the durable blueprint read
 	// proves it reads the author's own database instead of a constant shape.
 	seedSyntheticDurableBlueprint(t, database)
+	// Two author-manuscript import runs are seeded with their frozen chapters and
+	// sources, so the bound import-run bookkeeping advances real rows instead of
+	// inventing them.
+	seedSyntheticDurableImportRuns(t, database)
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	bootRequest.Header.Set("X-Novel-User", "synthetic-author")
 	boot := httptest.NewRecorder()
@@ -2377,6 +2381,95 @@ func seedSyntheticDurableBlueprint(t *testing.T, database string) {
 	closeErr := db.Close()
 	if execErr != nil || closeErr != nil {
 		t.Fatal(execErr, closeErr)
+	}
+}
+
+// The two import runs the durable lane advances. Both are author-manuscript
+// runs, because a reference run cannot leave the knowledge stage without a real
+// committed knowledge receipt for every chapter (store/importrun.go checkpoint
+// validation), while the author plan needs only its own frozen chapter rows.
+const (
+	syntheticDurableImportProgressRun  = "durable-import-progress"
+	syntheticDurableImportLifecycleRun = "durable-import-lifecycle"
+	syntheticDurableImportOwner        = "synthetic-import-executor"
+	syntheticDurableImportChapterOne   = "第一章：合成导入正文。"
+	syntheticDurableImportChapterTwo   = "第二章：合成导入续章。"
+)
+
+// seedSyntheticDurableImportRuns writes two author-manuscript import runs with
+// their frozen chapters and sources into the author's database while no lease is
+// admitted. The "progress" run carries two chapters and one still-unfinished
+// source, so both the checkpoint loop and the unfinished-source read see real
+// rows; the "lifecycle" run is the one that is leased, cancelled and re-leased.
+// It runs before project:open so the write admission fingerprints exactly the
+// seeded database.
+func seedSyntheticDurableImportRuns(t *testing.T, database string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	fingerprint := func(text string) string {
+		sum := sha256.Sum256([]byte(text))
+		return hex.EncodeToString(sum[:])
+	}
+	fail := func(err error) {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	type seededSource struct {
+		index        int64
+		id           string
+		status       string
+		chapterCount int64
+		displayName  string
+	}
+	insertRun := func(runID string, chapters []string, sources []seededSource) {
+		if _, err := db.Exec(`INSERT INTO import_runs(
+			id, purpose, root_run_id, effect_namespace, source_fingerprint, manifest_fingerprint,
+			locale, stage, status, total_chapters, manifest_chapter_count, completed_chapters
+		) VALUES(?, 'author-manuscript', ?, ?, ?, ?, 'zh-CN', 'author-publish', 'ready', ?, ?, 0)`,
+			runID, runID, "import:author-manuscript:"+runID, fingerprint(runID+"-source"),
+			fingerprint(runID+"-manifest"), int64(len(chapters)), int64(len(chapters))); err != nil {
+			fail(err)
+		}
+		for offset, content := range chapters {
+			chapterNumber := int64(offset + 1)
+			if _, err := db.Exec(`INSERT INTO import_run_chapters(
+				run_id, chapter_number, source_id, source_chapter_number, title,
+				content_fingerprint, content_size, content_snapshot
+			) VALUES(?, ?, 'source-1', ?, ?, ?, ?, ?)`,
+				runID, chapterNumber, chapterNumber, "第"+strconv.FormatInt(chapterNumber, 10)+"章",
+				fingerprint(content), int64(len(content)), content); err != nil {
+				fail(err)
+			}
+		}
+		for _, source := range sources {
+			display := `{"displayName":"` + source.displayName + `","mediaType":"text/plain","size":42}`
+			if _, err := db.Exec(`INSERT INTO import_run_sources(
+				run_id, source_index, source_id, source_fingerprint, display_json, status,
+				manifest_fingerprint, chapter_count, content_size, word_count
+			) VALUES(?, ?, ?, ?, ?, ?, '', ?, 42, 7)`,
+				runID, source.index, source.id, fingerprint(runID+source.id), display,
+				source.status, source.chapterCount); err != nil {
+				fail(err)
+			}
+		}
+	}
+	insertRun(syntheticDurableImportProgressRun,
+		[]string{syntheticDurableImportChapterOne, syntheticDurableImportChapterTwo},
+		[]seededSource{
+			{index: 1, id: "source-1", status: "completed", chapterCount: 2, displayName: "合成资料一.txt"},
+			{index: 2, id: "source-2", status: "pending", chapterCount: 0, displayName: "合成资料二.txt"},
+		})
+	insertRun(syntheticDurableImportLifecycleRun,
+		[]string{syntheticDurableImportChapterOne},
+		[]seededSource{
+			{index: 1, id: "source-1", status: "completed", chapterCount: 1, displayName: "合成资料三.txt"},
+		})
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -53,6 +53,17 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			},
 		},
 		{
+			name: "import-runs",
+			bind: func(s *Server) error { return s.BindImportRuns(ImportRunProviderFunc(nil)) },
+			want: []string{
+				"db:import-run-advance-stage", "db:import-run-cancel-at-boundary",
+				"db:import-run-complete", "db:import-run-complete-batch", "db:import-run-get",
+				"db:import-run-list-chapters", "db:import-run-list-resumable",
+				"db:import-run-renew-execution", "db:import-run-request-cancel",
+				"db:import-run-start-resume",
+			},
+		},
+		{
 			name: "finalization",
 			bind: func(s *Server) error {
 				return s.BindFinalization(FinalizationProviderFunc(nil))
