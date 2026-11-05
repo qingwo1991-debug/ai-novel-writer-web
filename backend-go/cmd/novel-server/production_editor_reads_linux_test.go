@@ -876,3 +876,204 @@ func TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease(t *testing.T) {
 		t.Fatalf("generation:execute answered %d instead of the lane's business refusal: %s", response.Code, response.Body.String())
 	}
 }
+
+// The review rows an earlier app version committed into the same admitted
+// database: one review and one pending revision against the seeded draft, each
+// with its frozen source snapshot, and deliberately no review_cycles row so the
+// cycle read has to answer the honest "no cycle yet" null.
+const (
+	productionEditorReviewID     = 17
+	productionEditorRevisionID   = 23
+	productionEditorReviewBody   = "审查报告正文：门后的脚步声。"
+	productionEditorRevisionBody = "候选修订正文：他听见门后有人。"
+)
+
+// productionReviewReadsRoot is the editor read fixture plus those committed
+// review rows. The returned bytes are re-read after seeding, because the two
+// tests above compare against the fixture exactly as the lane admits it.
+func productionReviewReadsRoot(t *testing.T) (root, projectPath string, contract admission.SchemaContract, seeded []byte) {
+	t.Helper()
+	root, projectPath, contract, _, _ = productionEditorReadsRoot(t)
+	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
+	seedProductionReviewRows(t, database)
+	var err error
+	if seeded, err = os.ReadFile(database); err != nil {
+		t.Fatal(err)
+	}
+	return root, projectPath, contract, seeded
+}
+
+// seedProductionReviewRows writes the review/revision rows through the same
+// column sets the admitted read transaction selects, then checkpoints them into
+// the admitted file so no sidecar carries rows the digest does not cover.
+func seedProductionReviewRows(t *testing.T, database string) {
+	t.Helper()
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
+	uri.RawQuery = "mode=rw&_foreign_keys=on"
+	db, err := sql.Open("sqlite3", uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	statements := []string{
+		`DELETE FROM revisions`,
+		`DELETE FROM reviews`,
+		`INSERT INTO contents (id, body) VALUES (2, '` + productionEditorReviewBody + `')`,
+		`INSERT INTO contents (id, body) VALUES (3, '` + productionEditorRevisionBody + `')`,
+		fmt.Sprintf(`INSERT INTO reviews (id, base_draft_id, review_index, content_id, created_at,
+ source_draft_chapter_number, source_draft_version, source_draft_status, source_content)
+ VALUES (%d, 1, 1, 2, '2024-05-06 07:08:09', 1, 1, 'draft', '%s')`,
+			productionEditorReviewID, productionEditorSeed),
+		fmt.Sprintf(`INSERT INTO revisions (id, base_draft_id, revision_index, revision_type, status,
+ merged_to_draft_id, user_prompt, review_source_id, content_id, word_count, created_at,
+ updated_at, source_draft_chapter_number, source_draft_version, source_draft_status,
+ source_content)
+ VALUES (%d, 1, 1, 'refine', 'pending', NULL, '', %d, 3, 6, '2024-05-06 07:08:09',
+ '2024-05-06 07:08:09', 1, 1, 'draft', '%s')`,
+			productionEditorRevisionID, productionEditorReviewID, productionEditorSeed),
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			t.Fatalf("seed %q: %v", statement, err)
+		}
+	}
+	productionEditorCheckpoint(t, db, database)
+}
+
+// TestProductionEditorReviewReadsServeAdmittedAuthorDatabase binds the review
+// half of the editor. Each of the six names must answer 200 over the admitted
+// project with the committed rows - a metadata list, a full row with its frozen
+// source, and the absent-cycle null - and each must refuse a stale, foreign or
+// absent lease instead of reading anything. The review/revision mutations and
+// the two reads that only have a write-capable seam stay at 501.
+func TestProductionEditorReviewReadsServeAdmittedAuthorDatabase(t *testing.T) {
+	root, projectPath, contract, seeded := productionReviewReadsRoot(t)
+	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
+		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	author := newProductionDurableClient(t, handler, productionEditorTab)
+	var opened productionDurableOpenWire
+	author.decode(t, "project:open", []any{projectPath, "review-open-1", projectPath}, &opened)
+	if !opened.Success || !opened.DBReady || opened.Error != "" {
+		t.Fatalf("project:open refused an admitted project: %+v", opened)
+	}
+	frozen := map[string]any{
+		"projectId":   opened.Project["id"],
+		"projectPath": opened.Project["path"],
+		"leaseId":     opened.Project["sessionLease"],
+	}
+	if frozen["leaseId"] == "" || frozen["leaseId"] == nil {
+		t.Fatalf("project:open returned no session lease: %v", opened.Project)
+	}
+
+	// The metadata lists are the committed rows for the seeded draft, not an
+	// empty shelf and not another draft's history.
+	var reviews []map[string]any
+	productionEditorDecode(t, author, "db:review-list", []any{int64(1), projectPath, frozen}, &reviews)
+	if len(reviews) != 1 || reviews[0]["id"] != float64(productionEditorReviewID) ||
+		reviews[0]["baseDraftId"] != float64(1) || reviews[0]["reviewIndex"] != float64(1) ||
+		reviews[0]["contentId"] != float64(2) {
+		t.Fatalf("db:review-list did not read the seeded review: %+v", reviews)
+	}
+	var revisions []map[string]any
+	productionEditorDecode(t, author, "db:revision-list", []any{int64(1), projectPath, frozen}, &revisions)
+	if len(revisions) != 1 || revisions[0]["id"] != float64(productionEditorRevisionID) ||
+		revisions[0]["revisionType"] != "refine" || revisions[0]["status"] != "pending" ||
+		revisions[0]["reviewSourceId"] != float64(productionEditorReviewID) {
+		t.Fatalf("db:revision-list did not read the seeded revision: %+v", revisions)
+	}
+	var pending []map[string]any
+	productionEditorDecode(t, author, "db:revision-get-pending", []any{int64(1), projectPath, frozen}, &pending)
+	if len(pending) != 1 || pending[0]["id"] != float64(productionEditorRevisionID) ||
+		pending[0]["reviewSourceId"] != float64(productionEditorReviewID) {
+		t.Fatalf("db:revision-get-pending lost the pending revision: %+v", pending)
+	}
+
+	// The full-row reads carry the committed body and the frozen source snapshot
+	// the review was taken against, which a row read from the wrong table (or one
+	// that skipped the contents join) could not return.
+	var review map[string]any
+	productionEditorDecode(t, author, "db:review-get-full", []any{int64(productionEditorReviewID), projectPath, frozen}, &review)
+	if review["content"] != productionEditorReviewBody || review["baseDraftId"] != float64(1) {
+		t.Fatalf("db:review-get-full did not read the committed review body: %+v", review)
+	}
+	source, ok := review["sourceDraft"].(map[string]any)
+	if !ok || source["id"] != float64(1) || source["chapterNumber"] != float64(1) ||
+		source["version"] != float64(1) || source["status"] != "draft" ||
+		source["content"] != productionEditorSeed {
+		t.Fatalf("db:review-get-full lost the frozen source snapshot: %+v", review["sourceDraft"])
+	}
+	var revision map[string]any
+	productionEditorDecode(t, author, "db:revision-get-full", []any{int64(productionEditorRevisionID), projectPath, frozen}, &revision)
+	if revision["content"] != productionEditorRevisionBody || revision["revisionType"] != "refine" ||
+		revision["wordCount"] != float64(6) || revision["reviewSourceId"] != float64(productionEditorReviewID) {
+		t.Fatalf("db:revision-get-full did not read the committed revision: %+v", revision)
+	}
+	source, ok = revision["sourceDraft"].(map[string]any)
+	if !ok || source["id"] != float64(1) || source["content"] != productionEditorSeed {
+		t.Fatalf("db:revision-get-full lost the frozen source snapshot: %+v", revision["sourceDraft"])
+	}
+
+	// The cycle read is bound and answers the honest null: the seeded project has
+	// no review_cycles row for this review, and a non-null answer here would mean
+	// the lane invented a cycle.
+	var cycle any
+	productionEditorDecode(t, author, "db:review-cycle-get", []any{int64(productionEditorReviewID), projectPath, frozen}, &cycle)
+	if cycle != nil {
+		t.Fatalf("db:review-cycle-get reported a cycle for a review that has none: %+v", cycle)
+	}
+
+	// The reads above are reads: the admitted bytes did not move.
+	afterReads, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterReads, seeded) {
+		t.Fatal("a review read changed the admitted author database")
+	}
+
+	// Every newly bound name is fenced exactly like the other editor reads.
+	reads := []struct {
+		operation string
+		args      func(map[string]any) []any
+	}{
+		{"db:review-list", func(m map[string]any) []any { return []any{int64(1), projectPath, m} }},
+		{"db:revision-list", func(m map[string]any) []any { return []any{int64(1), projectPath, m} }},
+		{"db:revision-get-pending", func(m map[string]any) []any { return []any{int64(1), projectPath, m} }},
+		{"db:review-get-full", func(m map[string]any) []any { return []any{int64(productionEditorReviewID), projectPath, m} }},
+		{"db:revision-get-full", func(m map[string]any) []any { return []any{int64(productionEditorRevisionID), projectPath, m} }},
+		{"db:review-cycle-get", func(m map[string]any) []any { return []any{int64(productionEditorReviewID), projectPath, m} }},
+	}
+	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
+	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
+	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	for _, read := range reads {
+		productionEditorRefused(t, foreign, "foreign tab", read.operation, read.args(frozen))
+		productionEditorRefused(t, author, "stale lease", read.operation, read.args(stale))
+		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
+	}
+
+	// The rest of the family keeps failing closed instead of being faked:
+	// db:review-get-latest and db:review-next-index are reads, but this lane has
+	// no read-only-transaction seam for them, and db:review-create is a write.
+	for _, operation := range []string{"db:review-get-latest", "db:review-next-index", "db:review-create"} {
+		response := author.call(t, operation, []any{int64(1), projectPath, frozen})
+		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("%s answered %d instead of the lane's fail-closed 501: %s", operation, response.Code, response.Body.String())
+		}
+	}
+
+	// A refused read is also a read: the admitted bytes still did not move.
+	afterRefusals, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterRefusals, seeded) {
+		t.Fatal("a refused review read changed the admitted author database")
+	}
+}
