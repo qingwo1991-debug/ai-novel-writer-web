@@ -562,6 +562,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:prepare-draft-context and generation:read-context project the
+		// chapter-draft context; both dial nothing and neither writes the author
+		// database. generation:commit-draft stays unbound: its composed text and
+		// unit-count ports do not exist in Go yet.
+		if bindErr := newProductionDraftContext(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
