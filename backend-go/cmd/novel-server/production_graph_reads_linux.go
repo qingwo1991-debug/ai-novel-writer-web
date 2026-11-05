@@ -2,59 +2,145 @@
 
 package main
 
-import "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+import (
+	"context"
+	"errors"
+	"net/http"
+	"unicode/utf8"
 
-// newProductionGraphReads lends the production lane the graph generation
-// recovery projection and the finalization slot read, and nothing else of that
-// family.
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+)
+
+// productionGraphReads lends the production lane exactly one name of the graph
+// family: the finalization slot read. It binds that one name itself instead of
+// calling transport.BindGraphGeneration.
 //
-// Both names are served by the durable implementation the committed generation
-// reads already use (newProductionGenerationReads), constructed the same way: of
-// syntheticGeneration's fields only lifecycle is set, because GraphRead and
-// FinalizationRead do nothing with the rest. Each one re-admits the exact frozen
-// cookie/tab/lease fence through BeginGenerationLedgerDB and then projects the
-// author's own ledger rows, so neither reserves an attempt, resolves a
-// credential, opens an egress endpoint or dispatches to a provider. The graph
-// family's begin, execute, confirm and cancel therefore stay unbound here.
+// BindGraphGeneration always installs graph-generation:read - that row is in its
+// list unconditionally - and, when no read is lent, installs a handler that
+// answers GENERATION_OPERATION_UNSUPPORTED. That is a bound name that can only
+// refuse, and this lane does not ship those: a browser user would get a 500 for
+// a feature that does not exist instead of the fail-closed 501 that says the
+// server cannot do it yet. graph-generation:read therefore stays unbound until a
+// begin that freezes the graph context is itself served. generation:begin here
+// is the reduced begin and freezes no graph context, so a graph projection would
+// have nothing to project.
 //
-// The provider type is transport.GraphGenerationProvider, and BindGraphGeneration
-// reads exactly two of its fields: Read, which GraphRead satisfies, and
-// FinalizationRead, whose field name, arity and argument type GraphRead's
-// sibling already matches. The binder unwraps the single-key family envelope
-// first, so the methods receive the frozen argument itself - a `{ handle }`
-// object for the graph read and a `{ slot }` object for the finalization read -
-// not the envelope around it.
-//
-// A nil runtime, a closed runtime and a runtime without a lifecycle lend
-// nothing: both fields stay nil, so the binder installs no finalization read
-// (that name keeps failing closed at 501 GO_OPERATION_NOT_MIGRATED) and the
-// graph read, which the binder always lists, answers
-// GENERATION_OPERATION_UNSUPPORTED instead of naming a view. That branch is
-// defensive: productionOpen.durable is nil only while startup is still admitting
-// projects, or after Close. Once bound, the two names refuse rather than guess
-// (synthetic_graph_linux.go): a handle that does not name a run frozen under this
-// very lease, a run whose manifest froze no graph context, and a finalization
-// slot another project owns are each answered with their documented refusal
-// code, never with a fabricated view.
-func newProductionGraphReads(durable *productionDurableOpen) *transport.GraphGenerationProvider {
-	provider := &transport.GraphGenerationProvider{}
+// The finalization slot read is a real projection: it answers the recovery of
+// the run that the slot currently owns, JSON null when it owns none, or its
+// documented refusal (GENERATION_FINALIZATION_CONTEXT_INVALID,
+// GENERATION_FINALIZATION_SLOT_CONFLICT, GENERATION_FINALIZATION_SLOT_INVALID).
+// Of syntheticGeneration's fields only lifecycle is set, because
+// FinalizationRead touches nothing else, and the read reserves no attempt,
+// resolves no credential, opens no egress endpoint and dispatches to no
+// provider.
+type productionGraphReads struct {
+	read func(context.Context, transport.Caller, map[string]any, any) (any, error)
+}
+
+// newProductionGraphReads builds the reader from the lane's durable open. A nil
+// or closed runtime lends nothing, and Bind then installs nothing, so the name
+// keeps failing closed.
+func newProductionGraphReads(durable *productionDurableOpen) *productionGraphReads {
 	if durable == nil {
-		return provider
+		return &productionGraphReads{}
 	}
 	durable.mu.Lock()
 	lifecycle := durable.lifecycle
 	closed := durable.closed
 	durable.mu.Unlock()
 	if closed || lifecycle == nil {
-		return provider
+		return &productionGraphReads{}
 	}
 	reads := &syntheticGeneration{lifecycle: lifecycle}
-	// Only the finalization read is lent. generation:begin in this lane freezes
-	// no graph context (it is the reduced begin, not the batch begin), so
-	// GraphRead could only ever answer GENERATION_GRAPH_CONTEXT_INVALID - a 200
-	// is unreachable. Binding a name that can only refuse is exactly what this
-	// lane refuses to do, so graph-generation:read stays at 501 until a begin
-	// that freezes the graph context is itself bound.
-	provider.FinalizationRead = reads.FinalizationRead
-	return provider
+	return &productionGraphReads{read: reads.FinalizationRead}
+}
+
+// Bind installs finalization-generation:read and nothing else.
+func (g *productionGraphReads) Bind(server *transport.Server) error {
+	if server == nil {
+		return errors.New("TRANSPORT_SERVER_REQUIRED")
+	}
+	if g == nil || g.read == nil {
+		return nil
+	}
+	read := g.read
+	return server.Bind("finalization-generation:read", func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
+		// Wire arity is the request arity plus the frozen expected context.
+		if len(args) != 2 {
+			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
+		}
+		raw, ok := args[1].(map[string]any)
+		if !ok || len(raw) != 3 {
+			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
+		}
+		expected := make(map[string]any, 3)
+		for _, key := range []string{"projectId", "leaseId", "projectPath"} {
+			text, ok := raw[key].(string)
+			if !ok || text == "" || !utf8.ValidString(text) {
+				return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
+			}
+			expected[key] = text
+		}
+		// The request is `{ slot }` and nothing else: any other key is refused
+		// before the ledger is read, which is what the family binder does when it
+		// unwraps this channel.
+		slot, err := productionFinalizationSlotRequest(args[0])
+		if err != nil {
+			return productionGraphReadFailure(err)
+		}
+		if ctx == nil {
+			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
+		}
+		value, err := read(ctx, caller, expected, slot)
+		if err != nil {
+			return productionGraphReadFailure(err)
+		}
+		return value, nil
+	})
+}
+
+// productionFinalizationSlotRequest is the `{ slot }` unwrap of
+// internal/transport/graph_generation.go with the same single-key rule and the
+// same refusal code.
+func productionFinalizationSlotRequest(value any) (any, error) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("GENERATION_FINALIZATION_SLOT_INVALID")
+	}
+	slot, present := object["slot"]
+	if !present || len(object) != 1 {
+		return nil, errors.New("GENERATION_FINALIZATION_SLOT_INVALID")
+	}
+	return slot, nil
+}
+
+// productionGraphReadFailure is the read half of the family adapter
+// (internal/transport/generation.go generationFailure): a read op surfaces its
+// HTTP error, and anything that is not one becomes a symbolic 500 rather than a
+// raw Go error carrying a path or a driver message.
+func productionGraphReadFailure(err error) (any, error) {
+	var public *security.HTTPError
+	if errors.As(err, &public) && public != nil {
+		return nil, security.NewHTTPError(public.Status, public.Code)
+	}
+	return nil, security.NewHTTPError(http.StatusInternalServerError, productionGraphReadCode(err))
+}
+
+// productionGraphReadCode keeps an all-caps symbolic code and answers
+// REQUEST_FAILED for anything else.
+func productionGraphReadCode(err error) string {
+	if err == nil {
+		return "REQUEST_FAILED"
+	}
+	code := err.Error()
+	if len(code) < 2 {
+		return "REQUEST_FAILED"
+	}
+	for i, c := range code {
+		if !(c >= 'A' && c <= 'Z') && !(i > 0 && (c >= '0' && c <= '9' || c == '_')) {
+			return "REQUEST_FAILED"
+		}
+	}
+	return code
 }

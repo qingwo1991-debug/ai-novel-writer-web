@@ -579,7 +579,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// names and db:plot-tree-save/db:plot-tree-clear are not bound here, so they
 	// keep failing closed at GO_OPERATION_NOT_MIGRATED.
 	for _, bind := range []func() error{
-		func() error { return server.BindGraphGeneration(newProductionGraphReads(open.durable)) },
+		func() error { return newProductionGraphReads(open.durable).Bind(server) },
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
@@ -605,6 +605,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionWrites(open).Bind(server) },
 		func() error { return newProductionEditorWrites(open.durable).Bind(server) },
 		func() error { return newProductionFinalizationWrites(open.durable).Bind(server) },
+		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
