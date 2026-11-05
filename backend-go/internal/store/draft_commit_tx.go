@@ -10,7 +10,7 @@ package store
 // already holds; the request carries no text (GenerationDraftCommitRequest,
 // src/shared/generation-owner-contract.ts:131-137), so the committed body is
 // recomposed here from the run's own artifacts through the pure ports in
-// internal/generation (ComposeDraftVisibleSources / CountDraftUnits /
+// internal/draftalg (ComposeDraftVisibleSources / CountDraftUnits /
 // DraftTargetUnitRange), which are the ports of src/shared/draft-visible-text.ts
 // and src/shared/draft-units.ts.
 //
@@ -78,7 +78,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/draftalg"
 )
 
 // The refusal codes of this write, each one the literal the reference throws.
@@ -221,8 +221,8 @@ func dcCommitBody(ctx context.Context, conn *sql.Conn, request DraftCommitReques
 	if err != nil {
 		return nil, err
 	}
-	units := generation.CountDraftUnits(composed.Text)
-	targetRange, rangeErr := generation.DraftTargetUnitRange(target)
+	units := draftalg.CountDraftUnits(composed.Text)
+	targetRange, rangeErr := draftalg.DraftTargetUnitRange(target)
 	if rangeErr != nil || int64(units) < targetRange.Minimum {
 		return nil, ErrDraftCommitIncomplete
 	}
@@ -295,8 +295,8 @@ func dcTargetUnits(manifest map[string]any) (int64, error) {
 	if !ok {
 		return 0, ErrDraftCommitIncomplete
 	}
-	target, parsed := generation.ParseDraftTargetUnits(text)
-	if !parsed || !generation.DraftTargetUnitsUsable(target) {
+	target, parsed := draftalg.ParseDraftTargetUnits(text)
+	if !parsed || !draftalg.DraftTargetUnitsUsable(target) {
 		return 0, ErrDraftCommitIncomplete
 	}
 	return target, nil
@@ -439,7 +439,7 @@ func dcVerifiedCommitOf(ctx context.Context, conn *sql.Conn, run *bpRun, row map
 	if !success || !draftOK || !versionOK || !hashOK || !contentOK || !batchOK || !chapterOK ||
 		!manifestChapterOK || !manifestBatchOK || identity == nil ||
 		chapterNumber != manifestChapter || batchID != manifestBatch ||
-		contentHash != generation.TextHash(content) || contentHash != composed.TextHash ||
+		contentHash != draftalg.TextHash(content) || contentHash != composed.TextHash ||
 		content != composed.Text || !dcHandleIs(stored["handle"], run, glText(identity["epoch"])) {
 		return nil, ErrDraftCommitReceiptInvalid
 	}
@@ -757,7 +757,7 @@ func dcDependencyStates(ctx context.Context, conn *sql.Conn, ids []int64) (map[i
 			}
 			state.status = glText(row["status"])
 			if body, ok := row["body"].(string); ok {
-				state.hash = generation.TextHash(body)
+				state.hash = draftalg.TextHash(body)
 			}
 			if snapshot, ok := row["contentSnapshot"].(string); ok {
 				body, _ := row["body"].(string)
@@ -821,7 +821,7 @@ const (
 
 // dcDraftAlgorithm is isDraftVisibleTextVersion (src/shared/draft-visible-text.ts:5-7).
 func dcDraftAlgorithm(algorithm string) bool {
-	return algorithm == generation.DraftVisibleTextVersion || algorithm == generation.DraftVisibleTextVersionV1
+	return algorithm == draftalg.DraftVisibleTextVersion || algorithm == draftalg.DraftVisibleTextVersionV1
 }
 
 // dcComposition is readVisibleComposition(runId) (generation-run-repository.ts:
@@ -982,7 +982,7 @@ func dcReadRows(ctx context.Context, conn *sql.Conn, run *bpRun) (*dcRows, error
 // refused with the same code the original uses for an algorithm it does not
 // compose under.
 func dcVisible(run *bpRun, read *dcRows, ids []any, idsWellFormed bool, algorithm string) (*dcComposed, error) {
-	if !dcDraftAlgorithm(algorithm) && algorithm != generation.VisibleContinuationVersion {
+	if !dcDraftAlgorithm(algorithm) && algorithm != draftalg.VisibleContinuationVersion {
 		return nil, glError("GENERATION_COMPOSITION_ALGORITHM_INVALID")
 	}
 	artifactIDs := make([]string, 0, len(ids))
@@ -1033,18 +1033,18 @@ func dcVisible(run *bpRun, read *dcRows, ids []any, idsWellFormed bool, algorith
 			draftAlgorithm = algorithm
 		}
 		var next string
-		condense := draftAlgorithm != "" && row.purpose == generation.DraftCondensePurpose
+		condense := draftAlgorithm != "" && row.purpose == draftalg.DraftCondensePurpose
 		switch {
 		case condense && (len(composed.Sources) == 0 || index != len(artifactIDs)-1):
 			return nil, glError("GENERATION_COMPOSITION_SOURCE_INVALID")
 		case condense:
-			next = generation.SanitizeDraftText(rawText, draftAlgorithm)
+			next = draftalg.SanitizeDraftText(rawText, draftAlgorithm)
 		case draftAlgorithm != "" && len(composed.Sources) > 0:
-			next = generation.ComposeDraftVisibleContinuation(text, rawText, draftAlgorithm)
+			next = draftalg.ComposeDraftVisibleContinuation(text, rawText, draftAlgorithm)
 		case draftAlgorithm != "":
-			next = generation.SanitizeDraftText(rawText, draftAlgorithm)
+			next = draftalg.SanitizeDraftText(rawText, draftAlgorithm)
 		case len(composed.Sources) > 0:
-			next = generation.ComposeVisibleContinuation(text, rawText)
+			next = draftalg.ComposeVisibleContinuation(text, rawText)
 		default:
 			next = trimJS(rawText)
 		}
@@ -1056,14 +1056,14 @@ func dcVisible(run *bpRun, read *dcRows, ids []any, idsWellFormed bool, algorith
 			if err != nil {
 				return nil, glError("GENERATION_COMPOSITION_SOURCE_INVALID")
 			}
-			targetRange, rangeErr := generation.DraftTargetUnitRange(target)
+			targetRange, rangeErr := draftalg.DraftTargetUnitRange(target)
 			if rangeErr != nil || finishReason != "stop" ||
-				int64(generation.CountDraftUnits(text)) <= targetRange.Maximum {
+				int64(draftalg.CountDraftUnits(text)) <= targetRange.Maximum {
 				return nil, glError("GENERATION_COMPOSITION_NO_PROGRESS")
 			}
 		} else {
 			if draftAlgorithm != "" && len(composed.Sources) > 0 && finishReason == "length" &&
-				generation.CountDraftUnits(next)-generation.CountDraftUnits(text) < 300 {
+				draftalg.CountDraftUnits(next)-draftalg.CountDraftUnits(text) < 300 {
 				return nil, glError("GENERATION_COMPOSITION_NO_PROGRESS")
 			}
 			if len(composed.Sources) > 0 &&
@@ -1085,7 +1085,7 @@ func dcVisible(run *bpRun, read *dcRows, ids []any, idsWellFormed bool, algorith
 		composed.lastResult = row.result
 	}
 	composed.Text = text
-	composed.TextHash = generation.TextHash(text)
+	composed.TextHash = draftalg.TextHash(text)
 	return composed, nil
 }
 
@@ -1121,7 +1121,7 @@ func dcHydrate(run *bpRun, read *dcRows, row *dcArtifactRow) (map[string]any, er
 		fingerprint != identityFingerprint || fingerprint != read.fingerprint ||
 		glText(artifact["projectId"]) != glText(run.binding["projectId"]) ||
 		!textOK || !hashOK || !revisionOK || revision != row.revision ||
-		generation.TextHash(text) != textHash {
+		draftalg.TextHash(text) != textHash {
 		return nil, glError("ARTIFACT_INTEGRITY_FAILED")
 	}
 	return artifact, nil

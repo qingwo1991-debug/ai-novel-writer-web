@@ -1,4 +1,4 @@
-package generation
+package draftalg
 
 // Every expectation in this file is transcribed by hand from the TypeScript and
 // written out literally, so a drift shows up as a failing literal instead of as

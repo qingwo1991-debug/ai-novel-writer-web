@@ -1,4 +1,4 @@
-package generation
+package draftalg
 
 // Ports of src/shared/visible-continuation.ts and src/shared/draft-visible-text.ts:
 // the visible continuation append and the draft projection built on top of it,

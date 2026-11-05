@@ -320,7 +320,7 @@ func productionDraftCommitRunRequest(nonce string, chapter int64, targetUnits, h
 		`"` + parent + `,"sourceManifest":{"operation":"chapter-draft"` + batch + `,"chapterNumber":` + number +
 		`,"modelId":"` + productionTestModelID + `","outputContract":"visible-text","authorInputs":[{"id":"draft:target-units","text":"` +
 		targetUnits + `"}],"selectedDraftIds":[],"selectedFinalizedDraftIds":[]},"sourceRefs":[]` +
-		`,"budget":{"maxPhysicalRequests":3,"maxTokenLiability":4000,"maxOutputPerRequest":1000,"maxActiveElapsedMs":600000}}`}
+		`,"budget":{"maxPhysicalRequests":3,"maxTokenLiability":4000,"maxOutputPerRequest":1000,"maxActiveElapsedMs":600000}}`
 }
 
 // TestProductionDraftCommitServesTheOneTransaction drives generation:commit-draft:

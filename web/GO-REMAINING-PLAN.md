@@ -74,8 +74,21 @@
 
 ### 3.5 桌面专属 → 需改产品形态
 
-`dialog`（9）：文件选择框在服务器上不存在，应改为**上传 / 服务端路径浏览**。
-`skills:pick-local`、`skills:install-local`：同上。
+这 9 个不是一类，浏览器能做的比我说得多。浏览器有文件选择框（`<input type="file">`），
+区别只在它交出来的是什么：**文件内容**，不是宿主上的绝对路径。
+
+**A. 选"我电脑上的文件"导入（5 个：novel-files / knowledge-files / knowledge-folder /
+project-archive / legacy-project）** — 浏览器完全能做，而且手机上更方便。但形状变了：
+不再是一次 IPC 往返拿到路径，而是**上传字节**，由服务器落盘。这 5 个操作在浏览器版里
+根本不需要存在，它们被"上传"这条路取代。
+
+**B. 选"服务器上的目录"写出（4 个：select-folder / select-export-directory /
+select-project-archive-export / select-project-restore-target）** — 这个浏览器确实做不到：
+网页不能指定服务器路径。两条路：
+- 服务端目录浏览（列目录 API + 校验根目录），
+- 或者干脆不选：导出直接作为浏览器下载，归档固定落在服务端数据目录。
+
+`skills:pick-local` / `skills:install-local` 属于 A：改为上传 zip。
 
 ### 3.6 MCP 与归档
 

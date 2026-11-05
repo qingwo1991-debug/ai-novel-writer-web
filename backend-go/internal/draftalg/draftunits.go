@@ -1,4 +1,4 @@
-package generation
+package draftalg
 
 // Port of src/shared/draft-units.ts: the persisted prose-count contract and the
 // target-unit range the commit gate compares against. Everything here is a pure
