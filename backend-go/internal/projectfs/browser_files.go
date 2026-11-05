@@ -346,7 +346,7 @@ func (p *Project) MakeBrowserDirectory(ctx context.Context, relative string) err
 		if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
 		}
-		child, err := openChild(parent, name)
+		child, _, err := openChild(parent, name)
 		if err != nil {
 			return err
 		}
