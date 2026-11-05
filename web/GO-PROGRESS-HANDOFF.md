@@ -1108,3 +1108,27 @@ projection).
 work - no Lance, no generation owner - which makes it the best next target by the criteria that have
 actually been delivering.
 
+### 2026-11-04 — ten import-run operations bound (durable 118 -> 128)
+
+Green: `11194f77`. New `store/importrun.go` (1451 lines) and `transport/import_run.go`.
+
+Bound, all plain SQLite work on the admitted author database: `db:import-run-get`, `-list-resumable`,
+`-list-chapters`, `-start-resume`, `-renew-execution`, `-request-cancel`, `-cancel-at-boundary`,
+`-complete-batch`, `-advance-stage`, `-complete`.
+
+Left at 501 on purpose: the four run **creation** stages (`prepare-inspection`, `author-preview`,
+`finalize-parsing`, `restart`) need the tab-bound in-memory inspection owner or a generation-source
+proof; the three **effect receipts** need authoritative readback from the global-facts, blueprint-range
+and finalized-draft repositories; `fail` and `import-global-facts-commit` and
+`draft-import-finalized-batch` still need their own proofs.
+
+One test defect found by CI and fixed: the "still unbound" loop kept all ten names, so the first bound
+name returned 400 and the loop failed. The list is now pruned to the genuinely unbound names - and that
+list is exactly the kind of thing that rots, so it is worth checking whenever a batch binds into a family
+that already has a pin loop.
+
+**Process note:** this batch was produced by a subagent whose run was *cancelled* mid-flight. It had in
+fact finished the code and the seeder, but I did not notice the cancellation until the next round, so its
+work sat in the tree unverified for one round. When a delegated run is cancelled, inspect the working
+tree for partial output immediately rather than assuming nothing landed.
+
