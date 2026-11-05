@@ -13,7 +13,10 @@ import (
 // BindPostHistoryReads binds only the five post-process receipt and LLM ledger
 // reads that the durable lane serves from its admitted author database. The
 // four mutating names in the same family (create-run, mark-step-ok,
-// mark-step-failed, log-llm-call) stay unbound, so they keep failing closed.
+// mark-step-failed, log-llm-call) are absent here on purpose: they belong to
+// BindPostHistoryWrites, which a lane installs only when it owns the author
+// write lease. A lane that does not bind them keeps answering
+// GO_OPERATION_NOT_MIGRATED rather than a handler that could only refuse.
 //
 // The provider is the same seam BindPostHistory already uses: it lends one
 // admitted repository per request and never a database handle. Arity, path

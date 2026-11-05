@@ -586,6 +586,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionSingletonReads(open).Bind(server) },
 		func() error { return server.BindDraftAuthorityReads(newProductionDraftAuthorityReads(open.durable)) },
 		func() error { return server.BindNarrativeReads(newProductionNarrativeReads(open.durable)) },
+		func() error { return server.BindPostHistoryWrites(newProductionStoryStateWrites(open.durable)) },
+		func() error { return server.BindPlotTreeClear(newProductionStoryStateWrites(open.durable)) },
+		func() error { return server.BindNarrativeWrites(newProductionStoryStateWrites(open.durable)) },
+		func() error { return server.BindNarrativeEventConfirm(newProductionStoryStateWrites(open.durable)) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()

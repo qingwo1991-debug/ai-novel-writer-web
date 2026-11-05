@@ -1316,16 +1316,13 @@ func TestProductionContinuityReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:plot-tree-read")
 	})
 
-	// The mutations in these three families are not bound by the read binders:
-	// they keep failing closed instead of being installed as handlers that could
-	// only refuse. One subtest per name, so a failure names the operation.
+	// The four post-process mutations and db:plot-tree-clear are bound now, so
+	// they are exercised where they belong, by the write batch. db:plot-tree-save
+	// stays fail-closed: saving a plot tree needs the graph-generation admission
+	// this lane cannot mint (plottree.go:22). One subtest per name, so a failure
+	// names the operation.
 	for _, operation := range []string{
-		"db:post-process-create-run",
-		"db:post-process-mark-step-ok",
-		"db:post-process-mark-step-failed",
-		"db:log-llm-call",
 		"db:plot-tree-save",
-		"db:plot-tree-clear",
 	} {
 		t.Run("unbound/"+operation, func(t *testing.T) {
 			response := author.call(t, operation, []any{map[string]any{}, projectPath, frozen})
