@@ -1955,3 +1955,59 @@ empty case stays the nullable `{success:false,data:null}` the runtime itself ret
 
 **Standing: 77 of 281 served and CI-verified, 204 unbound.**
 
+
+## Served count is now a build assertion, not arithmetic
+
+`cmd/novel-server/production_served_count_linux_test.go` reads the production lane's
+`Server.BoundOperations()` (through the mux mounted at `/api/`) and compares it with
+`productionServedOperations`. Adding operations without updating that constant fails the
+build, and the failure prints the full sorted list of served names. Every hand tally in
+this document before this test disagreed with the next one; the numbers below come from
+CI runs, not from counting binder lines.
+
+| commit | served | what landed |
+| --- | --- | --- |
+| `7a0f7fb1` | 77 | recovered baseline, CI-verified |
+| `43efe87c` | 115 | narrative/post-process writes, review/revision/recovery writes, model/config/prompt/file writes, blueprint/project-core/roster writes |
+| `8034766f` | 123 | generation ledger mutations, restart, the two family cancels, finalization commit/retry |
+| `e270dbb2` | 132 | import-run writes (7), finalization slot read, project delete — the graph read was bound by mistake here, see below |
+| `64518d18` | 134 | chapter draft context: `prepare-draft-context`, `read-context` |
+| `49bc234d` | 138 | batch progress reads: `read-batch`, `list-batches`, `confirm-batch-finalization`, `list-directory-progress` |
+| `e97c6bf2` | 140 | `compose-visible`, `read-visible-composition` |
+| `af4c4412` | 141 | `project:create` from the pinned v7 asset |
+
+### The graph read trap
+
+`transport.BindGraphGeneration` installs `graph-generation:read` **unconditionally**, with a
+handler that answers `GENERATION_OPERATION_UNSUPPORTED` when no read is lent. Binding the family
+therefore produced a 500 for a feature that does not exist, instead of the fail-closed 501 that
+tells the frontend the server cannot do it. The lane now binds `finalization-generation:read` by
+name (`production_graph_reads_linux.go`) and leaves `graph-generation:read` genuinely unbound
+until a begin that freezes the graph context is served.
+
+### The pinned schema is now a Go asset
+
+`internal/admission/baseline_v7_ddl.go` owns the v7 DDL (74 objects: 51 tables, 22 indexes, 1
+trigger). Its test provisiones a database from those statements, recomputes admission's own
+digest, and asserts membership in `PinnedSchemaContract()`; a drift names the object. Finding
+worth keeping: the DDL carries **no INSERTs**, and admission refuses a database without the
+`character_identity_meta` `'main'` row (`internal/admission/identity.go:23-25`), so a mint has to
+seed that row plus `project_core` — fingerprints are unaffected because they hash `sqlite_master`.
+
+### Duplicated ports are pinned to each other
+
+`internal/generation` (commit path) and `internal/composition` (receipt path) each port the
+visible-continuation algorithm. `internal/composition/parity_test.go` asserts, over non-ASCII,
+CRLF, U+0085, U+FEFF and whitespace cases, that `ComposeVisible` and `TextHash` agree with the
+draft port. Either side drifting fails the build instead of surfacing as an author's chapter
+being called corrupt by one half and intact by the other.
+
+### Still blocked, with the exact missing piece
+
+- `generation:commit-draft` — needs an in-transaction `contents`+`drafts`+receipt write; the
+  reference repeats the next-chapter check **inside** that transaction
+  (`generation-draft-effects.ts:175-179`), which is what stops two devices committing one chapter.
+- `generation:retry-draft-short-outline` — synthesises a request the browser never froze.
+- `db:blueprint-character-sync-get` / `-list-pending` — the store INSERTs before it SELECTs
+  (`blueprints_read.go:57-65`), so binding would answer 200 and write on the author's database.
+- Knowledge base (19) and cloud backup (8) — deferred by decision.
