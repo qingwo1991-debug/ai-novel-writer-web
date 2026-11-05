@@ -998,3 +998,36 @@ roster inconsistent. That is the correct trade - the store slice is testable wit
 relationships stage, and the proposal resolutions. Roughly the same size as this slice plus the roster
 readback in `character-roster-author.ts:160-175`.
 
+### 2026-11-04 — `db:character-roster-commit` is served (durable 105 -> 106)
+
+Green: `7142cf88`. This is the first character **write** operation Go can serve, and it is the fruit of
+the identity slice landed last round.
+
+The three missing stages were completed:
+- relationships (`character-roster-repository.ts:1240-1253`) - both endpoints resolved and re-read as
+  active rows *before* the edge is judged (empty/self/duplicate), then one `character_relationships` row;
+- proposal resolutions (`:1254-1271`) - already-resolved and `source_key` shape refusals, resolved
+  character written, plus an owner-shaped relationship row;
+- projection refresh (`character-roster-author.ts:135-147`) - `project_core.characters_arch`,
+  `character_roster_meta` (revision+1, `migration_state='ready'`, projection/fact hash), then a
+  readback that refuses on any disagreement.
+
+Bound as `BindCharacterRosterCommit` (`character_roster_commit.go:38`), arity 3 / path 1 unchanged. The
+old placeholder refusal was **replaced, not deleted**: a provider without `CharacterRosterCommitter`
+still borrows-then-refuses, so the read-only lanes keep their 501.
+
+Assertions (`synthetic_durable_http_linux_test.go:394-517`): a two-entry `manual_edit` commit returns
+`success:true` with a receipt whose `revision` is old+1; the snapshot reports `status:"ready"`; the rows
+show the renamed character with identity and roster revisions incremented; `db:character-roster-read`
+agrees; then `CHARACTER_ID_REVISION_CONFLICT` and `CHARACTER_ID_DUPLICATE` refusals, plus an
+unchanged-rows check. The old 501 block is gone.
+
+Two compile fixes on the way, both from the same class - name collisions in a 1300-line file:
+`rosterRole` (const vs the older func in `character_roster.go`) and then `rosterAuthorRole` (const vs the
+predicate). The constants now carry an `rosterAuthor*` prefix and the predicate is `rosterAuthorRoleValid`.
+
+**Known runtime divergences, ranked:** stored non-string columns read back as a mismatch (the original's
+`!==` refused too, so this fails closed); hashes use the canonical Go encoder; a missing approval row
+yields `CHARACTER_AUTHOR_RECEIPT_INVALID` instead of a TypeError; sorts use UTF-16 ordering rather than
+`localeCompare`.
+
