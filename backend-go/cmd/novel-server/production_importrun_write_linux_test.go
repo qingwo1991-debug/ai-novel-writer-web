@@ -29,12 +29,20 @@ import (
 // readback live inside the test's own temporary tree.
 //
 // The fixture is the original-v7 shape the other production write batches build
-// (production_blueprint_write_linux_test.go:49-213): an admitted library project
+// (production_blueprint_write_linux_test.go:49-215): an admitted library project
 // whose schema is the smallest set of tables these writes really touch
 // (import_runs and its three companions plus the effect ledger), seeded before the
 // lane opens so the admitted content identity covers the rows, and read back
 // afterwards over a SEPARATE mode=ro connection so a commit is only persisted when
 // the file the lane wrote says so.
+//
+// project_core is not part of that minimal set, but project:open is: it is the only
+// thing that mints the session lease and execution lease every one of these writes
+// names, and its opening transaction reads the core row and answers
+// PROJECT_CORE_INVALID without a complete one (internal/authorruntime/
+// project_open.go:117-135). The sibling write batches open the same way, so this is
+// the lane's real gate and not an artifact of this fixture; productionImportRunWriteSeedCore
+// is the row it demands.
 //
 // # Why this test builds the lane itself
 //
@@ -171,6 +179,29 @@ func productionImportRunWriteLeaseWire(epoch int64) map[string]any {
 	return map[string]any{"owner": productionImportRunWriteOwner, "epoch": float64(epoch)}
 }
 
+// productionImportRunWriteSeedCore is the one project_core row project:open
+// requires, copied column for column from the blueprint write fixture
+// (production_blueprint_write_linux_test.go:49-215) so this project opens exactly
+// like a real finalised one.
+//
+// It is not optional decoration. readProjectOpenCore
+// (internal/authorruntime/project_open.go:117-135) runs inside the opening
+// transaction and answers PROJECT_CORE_INVALID (:134) unless the 'main' row exists
+// AND project_name, total_chapters, words_per_chapter, character_states,
+// created_at and updated_at are all non-NULL: a missing character_states is the
+// easy one to get wrong, and it fails newProductionImportRunWriteFixture with
+// `Error:PROJECT_CORE_INVALID` before any import-run write is reached. The two
+// timestamps must also parse as "2006-01-02 15:04:05" or RFC3339Nano (:136-151).
+const productionImportRunWriteSeedCore = `INSERT INTO project_core (id, project_name, writing_language, genre, sub_genre,
+ target_audience, total_chapters, words_per_chapter, creative_strategy,
+ narrative_thread_dormant_threshold, plot_structure, narrative_pov, core_outline,
+ world_setting, golden_finger, protagonist_profile, global_guidance, writing_style,
+ reference_works, character_states, premise, worldbuilding, synopsis, characters_arch,
+ created_at, updated_at)
+ VALUES ('main', '导入运行写入小说', 'zh-CN', 'fantasy', '', '', 2, 2000, 'auto', 3,
+ '', '', '', '', '', '', '', '', '', '{}', '', '', '', '',
+ '2024-05-06 09:10:11', '2024-05-06 09:10:12')`
+
 // productionImportRunWriteSeedRows commits the seeded runs and their checkpoints
 // through hand-written INSERTs (the shipped store owns no run-creation method),
 // then folds the write-ahead log into the admitted file so the bytes the test reads
@@ -178,9 +209,7 @@ func productionImportRunWriteLeaseWire(epoch int64) map[string]any {
 func productionImportRunWriteSeedRows(t *testing.T, projectPath string, seeds ...productionImportRunWriteSeed) {
 	t.Helper()
 	statements := []string{
-		`INSERT INTO project_core (id, project_name, writing_language, total_chapters, words_per_chapter,
- created_at, updated_at) VALUES ('main', '导入运行写入小说', 'zh-CN', 2, 2000,
- '2024-05-06 09:10:11', '2024-05-06 09:10:12')`,
+		productionImportRunWriteSeedCore,
 	}
 	for _, seed := range seeds {
 		statements = append(statements, fmt.Sprintf(`INSERT INTO import_runs (id, purpose, stage, status,
