@@ -577,6 +577,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:begin-batch opens the batch root and its run; it validates the
+		// intent before admission and dispatches nothing.
+		if bindErr := newProductionBatchWrite(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
@@ -597,6 +603,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionGraphReads(open.durable).Bind(server) },
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return newProductionBatchReads(open.durable).Bind(server) },
+		func() error { return bindProductionFinalizationGeneration(server) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
 		func() error { return server.BindSummary(open.durable) },

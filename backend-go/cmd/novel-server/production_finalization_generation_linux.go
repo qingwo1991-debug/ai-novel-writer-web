@@ -1,0 +1,203 @@
+//go:build linux
+
+package main
+
+import (
+	"errors"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+)
+
+// This file is where the finalization generation family's three remaining names
+// would be served, and it serves none of them. The two names the family already
+// answers are bound elsewhere and are not touched here:
+//
+//	finalization-generation:read     production_graph_reads_linux.go:68
+//	finalization-generation:cancel   production_generation_write_linux.go:153
+//
+// The three that remain stay at the fail-closed 501
+// (GO_OPERATION_NOT_MIGRATED, internal/transport/server.go:116). Each of them
+// needs state this lane cannot freeze or a port this lane does not own, and a
+// handler installed over a missing piece is worse than an unbound name: the
+// browser would get a 5xx - or, worse, a claimed run whose own slot read then
+// refuses it - instead of the plain 501 that says the server cannot do this yet.
+// productionGraphReads (production_graph_reads_linux.go:15-27) records the same
+// judgement for graph-generation:read.
+//
+// # begin
+//
+// finalization-generation:begin answers with a FinalizationGenerationRecovery
+// whose context IS the frozen finalization context
+// (src/shared/finalization-generation.ts:11): the slot, the finalized identity,
+// the chapter title and entities, the writing language, the resolved
+// PromptTemplate and the notes baseline. Nothing in Go can produce that value,
+// and the reused admission cannot freeze it:
+//
+//   - The reduced admission freezes only what syntheticSelection carries, and its
+//     key allowlist (synthetic_generation_linux.go:396-405) has no finalization
+//     slot and no context field, so a finalization begin is refused with
+//     GENERATION_BEGIN_INVALID before the ledger is reached.
+//   - syntheticManifest (synthetic_generation_linux.go:704-726) writes no
+//     finalizationGenerationSlotKey, no finalizationGenerationContext and no
+//     finalization task, so no run this lane opens can name a slot at all - and
+//     the slot key is the only key the served read matches
+//     (synthetic_graph_linux.go:116).
+//   - The ledger admits that key for one operation only
+//     (internal/store/generation_ledger.go:436-437, refused as
+//     GENERATION_OPERATION_UNSUPPORTED at :477-481), so the chapter_notes step
+//     could not be frozen even if the manifest above were widened.
+//   - The context itself is not assemblable here: the finalized identity reader
+//     (SummaryRepository.readFinalizedCharacterContext) and the prompt template
+//     resolve (renderPrompt over src/services/builtin-prompt-templates.ts) have no
+//     Go counterpart - no Go file in this module names PromptTemplate or
+//     renderPrompt - and the task the desktop owner builds from them
+//     (electron/services/finalization-generation-source.ts:47-59) is a prompt
+//     author, not a projection.
+//
+// A claimed slot would also be unreadable: FinalizationRead refuses every row
+// that carries the slot key with GENERATION_FINALIZATION_CONTEXT_INVALID
+// (synthetic_graph_linux.go:143) because it cannot prove the frozen context
+// digest. The renderer asks that read first (src/services/finalization-generation.ts:38),
+// so a begin written by this file would hand the author a run whose very next
+// read throws.
+//
+// # execute
+//
+// The one dispatch path this lane may reuse is syntheticGeneration.Execute
+// (synthetic_generation_linux.go:1015), and it requires a browser-frozen
+// invocationNonce (:1024) and task (:1055). The finalization contract carries
+// neither: it sends `{ handle, retryOf?, recoverFrom? }`
+// (src/shared/finalization-generation.ts:42) because the desktop owner
+// authors the task from the frozen context. Supplying one here would make this
+// lane a prompt author and a second dispatcher, so execute stays unbound and
+// keeps failing closed.
+//
+// # commit
+//
+// The reference commit is one IMMEDIATE transaction over the frozen context:
+// readFinalizationGenerationContext first, the notes-baseline CAS, then the
+// domain writes and the effect stamped into the attempt's usage receipt
+// (electron/services/finalization-generation.ts:86-113). Its writers are
+// inventoried denials in this module:
+//
+//	db:continuity-save-finalized                     internal/transport/summary.go:45
+//	db:continuity-save-character-state-candidates    internal/transport/summary.go:45
+//	db:blueprint-update-notes                        internal/transport/blueprints.go:26
+//
+// all three answering GENERATION_FINALIZATION_ADMISSION_REQUIRED
+// (internal/transport/summary.go:125), and the store behind them can read a
+// finalized source (internal/store/summary.go:446) but has no finalized
+// continuity writer and no blueprint notes updater - production_blueprint_write_linux.go:40-49
+// already records that judgement for the notes write: it is "deliberately NOT
+// bound, here or anywhere else in this lane", because satisfying it needs
+// exactly this admission plus the artifact/ACK transaction, and "there is no
+// UpdateNotes store method at all". A commit also needs a settled artifact from
+// an attempt, which only execute can produce. With begin and execute refused
+// there is no artifact and no provable context, so a commit handler could only
+// ever answer GENERATION_FINALIZATION_CONTEXT_INVALID.
+//
+// What is left is this: the exact seam, name by name, so the next change starts
+// from the code that has to move instead of from a guess.
+
+// The three names this file refuses, spelled once so a test and the seam table
+// cannot drift from the binder.
+const (
+	productionFinalizationBegin   = "finalization-generation:begin"
+	productionFinalizationExecute = "finalization-generation:execute"
+	productionFinalizationCommit  = "finalization-generation:commit"
+)
+
+// productionFinalizationLine is one declaration or refusal that has to exist
+// before a name can be served: the path of the Go file, the line inside it, and a
+// marker that must be on that line. TestProductionLaneRefusesFinalizationGeneration
+// re-reads every one of them, so a moved declaration fails this lane's test
+// instead of leaving a note that points at nothing.
+type productionFinalizationLine struct {
+	Path   string
+	Line   int
+	Marker string
+}
+
+// productionFinalizationSeam is one refused name together with the missing piece
+// that keeps it unbound.
+type productionFinalizationSeam struct {
+	Operation string
+	Missing   []productionFinalizationLine
+}
+
+// productionFinalizationGenerationOperations is the family's three remaining
+// names, in the order the desktop controller registers them
+// (electron/controllers/generation-controller.ts:224-226). read and cancel are
+// deliberately absent: they are served by other files.
+func productionFinalizationGenerationOperations() []string {
+	return []string{productionFinalizationBegin, productionFinalizationExecute, productionFinalizationCommit}
+}
+
+// productionFinalizationGenerationSeams is the whole answer of this file: for
+// each refused name, the exact code that has to move first.
+func productionFinalizationGenerationSeams() []productionFinalizationSeam {
+	return []productionFinalizationSeam{
+		{
+			Operation: productionFinalizationBegin,
+			Missing: []productionFinalizationLine{
+				{Path: "synthetic_generation_linux.go", Line: 704, Marker: "func syntheticManifest("},
+				{Path: "synthetic_graph_linux.go", Line: 143, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+				{Path: "../../internal/store/generation_ledger.go", Line: 437, Marker: "finalized-character-state"},
+			},
+		},
+		{
+			Operation: productionFinalizationExecute,
+			Missing: []productionFinalizationLine{
+				{Path: "synthetic_generation_linux.go", Line: 1055, Marker: "request[\"task\"]"},
+				{Path: "synthetic_generation_linux.go", Line: 1024, Marker: "request[\"invocationNonce\"]"},
+			},
+		},
+		{
+			Operation: productionFinalizationCommit,
+			Missing: []productionFinalizationLine{
+				{Path: "../../internal/transport/summary.go", Line: 45, Marker: "db:continuity-save-finalized"},
+				{Path: "../../internal/transport/summary.go", Line: 125, Marker: "GENERATION_FINALIZATION_ADMISSION_REQUIRED"},
+				{Path: "../../internal/transport/blueprints.go", Line: 26, Marker: "db:blueprint-update-notes"},
+				{Path: "../../internal/store/summary.go", Line: 446, Marker: "func (s *Summary) ReadFinalizedSource"},
+				{Path: "production_blueprint_write_linux.go", Line: 40, Marker: "deliberately NOT bound"},
+			},
+		},
+	}
+}
+
+// productionFinalizationGenerationSeam returns the documented missing piece for
+// one name, or false when the name is not one of the three.
+func productionFinalizationGenerationSeam(operation string) (productionFinalizationSeam, bool) {
+	for _, seam := range productionFinalizationGenerationSeams() {
+		if seam.Operation == operation {
+			return seam, true
+		}
+	}
+	return productionFinalizationSeam{}, false
+}
+
+// bindProductionFinalizationGeneration installs the three remaining names of the
+// finalization generation family. It installs nothing, and it refuses to start a
+// lane whose refusal is undocumented: every one of the three must carry at least
+// one named missing piece, so the day one of them gains a body the table has to
+// change with it instead of silently becoming a lie.
+//
+// The nil-server refusal is the same one every other binder in this package
+// answers, so wiring this into production_open_linux.go cannot mask a
+// construction bug.
+func bindProductionFinalizationGeneration(server *transport.Server) error {
+	if server == nil {
+		return errors.New("TRANSPORT_SERVER_REQUIRED")
+	}
+	for _, operation := range productionFinalizationGenerationOperations() {
+		seam, found := productionFinalizationGenerationSeam(operation)
+		if !found || len(seam.Missing) == 0 {
+			return errors.New("PRODUCTION_FINALIZATION_SEAM_INCOMPLETE")
+		}
+	}
+	// Nothing is bound: the three names keep failing closed at
+	// GO_OPERATION_NOT_MIGRATED (internal/transport/server.go:116), exactly the
+	// answer the desktop-mirroring tests already pin for the synthetic lane
+	// (synthetic_generation_http_linux_test.go:475-476).
+	return nil
+}

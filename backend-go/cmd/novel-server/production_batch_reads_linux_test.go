@@ -530,6 +530,10 @@ func productionBatchSeedForeign(t *testing.T, db *sql.DB) {
 		`","sourceManifest":{"operation":"batch-chapters"` +
 		`,"batchIntent":{"mode":"draft_review","range":{"startChapter":1,"endChapter":2},"targetUnits":900}` +
 		`,"modelReceipt":{"modelId":"ci-foreign-model"}}}`
+	if _, err := db.Exec(`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json)
+ VALUES (?, ?, '{}', '{}')`, productionBatchForeignRoot, "ci-foreign-root-key"); err != nil {
+		t.Fatalf("seed the foreign batch root row: %v", err)
+	}
 	if _, err := db.Exec(`INSERT INTO generation_runs (run_id, root_action_id, binding_json, status, created_at_ms, open_key)
  VALUES (?, ?, ?, 'running', 1700000000002, ?)`, productionBatchForeignRun, productionBatchForeignRoot, binding,
 		"ci-foreign-open-key"); err != nil {
