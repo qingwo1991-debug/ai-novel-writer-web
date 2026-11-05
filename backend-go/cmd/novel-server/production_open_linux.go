@@ -581,6 +581,8 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindEditorReviewReads(newProductionReviewReads(open.durable)) },
 		func() error { return server.BindEditorReviewFullReads(newProductionReviewReads(open.durable)) },
 		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
+		func() error { return newProductionImportRunReads(open.durable).Bind(server) },
+		func() error { return newProductionFSReads(open).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
