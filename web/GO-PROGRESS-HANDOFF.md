@@ -1031,3 +1031,33 @@ predicate). The constants now carry an `rosterAuthor*` prefix and the predicate 
 yields `CHARACTER_AUTHOR_RECEIPT_INVALID` instead of a TypeError; sorts use UTF-16 ordering rather than
 `localeCompare`.
 
+### 2026-11-04 — LanceDB recon: the family is NOT the next win (correcting the plan)
+
+The previous round proposed LanceDB as the highest-value next target. Reconnaissance says that is wrong,
+and the reason is structural rather than a matter of effort.
+
+**`lancenative` is not a stub.** `backend-go/internal/lancenative/` (`native.go` 227 lines, `vector.go`
+116) is a real cgo binding to 789 lines of Rust (`native-lance/src/lib.rs`, lancedb `=0.22.3`). The stub
+is the *wiring*: `projectaccess/native_knowledge_stub.go:8-12` returns `false`/`ErrConfiguration` for
+every non-`lance_native` build, and `BindKnowledge` / `BindKnowledgeSearch` are called only from tests.
+
+**CI can build it** (`.github/workflows/go-lance-native.yml`: rustup 1.90.0, protoc, clang, cargo build,
+~3 GB target, 75-minute budget) - this machine cannot (rustc 1.63, no protoc/clang/go).
+
+**But the ABI is read-only.** `native-lance/include/novel_lance.h:74-121` exposes exactly four symbols:
+export, import, vector query, free. There is **no append, no delete, no drop, no FTS build**. So even a
+CI-built library cannot serve the twelve writing operations (`import-text`, `import-finalized`,
+`import-planning`, `import-reference`, `backfill-vectors`, `remove-document`, `clear-all`, the ingestion
+grants, and reindex). A Lance round buys **at most 4-5 read operations**, not the 19-op family.
+
+**And the SQLite shortcut is closed:** `electron/migrations/baseline-schema.ts` has no documents or chunks
+table; knowledge lives only in Lance. A metadata-only Go implementation would match an *empty* knowledge
+base and diverge on every real project - that is theatre, not migration.
+
+**Corrected consequence:** the `kb` family (19 operations, not 18) is blocked on extending the Rust ABI,
+which means a Rust change plus a cgo rebuild - a different kind of project than anything done so far, and
+one this machine cannot help with at all. It should be scheduled deliberately, not picked up mid-batch.
+
+The count in the earlier entry ("LanceDB native store - unblocks the kb family") was optimistic; treat this
+entry as the correction.
+
