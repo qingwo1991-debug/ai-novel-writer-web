@@ -66,6 +66,41 @@ func TestStaticAssetsAuthHeadersAndHead(t *testing.T) {
 	}
 }
 
+func TestStaticAssetsServesClientRoutesAndCachesBuildOutput(t *testing.T) {
+	assets, directory := staticFixture(t)
+	if err := os.WriteFile(filepath.Join(directory, "assets", "index-B2aHTjl4.js"), []byte("export default 1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root := staticRequest(assets, http.MethodGet, "/", "author")
+	if root.Code != http.StatusOK || root.Header().Get("Content-Type") != "text/html; charset=utf-8" || root.Header().Get("Cache-Control") != "no-store" || !strings.Contains(root.Body.String(), "window.__go_test__") {
+		t.Fatal(root.Code, root.Header(), root.Body.String())
+	}
+	for _, path := range []string{"/projects/7f2/chapter/3", "/projects/7f2/chapter/3/", "/settings"} {
+		deep := staticRequest(assets, http.MethodGet, path, "author")
+		if deep.Code != http.StatusOK || deep.Header().Get("Content-Type") != "text/html; charset=utf-8" || deep.Header().Get("Cache-Control") != "no-store" || deep.Body.String() != root.Body.String() {
+			t.Fatalf("%s did not fall back to the app shell: HTTP %d %v %s", path, deep.Code, deep.Header(), deep.Body.String())
+		}
+	}
+	head := staticRequest(assets, http.MethodHead, "/projects/7f2/chapter/3", "author")
+	if head.Code != http.StatusOK || head.Body.Len() != 0 || head.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatal(head.Code, head.Header(), head.Body.String())
+	}
+	asset := staticRequest(assets, http.MethodGet, "/assets/index-B2aHTjl4.js", "author")
+	if asset.Code != http.StatusOK || asset.Header().Get("Content-Type") != "text/javascript; charset=utf-8" || asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || asset.Body.String() != "export default 1" {
+		t.Fatal(asset.Code, asset.Header(), asset.Body.String())
+	}
+	unhashed := staticRequest(assets, http.MethodGet, "/assets/app.js", "author")
+	if unhashed.Code != http.StatusOK || unhashed.Header().Get("Cache-Control") != "public, max-age=3600" || unhashed.Body.String() != "console.log('safe')" {
+		t.Fatal(unhashed.Code, unhashed.Header(), unhashed.Body.String())
+	}
+	if missing := staticRequest(assets, http.MethodGet, "/assets/missing.css", "author"); missing.Code != http.StatusNotFound || strings.Contains(missing.Body.String(), "window.__go_test__") {
+		t.Fatal("missing build output was answered with the app shell:", missing.Code, missing.Body.String())
+	}
+	if unauthorized := staticRequest(assets, http.MethodGet, "/projects/7f2/chapter/3", ""); unauthorized.Code != http.StatusUnauthorized {
+		t.Fatal("client route bypassed authentication:", unauthorized.Code)
+	}
+}
+
 func TestStaticAssetsRejectTraversalSymlinkAndUnknown(t *testing.T) {
 	assets, directory := staticFixture(t)
 	if err := os.Symlink(filepath.Join(directory, "index.html"), filepath.Join(directory, "assets", "alias.html")); err != nil {

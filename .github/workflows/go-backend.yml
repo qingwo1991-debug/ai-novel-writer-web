@@ -554,7 +554,9 @@ jobs:
     name: Unpublished Go container with disposable smoke
     needs: [compile, verify]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The image now builds the browser app (frozen pnpm install + Vite) before
+    # copying the prebuilt Go binary, so the previous 15 minute budget is too tight.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -592,6 +594,23 @@ jobs:
           assert health['migrationComplete'] is False
           PY
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:16082/api/bootstrap)" = 401
+          # The image must serve the browser app, not only the API. Static files
+          # stay behind the trusted proxy header, exactly like /api/*.
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:16082/)" = 401
+          curl --silent --fail --dump-header /tmp/go-image-index.headers \
+            --output /tmp/go-image-index.html \
+            --header 'X-Novel-User: synthetic-ci' http://127.0.0.1:16082/
+          grep -qi '^content-type: text/html; charset=utf-8' /tmp/go-image-index.headers
+          grep -q 'id="root"' /tmp/go-image-index.html
+          # A deep client route falls back to the same app shell.
+          curl --silent --fail --output /tmp/go-image-deep.html \
+            --header 'X-Novel-User: synthetic-ci' http://127.0.0.1:16082/projects/ci/deep/client/route
+          cmp -s /tmp/go-image-index.html /tmp/go-image-deep.html
+          # A content-addressed build asset is served with its real type.
+          asset=$(awk 'match($0, /\/assets\/[^"]*\.js/) { print substr($0, RSTART, RLENGTH); exit }' /tmp/go-image-index.html)
+          test -n "$asset"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' --header 'X-Novel-User: synthetic-ci' "http://127.0.0.1:16082$asset")" = 200
+          test "$(curl --silent --output /dev/null --write-out '%{content_type}' --header 'X-Novel-User: synthetic-ci' "http://127.0.0.1:16082$asset")" = 'text/javascript; charset=utf-8'
           docker exec novel-go-migration-ci sh -c '! command -v node && ! command -v npm && ! command -v electron'
           printf 'Go migration container passed isolated smoke. It was not published or deployed.\n' >> "$GITHUB_STEP_SUMMARY"
       # The smoke-tested container is exported so it can be loaded and inspected

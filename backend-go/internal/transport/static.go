@@ -27,16 +27,51 @@ type StaticAssets struct {
 
 var inlineScript = regexp.MustCompile(`(?is)<script(?:\s[^>]*)?>(.*?)</script>`)
 
+// staticMIME covers every extension the Vite build actually emits, including
+// the .ttf reading faces in public/fonts and the licence .txt files beside them.
 var staticMIME = map[string]string{
-	".html":  "text/html; charset=utf-8",
-	".js":    "text/javascript; charset=utf-8",
-	".css":   "text/css; charset=utf-8",
-	".json":  "application/json",
-	".svg":   "image/svg+xml",
-	".png":   "image/png",
-	".webp":  "image/webp",
-	".woff2": "font/woff2",
-	".ico":   "image/x-icon",
+	".html":        "text/html; charset=utf-8",
+	".js":          "text/javascript; charset=utf-8",
+	".css":         "text/css; charset=utf-8",
+	".json":        "application/json",
+	".map":         "application/json",
+	".svg":         "image/svg+xml",
+	".png":         "image/png",
+	".jpg":         "image/jpeg",
+	".jpeg":        "image/jpeg",
+	".gif":         "image/gif",
+	".avif":        "image/avif",
+	".webp":        "image/webp",
+	".ico":         "image/x-icon",
+	".ttf":         "font/ttf",
+	".otf":         "font/otf",
+	".woff":        "font/woff",
+	".woff2":       "font/woff2",
+	".txt":         "text/plain; charset=utf-8",
+	".webmanifest": "application/manifest+json",
+}
+
+// hashedAsset matches Vite's content-addressed output (assets/<name>-<hash>.ext).
+var hashedAsset = regexp.MustCompile(`^assets/[^/]+-[A-Za-z0-9_-]{8}\.[a-z0-9]+$`)
+
+// staticCacheControl keeps the shell revalidatable, lets the content-addressed
+// build output live for a year, and keeps other public files short-lived.
+func staticCacheControl(name string) string {
+	switch {
+	case name == "index.html":
+		return "no-store"
+	case hashedAsset.MatchString(name):
+		return "public, max-age=31536000, immutable"
+	default:
+		return "public, max-age=3600"
+	}
+}
+
+// spaRoute reports whether an unresolved path may be a client-side route. Only
+// extensionless paths qualify, so a missing asset keeps its 404 instead of
+// being answered with HTML.
+func spaRoute(name string) bool {
+	return filepath.Ext(filepath.Base(name)) == ""
 }
 
 func NewStaticAssets(directory string, sessions *security.Sessions) (*StaticAssets, error) {
@@ -157,13 +192,22 @@ func (s *StaticAssets) serve(w http.ResponseWriter, r *http.Request) error {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		return security.NewHTTPError(http.StatusNotFound, "NOT_FOUND")
 	}
-	name := strings.TrimLeft(r.URL.Path, "/")
+	name := strings.TrimRight(strings.TrimLeft(r.URL.Path, "/"), "/")
 	if name == "" {
 		name = "index.html"
 	}
 	file, err := staticFile(s.root, name)
 	if err != nil {
-		return err
+		var public *security.HTTPError
+		// A single-page client route is served the app shell. A rejected path,
+		// a denied symlink and a missing asset each keep their own status.
+		if !errors.As(err, &public) || public.Status != http.StatusNotFound || !spaRoute(name) {
+			return err
+		}
+		name = "index.html"
+		if file, err = staticFile(s.root, name); err != nil {
+			return err
+		}
 	}
 	defer file.Close()
 	info, err := file.Stat()
@@ -176,11 +220,7 @@ func (s *StaticAssets) serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	if name == "index.html" {
-		w.Header().Set("Cache-Control", "no-store")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-	}
+	w.Header().Set("Cache-Control", staticCacheControl(name))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("Content-Security-Policy", s.csp)

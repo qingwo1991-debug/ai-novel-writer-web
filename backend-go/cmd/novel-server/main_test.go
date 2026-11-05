@@ -63,6 +63,10 @@ func TestMigrationGatewaySharesSessionAcrossStaticBootstrapAndLibrary(t *testing
 		t.Fatalf("static page: HTTP %d %s", page.Code, page.Body.String())
 	}
 	cookie := page.Result().Cookies()[0]
+	deep := request("/projects/7f2/chapter/3", cookie, "")
+	if deep.Code != http.StatusOK || deep.Body.String() != page.Body.String() {
+		t.Fatalf("client route did not reach the static shell: HTTP %d %s", deep.Code, deep.Body.String())
+	}
 	bootstrap := request("/api/bootstrap", cookie, "")
 	if bootstrap.Code != http.StatusOK || len(bootstrap.Result().Cookies()) != 0 {
 		t.Fatalf("bootstrap did not reuse static session: HTTP %d %s", bootstrap.Code, bootstrap.Body.String())
