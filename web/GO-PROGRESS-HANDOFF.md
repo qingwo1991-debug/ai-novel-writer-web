@@ -1837,3 +1837,29 @@ comes from the file names in the annotations, not from the commit that introduce
 
 **Standing: 60 of 281 served, 221 unbound.**
 
+### 2026-11-05 — class-C families: what is missing is not a binder
+
+Two families were examined and yielded **zero** bindable names. Both were refused rather than faked, and
+the refusals are recorded here because they convert a vague "8 operations left" into a prerequisite list.
+
+**`agent-generation` (8, none bindable).** No transport binder exists at all - `grep -rn "agent-generation"
+backend-go/internal/transport/` returns nothing, and the only Go references are in
+`synthetic_generation_http_linux_test.go:472-474`. Missing, in order: receipt-key widening plus a writer for
+`agentActions`/`agentResponse`/`agentControlEpoch` (`recordEffect` allows only graph/finalization keys,
+`store/generation_ledger.go:446-463`, enforced `:1182-1184`); agent selection/manifest keys;
+`AgentToolNames` acceptance (`generation/service.go:261,289`); an agent context builder and the
+`assistant_writing_identity` template (zero Go hits); a `round()` projection; a session-keyed run lookup
+(only per-project `ListRuns`, `:313`). `agent-generation:read` is read-only but unservable: Go never writes
+`agentResponse`, and its only caller is `begin`.
+
+**`cloud-backup` (8, none bindable).** No adapter exists (`grep "cloud-backup:"` in
+`internal/transport` = 0), and both stores the family needs have no Go implementation:
+`cloud-backup-bindings.json` and `cloud-backup-credentials.json`. `internal/secrets` is only AES-256-GCM
+with a caller-supplied key; `internal/webdav` holds no credential persistence and needs a deployment
+`Dispatch`/`Authorize`. `productionLayout` has no cloud record. Prerequisites: two stores, credential
+persistence, and a DAV dispatch seam - before any of the eight can answer anything but 501.
+
+A batch that binds nothing must not leave files behind: two `production_cloudbackup_*` files were created,
+containing only assertions that eight names answer 501. They were discarded. A file named after a family
+implies that family is served; that implication is worse than the absence of the file.
+
