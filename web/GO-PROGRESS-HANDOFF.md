@@ -1636,3 +1636,107 @@ the assertion now requires a non-empty failure code and no settled usage (`b1919
 through an allowlisted origin, and record refusal honestly - but no test has ever talked to a real
 provider, and no author data has been through the lane.
 
+## Resume brief (generated 2026-11-05)
+
+Re-read from the code in this tree, not from the sections above. Two of those sections are stale; see
+§7.
+
+### 1. What the production lane serves: 38 of 281
+
+`NOVEL_DATA_ROOT` alone selects it (`cmd/novel-server/main.go:143` -> `productionHandler`,
+`production_open_linux.go:445`); every binding is inside `productionHandlerWithContract`
+(`production_open_linux.go:458-573`). Bound names, by binder:
+
+- `official-homepage:open` (`internal/transport/navigation.go:16`), `model-provider-resource:open` (`:23`)
+- `config:get` (`internal/transport/globalconfig.go:36`), `startup:get-state` (`:56`),
+  `startup:appearance-ack` (`:60`)
+- `project:open` (`internal/transport/projects.go:68`), `db:close` (`:86`),
+  `project:get-runtime-context` (`:103`), `project:save` and `project:update-config` (`:110`)
+- the eight draft reads `db:draft-list|-list-all|-get-meta|-get-full|-get-latest|-get-finalized|`
+  `-get-max-finalized-chapter|-next-version` (`internal/transport/draft_live_read.go:46-53`)
+- `db:draft-update-content` (`internal/transport/draft_live_write.go:57`)
+- `db:draft-create|-update-status|-delete` (`internal/transport/draft_author.go:60-62`)
+- `db:character-get-all`, `db:character-roster-read`, `character-identity:read`
+  (`internal/transport/character_live_read.go:47-49`)
+- `db:project-core-get`, `db:blueprint-get-all` (`internal/transport/editor_stage_read.go:42`)
+- `db:blueprint-get` (`internal/transport/blueprints_read.go:39`)
+- `project:overview-current` (`internal/transport/project_overview_current.go:39`)
+- `generation:read` (`internal/transport/generation.go:152`), `generation:list` (`:157`),
+  `generation:begin` (`:182`), `generation:execute` (`:204`)
+- `llm:list-models` (`internal/transport/models.go:21`), `llm:get-stage-models`,
+  `llm:get-default-model`, `llm:get-default-embedding-model` (`internal/transport/model_routing.go:36`)
+- `project:recent-list` (`production_open_linux.go:565`)
+
+38 names, each present in `web/operations.json`: **38 of 281 served, 243 unbound.** Four are
+conditional: `generation:begin`/`:execute` stay 501 if `newProductionGeneration` fails
+(`production_open_linux.go:540-551`), and `generation:read`/`:list` need a non-nil provider field.
+`project:recent-remove` is not served: the provider implements no catalog interface (`projects.go:124`).
+
+### 2. What answers 501: 243, grouped
+
+db 85, generation 19, kb 19, llm 12, fs 10, dialog 9, agent-generation 8, cloud-backup 8, mcp 8,
+legacy-roster 7, project 7, character-proposal 6, skills 6, finalization-generation 5,
+finalized-character 5, graph-generation 5, character-avatar 4, chapter 4, editor-inline 4,
+review-revision 4, prompt 3, finalization 2, import-generation 2, config 1. All from the unbound default at
+`internal/transport/server.go:116`.
+
+### 3. How to verify any claim
+
+- CI: `.github/workflows/go-backend.yml`; jobs `compile` ("Parallel Go compile and static checks"),
+  `verify` ("Go format, vet, synthetic tests, race and binary"), `image` ("Unpublished Go container with
+  disposable smoke and production journey", `needs: [compile, verify]`).
+- Logs are unavailable (`gh run view --job --log` returns nothing). Read check-run annotations:
+  `gh api repos/<owner>/<repo>/commits/$SHA/check-runs`, then
+  `.../check-runs/<id>/annotations --jq '.[].message'`. The workflow emits `::error title=...` for
+  compile failures, test failures, per-operation journey mismatches and the step-outcome summary.
+- Image: the `image` job uploads artifact `novel-go-image` (`novel-go-image.tar.gz`, `docker save`);
+  download, load, run. Nothing is pushed.
+- Run it with `--network host`: `main.go:66-67` refuses a non-loopback `-listen` (default
+  `127.0.0.1:16082`), and the journey reaches `127.0.0.1:16086` from the host.
+
+### 4. Invariants a change must not break
+
+- One writer, one lease: `internal/writerlock/lock_linux.go:102` (`AcquireLegacy`), taken at
+  `production_open_linux.go:157` before any database is touched.
+- Pinned v7 admission, and a database that fails it is never opened:
+  `internal/admission/pinned_contract.go:17`, staged and verified (`production_open_linux.go:289`,
+  `:297`) before `newProductionDurable`.
+- Full-body CAS on save: `internal/store/drafts.go:228` (`UpdateContentIfCurrent`), reached only through
+  `CommitDraftCASDurable` (`production_durable_linux.go:283`) and `draft_live_write.go:57`.
+- Egress allowlist, no default-allow: `internal/egress/client.go:73` (empty list refused, `:195`
+  membership, no startup dial), built by `production_model_egress_linux.go`.
+- Optional provider fields fail silently: `internal/transport/generation.go:146-165` installs nothing for
+  a nil field, so a bound operation must be asserted non-501, never "not migrated" by luck.
+- A newly bound operation's 501 expectation must change in the same commit: the journey's
+  `expect_not_migrated` list (`.github/workflows/go-backend.yml:1014-1069`) and
+  `production_open_linux_test.go:367`.
+
+### 5. Honest status
+
+No real provider call has ever been made: production passes a nil dispatch seam, and the egress tests
+only prove no dial. No real author data has been through the lane (`cmd/production-fixture` builds a
+disposable root). The deployment has not been switched: `docker/compose.yaml` still runs the Node image
+and `Dockerfile.go` is an unpublished candidate. Switching now would serve 38 of 281 and answer 243
+writing operations with 501.
+
+### 6. Next three steps
+
+1. Bind the read-only families whose seams already exist: `BindSummary`
+   (`internal/transport/summary.go:33`; `SummaryRepositoryDurable`,
+   `internal/authorruntime/author_repositories_linux.go:24`, needs a thin adapter to `BeginSummary`),
+   then `BindPostHistoryReads:24` and `BindPlotTreeReads:32`. Start at `production_open_linux.go:552`.
+2. Bind `generation:cancel` first (`internal/generation/service.go:852`; stops and settles, no dial),
+   then pause/resume/restart from the same service and `production_generation_begin_linux.go`.
+3. Only then `project:create`/import, which need a schema oracle that mints an admissible database:
+   `internal/admission` with `cmd/production-fixture/main.go` as the DDL source.
+
+### 7. Contradictions with the history above
+
+- The counters 31/32 and "250 remain"/"264 still 501" omit six names that were already served
+  (`config:get`, the two `startup:*`, `project:recent-list`, the two navigation intents). Verified:
+  **38 of 281, 243 remaining.**
+- "START HERE" still claims 64/281 and names the graph binding rebuild as the blocker; both are
+  superseded by the production lane.
+- Line drift: the lease is at `production_open_linux.go:157` (not `:141`); the editor binders are called
+  at `:512-517` (not `:448-451`).
+
