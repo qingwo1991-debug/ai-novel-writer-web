@@ -1083,7 +1083,11 @@ func productionDraftContextInt(value any) (int64, bool) {
 		}
 		return out, true
 	case string:
-		return productionDraftContextParseID(value)
+		out, err := productionDraftContextParseID(value)
+		if err != nil {
+			return 0, false
+		}
+		return out, true
 	}
 	return 0, false
 }
