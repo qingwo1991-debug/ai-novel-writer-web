@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -875,4 +877,486 @@ func TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease(t *testing.T) {
 		!strings.Contains(response.Body.String(), `"success":false`) {
 		t.Fatalf("generation:execute answered %d instead of the lane's business refusal: %s", response.Code, response.Body.String())
 	}
+}
+
+// The continuity, post-process and plot-tree fixture. Every value is an author
+// fact seeded below that the three read families now bound on this lane must
+// project back, so a 200 returning a default or empty shape cannot pass.
+const (
+	productionContinuityFinalizedDraftID = 2
+	productionContinuityFinalizedChapter = 2
+	productionContinuitySnapshotChapter  = 2
+	productionContinuityNewChapter       = 7
+	productionContinuityStepAttempts     = 2
+	productionContinuityPromptTokens     = 6
+	productionContinuityCompletionTokens = 4
+	productionContinuityTotalTokens      = 10
+	productionContinuityChapterTitle     = "第二章 门后"
+	productionContinuityBody             = "第二章原稿：门后有人。"
+	productionContinuityFinalizationID   = "ci-finalization-2"
+	productionContinuitySnapshotStates   = `{"甲":"推门之前"}`
+	productionContinuityNewStates        = `{"甲":"门后"}`
+	productionContinuityNotes            = "承接第一章：他推开门。"
+	productionContinuityRunID            = "ci-post-run-1"
+	productionContinuityRunKind          = "arch_extract"
+	productionContinuityRunSource        = "ci-source-1"
+	productionContinuityRunLabel         = "后处理：门"
+	productionContinuityStepKey          = "knowledge-write"
+	productionContinuityStepLabel        = "写知识库"
+	productionContinuityModelSuccess     = "ci-model-a"
+	productionContinuityModelFailure     = "ci-model-b"
+)
+
+// productionContinuityBodyHash is the content digest the finalization receipt
+// and the continuity source projection both carry. The test recomputes it so the
+// assertion compares against the seeded digest instead of a copied constant.
+func productionContinuityBodyHash() string {
+	digest := sha256.Sum256([]byte(productionContinuityBody))
+	return hex.EncodeToString(digest[:])
+}
+
+// seedProductionContinuityRows adds the one finalized receipt-backed chapter and
+// the snapshot, post-process and llm ledger rows the three newly bound families
+// read. It runs after the editor fixture, so the character, blueprint and draft
+// rows that test asserts are untouched; the foreign-key edges (draft content,
+// receipt draft, snapshot draft, step run) are all satisfied because admission
+// verifies them before the lane opens.
+func seedProductionContinuityRows(t *testing.T, projectPath string) {
+	t.Helper()
+	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
+	uri.RawQuery = "mode=rw&_foreign_keys=on"
+	db, err := sql.Open("sqlite3", uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	statements := []string{
+		"DELETE FROM summary_snapshots",
+		"DELETE FROM post_process_steps",
+		"DELETE FROM post_process_runs",
+		"DELETE FROM llm_calls",
+		"DELETE FROM narrative_thread_confirmations",
+		"DELETE FROM narrative_thread_plans",
+		`INSERT INTO contents (id, body) VALUES (2, '` + productionContinuityBody + `')`,
+		`INSERT INTO drafts (id, chapter_number, version, status, source, content_id, word_count,
+ source_dependencies, created_at, updated_at)
+ VALUES (2, 2, 1, 'finalized', 'write', 2, 11, '[]', '2024-05-06 08:09:10', '2024-05-06 08:09:10')`,
+		`INSERT INTO finalization_outbox (finalization_id, draft_id, chapter_number, chapter_title,
+ content_hash, content_revision, content_snapshot, target_file_name, publication_status,
+ created_at, updated_at)
+ VALUES ('` + productionContinuityFinalizationID + `', 2, 2, '` + productionContinuityChapterTitle +
+			`', '` + productionContinuityBodyHash() + `', 1, '` + productionContinuityBody +
+			`', 'chapter-0002.md', 'published', '2024-05-06 08:09:10', '2024-05-06 08:09:10')`,
+		`INSERT INTO summary_snapshots (draft_id, chapter_number, character_states, chapter_notes,
+ continuity_facts, character_state_candidates, source_finalization_id, source_content_hash,
+ projection_generation)
+ VALUES (NULL, 2, '` + productionContinuitySnapshotStates + `', '', '[]', '[]', '', '', 0)`,
+		`INSERT INTO summary_snapshots (draft_id, chapter_number, character_states, chapter_notes,
+ continuity_facts, character_state_candidates, source_finalization_id, source_content_hash,
+ projection_generation)
+ VALUES (2, 2, '', '` + productionContinuityNotes + `', '[]', '[]', '', '', 0)`,
+		`INSERT INTO post_process_runs (id, trigger_source_type, trigger_source_id, source_label,
+ all_critical_passed, created_at, updated_at)
+ VALUES ('` + productionContinuityRunID + `', '` + productionContinuityRunKind + `', '` +
+			productionContinuityRunSource + `', '` + productionContinuityRunLabel +
+			`', 1, '2024-05-06 08:09:10', '2024-05-06 08:09:10')`,
+		fmt.Sprintf(`INSERT INTO post_process_steps (run_id, step_key, label, critical, ok, error_msg,
+ attempt_count, completed_at, last_attempt_at)
+ VALUES ('%s', '%s', '%s', 1, 1, '', %d, '2024-05-06 08:09:10', '2024-05-06 08:09:10')`,
+			productionContinuityRunID, productionContinuityStepKey, productionContinuityStepLabel,
+			productionContinuityStepAttempts),
+		fmt.Sprintf(`INSERT INTO llm_calls (model_id, model_name, purpose, prompt_tokens,
+ completion_tokens, total_tokens, duration_ms, success, error_message, created_at)
+ VALUES ('%s', 'ci-model-a-name', 'post-process', %d, %d, %d, 1200, 1, '', '2024-05-06 08:09:10')`,
+			productionContinuityModelSuccess, productionContinuityPromptTokens,
+			productionContinuityCompletionTokens, productionContinuityTotalTokens),
+		fmt.Sprintf(`INSERT INTO llm_calls (model_id, model_name, purpose, prompt_tokens,
+ completion_tokens, total_tokens, duration_ms, success, error_message, created_at)
+ VALUES ('%s', 'ci-model-b-name', 'post-process', NULL, NULL, NULL, 800, 0, 'finish:error',
+ '2024-05-06 08:09:11')`, productionContinuityModelFailure),
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			t.Fatalf("seed %q: %v", statement, err)
+		}
+	}
+	// The lane admits the file itself, so the seeded rows must be checkpointed
+	// into it: no sidecar may carry rows the admitted digest does not cover.
+	productionEditorCheckpoint(t, db, database)
+}
+
+// productionContinuityDenied asserts one continuity write that BindSummary binds
+// and then refuses. The name is served (never 501), but the answer is the
+// binder's own formal-write denial, so no generation or finalization authority is
+// granted and no row is written.
+func productionContinuityDenied(t *testing.T, client *productionDurableClient, operation string, args []any) {
+	t.Helper()
+	response := client.call(t, operation, args)
+	if response.Code == http.StatusNotImplemented {
+		t.Fatalf("%s is still GO_OPERATION_NOT_MIGRATED in the production lane: %s", operation, response.Body.String())
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s: HTTP %d %s", operation, response.Code, response.Body.String())
+	}
+	var wire struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("%s: %v %s", operation, err, response.Body.String())
+	}
+	if wire.Result.Success || wire.Result.Error != "Error: GENERATION_FINALIZATION_ADMISSION_REQUIRED" {
+		t.Fatalf("%s did not refuse the formal continuity write: %s", operation, response.Body.String())
+	}
+}
+
+// TestProductionContinuityReadsServeAdmittedAuthorDatabase is the continuity,
+// post-process and plot-tree half of this lane. Every operation the three binders
+// install is asserted one subtest at a time - so a failure names its own
+// operation - against rows the author database really holds, refuses a stale
+// lease under the same fence as every other editor read, and leaves the admitted
+// bytes untouched. The one write BindSummary carries is asserted last, because it
+// is what it is: a legacy snapshot INSERT on the author's own database.
+func TestProductionContinuityReadsServeAdmittedAuthorDatabase(t *testing.T) {
+	root, projectPath, contract, _, _ := productionEditorReadsRoot(t)
+	seedProductionContinuityRows(t, projectPath)
+	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
+		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
+	expected, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// unchanged re-reads the admitted database: a read, a refusal and a denied
+	// formal write must all leave the author's bytes exactly as they were seeded.
+	unchanged := func(t *testing.T, label string) {
+		t.Helper()
+		after, err := os.ReadFile(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(after, expected) {
+			t.Fatalf("%s changed the admitted author database", label)
+		}
+	}
+
+	author := newProductionDurableClient(t, handler, productionEditorTab)
+	var opened productionDurableOpenWire
+	author.decode(t, "project:open", []any{projectPath, "continuity-open-1", projectPath}, &opened)
+	if !opened.Success || !opened.DBReady || opened.Error != "" {
+		t.Fatalf("project:open refused an admitted project: %+v", opened)
+	}
+	frozen := map[string]any{
+		"projectId":   opened.Project["id"],
+		"projectPath": opened.Project["path"],
+		"leaseId":     opened.Project["sessionLease"],
+	}
+	if frozen["leaseId"] == "" || frozen["leaseId"] == nil {
+		t.Fatalf("project:open returned no session lease: %v", opened.Project)
+	}
+	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
+
+	// db:get-latest-summary: the newest legacy snapshot (no draft_id), not the
+	// receipt-bound one and not a default shape.
+	t.Run("db:get-latest-summary", func(t *testing.T) {
+		var latest map[string]any
+		productionEditorDecode(t, author, "db:get-latest-summary", []any{projectPath, frozen}, &latest)
+		if latest["chapterNumber"] != float64(productionContinuitySnapshotChapter) ||
+			latest["characterStates"] != productionContinuitySnapshotStates {
+			t.Fatalf("db:get-latest-summary did not read the seeded snapshot: %v", latest)
+		}
+		productionEditorRefused(t, author, "stale lease", "db:get-latest-summary", []any{projectPath, stale})
+		unchanged(t, "db:get-latest-summary")
+	})
+
+	// db:continuity-list-before: the projection of the finalized chapter below the
+	// requested one, including the receipt's chapter title.
+	t.Run("db:continuity-list-before", func(t *testing.T) {
+		var projections []map[string]any
+		productionEditorDecode(t, author, "db:continuity-list-before",
+			[]any{float64(productionContinuityFinalizedChapter + 1), projectPath, frozen}, &projections)
+		if len(projections) != 1 {
+			t.Fatalf("db:continuity-list-before returned %d projections; want the one seeded chapter: %v",
+				len(projections), projections)
+		}
+		projection := projections[0]
+		if projection["chapterNumber"] != float64(productionContinuityFinalizedChapter) ||
+			projection["chapterTitle"] != productionContinuityChapterTitle ||
+			projection["chapterNotes"] != productionContinuityNotes {
+			t.Fatalf("db:continuity-list-before did not read the seeded snapshot: %v", projection)
+		}
+		// The seeded row carries no source identity, so the original reports it as
+		// legacy instead of inventing a current projection.
+		if projection["sourceStatus"] != "legacy" {
+			t.Fatalf("db:continuity-list-before reported %v for a legacy snapshot", projection["sourceStatus"])
+		}
+		if facts, ok := projection["facts"].([]any); !ok || len(facts) != 0 {
+			t.Fatalf("db:continuity-list-before invented projected facts: %v", projection["facts"])
+		}
+		productionEditorRefused(t, author, "stale lease", "db:continuity-list-before",
+			[]any{float64(productionContinuityFinalizedChapter + 1), projectPath, stale})
+		unchanged(t, "db:continuity-list-before")
+	})
+
+	// db:continuity-read-source: the finalized source projection, which is only
+	// "valid" when the receipt's snapshot, body and digest all agree.
+	t.Run("db:continuity-read-source", func(t *testing.T) {
+		var source map[string]any
+		productionEditorDecode(t, author, "db:continuity-read-source",
+			[]any{float64(productionContinuityFinalizedDraftID), projectPath, frozen}, &source)
+		if source["status"] != "valid" {
+			t.Fatalf("db:continuity-read-source reported %v for a receipt-backed finalized draft: %v",
+				source["status"], source)
+		}
+		snapshot, ok := source["snapshot"].(map[string]any)
+		if !ok {
+			t.Fatalf("db:continuity-read-source returned no snapshot: %v", source)
+		}
+		if snapshot["chapterTitle"] != productionContinuityChapterTitle ||
+			snapshot["content"] != productionContinuityBody {
+			t.Fatalf("db:continuity-read-source read the wrong finalized body: %v", snapshot)
+		}
+		identity, ok := snapshot["source"].(map[string]any)
+		if !ok || identity["draftId"] != float64(productionContinuityFinalizedDraftID) ||
+			identity["chapterNumber"] != float64(productionContinuityFinalizedChapter) ||
+			identity["finalizationId"] != productionContinuityFinalizationID ||
+			identity["contentHash"] != productionContinuityBodyHash() {
+			t.Fatalf("db:continuity-read-source returned the wrong source identity: %v", snapshot["source"])
+		}
+		productionEditorRefused(t, author, "stale lease", "db:continuity-read-source",
+			[]any{float64(productionContinuityFinalizedDraftID), projectPath, stale})
+		unchanged(t, "db:continuity-read-source")
+	})
+
+	// db:continuity-save-finalized and
+	// db:continuity-save-character-state-candidates: bound, and refused by the
+	// binder itself, so the answer is the business envelope and not a 501.
+	t.Run("db:continuity-save-finalized", func(t *testing.T) {
+		productionContinuityDenied(t, author, "db:continuity-save-finalized",
+			[]any{float64(productionContinuityFinalizedChapter), projectPath, frozen})
+		unchanged(t, "db:continuity-save-finalized")
+	})
+	t.Run("db:continuity-save-character-state-candidates", func(t *testing.T) {
+		productionContinuityDenied(t, author, "db:continuity-save-character-state-candidates",
+			[]any{float64(productionContinuityFinalizedChapter), projectPath, frozen})
+		unchanged(t, "db:continuity-save-character-state-candidates")
+	})
+
+	// db:post-process-get-latest-run: the seeded receipt row.
+	t.Run("db:post-process-get-latest-run", func(t *testing.T) {
+		args := []any{productionContinuityRunKind, productionContinuityRunSource, projectPath, frozen}
+		var run map[string]any
+		productionEditorDecode(t, author, "db:post-process-get-latest-run", args, &run)
+		if run == nil || run["id"] != productionContinuityRunID {
+			t.Fatalf("db:post-process-get-latest-run did not read the seeded run: %v", run)
+		}
+		if run["triggerSourceType"] != productionContinuityRunKind ||
+			run["triggerSourceId"] != productionContinuityRunSource ||
+			run["sourceLabel"] != productionContinuityRunLabel {
+			t.Fatalf("db:post-process-get-latest-run returned the wrong source identity: %v", run)
+		}
+		if run["allCriticalPassed"] != true {
+			t.Fatalf("db:post-process-get-latest-run lost the all-passed flag: %v", run)
+		}
+		productionEditorRefused(t, author, "stale lease", "db:post-process-get-latest-run",
+			[]any{productionContinuityRunKind, productionContinuityRunSource, projectPath, stale})
+		unchanged(t, "db:post-process-get-latest-run")
+	})
+
+	// db:post-process-get-steps: the run's step rows, with their own flags.
+	t.Run("db:post-process-get-steps", func(t *testing.T) {
+		var steps []map[string]any
+		productionEditorDecode(t, author, "db:post-process-get-steps",
+			[]any{productionContinuityRunID, projectPath, frozen}, &steps)
+		if len(steps) != 1 {
+			t.Fatalf("db:post-process-get-steps returned %d steps; want the one seeded step: %v", len(steps), steps)
+		}
+		step := steps[0]
+		if step["runId"] != productionContinuityRunID || step["stepKey"] != productionContinuityStepKey ||
+			step["label"] != productionContinuityStepLabel {
+			t.Fatalf("db:post-process-get-steps did not read the seeded step: %v", step)
+		}
+		if step["critical"] != true || step["ok"] != true ||
+			step["attemptCount"] != float64(productionContinuityStepAttempts) {
+			t.Fatalf("db:post-process-get-steps returned the wrong step state: %v", step)
+		}
+		productionEditorRefused(t, author, "stale lease", "db:post-process-get-steps",
+			[]any{productionContinuityRunID, projectPath, stale})
+		unchanged(t, "db:post-process-get-steps")
+	})
+
+	// db:post-process-is-all-passed: the aggregate of those step flags.
+	t.Run("db:post-process-is-all-passed", func(t *testing.T) {
+		var passed bool
+		productionEditorDecode(t, author, "db:post-process-is-all-passed",
+			[]any{productionContinuityRunKind, productionContinuityRunSource, projectPath, frozen}, &passed)
+		if !passed {
+			t.Fatal("db:post-process-is-all-passed reported false for a run whose critical steps all passed")
+		}
+		productionEditorRefused(t, author, "stale lease", "db:post-process-is-all-passed",
+			[]any{productionContinuityRunKind, productionContinuityRunSource, projectPath, stale})
+		unchanged(t, "db:post-process-is-all-passed")
+	})
+
+	// db:get-llm-stats: the ledger aggregate, including the NULL usage row the
+	// known-usage count exists for.
+	t.Run("db:get-llm-stats", func(t *testing.T) {
+		var stats map[string]any
+		productionEditorDecode(t, author, "db:get-llm-stats", []any{projectPath, frozen}, &stats)
+		if stats["totalCalls"] != float64(2) || stats["successfulCalls"] != float64(1) ||
+			stats["failedCalls"] != float64(1) || stats["knownUsageCalls"] != float64(1) {
+			t.Fatalf("db:get-llm-stats did not aggregate the seeded calls: %v", stats)
+		}
+		if stats["totalTokens"] != float64(productionContinuityTotalTokens) ||
+			stats["totalPromptTokens"] != float64(productionContinuityPromptTokens) ||
+			stats["totalCompletionTokens"] != float64(productionContinuityCompletionTokens) {
+			t.Fatalf("db:get-llm-stats returned the wrong token sums: %v", stats)
+		}
+		productionEditorRefused(t, author, "stale lease", "db:get-llm-stats", []any{projectPath, stale})
+		unchanged(t, "db:get-llm-stats")
+	})
+
+	// db:get-llm-history: the newest calls first, with the finish reason the
+	// stored error message maps to, and the requested limit honoured.
+	t.Run("db:get-llm-history", func(t *testing.T) {
+		var history []map[string]any
+		productionEditorDecode(t, author, "db:get-llm-history", []any{float64(10), projectPath, frozen}, &history)
+		if len(history) != 2 {
+			t.Fatalf("db:get-llm-history returned %d calls; want the two seeded calls: %v", len(history), history)
+		}
+		if history[0]["modelId"] != productionContinuityModelFailure || history[0]["success"] != float64(0) ||
+			history[0]["finishReason"] != "error" {
+			t.Fatalf("db:get-llm-history did not read the newest failed call first: %v", history[0])
+		}
+		if history[1]["modelId"] != productionContinuityModelSuccess || history[1]["success"] != float64(1) ||
+			history[1]["totalTokens"] != float64(productionContinuityTotalTokens) {
+			t.Fatalf("db:get-llm-history did not read the older successful call: %v", history[1])
+		}
+		var limited []map[string]any
+		productionEditorDecode(t, author, "db:get-llm-history", []any{float64(1), projectPath, frozen}, &limited)
+		if len(limited) != 1 {
+			t.Fatalf("db:get-llm-history ignored the requested limit: %v", limited)
+		}
+		productionEditorRefused(t, author, "stale lease", "db:get-llm-history",
+			[]any{float64(10), projectPath, stale})
+		unchanged(t, "db:get-llm-history")
+	})
+
+	// db:plot-tree-read: the source facts the plot tree is rebuilt from, read in
+	// the store's own read-only transaction.
+	t.Run("db:plot-tree-read", func(t *testing.T) {
+		var tree map[string]any
+		productionEditorDecode(t, author, "db:plot-tree-read", []any{projectPath, frozen}, &tree)
+		if tree["writingLanguage"] != "zh-CN" {
+			t.Fatalf("db:plot-tree-read lost the project writing language: %v", tree["writingLanguage"])
+		}
+		revision, _ := tree["sourceRevision"].(string)
+		if len(revision) != 64 {
+			t.Fatalf("db:plot-tree-read returned %q as its source revision", revision)
+		}
+		blueprints, ok := tree["blueprints"].([]any)
+		if !ok || len(blueprints) != 1 {
+			t.Fatalf("db:plot-tree-read did not return the seeded blueprint: %v", tree["blueprints"])
+		}
+		if blueprint, ok := blueprints[0].(map[string]any); !ok || blueprint["title"] != productionEditorChapter ||
+			blueprint["chapterNumber"] != float64(1) {
+			t.Fatalf("db:plot-tree-read returned the wrong blueprint: %v", blueprints[0])
+		}
+		chapters, ok := tree["finalizedChapters"].([]any)
+		if !ok || len(chapters) != 1 {
+			t.Fatalf("db:plot-tree-read did not return the seeded finalized chapter: %v", tree["finalizedChapters"])
+		}
+		if chapter, ok := chapters[0].(map[string]any); !ok ||
+			chapter["draftId"] != float64(productionContinuityFinalizedDraftID) ||
+			chapter["chapterNumber"] != float64(productionContinuityFinalizedChapter) ||
+			chapter["title"] != productionContinuityChapterTitle ||
+			chapter["summary"] != productionContinuityNotes {
+			t.Fatalf("db:plot-tree-read returned the wrong finalized chapter: %v", chapters[0])
+		}
+		if threads, ok := tree["narrativeThreads"].([]any); !ok || len(threads) != 0 {
+			t.Fatalf("db:plot-tree-read invented narrative threads: %v", tree["narrativeThreads"])
+		}
+		if snapshot, present := tree["snapshot"]; !present || snapshot != nil {
+			t.Fatalf("db:plot-tree-read changed the absent-snapshot shape: %v", tree)
+		}
+		// A read of the same sources reports the same revision.
+		var again map[string]any
+		productionEditorDecode(t, author, "db:plot-tree-read", []any{projectPath, frozen}, &again)
+		if again["sourceRevision"] != tree["sourceRevision"] {
+			t.Fatalf("db:plot-tree-read changed the source revision between reads: %v then %v",
+				tree["sourceRevision"], again["sourceRevision"])
+		}
+		// A lease this server never issued is refused by the same fence; the plot
+		// tree binder's own finite vocabulary reports it as a read failure rather
+		// than leaking the lease error text.
+		response := author.call(t, "db:plot-tree-read", []any{projectPath, stale})
+		if response.Code == http.StatusOK {
+			t.Fatalf("db:plot-tree-read answered 200 under a stale lease: %s", response.Body.String())
+		}
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("db:plot-tree-read stale refusal: %v %s", err, response.Body.String())
+		}
+		if body.Error.Code != "PLOT_TREE_OPERATION_FAILED" {
+			t.Fatalf("db:plot-tree-read refused with %q, which is not its own read failure: %s",
+				body.Error.Code, response.Body.String())
+		}
+		unchanged(t, "db:plot-tree-read")
+	})
+
+	// The mutations in these three families are not bound by the read binders:
+	// they keep failing closed instead of being installed as handlers that could
+	// only refuse. One subtest per name, so a failure names the operation.
+	for _, operation := range []string{
+		"db:post-process-create-run",
+		"db:post-process-mark-step-ok",
+		"db:post-process-mark-step-failed",
+		"db:log-llm-call",
+		"db:plot-tree-save",
+		"db:plot-tree-clear",
+	} {
+		t.Run("unbound/"+operation, func(t *testing.T) {
+			response := author.call(t, operation, []any{map[string]any{}, projectPath, frozen})
+			if response.Code != http.StatusNotImplemented ||
+				!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+				t.Fatalf("%s is bound in the production lane but must stay fail-closed: %d %s",
+					operation, response.Code, response.Body.String())
+			}
+		})
+	}
+
+	// BindSummary installs the one legacy snapshot INSERT with the three reads,
+	// so it is asserted for what it is and last of all: a stale lease refuses it
+	// before any row is written, and the committed row is then served back through
+	// db:get-latest-summary instead of being trusted from the acknowledgement.
+	t.Run("db:save-summary-snapshot", func(t *testing.T) {
+		productionEditorRefused(t, author, "stale lease", "db:save-summary-snapshot",
+			[]any{float64(productionContinuityNewChapter), productionContinuityNewStates, projectPath, stale})
+		unchanged(t, "a refused db:save-summary-snapshot")
+		var ack map[string]any
+		productionEditorDecode(t, author, "db:save-summary-snapshot",
+			[]any{float64(productionContinuityNewChapter), productionContinuityNewStates, projectPath, frozen}, &ack)
+		if ack["success"] != true {
+			t.Fatalf("db:save-summary-snapshot did not commit the legacy snapshot: %v", ack)
+		}
+		var latest map[string]any
+		productionEditorDecode(t, author, "db:get-latest-summary", []any{projectPath, frozen}, &latest)
+		if latest["chapterNumber"] != float64(productionContinuityNewChapter) ||
+			latest["characterStates"] != productionContinuityNewStates {
+			t.Fatalf("db:save-summary-snapshot did not land in the admitted author database: %v", latest)
+		}
+	})
 }

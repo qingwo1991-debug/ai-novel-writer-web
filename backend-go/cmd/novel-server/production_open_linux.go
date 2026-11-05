@@ -549,10 +549,26 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
+	// The continuity, post-process ledger and plot-tree halves of the editor's
+	// read surface, borrowed from the same admitted author database under the same
+	// live lease as everything above (production_continuity_reads_linux.go). The
+	// three summary reads project the author's own snapshot rows under a
+	// BEGIN IMMEDIATE reservation that writes nothing, the five post-process
+	// receipt / llm ledger reads are plain SELECTs, and db:plot-tree-read opens
+	// its own read-only transaction over the project core, blueprint, finalized
+	// chapter and narrative rows. BindSummary also installs the one legacy
+	// snapshot INSERT (db:save-summary-snapshot) and keeps the two continuity
+	// names refusing at the binder's own
+	// GENERATION_FINALIZATION_ADMISSION_REQUIRED. The four mutating post-process
+	// names and db:plot-tree-save/db:plot-tree-clear are not bound here, so they
+	// keep failing closed at GO_OPERATION_NOT_MIGRATED.
 	for _, bind := range []func() error{
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
+		func() error { return server.BindSummary(open.durable) },
+		func() error { return server.BindPostHistoryReads(open.durable) },
+		func() error { return server.BindPlotTreeReads(open.durable) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
