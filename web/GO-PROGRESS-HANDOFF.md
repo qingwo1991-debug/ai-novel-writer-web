@@ -1132,3 +1132,31 @@ fact finished the code and the seeder, but I did not notice the cancellation unt
 work sat in the tree unverified for one round. When a delegated run is cancelled, inspect the working
 tree for partial output immediately rather than assuming nothing landed.
 
+### 2026-11-04 — four small-family operations bound, and three families closed as blocked (durable 128 -> 132)
+
+Green: `ecf599e6`. Bound: `prompt:save-global`, `prompt:delete-global`, `skills:uninstall-user`,
+`project:recent-remove`. Assertions read the effects back (template files on disk, skill directory gone,
+recent list empty, `project.db` untouched, second removal refusing without leaking a path).
+
+**A negative result worth recording, because it closes three families for now.** In the recon of
+`fs`, `dialog`, `project`, `prompt`, `skills` and `legacy-roster`, the `(a) implementable` group was
+**4 names out of 37**. Everything else needs a subsystem:
+
+- `fs:*` (8) - `projectfs` exposes only storage-relative `OpenFileRead` and `ListVisibleTree`; there is
+  no project-root text read/write, no mkdir, no exists, no atomic write, and no external-grant service.
+- `dialog:*` (9) - the pickers are native; `select-novel-files` additionally needs
+  `importsource.NewStore` plus a picker this lane cannot compose.
+- `legacy-roster:*` (7) - needs `main-generation-owner` (`generation-controller.ts:233-239`).
+- `project:*` 5 of 6 - create/delete/peek/import-legacy-copy/archive need directory grants, deletion
+  authority, or dialogs.
+- `skills:*` 4 of 5 - GitHub egress or a native picker.
+
+So these families are not "unfinished"; they are **blocked on injection points that do not exist in a
+server-side lane** (native pickers, desktop dialogs, external path grants). That is an architectural
+boundary of the headless Go server, not a gap in the porting work, and it should be decided by the owner
+rather than ground down further: a web deployment cannot hand a user a native file dialog.
+
+Consequence for the count: the reachable ceiling without new injection points is well below 281. The
+operations that genuinely need a desktop shell should be marked as such in the matrix rather than carried
+as "pending".
+
