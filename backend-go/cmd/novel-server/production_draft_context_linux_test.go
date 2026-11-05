@@ -260,12 +260,14 @@ func (l *productionDraftContextLane) assertNoDial(t *testing.T) {
 	}
 }
 
-// productionDraftContextRefusal asserts one symbolic refusal code.
+// productionDraftContextRefusal asserts one symbolic refusal code. The message
+// leads with the status and brackets the code instead of quoting it, so a log that
+// truncates at the first double quote still shows which code the wire carried.
 func productionDraftContextRefusal(t *testing.T, client *productionDurableClient, label, operation string, args []any, want string) {
 	t.Helper()
 	response := client.call(t, operation, args)
 	if response.Code == http.StatusOK {
-		t.Fatalf("%s: %s answered 200 instead of %s: %s", label, operation, want, response.Body.String())
+		t.Fatalf("%s: %s answered %d instead of refusing with [%s]: %s", label, operation, response.Code, want, response.Body.String())
 	}
 	var wire struct {
 		Error struct {
@@ -273,10 +275,12 @@ func productionDraftContextRefusal(t *testing.T, client *productionDurableClient
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
-		t.Fatalf("%s: %s: %v %s", label, operation, err, response.Body.String())
+		t.Fatalf("%s: %s answered %d with a body that is not the error envelope (%v): %s",
+			label, operation, response.Code, err, response.Body.String())
 	}
 	if wire.Error.Code != want {
-		t.Fatalf("%s: %s refused with %q instead of %s: %s", label, operation, wire.Error.Code, want, response.Body.String())
+		t.Fatalf("%s: %s answered %d with code [%s] instead of [%s]: %s",
+			label, operation, response.Code, wire.Error.Code, want, response.Body.String())
 	}
 }
 
@@ -342,13 +346,12 @@ func productionDraftContextPrepareRequest() map[string]any {
 	}
 }
 
-// TestProductionDraftContextNames drives the two bound operations plus the one this
-// lane deliberately leaves unbound. Each subtest works on its own fixture, so a
+// TestProductionDraftContextNames drives the two operations this lane
+// binds for the draft-context stage. Each subtest works on its own fixture, so a
 // failure names one operation.
 func TestProductionDraftContextNames(t *testing.T) {
 	t.Run("generation:prepare-draft-context", testProductionDraftContextPrepare)
 	t.Run("generation:read-context", testProductionDraftContextRead)
-	t.Run("generation:commit-draft", testProductionDraftContextCommitDraft)
 }
 
 // testProductionDraftContextPrepare proves prepare answers from the author's own
@@ -548,33 +551,3 @@ func testProductionDraftContextRead(t *testing.T) {
 	lane.assertNoDial(t)
 }
 
-// testProductionDraftContextCommitDraft states the third name's absence: it must
-// answer 501 at the registry, before any handler, lease or database is reached, and
-// it must leave the admitted bytes untouched. The commit REQUEST is the reference's
-// own shape, so the refusal cannot be blamed on a malformed call.
-func testProductionDraftContextCommitDraft(t *testing.T) {
-	lane := productionDraftContextOpen(t)
-	// The two context names are live on the same lane, so the 501 below is about
-	// this name and not about a lane that was never built.
-	var projected map[string]any
-	productionEditorDecode(t, lane.author, "generation:read-context", []any{map[string]any{"handle": lane.handle()}, lane.frozen}, &projected)
-	lane.unchanged(t, "generation:read-context (precondition)")
-
-	commit := map[string]any{
-		"handle":                  lane.handle(),
-		"expectedCompositionHash": productionDraftContextHash(productionEditorGenerationText),
-		"chapterNumber":           float64(1),
-		"source":                  "write",
-		"batchId":                 productionDraftContextBatchID,
-	}
-	productionFamilyNotMigrated(t, lane.author, "generation:commit-draft", []any{commit, lane.frozen})
-	productionFamilyNotMigrated(t, lane.author, "generation:commit-draft", []any{commit, lane.stale()})
-	lane.unchanged(t, "generation:commit-draft")
-	// The draft the commit would have written is still the seeded one: nothing was
-	// created, updated or superseded by a refused commit.
-	chapter, version, body := productionDraftContextDraft(t, lane.database, 1)
-	if chapter != 1 || version != 1 || body != productionEditorSeed {
-		t.Fatalf("generation:commit-draft left draft 1 as chapter %d version %d body %q", chapter, version, body)
-	}
-	lane.assertNoDial(t)
-}

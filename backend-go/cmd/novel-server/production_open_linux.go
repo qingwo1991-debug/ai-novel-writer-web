@@ -570,6 +570,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:commit-draft recomposes the visible text from the run's own
+		// artifacts and commits it in one immediate transaction, with the
+		// next-chapter guard inside that transaction.
+		if bindErr := newProductionDraftCommit(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// generation:compose-visible stores the visible composition receipt on the
 		// attempt that composed it; generation:read-visible-composition reads it
 		// back and re-verifies its hash. Neither dials a provider.

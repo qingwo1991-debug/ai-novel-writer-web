@@ -649,6 +649,16 @@ func productionDraftContextRun(ctx context.Context, ledger *store.GenerationLedg
 	}
 	value, err := ledger.CallJSON(ctx, "get", args)
 	if err != nil {
+		// The ledger names a missing row GENERATION_RUN_MISSING
+		// (internal/store/generation_ledger.go:369 through glOne at :218-230). The
+		// reference's requireRun refuses a run it cannot load with
+		// GENERATION_RUN_NOT_FOUND (main-generation-owner.ts:156-164), and that is
+		// the only code the browser branches on, so the store's internal name is
+		// translated here instead of being leaked to the wire. Any other failure
+		// keeps its own error and status.
+		if err.Error() == "GENERATION_RUN_MISSING" {
+			return nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
+		}
 		return nil, nil, err
 	}
 	run := syntheticMap(value)

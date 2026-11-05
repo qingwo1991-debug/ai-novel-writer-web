@@ -55,6 +55,22 @@ func productionCompositionDigest(text string) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// productionCompositionPayload reads one committed artifact's own revision and
+// payload hash over the test's own mode=ro connection, so a served source is
+// checked against the ledger instead of against the value under test.
+func productionCompositionPayload(t *testing.T, db *sql.DB, artifactID string) (int64, string) {
+	t.Helper()
+	var revision int64
+	var hash string
+	productionStoryStateWriteScan(t, db,
+		`SELECT revision, json_extract(artifact_json,'$.textHash') FROM generation_artifacts WHERE artifact_id=?`,
+		[]any{artifactID}, &revision, &hash)
+	if hash == "" {
+		t.Fatalf("the committed artifact %s records no textHash", artifactID)
+	}
+	return revision, hash
+}
+
 // productionCompositionAnswer decodes one answer of the family's read envelope. A
 // null result is reported as absent, which is exactly what
 // generation:read-visible-composition answers for a run that stores no receipt.
@@ -156,18 +172,36 @@ func TestProductionCompositionComposesAndReadsBack(t *testing.T) {
 	if !isList || len(sources) != 1 {
 		t.Fatalf("compose answered sources %v", receipt["sources"])
 	}
+	// The source names the payload, not the composition: its revision and its hash
+	// are the artifact's own (generation-run-repository.ts:511) - the hash of the
+	// raw snapshot text, trailing newline included - while the receipt hashes the
+	// composed, trimmed text this call produced. Reading both from a connection of
+	// the test's own is what makes that split observable instead of assumed.
+	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	payloadRevision, payloadHash := productionCompositionPayload(t, readback, artifactID)
+	if payloadHash != productionCompositionDigest(productionCompositionText) {
+		t.Fatalf("the committed payload hashes %q; want the raw candidate text", payloadHash)
+	}
+	if payloadHash == expectedHash {
+		t.Fatal("the payload and the composition hash the same text, so this fixture no longer pins the trim")
+	}
 	source, isMap := sources[0].(map[string]any)
-	if !isMap || source["artifactId"] != artifactID || source["textHash"] != expectedHash {
+	if !isMap {
 		t.Fatalf("compose answered source %v", sources[0])
 	}
-	if source["revision"] != float64(0) {
-		t.Fatalf("compose answered revision %v; want the payload revision 0", source["revision"])
+	if source["artifactId"] != artifactID {
+		t.Fatalf("compose answered source artifactId %v; want %s", source["artifactId"], artifactID)
+	}
+	if source["revision"] != float64(payloadRevision) {
+		t.Fatalf("compose answered source revision %v; want the payload revision %d", source["revision"], payloadRevision)
+	}
+	if source["textHash"] != payloadHash {
+		t.Fatalf("compose answered source textHash %v; want the payload hash %s", source["textHash"], payloadHash)
 	}
 
 	// The receipt was written on the attempt that owns the last composed artifact,
 	// as generation-run-repository.ts:691-693 does, and it was written as one added
 	// key rather than a replacement of the attempt's usage.
-	readback := productionStoryStateWriteReadback(t, lane.projectPath)
 	var storedHash, storedIDs, usageKeys string
 	productionStoryStateWriteScan(t, readback,
 		`SELECT json_extract(usage_receipt_json,'$.visibleComposition.textHash'),
@@ -251,8 +285,11 @@ func TestProductionCompositionComposesAndReadsBack(t *testing.T) {
 
 // TestProductionCompositionRefusesATamperedReceipt seeds one settled visible-text
 // run whose stored receipt still names the right artifact and sources but the wrong
-// hash, then proves the read refuses it with the integrity code, that a compose over
-// it refuses for the same reason, and that neither leaves a byte behind.
+// hash, then proves the read re-composes it, finds the disagreement and refuses with
+// the integrity code, that the compose over the same run is stopped one gate earlier
+// by the lease, and that neither leaves a byte behind. The seeded run is frozen under
+// the fixture's epoch, which no live lease can equal, so the compose is a lease
+// refusal here and the compose-side integrity branch is covered by the pure table.
 func TestProductionCompositionRefusesATamperedReceipt(t *testing.T) {
 	root, projectPath, contract, _, _ := productionEditorReadsRoot(t)
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
@@ -285,10 +322,15 @@ func TestProductionCompositionRefusesATamperedReceipt(t *testing.T) {
 		t.Fatal("a refused read of a tampered receipt changed the committed database file")
 	}
 
-	// A compose over the same run refuses for the same reason and writes nothing.
+	// A compose over the same run never reaches that receipt: the run was frozen
+	// under the fixture's own epoch, and a compose re-admits the handle against the
+	// live lease first (requireRun(handle, true), main-generation-owner.ts:164), so
+	// the lease gate answers before the integrity check can. That is why the read
+	// above is the operation that proves the tampered receipt is rejected, and why
+	// the pure table below covers the compose-side integrity branch directly.
 	if code := productionCompositionRefusal(t, "tampered compose", author.call(t, "generation:compose-visible",
-		[]any{handle, []any{seed.ArtifactID}, seed.TextHash, frozen})); code != composition.CodeIntegrityFailed {
-		t.Fatalf("a compose over a tampered receipt was refused with %q; want %s", code, composition.CodeIntegrityFailed)
+		[]any{handle, []any{seed.ArtifactID}, seed.TextHash, frozen})); code != composition.CodeEpochStale {
+		t.Fatalf("a compose over a run frozen under another epoch was refused with %q; want %s", code, composition.CodeEpochStale)
 	}
 	if after, readErr := os.ReadFile(database); readErr != nil {
 		t.Fatal(readErr)
@@ -360,15 +402,19 @@ func productionCompositionTamperedRun(t *testing.T, database, text string) produ
 		t.Fatalf("tampered-run settle: %v", err)
 	}
 	var artifact, artifactText, artifactHash string
-	if err := db.QueryRow(`SELECT artifact_id,json_extract(artifact_json,'$.text'),json_extract(artifact_json,'$.textHash')
- FROM generation_artifacts WHERE attempt_id=?`, attemptID).Scan(&artifact, &artifactText, &artifactHash); err != nil {
+	var artifactRevision int64
+	if err := db.QueryRow(`SELECT artifact_id,json_extract(artifact_json,'$.text'),json_extract(artifact_json,'$.textHash'),revision
+ FROM generation_artifacts WHERE attempt_id=?`, attemptID).Scan(&artifact, &artifactText, &artifactHash, &artifactRevision); err != nil {
 		t.Fatalf("tampered-run artifact: %v", err)
 	}
 	if artifactHash != productionCompositionDigest(artifactText) {
 		t.Fatalf("the ledger's own artifact does not hash to its text: %q vs %q", artifactHash, artifactText)
 	}
-	tampered := fmt.Sprintf(`{"algorithm":%q,"textHash":%q,"artifactIds":[%q],"sources":[{"artifactId":%q,"revision":0,"textHash":%q}]}`,
-		composition.VisibleContinuationVersion, strings.Repeat("0", 64), artifact, artifact, artifactHash)
+	// Only the composed hash lies: the ids, the source and its revision are the ones
+	// the ledger holds, so the recomposition's comparison is the single refusal that
+	// can fire (generation-run-repository.ts:672).
+	tampered := fmt.Sprintf(`{"algorithm":%q,"textHash":%q,"artifactIds":[%q],"sources":[{"artifactId":%q,"revision":%d,"textHash":%q}]}`,
+		composition.VisibleContinuationVersion, strings.Repeat("0", 64), artifact, artifact, artifactRevision, artifactHash)
 	if _, err := db.Exec(`UPDATE generation_attempts SET usage_receipt_json=json_set(usage_receipt_json,'$.visibleComposition',json(?)) WHERE attempt_id=?`,
 		tampered, attemptID); err != nil {
 		t.Fatalf("tampered-run receipt: %v", err)
