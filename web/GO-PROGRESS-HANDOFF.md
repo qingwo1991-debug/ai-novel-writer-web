@@ -1160,3 +1160,81 @@ Consequence for the count: the reachable ceiling without new injection points is
 operations that genuinely need a desktop shell should be marked as such in the matrix rather than carried
 as "pending".
 
+
+### 2026-11-05 — `finalization-generation:read` bound, the other ten names stay 501 (durable 132 -> 133)
+
+Recon of the eleven server-side AI names (`review-revision:*` 4, `finalization-generation:*` 4,
+`graph-generation:*` 3). Eight of them are `(c)` needs-a-subsystem, three were already bound, and one was
+`(a)`:
+
+- **Already bound:** `graph-generation:read` (`internal/transport/graph_generation.go`),
+  `graph-generation:cancel`, `finalization-generation:cancel` (`BindGeneration`).
+- **`(c)` blocked:** `graph-generation:begin/execute/confirm` need graph run admission with a
+  `graphGenerationContext` manifest and a nonce-deduped run open (`syntheticParseSelection` refuses the
+  `input`/`modelId`/`uiActionNonce` request); `finalization-generation:begin` needs
+  `captureFinalizationGenerationContext` plus prompt-template rendering, `execute` a live model call, and
+  `commit` the artifact readback plus `rebuildBinding`/`compareGenerationSourceBindings`; the three
+  `review-revision` writes need a settled run carrying `reviewRevisionContext`, which needs
+  `freezeChapterGoals`, `findBlueprintContinuityRisks`, `parseHumanConfirmedReviewSnapshot` and
+  `ReviewCycleRepository.planRecheck` - none of them ported.
+- **`(a)` bound:** `finalization-generation:read`. It takes `{ slot }` (not `{ handle }`), validates the
+  slot exactly like `finalizationSlotKey`, re-derives the key with `graphgen.EncodeJSON`+`TextHash`
+  (`textHash(JSON.stringify([draftId, finalizationId, chapterNumber, contentHash, stepKey]))`) and looks
+  it up in `generation_runs` via `json_extract(binding_json,'$.sourceManifest.finalizationGenerationSlotKey')`.
+  No row means JSON **null**, which is the answer `src/services/finalization-generation.ts:38` needs to
+  start a finalization at all: refusing it would break the first step of the normal flow rather than
+  protect anything.
+  A matching row is refused, not projected. Only `finalization-generation:begin` writes that manifest key
+  and this lane does not bind it, so recovering the run would mean proving
+  `textHash(JSON.stringify(context))` against the stored `finalizationGenerationContextHash` - insertion
+  order, which every digest in this lane deliberately canonicalises. The row is answered with
+  `GENERATION_FINALIZATION_CONTEXT_INVALID` (foreign `binding.projectId`:
+  `GENERATION_FINALIZATION_SLOT_CONFLICT`), so the lane never hands the renderer a context it cannot prove.
+
+Shape notes worth keeping: the binder row is **conditional** (`FinalizationRead != nil`), because
+`bindGenerationOperations` installs every row it is handed and a bound-but-unsupported row would answer
+500 instead of 501. The read is `mutating: false`, so its refusals are HTTP errors, not the
+`{"success":false,...}` business DTO. `familyRequestHandle` was split into
+`familyRequestField(value, field, code)` so the `{ slot }` envelope reuses the same single-key rule.
+
+Tests: `internal/transport/finalization_read_test.go` pins the unwrap, the read envelope, and that a nil
+provider leaves the name unbound; the pin test grew a `graph-generation-with-finalization-read` case; the
+durable HTTP test seeds one owning run in this project and one in another (row insert shape from
+`contract/m03-generated-contract.mjs:81`, before `project:open` so the write admission fingerprints that
+database) and asserts null / conflict / context-invalid plus ten malformed slots. `finalization-generation:read`
+was pruned from the "still unbound" loop (29 -> 28) - the same rot the previous entry warns about.
+
+### 2026-11-05 — OWNER DECISION: the target is a Dockerised Go server, browser-only, data server-side
+
+Stated by the owner:
+
+> 我要的就是 docker 服务跑，然后我通过浏览器就可以实现全部功能，并且我的小说内容是在服务器上（本机），
+> 电脑写一半的，手机可以接着写，不要 nodejs 架构，要轻量一些的 go
+
+This settles the question the previous entry raised, and it settles it the *second* way: the desktop-only
+operations are **not** out of scope. They are to be re-expressed with web semantics, because the product is
+"open a browser, from any device, and everything works, with the manuscripts living on the server".
+
+Consequences, in order of how much they change the plan:
+
+1. **`dialog:*` (9) becomes upload/download, not a dropped family.** A native file picker has no server
+   equivalent, but its *purpose* does: choosing files to import is a browser upload (multipart), and
+   choosing a save destination is an HTTP download (attachment) or a server-side path choice confined to
+   the project root. These need new routes and a new browser-side caller, which is why they were never
+   bindable as-is.
+2. **`fs:*` (8) becomes a project-root-confined file API.** The original's external-grant model exists to
+   let a desktop app reach arbitrary user paths. Server-side, the correct analogue is stricter, not
+   looser: read/write/mkdir/exists confined to the storage root, with the grant model simply absent.
+   This is a security improvement over the original, and a *different* contract - it must be documented
+   per operation, not silently substituted.
+3. **`legacy-roster:*` (7) is unchanged** - it needs the generation owner, which is real work, not a
+   desktop artefact.
+4. **Cross-device resumption is already the lane's design**: single-writer lease, full-body CAS, draft
+   authority sequence. Nothing new is needed for "write half on the desktop, continue on the phone"
+   beyond the lease and CAS that are already bound and tested.
+
+So the reachable ceiling is **still 281**, but roughly 17 of them will be served by *web-native* contracts
+rather than by porting a desktop contract verbatim. That difference must be visible in the matrix, because
+"the same operation" with a different security model is exactly the kind of thing that must not be
+presented as a faithful port.
+
