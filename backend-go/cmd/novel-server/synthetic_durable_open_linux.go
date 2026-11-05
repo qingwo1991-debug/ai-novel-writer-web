@@ -652,12 +652,12 @@ func (s *syntheticDurableOpen) BeginPlotTree(ctx context.Context, caller transpo
 }
 
 // BeginPromptSkills lends the durable lane's pinned private prompt and
-// installed-skill root. Only the two reads are bound to it (prompt:load-global,
-// skills:list-user); prompt save/delete and skill uninstall stay unbound, so
-// this lane can never rewrite the global prompt store or remove an installed
-// skill. Those two names take no argument at all, so unlike the project-family
-// borrows there is no frozen context to recheck; the service itself is the only
-// authority and it refuses any path that leaves the root.
+// installed-skill root. The read binder serves prompt:load-global and
+// skills:list-user from it; the disjoint write binder serves
+// prompt:save-global, prompt:delete-global and skills:uninstall-user from the
+// same service. None of those five names carries a frozen session context, so
+// unlike the project-family borrows there is no lease to recheck; the service
+// itself is the only authority and it refuses any path that leaves the root.
 func (s *syntheticDurableOpen) BeginPromptSkills(ctx context.Context, _ transport.Caller) (*promptskills.Service, func(), error) {
 	if s == nil || ctx == nil {
 		return nil, nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
@@ -706,6 +706,43 @@ func (s *syntheticDurableOpen) CloseProject(ctx context.Context, caller transpor
 		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
 	}
 	return s.manager.CloseProject(ctx, caller, projectPath, expected)
+}
+
+// RemoveRecentNavigation is the durable lane's project:recent-remove. The
+// browser names the shelf entry with the path project:recent-list handed it, so
+// this method maps that path to the process-local catalog key this lane already
+// issued and lets projectcatalog drop the navigation record. The catalog never
+// deletes a project directory, and this method never opens, creates or reads a
+// filesystem path of its own.
+//
+// The admitted runtime is intentionally left alone: the original drops a
+// recent-list entry and revokes preview capabilities, but it does not close the
+// project the author is editing (project-controller.ts:896-904). The
+// path-to-key mapping this lane issued at creation is kept for the same reason
+// — the key belongs to the admitted runtime, not to the shelf — so a later
+// project:open on a removed path is refused through the catalog's redacted open
+// error instead of minting a fresh capability. A refusal here is symbolic,
+// because a catalog error can carry a host path.
+func (s *syntheticDurableOpen) RemoveRecentNavigation(ctx context.Context, _ transport.Caller, target string) (any, error) {
+	if s == nil || ctx == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.catalog == nil {
+		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	key := s.keys[target]
+	if key == "" {
+		return nil, errors.New("PROJECT_RECENT_TARGET_INVALID")
+	}
+	if err := s.catalog.Remove(key); err != nil {
+		return nil, err
+	}
+	return map[string]any{"success": true}, nil
 }
 
 func (s *syntheticDurableOpen) ProjectRuntimeContext(ctx context.Context, caller transport.Caller) (any, error) {
@@ -791,6 +828,16 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		return nil, nil, fmt.Errorf("synthetic durable runtime: %w", err)
 	}
 	if err := server.BindProjects(durable); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	// project:recent-remove is the one project-family name BindProjects leaves
+	// unbound (its optional ProjectCatalogProvider needs both recent methods,
+	// and this lane serves the shelf through BindEditorNavigation's
+	// project:recent-list instead). Dropping a shelf entry is a navigation
+	// metadata write on this lane's own catalog: no author database, no
+	// filesystem path and no frozen lease, so it is bound on its own.
+	if err := server.BindProjectRecentRemove(durable); err != nil {
 		cleanup()
 		return nil, nil, err
 	}
@@ -956,12 +1003,18 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			}
 		}
 	}
-	// The prompt template and installed-skill reads are served from that same
-	// pinned private config root, so they are wired by the same condition. This
-	// binds only the two reads; prompt save/delete and skill uninstall stay
-	// unbound and keep failing closed.
+	// The prompt template and installed-skill names are served from that same
+	// pinned private config root, so they are wired by the same condition. The
+	// read binder carries prompt:load-global and skills:list-user; the disjoint
+	// write binder carries prompt:save-global, prompt:delete-global and
+	// skills:uninstall-user. The remote and local install names stay unbound:
+	// they need GitHub egress or a native file picker this lane does not own.
 	if config.GlobalRoot != "" {
 		if err := server.BindPromptSkillsReads(durable); err != nil {
+			cleanup()
+			return nil, nil, err
+		}
+		if err := server.BindPromptSkillsWrites(durable); err != nil {
 			cleanup()
 			return nil, nil, err
 		}

@@ -21,8 +21,9 @@ type PromptSkillsReadProvider interface {
 // BindPromptSkillsReads binds only the two read-only names of the prompt and
 // installed-skill family: prompt:load-global and skills:list-user. The three
 // mutating names that BindPromptSkills also serves (prompt:save-global,
-// prompt:delete-global, skills:uninstall-user) stay unbound, so they keep
-// failing closed.
+// prompt:delete-global, skills:uninstall-user) are not in this binder: a lane
+// that wants them takes the disjoint BindPromptSkillsWrites below, and a lane
+// that does not keeps failing closed on them.
 //
 // Arity is copied from BindPromptSkills exactly: both names take ZERO
 // arguments (promptskills.go:27-28 and :35-36), so there is no project path
@@ -172,4 +173,128 @@ func promptSkillsReadError(err error) error {
 		}
 	}
 	return errors.New("PROMPT_SKILLS_READ_FAILED")
+}
+
+// BindPromptSkillsWrites binds the three mutating names of the prompt and
+// installed-skill family that BindPromptSkillsReads leaves alone:
+// prompt:save-global, prompt:delete-global and skills:uninstall-user.
+//
+// It is deliberately a separate binder over the same BeginPromptSkills seam.
+// The family's conventions are copied from its own binder, BindPromptSkills
+// (promptskills.go:27-41), not from a neighbour:
+//   - arity: save-global takes ONE argument (the template object), delete-global
+//     takes TWO (key, writingLanguage) and uninstall-user takes ONE (name).
+//     app-data-controller.ts:382/:399/:544 register exactly those arities.
+//   - no path index and NO frozen session context: these three are global
+//     operations, so the last wire argument is not a lease and must not be
+//     parsed as one. Every argument is at a fixed index from zero.
+//   - envelope: success is `{"success": true}`; a provider or domain failure is
+//     reported at HTTP 200 as `{"success": false, "error": "Error: CODE"}`,
+//     which is exactly BindPromptSkills' `failure` helper. The prefix matters:
+//     the sibling plot-tree-clear and event-confirm names refuse with a
+//     transport error instead, and the ledger name refuses with a bare
+//     {"success": false} and no error field at all.
+//   - the caller gate is the read sibling's: an unidentified caller gets
+//     GLOBAL_DATA_NOT_READY before any root is touched.
+//
+// The domain itself is the authority: promptskills.SavePrompt rejects an
+// invalid key/language, DeletePrompt refuses a path that leaves the pinned
+// root, and UninstallUser refuses a symlinked or unsafe skill name, so none of
+// those is re-implemented here.
+func (s *Server) BindPromptSkillsWrites(provider PromptSkillsReadProvider) error {
+	if provider == nil {
+		return errors.New("PROMPT_SKILLS_PROVIDER_REQUIRED")
+	}
+	value := reflect.ValueOf(provider)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if value.IsNil() {
+			return errors.New("PROMPT_SKILLS_PROVIDER_REQUIRED")
+		}
+	}
+	operations := []struct {
+		name  string
+		arity int
+	}{
+		{"prompt:save-global", 1},
+		{"prompt:delete-global", 2},
+		{"skills:uninstall-user", 1},
+	}
+	handlers := make(map[string]Operation, len(operations))
+	for _, operation := range operations {
+		name, arity := operation.name, operation.arity
+		handlers[name] = func(ctx context.Context, caller Caller, args []any) (any, error) {
+			if len(args) != arity {
+				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+			}
+			if startupCaller(caller) == "" {
+				return nil, security.NewHTTPError(http.StatusConflict, "GLOBAL_DATA_NOT_READY")
+			}
+			if ctx == nil {
+				return nil, errors.New("PROMPT_SKILLS_WRITE_FAILED")
+			}
+			// Argument shape is checked before the root is borrowed, exactly like
+			// the read sibling: a malformed request never opens the store.
+			var template map[string]any
+			var key, language, skill string
+			var shaped, keyOK, languageOK bool
+			switch name {
+			case "prompt:save-global":
+				template, shaped = args[0].(map[string]any)
+			case "prompt:delete-global":
+				key, keyOK = args[0].(string)
+				language, languageOK = args[1].(string)
+				shaped = keyOK && languageOK
+			case "skills:uninstall-user":
+				skill, shaped = args[0].(string)
+			}
+			if !shaped {
+				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+			}
+			service, release, err := provider.BeginPromptSkills(ctx, caller)
+			if release != nil {
+				defer release()
+			}
+			if err != nil {
+				return nil, promptSkillsReadError(err)
+			}
+			if service == nil || release == nil {
+				return nil, errors.New("PROMPT_SKILLS_PROVIDER_UNAVAILABLE")
+			}
+			failure := func(code string) (any, error) {
+				return map[string]any{"success": false, "error": "Error: " + code}, nil
+			}
+			switch name {
+			case "prompt:save-global":
+				if err := service.SavePrompt(template); err != nil {
+					return failure("PROMPT_SAVE_FAILED")
+				}
+			case "prompt:delete-global":
+				if err := service.DeletePrompt(key, language); err != nil {
+					return failure("PROMPT_DELETE_FAILED")
+				}
+			case "skills:uninstall-user":
+				if err := service.UninstallUser(skill); err != nil {
+					return failure("SKILLS_UNINSTALL_FAILED")
+				}
+			default:
+				return nil, errors.New("PROMPT_SKILLS_WRITE_FAILED")
+			}
+			return map[string]any{"success": true}, nil
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, operation := range operations {
+		if _, ok := s.registry.Lookup(operation.name); !ok {
+			return errors.New("OPERATION_NOT_EXPOSED")
+		}
+		if _, ok := s.handlers[operation.name]; ok {
+			return errors.New("OPERATION_ALREADY_BOUND")
+		}
+	}
+	for name, handler := range handlers {
+		s.handlers[name] = handler
+	}
+	return nil
 }

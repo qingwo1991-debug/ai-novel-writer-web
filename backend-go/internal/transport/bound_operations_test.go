@@ -1,9 +1,26 @@
 package transport
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/promptskills"
 )
+
+// familyOptionalStub satisfies both optional seams the two newest family
+// binders accept. The pin test only needs the binder to install its exact
+// operation set, so every provider method is unreachable and refuses.
+type familyOptionalStub struct{}
+
+func (familyOptionalStub) BeginPromptSkills(context.Context, Caller) (*promptskills.Service, func(), error) {
+	return nil, nil, errors.New("FAMILY_PIN_STUB_UNUSED")
+}
+
+func (familyOptionalStub) RemoveRecentNavigation(context.Context, Caller, string) (any, error) {
+	return nil, errors.New("FAMILY_PIN_STUB_UNUSED")
+}
 
 // Each family binder is pinned to its exact operation set. The durable lane
 // composes these binders, so a name silently disappearing from one of them is
@@ -71,6 +88,16 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			want: []string{
 				"db:finalization-link-knowledge-document", "finalization:commit", "finalization:retry",
 			},
+		},
+		{
+			name: "prompt-skills-writes",
+			bind: func(s *Server) error { return s.BindPromptSkillsWrites(familyOptionalStub{}) },
+			want: []string{"prompt:delete-global", "prompt:save-global", "skills:uninstall-user"},
+		},
+		{
+			name: "project-recent-remove",
+			bind: func(s *Server) error { return s.BindProjectRecentRemove(familyOptionalStub{}) },
+			want: []string{"project:recent-remove"},
 		},
 	}
 	for _, c := range cases {

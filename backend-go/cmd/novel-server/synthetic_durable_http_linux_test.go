@@ -1110,24 +1110,96 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if strings.Contains(skillsRec.Body.String(), globalRoot) {
 		t.Fatal("durable skills:list-user leaked the private root", skillsRec.Body.String())
 	}
-	// The three mutating names in the prompt and installed-skill family stay
-	// unbound on this lane: the registry exposes them, so the 501 is the durable
-	// binding, not a 404. A refused uninstall must also leave the skill on disk.
-	for _, unboundWrite := range []struct {
+	// The three mutating names in the prompt and installed-skill family are
+	// bound by BindPromptSkillsWrites over that same pinned root. Each one is
+	// asserted on the state the already bound reads return and, where the store
+	// commits a file, on the file in the private root itself: a `success: true`
+	// receipt alone would not prove the write reached the root.
+	const authoredPromptKey = "durable-authored-prompt"
+	prompts := func() []map[string]any {
+		t.Helper()
+		response := rpc("prompt:load-global", []any{})
+		var wire struct {
+			Result struct {
+				Templates []map[string]any `json:"templates"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("prompt:load-global readback failed: %d %s %v", response.Code, response.Body.String(), err)
+		}
+		return wire.Result.Templates
+	}
+	savedPrompt := rpc("prompt:save-global", []any{map[string]any{
+		"key": authoredPromptKey, "content": "作者保存的全局提示词", "writingLanguage": "zh-CN",
+	}})
+	var promptWriteWire struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(savedPrompt.Body.Bytes(), &promptWriteWire); err != nil ||
+		savedPrompt.Code != http.StatusOK || !promptWriteWire.Result.Success || promptWriteWire.Result.Error != "" {
+		t.Fatalf("prompt:save-global failed: %d %s %v", savedPrompt.Code, savedPrompt.Body.String(), err)
+	}
+	if templates := prompts(); len(templates) != 2 {
+		t.Fatalf("prompt:save-global did not add the authored template: %v", templates)
+	}
+	authoredFile := filepath.Join(promptDirectory, authoredPromptKey+".zh-CN.json")
+	if raw, err := os.ReadFile(authoredFile); err != nil || !bytes.Contains(raw, []byte("作者保存的全局提示词")) {
+		t.Fatalf("prompt:save-global did not commit the prompt file: %v", err)
+	}
+	// A non-object template is refused before the root is borrowed: these names
+	// take no frozen context, so a malformed argument is a plain 400 and can
+	// never be mistaken for a context mismatch.
+	if badShape := rpc("prompt:save-global", []any{"not-a-template"}); badShape.Code != http.StatusBadRequest ||
+		!strings.Contains(badShape.Body.String(), "INVALID_ARGUMENTS") {
+		t.Fatalf("prompt:save-global accepted a non-object template: %d %s", badShape.Code, badShape.Body.String())
+	}
+	promptDeleted := rpc("prompt:delete-global", []any{authoredPromptKey, "zh-CN"})
+	if err := json.Unmarshal(promptDeleted.Body.Bytes(), &promptWriteWire); err != nil ||
+		promptDeleted.Code != http.StatusOK || !promptWriteWire.Result.Success || promptWriteWire.Result.Error != "" {
+		t.Fatalf("prompt:delete-global failed: %d %s %v", promptDeleted.Code, promptDeleted.Body.String(), err)
+	}
+	if templates := prompts(); len(templates) != 1 || templates[0]["key"] != promptKey {
+		t.Fatalf("prompt:delete-global left the wrong template set: %v", templates)
+	}
+	if _, err := os.Stat(authoredFile); !os.IsNotExist(err) {
+		t.Fatalf("prompt:delete-global left the prompt file behind: %v", err)
+	}
+	// skills:uninstall-user removes the installed tree; the already bound
+	// skills:list-user read and the directory itself both prove it is gone.
+	uninstalled := rpc("skills:uninstall-user", []any{skillName})
+	if err := json.Unmarshal(uninstalled.Body.Bytes(), &promptWriteWire); err != nil ||
+		uninstalled.Code != http.StatusOK || !promptWriteWire.Result.Success || promptWriteWire.Result.Error != "" {
+		t.Fatalf("skills:uninstall-user failed: %d %s %v", uninstalled.Code, uninstalled.Body.String(), err)
+	}
+	emptySkills := rpc("skills:list-user", []any{})
+	var emptySkillsWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(emptySkills.Body.Bytes(), &emptySkillsWire); err != nil ||
+		emptySkills.Code != http.StatusOK || len(emptySkillsWire.Result) != 0 {
+		t.Fatalf("skills:uninstall-user did not remove the installed skill: %d %s %v", emptySkills.Code, emptySkills.Body.String(), err)
+	}
+	if _, err := os.Stat(skillDirectory); !os.IsNotExist(err) {
+		t.Fatalf("skills:uninstall-user left the skill directory behind: %v", err)
+	}
+	// Each arity is the family's own: save-global takes exactly one argument,
+	// delete-global exactly two and uninstall-user exactly one. A short call is
+	// refused with INVALID_ARGUMENTS instead of being read as a frozen context.
+	for _, wrongArity := range []struct {
 		name string
 		args []any
 	}{
-		{"prompt:save-global", []any{map[string]any{"key": "public", "content": "no"}}},
-		{"prompt:delete-global", []any{promptKey, "zh-CN"}},
-		{"skills:uninstall-user", []any{skillName}},
+		{"prompt:save-global", []any{}},
+		{"prompt:delete-global", []any{authoredPromptKey}},
+		{"skills:uninstall-user", []any{}},
 	} {
-		promptRec := rpc(unboundWrite.name, unboundWrite.args)
-		if promptRec.Code != http.StatusNotImplemented || !strings.Contains(promptRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("mutating prompt/skill name %s was bound on the durable lane: %d %s", unboundWrite.name, promptRec.Code, promptRec.Body.String())
+		arityRec := rpc(wrongArity.name, wrongArity.args)
+		if arityRec.Code != http.StatusBadRequest || !strings.Contains(arityRec.Body.String(), "INVALID_ARGUMENTS") {
+			t.Fatalf("%s accepted the wrong argument count: %d %s", wrongArity.name, arityRec.Code, arityRec.Body.String())
 		}
-	}
-	if _, err := os.Stat(filepath.Join(skillDirectory, "SKILL.md")); err != nil {
-		t.Fatal("unbound skills:uninstall-user removed the installed skill", err)
 	}
 	// The ninth name in that family, db:narrative-thread-event-confirm, is bound
 	// separately by BindNarrativeEventConfirm and is exercised at the end of
@@ -2301,6 +2373,47 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	durableQuery(t, database, "SELECT COUNT(*) FROM narrative_thread_confirmations", &confirmationRows)
 	if confirmationRows != 1 {
 		t.Fatalf("a refused event-confirm persisted a row: %d", confirmationRows)
+	}
+	// project:recent-remove is bound by BindProjectRecentRemove and is exercised
+	// last, because it drops the only shelf entry this lane ever registers. The
+	// already bound project:recent-list read proves the entry is gone, the
+	// database file proves the catalog dropped navigation metadata rather than
+	// author files, and a second removal is a symbolic refusal at HTTP 200 that
+	// leaks no catalog internals.
+	removed := rpc("project:recent-remove", []any{projectPath})
+	var removedWire struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(removed.Body.Bytes(), &removedWire); err != nil ||
+		removed.Code != http.StatusOK || !removedWire.Result.Success || removedWire.Result.Error != "" {
+		t.Fatalf("project:recent-remove failed: %d %s %v", removed.Code, removed.Body.String(), err)
+	}
+	afterRemove := rpc("project:recent-list", []any{})
+	var afterRemoveWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(afterRemove.Body.Bytes(), &afterRemoveWire); err != nil ||
+		afterRemove.Code != http.StatusOK || len(afterRemoveWire.Result) != 0 {
+		t.Fatalf("project:recent-remove did not drop the shelf entry: %d %s %v", afterRemove.Code, afterRemove.Body.String(), err)
+	}
+	if _, err := os.Stat(database); err != nil {
+		t.Fatalf("project:recent-remove touched the project directory: %v", err)
+	}
+	removedAgain := rpc("project:recent-remove", []any{projectPath})
+	var removedAgainWire struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(removedAgain.Body.Bytes(), &removedAgainWire); err != nil ||
+		removedAgain.Code != http.StatusOK || removedAgainWire.Result.Success ||
+		removedAgainWire.Result.Error != "Error: PROJECT_RECENT_REMOVE_FAILED" ||
+		strings.Contains(removedAgain.Body.String(), projectPath) {
+		t.Fatalf("a repeated project:recent-remove was not refused symbolically: %d %s %v", removedAgain.Code, removedAgain.Body.String(), err)
 	}
 }
 

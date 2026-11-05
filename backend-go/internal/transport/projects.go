@@ -44,6 +44,20 @@ type ProjectCatalogProvider interface {
 	RemoveRecentProject(context.Context, Caller, string) (any, error)
 }
 
+// ProjectRecentRemoveProvider drops one recent-shelf navigation record. The
+// argument is the identifier project:recent-list returned, never a new host
+// path: the provider resolves it against its own trusted catalog and must not
+// delete the project directory.
+//
+// The method is deliberately not spelled the way ProjectCatalogProvider spells
+// it. A provider that also implements ProjectCatalogProvider is bound by
+// BindProjects, and a shared method name would let a lane that adds this one
+// silently satisfy that optional interface and double-bind project:recent-list
+// (OPERATION_ALREADY_BOUND at startup).
+type ProjectRecentRemoveProvider interface {
+	RemoveRecentNavigation(context.Context, Caller, string) (any, error)
+}
+
 // BindProjects preserves the existing frontend protocol. Only supported
 // operations are bound; create/delete/import/dialog workflows are not stubs.
 func (s *Server) BindProjects(provider ProjectLifecycleProvider) error {
@@ -274,4 +288,37 @@ func projectSaveFailure(err error) map[string]any {
 		}
 	}
 	return map[string]any{"success": false, "error": "Error: " + code}
+}
+
+// BindProjectRecentRemove binds the one project-family name BindProjects leaves
+// unbound unless its provider happens to implement the optional
+// ProjectCatalogProvider: project:recent-remove.
+//
+// Arity is copied from the family, not invented: the original handler takes
+// exactly one argument (project-controller.ts:896) and no frozen session
+// context, because dropping a shelf entry is navigation metadata rather than an
+// author-database write (operations.json routes it as global). The success
+// envelope is the family's `{success: true}` and its refusal is reported at
+// HTTP 200 as `{success: false, error: "Error: CODE"}`, the same shape
+// projectSaveFailure already returns for this family. The original reflects
+// String(error) there; this binder keeps the failure symbolic instead, because
+// a catalog error can carry a host path.
+func (s *Server) BindProjectRecentRemove(provider ProjectRecentRemoveProvider) error {
+	if provider == nil {
+		return errors.New("PROJECT_RECENT_PROVIDER_REQUIRED")
+	}
+	return s.Bind("project:recent-remove", func(ctx context.Context, caller Caller, args []any) (any, error) {
+		if len(args) != 1 {
+			return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+		}
+		target, ok := args[0].(string)
+		if !ok || target == "" {
+			return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+		}
+		result, err := provider.RemoveRecentNavigation(ctx, caller, target)
+		if err != nil || result == nil {
+			return map[string]any{"success": false, "error": "Error: PROJECT_RECENT_REMOVE_FAILED"}, nil
+		}
+		return result, nil
+	})
 }
