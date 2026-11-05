@@ -11,9 +11,11 @@ import "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/tran
 // admitted project database: the run list, and one run view including its
 // attempt/budget diagnostics. Neither one reserves an attempt, touches a model
 // profile, opens an egress endpoint or dispatches to a provider, so this lane can
-// answer them while its execution half stays unbound: NOVEL_DATA_ROOT never
-// configures model origins, and binding begin/execute here would mean inventing
-// a dispatch seam the production lane does not have.
+// answer them while its execution half stays unbound. The lane does derive a real
+// model-egress policy from the committed config
+// (production_model_egress_linux.go) and keeps it for a future executor, but it
+// still owns no executor, no dispatch seam and no run admission, so binding
+// begin/execute here would mean inventing the half that is missing.
 //
 // The projection is reused verbatim from the durable S1 provider instead of being
 // rewritten, so the browser receives the same MainGenerationRunView the verified

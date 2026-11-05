@@ -1548,3 +1548,32 @@ head -8` truncated the list and I staged files explicitly from that truncated ou
 `BindModelRoutingReads undefined`. Rule: never enumerate changed files through a truncated command before
 staging; `git status --short` in full, or `git add` with complete paths.
 
+### 2026-11-05 — production model egress from the committed config
+
+The production lane now derives a real model-egress policy from the author's own committed global
+generation (`production_model_egress_linux.go`), built once in `openProduction`
+(`production_open_linux.go:197`) and kept behind `ModelEgress()` for a future executor. Two sources, in
+order: the optional `modelOrigins` array of the committed `config.json` (the document
+`llm:get-default-model` reads), else the `baseUrl` origins of the committed model profiles in
+`models.json`. No environment, flag, request field or default list is consulted.
+
+Validation fails closed: only absolute `http`/`https` origins, at most a root slash. Wildcards, userinfo,
+paths, query/fragment markers, control characters, other schemes and non-string entries are refused with
+`PRODUCTION_MODEL_EGRESS_INVALID`; an absent or empty source is `PRODUCTION_MODEL_EGRESS_UNCONFIGURED`;
+an unreadable one is `PRODUCTION_MODEL_EGRESS_UNAVAILABLE`. There is no default-allow. Credentials are
+never copied: only `baseUrl` is read from a profile, refusals are symbolic codes, and the lane logs a
+count of origins, never a value or a key. `egress.Client` constructs its private transport without
+dialing, so startup makes no network call.
+
+Refusals stay silent at the operator boundary: a bad optional provider field never fails startup, the
+lane keeps serving its 30 operations, and the generation execution names stay unbound at
+`GO_OPERATION_NOT_MIGRATED`. **Still blocking `generation:execute`:** the policy is only a dispatch
+boundary. The lane owns no `generationowner.Executor`, no `generation.Dispatch` seam (the synthetic lane
+gets one from a test-only flag), no run/attempt admission wired to a live lease, and no per-dispatch
+credential storage. Binding execute without those would mean inventing a provider.
+
+**Tests** (`production_model_egress_linux_test.go`): the committed allowlist matches exactly and an
+endpoint outside it is refused; the `models.json` fallback reduces each endpoint to its origin; fifteen
+refusal shapes each yield a symbolic code and no policy; a loopback listener proves no dial; a
+credentials case proves no secret reaches the policy, the logs or an error; and with a policy configured
+eleven generation execution names still answer 501 while `llm:get-default-model` still answers.

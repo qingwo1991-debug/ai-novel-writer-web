@@ -148,6 +148,48 @@ func (s *Service) Get() (any, error) {
 	return value, err
 }
 
+// ModelOriginsKey is the optional top-level config.json field that declares the
+// exact HTTP(S) origins a server-side model executor may dial. The shipped
+// renderer never writes it: it exists so an author or operator can pin an
+// explicit allowlist in the same committed document the model routing reads
+// instead of a synthetic command-line flag.
+const ModelOriginsKey = "modelOrigins"
+
+// ModelEgressOrigins returns the raw optional modelOrigins value of config.json
+// and whether the committed document carries it. The document is the one
+// llm:get-default-model reads, but the read is deliberately stricter than that
+// tolerant routing projection: a config this call cannot parse is ErrConfigCorrupt
+// instead of an empty allowlist, so a damaged document refuses the caller rather
+// than looking like "no origins". It never writes and never interprets the value:
+// the production lane owns the exact origin validation.
+func (s *Service) ModelEgressOrigins() (any, bool, error) {
+	var value any
+	present := false
+	err := s.locked(func(fd int) error {
+		data, missing, readErr := readConfig(fd)
+		if readErr != nil {
+			return readErr
+		}
+		if missing {
+			return nil
+		}
+		decoded, decodeErr := decode(data)
+		if decodeErr != nil {
+			return ErrConfigCorrupt
+		}
+		document, ok := decoded.(map[string]any)
+		if !ok {
+			return ErrConfigCorrupt
+		}
+		value, present = document[ModelOriginsKey]
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return value, present, nil
+}
+
 func (s *Service) Set(patch map[string]any) Result { return s.SetForLocale(patch, "en-US") }
 
 // SetForLocale's locale is backend appHost locale, never a request authority.
