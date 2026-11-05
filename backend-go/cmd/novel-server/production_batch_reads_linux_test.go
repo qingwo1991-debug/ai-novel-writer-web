@@ -506,6 +506,10 @@ func productionBatchSeedDirectory(t *testing.T, db *sql.DB, fixture *productionB
 		productionBatchDirectoryOperationID, payloadHash); err != nil {
 		t.Fatalf("seed the blueprint commit operation: %v", err)
 	}
+	if _, err := db.Exec(`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json)
+ VALUES (?, ?, '{}', '{}')`, productionBatchRetiredRoot, "ci-directory-retired-root-key"); err != nil {
+		t.Fatalf("seed the retired directory root: %v", err)
+	}
 	retired := `{"projectId":"` + productionEditorProjectID + `","epoch":"` + productionBatchDirectoryEpoch +
 		`","sourceManifest":{"operation":"chapter-blueprint-directory"},` +
 		`"$blueprintRetirement":"blueprints-cleared"}`
