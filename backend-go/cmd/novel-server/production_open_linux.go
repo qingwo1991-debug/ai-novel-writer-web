@@ -583,6 +583,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
 		func() error { return newProductionImportRunReads(open.durable).Bind(server) },
 		func() error { return newProductionFSReads(open).Bind(server) },
+		func() error { return newProductionSingletonReads(open).Bind(server) },
 		func() error { return server.BindDraftAuthorityReads(newProductionDraftAuthorityReads(open.durable)) },
 		func() error { return server.BindNarrativeReads(newProductionNarrativeReads(open.durable)) },
 	} {
