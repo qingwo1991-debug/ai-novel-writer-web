@@ -578,6 +578,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindPostHistoryReads(open.durable) },
 		func() error { return server.BindPlotTreeReads(open.durable) },
 		func() error { return server.Bind("prompt:load-global", newProductionPromptLoad(open.global, open.startup)) },
+		func() error { return server.BindEditorReviewReads(newProductionReviewReads(open.durable)) },
+		func() error { return server.BindEditorReviewFullReads(newProductionReviewReads(open.durable)) },
+		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
