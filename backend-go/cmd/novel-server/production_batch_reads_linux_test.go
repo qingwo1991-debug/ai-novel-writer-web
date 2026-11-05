@@ -468,6 +468,15 @@ func seedProductionBatch(t *testing.T, database string) productionBatchFixture {
 // are inserted the way that writer would have inserted them.
 func productionBatchSeedDirectory(t *testing.T, db *sql.DB, fixture *productionBatchFixture) {
 	t.Helper()
+	// generation_runs carries a foreign key onto generation_roots, so the root has
+	// to exist before the run. The ledger writes both in one call; this seed is
+	// writing the rows that the unbound directory writer would have written, so it
+	// inserts the root first, with the same empty action and budget the planning
+	// operation would carry.
+	if _, err := db.Exec(`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json)
+ VALUES (?, ?, '{}', '{}')`, productionBatchDirectoryRoot, "ci-directory-root-key"); err != nil {
+		t.Fatalf("seed the directory root: %v", err)
+	}
 	payloadHash := sha256Hex(productionBatchRangeInput)
 	binding := `{"projectId":"` + productionEditorProjectID + `","epoch":"` + productionBatchDirectoryEpoch +
 		`","fingerprint":` + productionBatchFingerprint(strings.Repeat("f", 64)) +
