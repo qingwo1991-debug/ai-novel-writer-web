@@ -77,14 +77,22 @@ const productionFixtureSource = `{"chapterNumber":1,"title":"` + productionFixtu
 // rejected as SCHEMA_UNRECOGNIZED before a single write ran. SQLite treats "!="
 // and "<>" identically, and this file's DDL stays free of every character the
 // two encoders disagree about.
+//
+// Two columns deliberately carry the shipped baseline's default instead of a test
+// value: revisions.status and recovery_candidates.status are DEFAULT 'pending'.
+// The store does not name them in its INSERTs - internal/store/reviewrevision.go
+// lists revision_type but never status, and internal/store/recovery.go inserts a
+// candidate and then re-reads it expecting status "pending" - so the baseline, not
+// the writer, is what makes those rows pending. A fixture without the default
+// writes NULL and the recovery write fails its own integrity re-read.
 var productionFixtureSchema = []string{
 	"CREATE TABLE blueprints (chapter_number INTEGER PRIMARY KEY, title TEXT, role TEXT, purpose TEXT, key_events TEXT, characters TEXT, suspense_hook TEXT, user_guidance TEXT, notes TEXT, notes_updated_at TEXT)",
 	"CREATE TABLE contents (id INTEGER PRIMARY KEY, body TEXT)",
 	"CREATE TABLE drafts (id INTEGER PRIMARY KEY, chapter_number INTEGER, version INTEGER, status TEXT, source TEXT, content_id INTEGER, word_count INTEGER, source_dependencies TEXT, created_at TEXT, updated_at TEXT)",
 	"CREATE TABLE project_core (id TEXT PRIMARY KEY, project_name TEXT, writing_language TEXT, genre TEXT, sub_genre TEXT, target_audience INTEGER, total_chapters INTEGER, words_per_chapter INTEGER, creative_strategy TEXT, narrative_thread_dormant_threshold INTEGER, plot_structure TEXT, narrative_pov TEXT, core_outline TEXT, world_setting TEXT, golden_finger TEXT, protagonist_profile TEXT, global_guidance TEXT, writing_style TEXT, reference_works TEXT, character_states TEXT, created_at TEXT, updated_at TEXT)",
-	"CREATE TABLE recovery_candidates (candidate_id TEXT PRIMARY KEY, run_id TEXT, step_id TEXT, project_id TEXT, chapter_number INTEGER, chapter_title TEXT, source_snapshot TEXT, source_hash TEXT, source_draft_id INTEGER, source_draft_version INTEGER, source_draft_identity_captured INTEGER, visible_text TEXT, content_hash TEXT, failure_code TEXT, failure_reason TEXT, replaces_candidate_id TEXT, status TEXT, resolved_at TEXT, created_at TEXT)",
+	"CREATE TABLE recovery_candidates (candidate_id TEXT PRIMARY KEY, run_id TEXT, step_id TEXT, project_id TEXT, chapter_number INTEGER, chapter_title TEXT, source_snapshot TEXT, source_hash TEXT, source_draft_id INTEGER, source_draft_version INTEGER, source_draft_identity_captured INTEGER, visible_text TEXT, content_hash TEXT, failure_code TEXT, failure_reason TEXT, replaces_candidate_id TEXT, status TEXT NOT NULL DEFAULT 'pending', resolved_at TEXT, created_at TEXT)",
 	"CREATE TABLE reviews (id INTEGER PRIMARY KEY, base_draft_id INTEGER, review_index INTEGER, content_id INTEGER, created_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT, CHECK (base_draft_id != 4))",
-	"CREATE TABLE revisions (id INTEGER PRIMARY KEY, base_draft_id INTEGER, revision_index INTEGER, revision_type TEXT, status TEXT, merged_to_draft_id INTEGER, user_prompt TEXT, review_source_id INTEGER, content_id INTEGER, word_count INTEGER, created_at TEXT, updated_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT)",
+	"CREATE TABLE revisions (id INTEGER PRIMARY KEY, base_draft_id INTEGER, revision_index INTEGER, revision_type TEXT, status TEXT DEFAULT 'pending', merged_to_draft_id INTEGER, user_prompt TEXT, review_source_id INTEGER, content_id INTEGER, word_count INTEGER, created_at TEXT, updated_at TEXT, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT)",
 }
 
 // productionFixtureContract is the trusted contract for productionFixtureSchema.
@@ -561,6 +569,16 @@ func TestProductionReviewAndRecoveryWritesCommitUnderLiveLease(t *testing.T) {
 		}
 		if got := productionFixtureText(t, row, "body"); got != productionFixtureCreatedRevision {
 			t.Fatalf("committed revision body = %q; want %q", got, productionFixtureCreatedRevision)
+		}
+		// The store decides the index itself (SELECT COALESCE(MAX(revision_index),0)+1
+		// inside BEGIN IMMEDIATE), so this row must be the fourth pending revision of
+		// base 1: three were seeded, and nothing else in this subtest can move the
+		// ledger. status is not written by that INSERT - the fixture's baseline
+		// default supplies 'pending' - so the ledger count, not the single value, is
+		// what proves a new pending row reached the file.
+		if got := productionFixtureNumber(t, productionFixtureSingle(t, projectPath,
+			`SELECT COUNT(*) AS total FROM revisions WHERE base_draft_id = 1 AND status = 'pending'`), "total"); got != 4 {
+			t.Fatalf("base 1 holds %d pending revisions; want 4 after the create", got)
 		}
 	})
 

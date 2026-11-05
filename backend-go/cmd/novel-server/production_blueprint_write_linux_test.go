@@ -631,11 +631,41 @@ func TestProductionLaneServesEditorWriteSurface(t *testing.T) {
 		if len(cores) != 1 || !strings.Contains(productionWriteText(cores[0], "characters_arch"), productionWriteNextName) {
 			t.Fatalf("db:character-roster-commit did not refresh the projection: %v", cores)
 		}
+		// One author roster commit records exactly two identity approvals, both
+		// suffixing the operation ID this request chose: the EFFECT row the identity
+		// commit writes for its own approval (character_identity.go:370) and the
+		// REQUEST row that binds the author payload and the returned receipt
+		// (character_roster_author.go:433, which also reads the effect row back
+		// before it writes). Both are asserted by name, so a store that stops
+		// writing either one - or starts writing a third - fails here.
 		approvals := productionWriteQuery(t, fixture.database,
-			`SELECT operation_id FROM character_identity_approvals`)
-		if len(approvals) != 1 || productionWriteText(approvals[0], "operation_id") !=
-			"author-roster-effect:production-write-roster-1" {
-			t.Fatalf("db:character-roster-commit did not record its approval: %v", approvals)
+			`SELECT operation_id, payload_hash FROM character_identity_approvals ORDER BY operation_id`)
+		wantApprovals := []string{
+			"author-roster-effect:production-write-roster-1",
+			"author-roster-request:production-write-roster-1",
+		}
+		if len(approvals) != len(wantApprovals) {
+			t.Fatalf("db:character-roster-commit recorded %d approvals; want %d: %v",
+				len(approvals), len(wantApprovals), approvals)
+		}
+		for index, want := range wantApprovals {
+			if productionWriteText(approvals[index], "operation_id") != want {
+				t.Fatalf("db:character-roster-commit recorded %q; want %q: %v",
+					productionWriteText(approvals[index], "operation_id"), want, approvals)
+			}
+			if productionWriteText(approvals[index], "payload_hash") == "" {
+				t.Fatalf("db:character-roster-commit recorded %q without a payload hash: %v", want, approvals[index])
+			}
+		}
+		// The request row is the one that binds THIS author payload, so it carries
+		// the hash the browser's receipt names; the effect row binds the identity
+		// commit instead and therefore carries a different one.
+		if requestHash := productionWriteText(approvals[1], "payload_hash"); requestHash != receipt["payloadHash"] {
+			t.Fatalf("the roster request approval names payload %v, but the receipt names %v",
+				requestHash, receipt["payloadHash"])
+		}
+		if productionWriteText(approvals[0], "payload_hash") == productionWriteText(approvals[1], "payload_hash") {
+			t.Fatalf("the roster effect approval reused the request payload hash: %v", approvals)
 		}
 		// The commit's own nonce is idempotent: the same operation ID and payload
 		// answers the stored receipt and writes nothing a second time.
