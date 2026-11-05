@@ -934,7 +934,7 @@ func rosterAuthorEntryNormalize(object map[string]any) (rosterAuthorEntry, error
 		return entry, ErrCharacterRosterNameRequired
 	}
 	role, ok := object["role"].(string)
-	if !ok || !rosterAuthorRole(role) {
+	if !ok || !rosterAuthorRoleValid(role) {
 		return entry, ErrCharacterRosterRoleInvalid
 	}
 	entry.static[rosterAuthorName] = name
@@ -962,7 +962,7 @@ func rosterAuthorEntryNormalize(object map[string]any) (rosterAuthorEntry, error
 	return entry, nil
 }
 
-func rosterAuthorRole(role string) bool {
+func rosterAuthorRoleValid(role string) bool {
 	switch role {
 	case "protagonist", "supporting", "antagonist", "minor":
 		return true
