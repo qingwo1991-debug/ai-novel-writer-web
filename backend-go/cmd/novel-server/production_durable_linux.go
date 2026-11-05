@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -297,13 +298,14 @@ func (d *productionDurableOpen) CommitDraftContent(ctx context.Context, caller t
 	}}, nil
 }
 
-// BeginDrafts borrows the admitted author database for the three self-contained
-// draft mutations. The borrow re-proves the permit and the handle identity, and
-// the release adopts whatever content identity the mutation committed before the
-// fence is observed again; a refresh that fails leaves the permit stale, so the
-// next operation on this project fails closed with AUTHOR_WRITE_STALE instead of
-// trusting a handle whose bytes changed underneath it.
-func (d *productionDurableOpen) BeginDrafts(ctx context.Context, caller transport.Caller, raw any) (*store.Drafts, func(), error) {
+// borrowAuthorDatabase borrows the admitted author database for one repository
+// call. The borrow re-proves the permit and the handle identity, and the release
+// adopts whatever content identity the call committed before the fence is
+// observed again; a refresh that fails leaves the permit stale, so the next
+// operation on this project fails closed with AUTHOR_WRITE_STALE instead of
+// trusting a handle whose bytes changed underneath it. A read commits nothing,
+// so its refresh is only a re-verification.
+func (d *productionDurableOpen) borrowAuthorDatabase(ctx context.Context, caller transport.Caller, raw any) (*sql.DB, func(), error) {
 	if d == nil || ctx == nil {
 		return nil, nil, errors.New("PRODUCTION_CLOSED")
 	}
@@ -349,5 +351,83 @@ func (d *productionDurableOpen) BeginDrafts(ctx context.Context, caller transpor
 			done()
 		})
 	}
+	return db, release, nil
+}
+
+// BeginDrafts borrows the admitted author database for the three self-contained
+// draft mutations.
+func (d *productionDurableOpen) BeginDrafts(ctx context.Context, caller transport.Caller, raw any) (*store.Drafts, func(), error) {
+	db, release, err := d.borrowAuthorDatabase(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
 	return store.NewDrafts(db), release, nil
+}
+
+// BeginBlueprints borrows the same admitted author database for the editor's
+// db:blueprint-get. The borrow is the identical fence every other production
+// read and write uses: it is refused when the lease is stale, when the project
+// was never opened by this cookie/tab, or when the pinned v7 handle no longer
+// matches its admitted content identity. store.Blueprints.Get is a single
+// SELECT, so the borrow commits nothing.
+func (d *productionDurableOpen) BeginBlueprints(ctx context.Context, caller transport.Caller, raw any) (*store.Blueprints, func(), error) {
+	db, release, err := d.borrowAuthorDatabase(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewBlueprints(db), release, nil
+}
+
+// ReadCharactersJSON is the editor's three character reads, served from the
+// admitted author database under the same frozen cookie/tab/lease fence as
+// project:open and project:save. The character repository reserves a coherent
+// BEGIN IMMEDIATE snapshot, which is safe here because the legacy writer lock is
+// exclusive: no other writer can exist, so the reservation cannot block.
+func (d *productionDurableOpen) ReadCharactersJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
+	return d.readDurableJSON(ctx, caller, raw, func(lifecycle *authorruntime.ReadLifecycle, owner projectsession.Owner, expected projectsession.Context) (json.RawMessage, error) {
+		return lifecycle.ReadCharactersJSONDurable(ctx, owner, expected, operation)
+	})
+}
+
+// ReadEditorStageJSON is the editor's db:project-core-get and
+// db:blueprint-get-all, read inside one admitted read transaction.
+func (d *productionDurableOpen) ReadEditorStageJSON(ctx context.Context, caller transport.Caller, raw any, operation string) (json.RawMessage, error) {
+	return d.readDurableJSON(ctx, caller, raw, func(lifecycle *authorruntime.ReadLifecycle, owner projectsession.Owner, expected projectsession.Context) (json.RawMessage, error) {
+		return lifecycle.ReadEditorStageJSONDurable(ctx, owner, expected, operation)
+	})
+}
+
+// ReadCurrentOverviewJSON is project:overview-current on the admitted author
+// database: the same six stage facts project:peek-overview aggregates, computed
+// under the live lease from rows the author's own database actually holds.
+func (d *productionDurableOpen) ReadCurrentOverviewJSON(ctx context.Context, caller transport.Caller, raw any) (json.RawMessage, error) {
+	return d.readDurableJSON(ctx, caller, raw, func(lifecycle *authorruntime.ReadLifecycle, owner projectsession.Owner, expected projectsession.Context) (json.RawMessage, error) {
+		return lifecycle.ReadCurrentOverviewJSONDurable(ctx, owner, expected)
+	})
+}
+
+// readDurableJSON parses the frozen three-key context once, names the caller's
+// own browser owner, refuses a closed bridge, and lends the runtime call the same
+// lease the request named. Nothing here opens a database: the runtime owns the
+// only admitted handle, and it refuses a lease this caller does not hold.
+func (d *productionDurableOpen) readDurableJSON(ctx context.Context, caller transport.Caller, raw any, read func(*authorruntime.ReadLifecycle, projectsession.Owner, projectsession.Context) (json.RawMessage, error)) (json.RawMessage, error) {
+	if d == nil || ctx == nil || read == nil {
+		return nil, errors.New("PRODUCTION_CLOSED")
+	}
+	expected, err := projectsession.ParseContext(raw)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := productionOwner(caller)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	lifecycle := d.lifecycle
+	closed := d.closed
+	d.mu.Unlock()
+	if closed || lifecycle == nil {
+		return nil, errors.New("PRODUCTION_CLOSED")
+	}
+	return read(lifecycle, owner, expected)
 }

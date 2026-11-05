@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/promptskills"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 // familyOptionalStub satisfies both optional seams the two newest family
@@ -20,6 +21,14 @@ func (familyOptionalStub) BeginPromptSkills(context.Context, Caller) (*promptski
 
 func (familyOptionalStub) RemoveRecentNavigation(context.Context, Caller, string) (any, error) {
 	return nil, errors.New("FAMILY_PIN_STUB_UNUSED")
+}
+
+// blueprintGetStub satisfies the blueprint read seam. The pin test only needs
+// the binder to install its exact operation set, so the borrow is unreachable.
+type blueprintGetStub struct{}
+
+func (blueprintGetStub) BeginBlueprints(context.Context, Caller, any) (*store.Blueprints, func(), error) {
+	return nil, nil, errors.New("FAMILY_PIN_STUB_UNUSED")
 }
 
 // Each family binder is pinned to its exact operation set. The durable lane
@@ -105,6 +114,14 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			name: "prompt-skills-writes",
 			bind: func(s *Server) error { return s.BindPromptSkillsWrites(familyOptionalStub{}) },
 			want: []string{"prompt:delete-global", "prompt:save-global", "skills:uninstall-user"},
+		},
+		{
+			// The production lane serves db:blueprint-get alone. The two
+			// character-sync reads are backed by an INSERT OR IGNORE backfill, so
+			// that lane leaves them fail-closed instead of writing during a read.
+			name: "blueprint-get-read",
+			bind: func(s *Server) error { return s.BindBlueprintGetRead(blueprintGetStub{}) },
+			want: []string{"db:blueprint-get"},
 		},
 		{
 			name: "project-recent-remove",

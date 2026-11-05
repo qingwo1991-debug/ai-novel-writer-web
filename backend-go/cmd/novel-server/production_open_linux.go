@@ -438,6 +438,23 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			return nil, nil, bindErr
 		}
 	}
+	// The editor's read surface, bound to the same admitted author database under
+	// the same live lease: the three character reads, the two stage reads
+	// (project core and the whole blueprint list the chapter/volume tree is built
+	// from), the single blueprint read, and the project overview aggregate. Each
+	// one is a SELECT-only path; nothing here grants a write, and these four
+	// distinct binders never overlap, so no operation is double-bound.
+	for _, bind := range []func() error{
+		func() error { return server.BindCharacterLiveReads(open.durable) },
+		func() error { return server.BindEditorStageReads(open.durable) },
+		func() error { return server.BindBlueprintGetRead(open.durable) },
+		func() error { return server.BindCurrentOverview(open.durable) },
+	} {
+		if bindErr := bind(); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+	}
 	// project:recent-list is bound on its own: the editor navigation family would
 	// also publish fs:list-dir (which has no confined production provider yet)
 	// and would rebind project:recent-list (OPERATION_ALREADY_BOUND).

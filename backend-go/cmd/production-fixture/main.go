@@ -128,8 +128,9 @@ func run() error {
 	fmt.Printf("fixture root: %s\n", rootValue)
 	fmt.Printf("pinned contract: user_version=%d fingerprint=%s tables=%d database_sha256=%s\n",
 		evidence.UserVersion, evidence.SchemaFingerprint, len(evidence.TableCounts), digest)
-	fmt.Printf("seeded rows: project_core=%d contents=%d drafts=%d\n",
-		evidence.TableCounts["project_core"], evidence.TableCounts["contents"], evidence.TableCounts["drafts"])
+	fmt.Printf("seeded rows: project_core=%d contents=%d drafts=%d characters=%d blueprints=%d\n",
+		evidence.TableCounts["project_core"], evidence.TableCounts["contents"], evidence.TableCounts["drafts"],
+		evidence.TableCounts["characters"], evidence.TableCounts["blueprints"])
 	fmt.Printf("library project: %s\n", filepath.Join(rootValue, "workspaces", *workspace))
 	fmt.Printf("project id: %s\n", *projectID)
 	fmt.Printf("seeded draft body: %s\n", *seed)
@@ -194,7 +195,8 @@ func verifyAgainstPinnedContract(ctx context.Context, database string) (admissio
 	if evidence.UserVersion != admission.CurrentSchemaVersion {
 		return zero, "", fmt.Errorf("the seeded project database is schema version %d", evidence.UserVersion)
 	}
-	if evidence.TableCounts["project_core"] != 1 || evidence.TableCounts["contents"] != 1 || evidence.TableCounts["drafts"] != 1 {
+	if evidence.TableCounts["project_core"] != 1 || evidence.TableCounts["contents"] != 1 || evidence.TableCounts["drafts"] != 1 ||
+		evidence.TableCounts["characters"] != 1 || evidence.TableCounts["blueprints"] != 1 {
 		return zero, "", fmt.Errorf("the seeded author rows were not committed: %v", evidence.TableCounts)
 	}
 	return evidence, digest, nil
@@ -245,9 +247,14 @@ func seedProjectDatabase(database, projectName, seed string) error {
 }
 
 // insertAuthorRows writes the smallest author history the current-schema
-// runtime reads: one project_core row, one contents row and one working draft.
-// The column set matches the admitted runtime's own queries instead of a
-// private test schema.
+// runtime reads: one project_core row, one contents row, one working draft, one
+// character card and one blueprint row. The column set matches the admitted
+// runtime's own queries instead of a private test schema, and every row is
+// synthetic: the character and the blueprint exist so the container journey can
+// prove the editor's read surface returns real rows instead of an empty list or
+// a default shape. The roster and identity metadata rows are the migration
+// lane's own (M02 and the roster schema insert them); this fixture never
+// fabricates a hash receipt it cannot compute.
 func insertAuthorRows(db *sql.DB, projectName, seed string) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -259,6 +266,8 @@ func insertAuthorRows(db *sql.DB, projectName, seed string) error {
 		"DELETE FROM drafts",
 		"DELETE FROM contents",
 		"DELETE FROM project_core",
+		"DELETE FROM blueprints",
+		"DELETE FROM characters",
 	} {
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("%s: %w", statement, err)
@@ -281,6 +290,21 @@ func insertAuthorRows(db *sql.DB, projectName, seed string) error {
  content_id, word_count, source_dependencies, created_at, updated_at)
  VALUES (1, 1, 1, 'draft', 'write', 1, ?, '[]', '2024-05-06 07:08:09', '2024-05-06 07:08:09')`
 	if _, err := tx.Exec(draft, utf8.RuneCountInString(seed)); err != nil {
+		return err
+	}
+	// One active character card and one chapter blueprint: the two rows the
+	// editor's character and chapter/volume reads must return. Only columns the
+	// admitted runtime itself selects are written; everything else keeps the
+	// schema's own defaults.
+	const character = `INSERT INTO characters (character_id, name, role, retired, created_at, updated_at)
+ VALUES ('ci-character-1', '甲', 'protagonist', 0, '2024-05-06 07:08:09', '2024-05-06 07:08:09')`
+	if _, err := tx.Exec(character); err != nil {
+		return err
+	}
+	const blueprint = `INSERT INTO blueprints (chapter_number, title, role, purpose,
+ key_events, characters, suspense_hook, user_guidance, notes, notes_updated_at, created_at, updated_at)
+ VALUES (1, '第一章 门', 'setup', '开篇', '["他推开门"]', '["甲"]', '风声', '', '', '', '2024-05-06 07:08:09', '2024-05-06 07:08:09')`
+	if _, err := tx.Exec(blueprint); err != nil {
 		return err
 	}
 	return tx.Commit()
