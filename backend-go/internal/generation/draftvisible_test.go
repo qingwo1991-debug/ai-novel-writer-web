@@ -380,9 +380,12 @@ func TestParseDraftTargetUnits(t *testing.T) {
 		{name: "octal notation", text: "0o17", want: 15, ok: true},
 		{name: "trailing decimal point", text: "80.", want: 80, ok: true},
 		{name: "largest safe integer", text: "9007199254740991", want: 9007199254740991, ok: true},
-		// Number('') is 0, which is not a usable target.
-		{name: "empty text is zero", text: "", want: 0, ok: false},
-		{name: "blank text is zero", text: "   ", want: 0, ok: false},
+		// Number('') is 0 and 0 is a safe integer, so the coercion SUCCEEDS with
+		// zero; usability is a separate question answered by
+		// DraftTargetUnitsUsable, exactly as draft-units.ts:8 keeps the range check
+		// apart from the coercion.
+		{name: "empty text coerces to zero", text: "", want: 0, ok: true},
+		{name: "blank text coerces to zero", text: "   ", want: 0, ok: true},
 		{name: "fraction is not an integer", text: "80.5", want: 0, ok: false},
 		{name: "non-numeric text", text: "八十", want: 0, ok: false},
 		{name: "infinity", text: "Infinity", want: 0, ok: false},

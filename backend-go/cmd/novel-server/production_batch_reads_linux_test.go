@@ -338,7 +338,7 @@ func seedProductionBatch(t *testing.T, database string) productionBatchFixture {
 	}
 	fixture := productionBatchFixture{BatchID: batchID, RootID: rootID}
 	texts := map[int64]string{2: productionBatchChapterTwoText, 3: productionBatchChapterThreeText, 4: productionBatchChapterFourText}
-	for chapter := productionBatchStartChapter; chapter <= productionBatchEndChapter; chapter++ {
+	for chapter := int64(productionBatchStartChapter); chapter <= productionBatchEndChapter; chapter++ {
 		text := texts[chapter]
 		if text == "" {
 			text = "第五章 未写的稿。"
