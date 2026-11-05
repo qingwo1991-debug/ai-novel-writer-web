@@ -1008,9 +1008,11 @@ jobs:
             "$(jq -nc --argjson ctx "$stale_ctx" --argjson handle "$run_handle" '{args: [$handle, $ctx]}')" \
             "$work/stale-generation-read.json"
 
-          # What this lane does not own stays fail-closed: generation:cancel and
-          # the three llm setters answer 501 GO_OPERATION_NOT_MIGRATED rather than
-          # a handler that could only refuse.
+          # What this lane does not own stays fail-closed with 501
+          # GO_OPERATION_NOT_MIGRATED rather than a handler that could only
+          # refuse. The four llm model setters used to be listed here; they are
+          # bound now, so this journey no longer expects them to answer 501 and
+          # their refusals are asserted by the unit lane instead.
           expect_not_migrated() {
             local operation=$1
             local body=$2
@@ -1064,13 +1066,6 @@ jobs:
               exit 1
             fi
           }
-          for operation in \
-            llm:set-stage-model llm:set-default-model llm:set-default-embedding-model llm:save-model; do
-            expect_not_migrated "$operation" \
-              "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" \
-                '{args: [$handle, "synthetic-model", $ctx]}')" \
-              "$work/not-migrated-${operation//:/-}.json"
-          done
           # The dispatch name is bound, so the journey expects its own fence. The
           # handle is the fixture's historical run, whose lease this session never
           # held, so the refusal lands before any ledger row and long before any
@@ -1125,7 +1120,7 @@ jobs:
               "$(jq -r '.error.code' "$work/stale-character-get-all.json")" \
               "$(jq -r '.error.code' "$work/stale-overview.json")"
             printf -- '- `generation:list` and `generation:read` returned the one settled run the fixture committed (`%s`, epoch `%s`) with 1 budget diagnostic and `nonReplayable` set, and `llm:list-models`, `llm:get-stage-models`, `llm:get-default-model` and `llm:get-default-embedding-model` returned the committed model configuration (`%s`, `%s`).\n' "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id"
-            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`); `generation:execute` is bound and refused the committed fixture run with `%s` before any ledger row or provider call, while the four `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
+            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`); `generation:execute` is bound and refused the committed fixture run with `%s` before any ledger row or provider call, and the four `llm:set-*` setters are bound now, so they are no longer part of this journey.\n\n' \
               "$(jq -r '.error.code' "$work/stale-generation-list.json")" \
               "$(jq -r '.error.code' "$work/stale-generation-read.json")" \
               "$(jq -r '.result.error' "$work/execute-refusal.json")"

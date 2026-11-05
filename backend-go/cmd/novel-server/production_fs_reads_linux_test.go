@@ -264,12 +264,11 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 			[]any{marker, projectPath, stale}, "PROJECT_SESSION_STALE", "PROJECT_SESSION_NOT_OWNED")
 	})
 
-	// The seven names this file must not publish, one subtest each: the two
-	// writes the family binder carries, fs:write-json, the three browser-impossible
-	// fs:grant-* names and the absolute-path listing.
+	// The five names this file must not publish, one subtest each: fs:write-json,
+	// the three browser-impossible fs:grant-* names and the absolute-path listing.
+	// fs:write-file and fs:mkdir are bound by the write batch, which proves their
+	// confinement against the same adapter this file exercises.
 	for _, operation := range []string{
-		"fs:write-file",
-		"fs:mkdir",
 		"fs:write-json",
 		"fs:grant-read-file",
 		"fs:grant-write-file",

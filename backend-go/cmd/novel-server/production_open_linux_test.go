@@ -364,7 +364,7 @@ func TestProductionLaneServesStartupConfigAndLibrary(t *testing.T) {
 		t.Fatalf("/api/library did not serve exactly the admitted author database: %s", library.Body.String())
 	}
 	// What this lane still does not own stays fail-closed over real data.
-	for _, operation := range []string{"project:create", "config:set"} {
+	for _, operation := range []string{"project:create"} {
 		response := rpc(operation, []any{})
 		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%s did not fail closed: %d %s", operation, response.Code, response.Body.String())

@@ -125,11 +125,12 @@ func productionFamilyNotMigrated(t *testing.T, client *productionDurableClient, 
 
 // TestProductionPromptAndChapterFamilies proves the split this lane ships:
 // prompt:load-global answers 200 from prompt objects the committed generation
-// really holds, and every other name in the two families - the three chapter
-// deletions, the chapter deletion list and the two prompt writes - is still
-// unbound. Each refusal is asserted under a live lease and under a stale one,
-// and each one must leave both the author database and the global prompt
-// directory byte-identical.
+// really holds, while the four chapter names stay unbound because each one
+// deletes facts or consumes an authorization this lane cannot mint. The two
+// prompt writes are bound by the write batch, so they are not refused here.
+// Each refusal is asserted under a live lease and under a stale one, and each
+// one must leave both the author database and the global prompt directory
+// byte-identical.
 func TestProductionPromptAndChapterFamilies(t *testing.T) {
 	root, projectPath := productionDurableDataRoot(t)
 	promptDirectory := seedProductionPromptFiles(t, root)
@@ -271,20 +272,5 @@ func TestProductionPromptAndChapterFamilies(t *testing.T) {
 		productionFamilyNotMigrated(t, author, "chapter:list-incomplete-deletions", []any{projectPath, frozen})
 		productionFamilyNotMigrated(t, author, "chapter:list-incomplete-deletions", []any{projectPath, stale})
 		unchanged(t, "chapter:list-incomplete-deletions")
-	})
-	// prompt:save-global: refused. It would atomicWrite a new prompt object (and
-	// remove the legacy one) under the private root.
-	t.Run("prompt:save-global", func(t *testing.T) {
-		template := map[string]any{"key": productionPromptTemplateKey, "writingLanguage": "zh-CN", "content": "改写后的提示词"}
-		productionFamilyNotMigrated(t, author, "prompt:save-global", []any{template})
-		productionFamilyNotMigrated(t, author, "prompt:save-global", []any{template, stale})
-		unchanged(t, "prompt:save-global")
-	})
-	// prompt:delete-global: refused. It would unlink the prompt objects under the
-	// private root.
-	t.Run("prompt:delete-global", func(t *testing.T) {
-		productionFamilyNotMigrated(t, author, "prompt:delete-global", []any{productionPromptTemplateKey, "zh-CN"})
-		productionFamilyNotMigrated(t, author, "prompt:delete-global", []any{productionPromptTemplateKey, "zh-CN", stale})
-		unchanged(t, "prompt:delete-global")
 	})
 }

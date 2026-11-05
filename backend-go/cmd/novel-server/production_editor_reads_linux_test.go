@@ -601,18 +601,15 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
 	}
 
-	// The rest of the execution family and the three config setters are not
-	// installed here, so they keep answering the lane's fail-closed 501 instead of
-	// a fake success. generation:begin and generation:execute are the two bound
-	// names: the run admission is asserted by
-	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease and dispatch by
-	// TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
+	// The four llm model setters are bound by the write half now, so they must
+	// stop answering the lane's fail-closed 501. Their refusals and their real
+	// writes are asserted by the write batch; here the only claim is that the
+	// names are installed, which a 501 would falsify whatever the arity.
 	for _, operation := range []string{
 		"llm:set-stage-model", "llm:set-default-model", "llm:set-default-embedding-model", "llm:save-model",
 	} {
-		if response := author.call(t, operation, []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
-			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("%s answered %d instead of the lane's fail-closed 501: %s", operation, response.Code, response.Body.String())
+		if response := author.call(t, operation, []any{handle, frozen}); response.Code == http.StatusNotImplemented {
+			t.Fatalf("%s is bound but still answered the fail-closed 501: %s", operation, response.Body.String())
 		}
 	}
 
