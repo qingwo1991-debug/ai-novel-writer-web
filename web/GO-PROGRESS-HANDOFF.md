@@ -1788,3 +1788,28 @@ comes, rests on a checklist rather than on memory.
    by a crash: the pinned verification refuses such a database rather than repairing it, so a crash mid-run
    is a manual-intervention event, not a silent recovery.
 
+### 2026-11-05 — 50 of 281; parallel work method replaces blocking CI waits
+
+Green: `bfb11b12`. Twelve more names bound through three new adapters
+(`production_continuity_reads_linux.go:39/:51/:63`), wired at `production_open_linux.go:569-571`:
+`db:get-latest-summary`, `db:continuity-list-before`, `db:continuity-read-source`,
+`db:post-process-get-latest-run`, `db:post-process-get-steps`, `db:post-process-is-all-passed`,
+`db:get-llm-stats`, `db:get-llm-history`, `db:plot-tree-read`, plus `db:save-summary-snapshot` which
+`BindSummary` installs atomically with its three reads (a real INSERT, so this family is not read-only).
+Refused, and why: the post-process writers (`create-run`, `mark-step-ok`, `mark-step-failed`,
+`log-llm-call`) and `db:plot-tree-save`/`-clear` are mutations outside this batch, and
+`db:blueprint-character-sync-get`/`-list-pending` still backfill with `INSERT OR IGNORE`.
+
+**Working method changed, because waiting was the bottleneck.** Blocking on a CI run costs 10-12 minutes
+and buys nothing: the result can be collected later. From now on the loop is
+(1) push, (2) start a background poll job, (3) immediately begin the next independent batch, (4) collect.
+Parallelism needs file ownership or it corrupts:
+
+- **Shared files have one owner: the parent.** `production_open_linux.go` (binder call sites),
+  `.github/workflows/go-backend.yml` (501 expectations) and the shared test file are edited only by the
+  parent, because every batch touches them.
+- **Each batch agent creates exactly two new files** - `<family>_reads_linux.go` and its `_test.go` - and
+  reports the literal binder lines plus the insert position instead of applying them.
+- Agents never commit or push; the parent stages explicit paths after reading the full `git status`
+  (a truncated `head -8` once cost a full CI cycle by omitting the file that defined the function).
+
