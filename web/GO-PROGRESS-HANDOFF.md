@@ -1420,3 +1420,43 @@ generation directory.
 library - which is the first time any production behaviour has worked. The next layer is the same shape:
 catalog + lease + author-runtime publication for the real data root, not more synthetic binders.
 
+### 2026-11-05 — production lane opens projects and writes drafts (17 operations)
+
+Green: `90dad2cd`.
+
+**What was synthetic-only, now real.** The synthetic lane reached author bytes through flag roots, a
+seeded `baseline-v7.db`, and a scratch copy reopened per read. Production now derives every path from
+`NOVEL_DATA_ROOT` (`productionLayout`) and opens the author's own `project.db`. Catalog entries are built
+at startup from `projectfs.Library` (`production_durable_linux.go:106-123`) and keyed to the trusted path,
+so a browser-supplied path selects a key but never *becomes* one.
+
+**Lease.** One exclusive `writerlock.AcquireLegacy` is taken before any database is touched
+(`production_open_linux.go:141`) and transferred to the runtime, which owns the only `Close`: `Shutdown`
+closes every admitted database and then releases (`:359`); a runtime that cannot prove that keeps the
+lease (`errProductionLeaseRetained`). A second server gets `writerlock_busy`; a stale lease is never
+stolen because the entry is only ever acquired, never repaired. Per-project, `ActiveCoordinator` refuses a
+second owner for the same path before any SQL (`production_durable_linux.go:183-187`).
+
+**Save is full-body CAS:** `CommitDraftContent` -> `CommitDraftCASDurable` ->
+`store.Drafts.UpdateContentIfCurrent` (BEGIN IMMEDIATE, exact baseline compare, receipt fence, lease
+rotation) at `:260-298`. Reads hold the same lease (`internal/authorruntime/draft_read.go:46`).
+
+**17 operations now 200 in production:** `project:open`, `db:close`, `project:get-runtime-context`,
+`project:save`, `project:update-config`, the eight `db:draft-*` reads, `db:draft-update-content`,
+`db:draft-create`/`-update-status`/`-delete`.
+
+**`project:create` stays 501 on purpose:** a newly created database could not honestly pass the pinned v7
+fingerprint (that needs the schema oracle this lane does not own), so a created project would be
+un-admissible on restart - a false success, worse than a refusal. `project:recent-remove` stays 501: the
+shelf is derived from the library, there is no persisted navigation document.
+
+**Safety tests** (temp root only): the root takes the lease and a second `AcquireLegacy` gets `ErrLocked`;
+refused startup and clean shutdown both release; a save persists into `project.db` (verified on disk) and
+reads back under the rotated lease; a rotated-away lease is refused with the body unchanged; a stale
+baseline under a live lease is `DRAFT_CONTENT_CONFLICT` with the body unchanged; a second tab gets
+`PROJECT_OPEN_IN_ANOTHER_TAB`.
+
+**Highest residual risk:** this lane writes real author databases. Misordered shutdown would release the
+lease before the handles (guarded only by `Shutdown`'s error path), and a crash leaves a WAL the next
+start must recover - the pinned verification refuses rather than repairs.
+
