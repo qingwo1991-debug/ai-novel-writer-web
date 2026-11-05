@@ -1577,3 +1577,33 @@ endpoint outside it is refused; the `models.json` fallback reduces each endpoint
 refusal shapes each yield a symbolic code and no policy; a loopback listener proves no dial; a
 credentials case proves no secret reaches the policy, the logs or an error; and with a policy configured
 eleven generation execution names still answer 501 while `llm:get-default-model` still answers.
+
+### 2026-11-05 — production admits generation runs (31 operations); CI green at `49388ad2`
+
+`generation:begin` is bound in the production lane (gate `production_generation_begin_linux.go:43`,
+constructor `:60`, bind `production_open_linux.go:530`, one-name binder
+`internal/transport/generation.go:177`). It reuses `syntheticGeneration.Begin` - the same ledger `open` -
+with no executor and no provider client, so a run is admitted and its rows land before anything could
+dispatch.
+
+Tests assert: not 501 and 200; the run is `running`/`chapter-draft` with a fresh id under the live lease;
+`generation:read` reads back a **non-empty** ledger budget (32 physical requests, 3,600,000 ms, positive
+token cap and deadline, zero reservations); a stale lease is refused; a malformed call is
+`GENERATION_BEGIN_INVALID` with byte-identical database bytes and no new run; `generation:execute` stays
+501.
+
+**Process note, second occurrence.** The push went red in the container job because the CI journey still
+listed `generation:begin` among the names expected to answer 501 - the same mistake as the
+`db:import-run-*` batch earlier. When an operation is bound, its expectation in the journey must move in
+the same commit. Fixed in `49388ad2`, all three jobs green.
+
+**Remaining gap to a real AI run:** no `Registry`/`Executor` construction, no profile-to-dispatch mapping,
+no credential storage at dispatch, and no run admission bound to `Current`/`AuthorityLock` beyond `begin`.
+`generation:execute` and the other execution names stay 501; a wrong success there would spend the
+author's money and write their manuscript, so it must not be faked.
+
+**Where the migration stands:** 31 of 281 operations answer in production (project open, draft read/write
+with full-body CAS, character/blueprint/overview reads, generation list/read/begin, four `llm` reads), the
+React app is served by the Go image, and the production journey is proven inside the real container. 250
+operations remain, and no real author data has been through this lane.
+
