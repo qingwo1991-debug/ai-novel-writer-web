@@ -1520,3 +1520,31 @@ both the reads and the refusals. The container journey now calls all seven and a
 **Still 501 and still the reason not to switch:** 257 of 281 operations, including generation, review,
 finalisation, import/export, knowledge base, MCP, and the folder dialogs.
 
+### 2026-11-05 — generation and model-config reads in production (30 operations)
+
+Green: `a0e002f9`.
+
+Six more names answer 200 in the production lane: `generation:list`, `generation:read` (binder
+`internal/transport/generation.go:146`, provider `production_generation_reads_linux.go:23`, `ReadCommitted`
+at `synthetic_generation_linux.go:1292`), and the four model-config reads (`llm:list-models`,
+`llm:get-stage-models`, `llm:get-default-model`, `llm:get-default-embedding-model`) through the new
+`BindModelRoutingReads` (`internal/transport/model_routing.go:41`), which installs **only** the read half
+of the six-name routing family. The three setters rewrite `config.json` in place - a global-config write
+this lane has never owned - so they stay fail-closed for the same reason `config:set` is.
+
+**The budgetDiagnostics mystery from the earlier pause point is closed.** The SQL and the writer
+(`generation_ledger.go:957`) were always correct; `budget` returns a typed `[]map[string]any` and
+`syntheticSlice` (`synthetic_generation_linux.go:232`) accepted only `[]any`, narrowing the list to nil.
+Fixed in `d253f49e`; the new production assertion is its regression guard.
+
+**Still 501, deliberately:** the 13 execution names need model origins, an egress policy and an executor
+that this lane does not have (`main.go` refuses `NOVEL_DATA_ROOT` together with
+`-synthetic-durable-model-origins`), and the llm writers need either mutations or live provider round
+trips.
+
+**A process miss worth recording:** the first push of this batch went red because `git status --short |
+head -8` truncated the list and I staged files explicitly from that truncated output, leaving
+`model_routing.go` - the file that *defines* `BindModelRoutingReads` - uncommitted. Two jobs failed with
+`BindModelRoutingReads undefined`. Rule: never enumerate changed files through a truncated command before
+staging; `git status --short` in full, or `git add` with complete paths.
+
