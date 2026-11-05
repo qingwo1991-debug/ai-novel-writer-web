@@ -1061,3 +1061,26 @@ one this machine cannot help with at all. It should be scheduled deliberately, n
 The count in the earlier entry ("LanceDB native store - unblocks the kb family") was optimistic; treat this
 entry as the correction.
 
+### 2026-11-04 — six llm routing-config operations bound (durable 106 -> 112)
+
+Green: `1bfa4f6d`.
+
+Bound, conditional on `GlobalRoot` like the existing llm bindings: `llm:get-stage-model`,
+`llm:set-stage-model`, `llm:get-default-model`, `llm:set-default-model`,
+`llm:get-default-embedding-model`, `llm:set-default-embedding-model`. New binder
+`internal/transport/model_routing.go`, new store `internal/globalconfig/model_routing_linux.go`.
+Frozen context: `llm:*` is **not** project-scoped (`src/services/ipc-client.ts:43-83`), so these take
+0/1 arguments and no trailing session - unlike every other family bound so far.
+
+`config:set` cannot carry `stageModelIds` (`transport/globalconfig.go:31`), which is why the routing
+writes need their own path rather than riding the existing config binder.
+
+**The seven execution names stay 501, deliberately:** `generate`, `generate-stream`, `cancel`,
+`discover-models`, `test-connection`, `begin-execution-lease`, `close-execution-lease`. Their only real
+effect is a provider round trip or a lease/stream registry whose sole consumer is the unbound `generate`
+family. Binding them would mint capability this lane cannot honour - the lease pair is the one genuinely
+debatable call, and it was decided fail-closed.
+
+**LLM family status:** 9 of 13 bound, 7 left (13 unbound total including the 4 `editor-inline:*`, which
+remain blocked on the generation owner).
+
