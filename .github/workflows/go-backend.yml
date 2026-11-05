@@ -1035,7 +1035,7 @@ jobs:
               exit 1
             fi
           }
-          for operation in generation:execute generation:begin generation:cancel \
+          for operation in generation:execute generation:cancel \
             llm:set-stage-model llm:set-default-model llm:set-default-embedding-model llm:save-model; do
             expect_not_migrated "$operation" \
               "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" \
@@ -1081,7 +1081,7 @@ jobs:
               "$(jq -r '.error.code' "$work/stale-character-get-all.json")" \
               "$(jq -r '.error.code' "$work/stale-overview.json")"
             printf -- '- `generation:list` and `generation:read` returned the one settled run the fixture committed (`%s`, epoch `%s`) with 1 budget diagnostic and `nonReplayable` set, and `llm:list-models`, `llm:get-stage-models`, `llm:get-default-model` and `llm:get-default-embedding-model` returned the committed model configuration (`%s`, `%s`).\n' "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id"
-            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`), and `generation:execute`, `generation:begin`, `generation:cancel` and the three `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
+            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`), and `generation:execute`, `generation:cancel` and the three `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
               "$(jq -r '.error.code' "$work/stale-generation-list.json")" \
               "$(jq -r '.error.code' "$work/stale-generation-read.json")"
             printf 'Body seeded into the v7 database: `%s`\n\n' "$seed"
