@@ -589,6 +589,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	for _, bind := range []func() error{
 		func() error { return newProductionGraphReads(open.durable).Bind(server) },
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
+		func() error { return newProductionBatchReads(open.durable).Bind(server) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
 		func() error { return server.BindSummary(open.durable) },
