@@ -47,6 +47,18 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			want: []string{"graph-generation:read"},
 		},
 		{
+			// The finalization slot read is bound only when the provider
+			// implements it, so the family grows by exactly that one name.
+			name: "graph-generation-with-finalization-read",
+			bind: func(s *Server) error {
+				return s.BindGraphGeneration(&GraphGenerationProvider{
+					Read:             func(context.Context, Caller, map[string]any, any) (any, error) { return nil, nil },
+					FinalizationRead: func(context.Context, Caller, map[string]any, any) (any, error) { return nil, nil },
+				})
+			},
+			want: []string{"finalization-generation:read", "graph-generation:read"},
+		},
+		{
 			name: "review-revisions",
 			bind: func(s *Server) error {
 				return s.BindReviewRevisions(ReviewRevisionProviderFunc(nil))

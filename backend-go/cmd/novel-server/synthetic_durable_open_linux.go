@@ -959,9 +959,15 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			return nil, nil, err
 		}
 		// The graph family shares the same durable admission but not the same
-		// request shape: its channels carry `{ handle }`, so it binds through its
-		// own row set on top of the same adapter.
-		if err := server.BindGraphGeneration(&transport.GraphGenerationProvider{Read: provider.GraphRead}); err != nil {
+		// request shape: its channels carry `{ handle }` and the finalization slot
+		// read carries `{ slot }`, so it binds through its own row set on top of
+		// the same adapter. Only the two reads are bound here; finalization begin,
+		// execute and commit stay 501 because they need the slot context capture
+		// and the model dispatch this lane does not have.
+		if err := server.BindGraphGeneration(&transport.GraphGenerationProvider{
+			Read:             provider.GraphRead,
+			FinalizationRead: provider.FinalizationRead,
+		}); err != nil {
 			cleanup()
 			return nil, nil, err
 		}

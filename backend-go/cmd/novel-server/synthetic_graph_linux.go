@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"strings"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/graphgen"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
@@ -73,6 +75,136 @@ func (s *syntheticGeneration) GraphRead(ctx context.Context, caller transport.Ca
 		"sourceStatus": status,
 		"effects":      []any{},
 	}, nil
+}
+
+// FinalizationRead is the finalization-generation:read projection: the recovery
+// of the run that currently owns a finalization slot, or JSON null when no run
+// owns it yet.
+//
+// null is a real answer here, not a stand-in. The renderer asks this before
+// begin (src/services/finalization-generation.ts:38) and reads null as "nothing
+// to resume", so refusing the call would break the first step of every
+// finalization instead of protecting anything. The slot is validated exactly
+// like finalizationSlotKey and its key is matched against the frozen manifest of
+// the runs this project's ledger holds, so an absent answer is the result of a
+// real lookup rather than a constant.
+//
+// A matching row is refused instead of projected. That key is stamped by the
+// finalization source binding alone
+// (electron/services/generation-source-binding.ts:589), which this lane never
+// reaches because it does not bind finalization begin, so such a row can only
+// come from another writer. Recovering it would mean proving textHash(JSON.stringify(context))
+// against the stored finalizationGenerationContextHash, and JSON.stringify
+// writes property insertion order while every digest this lane derives is
+// canonical (syntheticGraphDigest): either that comparison is skipped or a
+// context the lane cannot prove is handed to the renderer. It refuses with the
+// code the original raises for an unprovable context, and a row whose binding
+// names another project is the original's slot conflict
+// (electron/services/finalization-generation.ts:27).
+func (s *syntheticGeneration) FinalizationRead(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	key, err := syntheticFinalizationSlotKey(arg)
+	if err != nil {
+		return nil, err
+	}
+	_, scope, _, db, done, err := s.admit(ctx, caller, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	rows, err := db.QueryContext(ctx,
+		`SELECT json_extract(binding_json,'$.projectId') FROM generation_runs
+		 WHERE json_extract(binding_json,'$.sourceManifest.finalizationGenerationSlotKey')=? ORDER BY rowid`, key)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	found := false
+	for rows.Next() {
+		// A missing projectId (NULL) is the original's `undefined !== projectId`
+		// conflict, so NullString covers both the foreign row and the shapeless one.
+		var owner sql.NullString
+		if err := rows.Scan(&owner); err != nil {
+			return nil, err
+		}
+		if !owner.Valid || owner.String != scope.Project {
+			return nil, errors.New("GENERATION_FINALIZATION_SLOT_CONFLICT")
+		}
+		found = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	// The rows all belong to this project, so the original would go on to compare
+	// each stored context with the slot; that comparison is what this lane cannot
+	// reproduce, and it refuses rather than guesses.
+	return nil, errors.New("GENERATION_FINALIZATION_CONTEXT_INVALID")
+}
+
+// syntheticFinalizationSlotKey validates one FinalizationGenerationSlot and
+// returns the original's finalizationSlotKey
+// (electron/services/finalization-generation-source.ts:12):
+//
+//	textHash(JSON.stringify([draftId, finalizationId, chapterNumber, contentHash, stepKey]))
+//
+// The hashed value is an array of primitives, so the insertion-order ambiguity
+// that forces this lane's object digests onto canonical encoding cannot arise:
+// graphgen.EncodeJSON reproduces JSON.stringify for exactly this shape, and the
+// key matches the one a desktop build stores for the same slot.
+func syntheticFinalizationSlotKey(value any) (string, error) {
+	invalid := errors.New("GENERATION_FINALIZATION_SLOT_INVALID")
+	slot := syntheticMap(value)
+	if slot == nil {
+		return "", invalid
+	}
+	for key := range slot {
+		if key != "source" && key != "stepKey" {
+			return "", invalid
+		}
+	}
+	stepKey := syntheticString(slot["stepKey"])
+	if stepKey != "chapter_notes" && stepKey != "character_cards" {
+		return "", invalid
+	}
+	source := syntheticMap(slot["source"])
+	if source == nil {
+		return "", invalid
+	}
+	for key := range source {
+		switch key {
+		case "draftId", "chapterNumber", "finalizationId", "contentHash":
+		default:
+			return "", invalid
+		}
+	}
+	draftID, draftOK := syntheticSlotID(source["draftId"])
+	chapterNumber, chapterOK := syntheticSlotID(source["chapterNumber"])
+	finalizationID, finalizationOK := source["finalizationId"].(string)
+	contentHash, contentOK := source["contentHash"].(string)
+	if !draftOK || !chapterOK || !finalizationOK || !contentOK ||
+		strings.TrimSpace(finalizationID) == "" || !syntheticHex64(contentHash) {
+		return "", invalid
+	}
+	encoded, err := graphgen.EncodeJSON([]any{draftID, finalizationID, chapterNumber, contentHash, stepKey})
+	if err != nil {
+		return "", invalid
+	}
+	return graphgen.TextHash(encoded), nil
+}
+
+// syntheticSlotID accepts exactly what the original's Number.isSafeInteger guard
+// accepts: a JSON number, integral, positive and inside the safe-integer range.
+// A numeric string is refused, unlike this lane's looser ledger coercion,
+// because the original refuses it too.
+func syntheticSlotID(value any) (int64, bool) {
+	number, ok := syntheticFloat64(value)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) ||
+		number != math.Trunc(number) || number < 1 || number > 1<<53-1 {
+		return 0, false
+	}
+	return int64(number), true
 }
 
 // syntheticGraphAttemptIDs lists a run's attempts in dispatch order.
