@@ -1238,3 +1238,23 @@ rather than by porting a desktop contract verbatim. That difference must be visi
 "the same operation" with a different security model is exactly the kind of thing that must not be
 presented as a faithful port.
 
+### 2026-11-05 — finalization-generation:read bound (durable 133), and a silent-failure hazard
+
+Green: `60f9e845`.
+
+One defect cost two CI cycles and is worth recording: the binder appends the row only when its optional
+provider field is non-nil (`transport/graph_generation.go:40` `if provider.FinalizationRead != nil`). The
+durable opener passed only `Read`, so the row was never appended, `Server.Bind` never saw the name, and the
+route answered 501 - **with no startup error**. Optional provider fields in this codebase fail silently:
+the only things that catch them are non-501 assertions and the `BoundOperations` pins. When adding an
+operation to a binder with optional fields, wire the field in the same commit as the registration.
+
+The read itself: `{ slot }`, arity 1, non-mutating, answering JSON `null` for a slot no run owns,
+`GENERATION_FINALIZATION_SLOT_CONFLICT` for a foreign project, and `GENERATION_FINALIZATION_CONTEXT_INVALID`
+for a run whose manifest this lane cannot reproduce (the insertion-order digest the desktop build froze).
+
+**The eleven AI-generation names are now accounted for:** 3 bound (`graph-generation:read`,
+`graph-generation:cancel`, `finalization-generation:read`), 8 left at 501 because they need a model
+dispatch or a settled-artifact proof, and `review-revision` (4) needs four unported composition helpers
+(`freezeChapterGoals`, `findBlueprintContinuityRisks`, `parseHumanConfirmedReviewSnapshot`, `planRecheck`).
+
