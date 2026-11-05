@@ -261,13 +261,13 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | db:get-latest-summary | P | HIST; latest legacy-only id order, ignores formal projection | IN PROGRESS — isolated private-copy HTTP/original141case summary oracle; main unbound |
 | dialog:select-legacy-project | F | DLG/PROJ | NOT STARTED |
 | dialog:select-folder | F | DLG; global library chooser override | NOT STARTED |
-| dialog:select-export-directory | F | DLG | NOT STARTED |
+| dialog:select-export-directory | F | DLG | NOT STARTED — a browser cannot pick a host directory; the durable lane's save path is `GET /api/downloads/<relative path>` |
 | dialog:select-project-archive-export | F | DLG/ARCH | NOT STARTED |
-| dialog:select-project-archive | F | DLG/ARCH | NOT STARTED |
+| dialog:select-project-archive | F | DLG/ARCH | NOT STARTED — the browser replacement is `POST /api/uploads`; the archive-import consumer is unbound |
 | dialog:select-project-restore-target | F | DLG/ARCH | NOT STARTED |
-| dialog:select-knowledge-files | F | DLG/KB | NOT STARTED |
+| dialog:select-knowledge-files | F | DLG/KB | NOT STARTED — the browser replacement is `POST /api/uploads`; the KB import consumer is unbound |
 | dialog:select-knowledge-folder | F | DLG/KB | NOT STARTED |
-| dialog:select-novel-files | F | DLG/IMP; returns inspection not path authority | NOT STARTED |
+| dialog:select-novel-files | F | DLG/IMP; returns inspection not path authority | NOT STARTED — the browser replacement is `POST /api/uploads`; the inspection consumer is unbound on this lane |
 | editor-inline:begin | P | INLINE | NOT STARTED |
 | editor-inline:read-recovery | P | INLINE | NOT STARTED |
 | editor-inline:execute | P | INLINE | NOT STARTED |
@@ -284,16 +284,16 @@ Each row's key expands to the concrete source/dependency/replacement decision ab
 | finalized-character:list-state-candidates | P | CP | NOT STARTED |
 | finalized-character:read-state-candidate | P | CP | NOT STARTED |
 | finalized-character:decide-state-candidate | P | CP | NOT STARTED |
-| fs:read-file | P | FS | NOT STARTED |
-| fs:write-file | P | FS; expected body and commitState | NOT STARTED |
-| fs:list-dir | P | FS | IN PROGRESS — bounded same-lease synthetic project tree HTTP; full filesystem contract absent |
-| fs:mkdir | P | FS | NOT STARTED |
-| fs:check-exists | P | FS | NOT STARTED |
+| fs:read-file | P | FS | IN PROGRESS — bounded same-lease synthetic project read; browser path is RELATIVE to the project root, absolute paths and grants deliberately absent |
+| fs:write-file | P | FS; expected body and commitState | IN PROGRESS — bounded same-lease synthetic project write with `commitState`; temp file + one rename, no client absolute path |
+| fs:list-dir | P | FS | IN PROGRESS — bounded same-lease synthetic project tree HTTP; still takes the legacy absolute project-root form, full filesystem contract absent |
+| fs:mkdir | P | FS | IN PROGRESS — same-lease synthetic directory chain on a relative path; absolute paths and grants absent |
+| fs:check-exists | P | FS | IN PROGRESS — same-lease synthetic existence probe, bare boolean result, refusal as transport error |
 | fs:read-json | P | FS | IN PROGRESS — fixed partial_arch.json same-lease synthetic HTTP; arbitrary JSON paths/write absent |
-| fs:write-json | P | FS | NOT STARTED |
-| fs:grant-read-file | F | FS/DLG | NOT STARTED |
-| fs:grant-write-file | F | FS/DLG | NOT STARTED |
-| fs:grant-mkdir | F | FS/DLG | NOT STARTED |
+| fs:write-json | P | FS | NOT STARTED — no confined JSON write contract yet; storage-reserved paths stay out of browser reach |
+| fs:grant-read-file | F | FS/DLG | NOT STARTED — replaced by confined relative paths; a browser has no server-issued external grant |
+| fs:grant-write-file | F | FS/DLG | NOT STARTED — replaced by confined relative paths; a browser has no server-issued external grant |
+| fs:grant-mkdir | F | FS/DLG | NOT STARTED — replaced by confined relative paths; a browser has no server-issued external grant |
 | generation:prepare-draft-context | P | GEN/KB | NOT STARTED |
 | generation:commit-draft | P | GEN/DR; proof + source CAS | NOT STARTED |
 | generation:read-context | P | GEN | NOT STARTED |
@@ -420,6 +420,8 @@ All below are **NOT STARTED** for Go; do not inflate the 281 count with them.
 | `POST /api/dialogs/<id>` | Resolve caller's pending dialog with browser upload IDs/selected controlled project; ten-minute expiry and initiating request binding |
 | `browser:prepare-download` | Special gateway operation outside registry; caller-owned export grant + relative path → download-ready event |
 | `GET /api/downloads/<token>` | Session-owned expiring token, attachment filename, directory ZIP support, no-store; preserve current session-level download authority deliberately |
+| `POST /api/uploads` (durable synthetic lane) | Multipart `file` part + `?path=<relative>`; commits into the caller's live project lease at a confined relative path, 201 `{success,path,name,size}`; no upload ID is minted, no X-Upload-* header is trusted, no absolute or traversing path is accepted |
+| `GET /api/downloads/<relative path>` (durable synthetic lane) | Streams one confined project file to the browser's own save mechanism under the caller's live lease; `Content-Disposition` attachment, `Cache-Control: no-store`, `nosniff`; no expiring token and no directory ZIP support |
 | `POST /api/release` | Best-effort departure hint, not forced task cancel; same-tab refresh and in-flight work retain owner |
 | Static `GET`/`HEAD` | Existing built `dist-web`, MIME, CSP/security headers, no accidental arbitrary file access; no replacement frontend |
 | Events | Preserve actual shared event payloads: llm stream chunk/reasoning/done/error; generation snapshot/reasoning; cloud/import/KB progress; MCP status/tools; browser dialog/download-ready/open-external/project-lost |
