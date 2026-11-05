@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"path/filepath"
@@ -13,7 +15,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/authorruntime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -82,11 +83,19 @@ import (
 //     (internal/transport/editor_checkpoint.go:47); this file derives the same
 //     absolute path from the frozen context (productionFSArchCheckpointPath) and
 //     compares the argument against it, so the request's string is never opened.
-//     The bytes then come from authorruntime.ReadLifecycle.ReadArchCheckpoint
-//     (internal/authorruntime/editor_checkpoint.go:22-53), which reads the fixed
-//     name project.OpenFileRead("partial_arch.json") inside its admitted,
-//     re-verified project handle (:55-88) - the file name is a constant of that
-//     method, not an argument of the request.
+//     The bytes come from projectfs.Project.OpenFileRead("partial_arch.json") on
+//     the pinned project (internal/projectfs/project.go:356-396): the name is a
+//     constant of this file, it is resolved inside the pinned storage root, and
+//     the final component goes through openRegular (O_NOFOLLOW, single link,
+//     project.go:218-238). That is the same call the runtime's own marker read
+//     makes (internal/authorruntime/editor_checkpoint.go:59-91), and this file
+//     keeps the double read and the invalid-JSON-is-absent rule (:38-50) under the
+//     same 1 MiB bound (:17); it cannot call
+//     authorruntime.ReadLifecycle.ReadArchCheckpoint itself, because that method
+//     asserts the READ-ONLY admitted handle (:31-34) while this lane's durable
+//     lease admits *admittedAuthor (internal/authorruntime/durable_linux.go:194)
+//     and is answered with AUTHOR_READ_INVALID (internal/authorruntime/
+//     read_linux.go:24) - a proof this lane can never mint.
 //
 // # Refused, with the line that makes each refusal
 //
@@ -129,7 +138,7 @@ import (
 // # The fence
 //
 // Every request re-observes the caller's own durable lease before any project
-// tree is opened (productionFSLease): the frozen three-key context is parsed
+// tree is opened (productionFSFence): the frozen three-key context is parsed
 // (internal/projectsession/session.go:32-47), the caller's own cookie/tab
 // identity names the owner (production_durable_linux.go:152), the project path
 // must be one the startup inventory issued a catalog key for
@@ -163,9 +172,14 @@ const (
 	// productionFSStorageMarkerName is the ONE file under the canonical storage
 	// root that fs:read-json may serve. It is the name the family binder pins
 	// (internal/transport/editor_checkpoint.go:47) and the name
-	// authorruntime.ReadArchCheckpoint opens inside its admitted project
-	// (internal/authorruntime/editor_checkpoint.go:65).
+	// projectfs.Project.OpenFileRead resolves relative to the pinned storage root
+	// (internal/projectfs/project.go:356-396).
 	productionFSStorageMarkerName = "partial_arch.json"
+
+	// productionFSMarkerMaxBytes is the ceiling the runtime's own marker read
+	// applies (internal/authorruntime/editor_checkpoint.go:17). A larger marker is
+	// refused rather than served truncated.
+	productionFSMarkerMaxBytes = 1 << 20
 
 	// The wire shape of the three bound names: the frozen context is always last,
 	// the claimed root immediately before it, the browser path first.
@@ -238,57 +252,55 @@ func (r *productionFSReads) roots() (*productionDurableOpen, *projectfs.Library,
 	return open.durable, open.library, nil
 }
 
-// productionFSLifecycle snapshots the durable runtime's lifecycle for one
-// project, under the runtime's own lock, and requires the path to be one the
-// startup inventory issued a catalog key for - the same inventory check
+// productionFSHolds proves, for one frozen context, the three properties a file
+// read needs and nothing more: the durable runtime is still open, the project is
+// one the startup inventory issued a catalog key for - the same inventory check
 // borrowAuthorDatabase performs (production_durable_linux.go:322-331) before it
-// lends anything. A browser path never becomes a key.
-func (d *productionDurableOpen) productionFSLifecycle(projectPath string) (*authorruntime.ReadLifecycle, error) {
-	if d == nil {
-		return nil, productionFSHTTPError(productionFSClosedCode)
+// lends anything, so a browser path never becomes a key - and this owner still
+// holds exactly this context. It lends no handle: this file reads the marker
+// through the pinned project tree, not through a runtime borrow.
+func (d *productionDurableOpen) productionFSHolds(ctx context.Context, owner projectsession.Owner, expected projectsession.Context) error {
+	if d == nil || ctx == nil {
+		return productionFSHTTPError(productionFSClosedCode)
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.closed || d.lifecycle == nil {
-		return nil, productionFSHTTPError(productionFSClosedCode)
+	lifecycle, closed := d.lifecycle, d.closed
+	_, known := d.keyFor(expected.ProjectPath)
+	d.mu.Unlock()
+	if closed || lifecycle == nil {
+		return productionFSHTTPError(productionFSClosedCode)
 	}
-	if _, known := d.keyFor(projectPath); !known {
-		return nil, productionFSHTTPError("PROJECT_NOT_OPEN")
+	if !known {
+		return productionFSHTTPError("PROJECT_NOT_OPEN")
 	}
-	return d.lifecycle, nil
+	// CurrentProjectDurable re-verifies the retained writer lock and the live
+	// handle before it reports the context (internal/projectsession/
+	// active.go:282-311), so a swapped project or a lost lock is refused here.
+	current, present, err := lifecycle.CurrentProjectDurable(ctx, owner)
+	if err != nil {
+		return err
+	}
+	if !present || current != expected {
+		return productionFSHTTPError("PROJECT_SESSION_STALE")
+	}
+	return nil
 }
 
-// productionFSLease re-observes the caller's live durable lease and returns the
-// lifecycle that owns it plus the owner the lease is keyed by. It is the single
-// fence all three names share: the frozen context is parsed, the caller's own
-// cookie/tab identity names the owner, the project is a catalog-admitted one, and
-// the runtime re-proves that the exact context this request froze is still the
-// context this owner holds. A stale, foreign or absent lease never reaches a
-// project tree.
-func (r *productionFSReads) productionFSLease(ctx context.Context, caller transport.Caller, expected projectsession.Context) (*authorruntime.ReadLifecycle, projectsession.Owner, error) {
-	if ctx == nil {
-		return nil, projectsession.Owner{}, productionFSHTTPError(productionFSClosedCode)
-	}
+// productionFSFence re-observes the caller's live durable lease. It is the single
+// fence all three names share: the caller's own cookie/tab identity names the
+// owner, the runtime is required to be open, the project is a catalog-admitted
+// one, and the exact context this request froze must still be the context this
+// owner holds. A stale, foreign or absent lease never reaches a project tree.
+func (r *productionFSReads) productionFSFence(ctx context.Context, caller transport.Caller, expected projectsession.Context) error {
 	owner, err := productionOwner(caller)
 	if err != nil {
-		return nil, projectsession.Owner{}, productionFSHTTPError("PROJECT_SESSION_REQUIRED")
+		return productionFSHTTPError("PROJECT_SESSION_REQUIRED")
 	}
 	durable, _, err := r.roots()
 	if err != nil {
-		return nil, projectsession.Owner{}, err
+		return err
 	}
-	lifecycle, err := durable.productionFSLifecycle(expected.ProjectPath)
-	if err != nil {
-		return nil, projectsession.Owner{}, err
-	}
-	current, present, err := lifecycle.CurrentProjectDurable(ctx, owner)
-	if err != nil {
-		return nil, projectsession.Owner{}, err
-	}
-	if !present || current != expected {
-		return nil, projectsession.Owner{}, productionFSHTTPError("PROJECT_SESSION_STALE")
-	}
-	return lifecycle, owner, nil
+	return durable.productionFSHolds(ctx, owner, expected)
 }
 
 // withProjectFile runs one confined read under the caller's live lease. The
@@ -301,7 +313,7 @@ func (r *productionFSReads) withProjectFile(ctx context.Context, caller transpor
 	if action == nil {
 		return productionFSHTTPError(productionFSClosedCode)
 	}
-	if _, _, err := r.productionFSLease(ctx, caller, expected); err != nil {
+	if err := r.productionFSFence(ctx, caller, expected); err != nil {
 		return err
 	}
 	_, library, err := r.roots()
@@ -343,9 +355,9 @@ func (r *productionFSReads) readFile(ctx context.Context, caller transport.Calle
 }
 
 // checkExists serves fs:check-exists: a bare boolean, exactly as the desktop
-// answered it. A missing confined path is false rather than an error
-// (internal/projectfs/browser_files.go:266-270), and a refusal is the transport
-// envelope the family's own handler uses (project_files.go:99-106).
+// answered it. A path the tree does not contain is false rather than an error
+// (internal/projectfs/browser_files.go:266-270, :292-294), and a refusal is the
+// transport envelope the family's own handler uses (project_files.go:99-106).
 func (r *productionFSReads) checkExists(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 	request, code := productionFSParseFileRequest(args)
 	if code != "" {
@@ -383,11 +395,7 @@ func (r *productionFSReads) readJSON(ctx context.Context, caller transport.Calle
 	if !ok || marker != productionFSArchCheckpointPath(expected.ProjectPath) {
 		return nil, productionFSHTTPError("PROJECT_CONTEXT_REQUIRED")
 	}
-	lifecycle, owner, err := r.productionFSLease(ctx, caller, expected)
-	if err != nil {
-		return nil, productionFSHTTPError(productionFSCode(err))
-	}
-	wire, found, err := lifecycle.ReadArchCheckpoint(ctx, owner, expected)
+	wire, found, err := r.readArchCheckpoint(ctx, caller, expected)
 	if err != nil {
 		return nil, productionFSHTTPError(productionFSCode(err))
 	}
@@ -397,10 +405,78 @@ func (r *productionFSReads) readJSON(ctx context.Context, caller transport.Calle
 		// would make a first-run project look broken.
 		return map[string]any{"success": false, "data": nil}, nil
 	}
-	if !json.Valid(wire) {
-		return nil, productionFSHTTPError("FS_READ_JSON_FAILED")
+	return map[string]any{"success": true, "data": wire}, nil
+}
+
+// readArchCheckpoint reads the fixed storage marker twice through the pinned
+// project storage. The two reads must agree, so a replacement or an in-place edit
+// between them is refused rather than half-served - the same discipline
+// authorruntime.ReadArchCheckpoint applies
+// (internal/authorruntime/editor_checkpoint.go:37-54), which this file cannot
+// call here because that method asserts the READ-ONLY admitted handle (:31-34)
+// and this lane's durable lease admits *admittedAuthor
+// (internal/authorruntime/durable_linux.go:194).
+func (r *productionFSReads) readArchCheckpoint(ctx context.Context, caller transport.Caller, expected projectsession.Context) (json.RawMessage, bool, error) {
+	var first, second []byte
+	var firstFound, secondFound bool
+	if err := r.withProjectFile(ctx, caller, expected, func(project *projectfs.Project) error {
+		var err error
+		if first, firstFound, err = productionFSMarkerBytes(ctx, project); err != nil {
+			return err
+		}
+		second, secondFound, err = productionFSMarkerBytes(ctx, project)
+		return err
+	}); err != nil {
+		return nil, false, err
 	}
-	return map[string]any{"success": true, "data": json.RawMessage(append([]byte(nil), wire...))}, nil
+	if firstFound != secondFound || !bytes.Equal(first, second) {
+		return nil, false, productionFSHTTPError("PROJECT_FILE_CHANGED")
+	}
+	if !firstFound || !json.Valid(first) {
+		// A marker the runtime itself would not hand out - because it is absent,
+		// or because it does not hold JSON (internal/authorruntime/
+		// editor_checkpoint.go:48-50) - is the nullable answer, not a failure.
+		return nil, false, nil
+	}
+	return json.RawMessage(append([]byte(nil), first...)), true, nil
+}
+
+// productionFSMarkerBytes reads the one storage-reserved name this lane may
+// serve, out of an already pinned project. The name is a constant of this file;
+// projectfs.Project.OpenFileRead resolves it inside the pinned storage root
+// (internal/projectfs/project.go:356-396) and refuses a database name, a
+// non-regular or multi-link file (project.go:218-238), so a symlink planted at
+// that name is refused rather than followed.
+func productionFSMarkerBytes(ctx context.Context, project *projectfs.Project) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	file, err := project.OpenFileRead(productionFSStorageMarkerName)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	if info.Size() > productionFSMarkerMaxBytes {
+		return nil, false, productionFSHTTPError("PROJECT_FILE_TOO_LARGE")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, productionFSMarkerMaxBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) > productionFSMarkerMaxBytes {
+		return nil, false, productionFSHTTPError("PROJECT_FILE_TOO_LARGE")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
 // productionFSFileRequest is one validated fs:read-file / fs:check-exists
@@ -466,6 +542,15 @@ func (r *productionFSReads) projectPathExists(ctx context.Context, caller transp
 	present := false
 	if err := r.withProjectFile(ctx, caller, request.expected, func(project *projectfs.Project) error {
 		found, existsErr := project.BrowserPathExists(ctx, request.relative)
+		if errors.Is(existsErr, fs.ErrNotExist) {
+			// A missing PARENT surfaces as not-exist from the pinned walk
+			// (internal/projectfs/project.go:62-66), not as a false answer. The
+			// desktop asked fs:check-exists exactly to learn this - "does the file
+			// I am about to create already exist?" - so fold it back into that
+			// boolean. Nothing is opened or created by doing so, and the caller
+			// still learns nothing about the filesystem beyond yes/no.
+			return nil
+		}
 		present = found
 		return existsErr
 	}); err != nil {

@@ -111,7 +111,8 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 	})
 
 	// fs:check-exists: a bare boolean, true for the seeded file and the seeded
-	// directory, false for a path inside the project that does not exist.
+	// directory, false for a path inside the project that does not exist yet -
+	// including one whose parent directory does not exist either.
 	t.Run("fs:check-exists", func(t *testing.T) {
 		var file bool
 		productionEditorDecode(t, author, productionFSCheckExistsName,
@@ -130,6 +131,12 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 			[]any{productionFSMissingPath, projectPath, frozen}, &missing)
 		if missing {
 			t.Fatalf("fs:check-exists reported the unseeded path %q present", productionFSMissingPath)
+		}
+		var unwritten bool
+		productionEditorDecode(t, author, productionFSCheckExistsName,
+			[]any{"unwritten/deep/chapter-2.md", projectPath, frozen}, &unwritten)
+		if unwritten {
+			t.Fatal("fs:check-exists reported a path under a missing parent present")
 		}
 	})
 
