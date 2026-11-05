@@ -1890,3 +1890,31 @@ implies that family is served; that implication is worse than the absence of the
 6. Lifecycle and archive plumbing: an in-flight registry keyed by `operationId` with abort, plus
    `exportPortableProject`/`restorePortableProject` and `targetGrantId` resolution.
 
+### 2026-11-05 — knowledge reads: a gate, not an adapter
+
+All five knowledge reads were refused, and the reason is worth recording precisely because it is a
+configuration gate rather than missing code: `knowledgequery.View` exists only over a native snapshot
+exported from `<project>/.ai-novel/lancedb` (`projectaccess/native_knowledge.go:27-89`). The only
+lease-respecting seam, `authorruntime.BeginKnowledgeRead` (`knowledge_read_linux.go:30`), returns
+`projectaccess.ErrConfiguration` unless `Knowledge.Native` is set (`:31`), and `readConfig`
+(`production_durable_linux.go:85-89`) never sets it - so a binding today answers 500, never 200.
+`projectaccess.InspectKnowledge` cannot substitute: it re-flocks (`preflight.go:114-126`) and hits
+`writerlock.ErrLocked` (`lock_linux.go:141-145`).
+
+Two changes open all four read names, and both are outside any adapter:
+
+1. `readConfig` sets `Knowledge: &projectaccess.KnowledgeConfig{Copy: projectfs.KnowledgeBudget{MaxBytes:
+   64 << 20, MaxEntries: 4096, MaxDepth: 8}, Metadata: knowledgecopy.Budget{MaxMetadataBytes: 32 << 20,
+   MaxCopies: 10000}, Native: true}`.
+2. The build carries `-tags lance_native`; `.github/workflows/go-backend.yml:489` has none, and the image
+   would have to ship the native library.
+
+With both in place the line to add is
+`func() error { return server.BindKnowledge(newProductionKnowledgeReads(open.durable)) },`.
+
+`kb:search` stays refused on its own merits regardless: `BindKnowledgeSearch` installs FTS only
+(`knowledge_search.go:68-84`) while the desktop prefers the vector path whenever an embedding model is
+configured (`kb-controller.ts:379-390`), and this lane's committed config names one
+(`production_open_linux_test.go:103`). FTS-only would be silent degradation, so it is refused rather than
+downgraded. `internal/transport/knowledge_test.go:270` already pins it at 501.
+
