@@ -861,6 +861,13 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		func() error { return server.BindEditorNavigation(durable) },
 		func() error { return server.BindCurrentOverview(durable) },
 		func() error { return server.BindEditorCheckpoint(durable) },
+		// The browser-confined half of the fs:* family: fs:read-file,
+		// fs:write-file, fs:mkdir and fs:check-exists, resolved by relative path
+		// under the admitted project's own pinned root. fs:list-dir stays with
+		// BindEditorNavigation above and fs:read-json with BindEditorCheckpoint
+		// above, so this binder is disjoint from both; the three fs:grant-* names
+		// and fs:write-json stay unbound and keep failing closed.
+		func() error { return server.BindProjectFiles(durable) },
 		func() error { return server.BindEditorStageReads(durable) },
 		func() error { return server.BindEditorReviewReads(durable) },
 		func() error { return server.BindEditorReviewFullReads(durable) },
@@ -1074,6 +1081,20 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		}
 		route.ServeHTTP(w, r)
 	}))
+	// The two transfer routes of the same browser file surface. The desktop
+	// dialog:* pickers cannot exist in a browser, so the browser's own file
+	// input uploads bytes to a confined project path and its own download saves
+	// one: POST /api/uploads (multipart, ?path=relative) and
+	// GET /api/downloads/<relative path>. Both resolve the project from the
+	// caller's live durable lease, never from a request path, and neither is an
+	// operation name: the dialog:* names stay GO_OPERATION_NOT_MIGRATED.
+	transfers := &syntheticProjectTransfers{
+		open:    durable,
+		server:  server,
+		origins: security.NewOrigins("http://" + address),
+	}
+	mux.Handle("/api/uploads", transfers)
+	mux.Handle("/api/downloads/", transfers)
 	if staticDir != "" {
 		static, err := transport.NewStaticAssets(staticDir, server.SessionStore())
 		if err != nil {
