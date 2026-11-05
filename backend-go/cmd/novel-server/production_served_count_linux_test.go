@@ -4,6 +4,7 @@ package main
 
 import (
 	"net/http"
+	"sort"
 	"net/url"
 	"strings"
 	"testing"
@@ -89,11 +90,12 @@ func TestProductionLaneRemainingInventory(t *testing.T) {
 		served[name] = true
 	}
 	var remaining []string
-	for _, name := range registry.Operations {
+	for name := range registry.Operations {
 		if !served[name] {
 			remaining = append(remaining, name)
 		}
 	}
+	sort.Strings(remaining)
 	t.Fatalf("%d of %d operations are NOT served; remaining=%s",
 		len(remaining), len(registry.Operations), strings.Join(remaining, ","))
 }
