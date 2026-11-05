@@ -1084,3 +1084,27 @@ debatable call, and it was decided fail-closed.
 **LLM family status:** 9 of 13 bound, 7 left (13 unbound total including the 4 `editor-inline:*`, which
 remain blocked on the generation owner).
 
+### 2026-11-04 — six draft author/authority operations bound (durable 112 -> 118)
+
+Green: `49fcf5d8`. New `transport/draft_author.go`, `store/draft_author.go`, `store/draft_authority.go`.
+
+Reads (`BindDraftAuthorityReads`, arity/path `2/0, 2/0, 3/1` from `ipc-channels.ts:1031-1036`):
+`db:draft-authority-sequence`, `db:draft-export-snapshot`, `db:draft-export-authority-current`.
+
+Writes (`BindDraftAuthorWrites`, `3/1, 5/3, 3/1` from `ipc-channels.ts:1023,1099,1101`):
+`db:draft-create`, `db:draft-update-status`, `db:draft-delete`.
+
+Notable assertion detail: `db:draft-delete` on a **finalized** draft returns an `errorCode` with **no**
+`"error":` key at all and the row survives - that asymmetry is the original's, and it is now pinned.
+Deleting the working draft removes both the draft and its content row.
+
+**The `db` family is now 90 of 103 served.** 27 remain: 20 are the import pipeline, 4 are the
+retire-generation-runs writes, and 3 need subsystems (`project-core-commit-generated`,
+`blueprint-character-sync-complete`, `review-cycle-list-pending-rechecks` - the last is an unported M03
+projection).
+
+**Import pipeline is the single largest coherent block left in this family** (20 operations, all
+`db:import-run-*` plus `import-global-facts-commit` and `draft-import-finalized-batch`). It is pure Go
+work - no Lance, no generation owner - which makes it the best next target by the criteria that have
+actually been delivering.
+
