@@ -13,9 +13,10 @@ import "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/tran
 // profile, opens an egress endpoint or dispatches to a provider, so this lane can
 // answer them while its execution half stays unbound. The lane does derive a real
 // model-egress policy from the committed config
-// (production_model_egress_linux.go) and keeps it for a future executor, but it
-// still owns no executor, no dispatch seam and no run admission, so binding
-// begin/execute here would mean inventing the half that is missing.
+// (production_model_egress_linux.go) and keeps it for a future executor, and
+// generation:begin opens a run against it (production_generation_begin_linux.go),
+// but the lane still owns no executor and no dispatch seam, so execute/resume
+// stay unbound.
 //
 // The projection is reused verbatim from the durable S1 provider instead of being
 // rewritten, so the browser receives the same MainGenerationRunView the verified

@@ -362,10 +362,11 @@ func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller)
 
 // ModelEgress is the committed model-egress policy a future generation executor
 // must dispatch through. It is deliberately not reachable from any browser
-// operation: this lane still owns no dispatch seam, so the 13 generation
-// execution names keep failing closed at GO_OPERATION_NOT_MIGRATED even when a
-// policy exists. A nil client with a symbolic refusal means the committed config
-// named no usable origin, which is never widened into a default-allow policy.
+// operation: this lane still owns no dispatch seam, so the generation dispatch
+// names keep failing closed at GO_OPERATION_NOT_MIGRATED even when a policy
+// exists - generation:begin only opens a run and never dials it. A nil client
+// with a symbolic refusal means the committed config named no usable origin,
+// which is never widened into a default-allow policy.
 func (p *productionOpen) ModelEgress() (*egress.Client, error) {
 	if p == nil {
 		return nil, errProductionModelEgressUnavailable
@@ -514,12 +515,27 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// reads. generation:list and generation:read project the author's own ledger
 	// rows under the live lease (SELECT-only, no provider call), and the four
 	// llm reads answer from the committed global generation this lane already
-	// pinned. Every execution name stays unbound: the committed model-egress
-	// policy above is a dispatch boundary a future executor must dial through, but
-	// this lane still owns no executor, no dispatch seam and no run admission to
-	// hand it one, so begin/execute/resume and the six llm setters keep failing
-	// closed at GO_OPERATION_NOT_MIGRATED rather than being installed as handlers
-	// that could only refuse.
+	// pinned. Every dispatch name stays unbound: the committed model-egress policy
+	// above is a dispatch boundary a future executor must dial through, but this
+	// lane still owns no executor and no dispatch seam, so execute/resume and the
+	// six llm setters keep failing closed at GO_OPERATION_NOT_MIGRATED rather than
+	// being installed as handlers that could only refuse.
+	//
+	// generation:begin is the one run-admission name this lane now owns, and it
+	// is the identical reduced admission the verified synthetic lane implements
+	// (production_generation_begin_linux.go): it opens a ledger run under the live
+	// lease from the committed config and writes the root budget row and the run
+	// row. It reserves no attempt, marks nothing dispatched and constructs no
+	// provider client, so generation:execute and the other dispatch names below
+	// stay unbound and keep failing closed.
+	if begin, beginErr := newProductionGenerationBegin(open); beginErr == nil {
+		if bindErr := server.BindGenerationBegin(&transport.GenerationProvider{Begin: begin.Begin}); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+	} else {
+		log.Printf("novel-server: production generation begin unavailable (%v); generation:begin stays unbound", beginErr)
+	}
 	for _, bind := range []func() error{
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return server.BindModelReads(open.config, open.startup) },

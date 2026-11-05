@@ -164,6 +164,27 @@ func (s *Server) BindGenerationReads(provider *GenerationProvider) error {
 	return s.bindGenerationOperations(operations)
 }
 
+// BindGenerationBegin installs exactly one execution name, generation:begin,
+// and nothing else. It exists because a lane can own run admission (open a
+// ledger run under its live lease) without owning dispatch: the remaining twelve
+// names of BindGeneration must keep failing closed at GO_OPERATION_NOT_MIGRATED
+// rather than being installed as handlers that can only refuse. A nil provider,
+// or one with no Begin, installs nothing and is not an error.
+//
+// The installed handler shares the family adapter, so the wire arity
+// (request + frozen expected context), the three-key session fence and the
+// mutating business DTO are identical to generation:begin in BindGeneration.
+func (s *Server) BindGenerationBegin(provider *GenerationProvider) error {
+	if provider == nil || provider.Begin == nil {
+		return nil
+	}
+	return s.bindGenerationOperations([]generationOperation{
+		{"generation:begin", 1, true, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Begin(ctx, caller, expected, args[0])
+		}},
+	})
+}
+
 // generationOperation is one generation-family binding. The shared adapter below
 // is what makes every operation in the family answer with the same envelopes, so
 // the graph binder reuses it instead of copying the rules.

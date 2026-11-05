@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -600,8 +601,10 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 
 	// The execution half and the three config setters are not installed here, so
 	// they keep answering the lane's fail-closed 501 instead of a fake success.
+	// generation:begin is bound by the run-admission binder and is asserted by
+	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease instead.
 	for _, operation := range []string{
-		"generation:begin", "generation:execute", "generation:cancel",
+		"generation:execute", "generation:cancel",
 		"llm:set-stage-model", "llm:set-default-model", "llm:set-default-embedding-model", "llm:save-model",
 	} {
 		if response := author.call(t, operation, []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
@@ -617,5 +620,238 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 	}
 	if !bytes.Equal(afterRefusals, seeded) {
 		t.Fatal("a refused generation read changed the admitted author database")
+	}
+}
+
+// productionCommitGenerationPurpose rewrites the fixture's private model store
+// before the lane pins it: the one story profile has to name the generation
+// purpose the run admission requires, and nothing else about the committed
+// document changes.
+func productionCommitGenerationPurpose(t *testing.T, root, modelID string) {
+	t.Helper()
+	path := productionCommittedModelsPath(root)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	if err := json.Unmarshal(raw, &records); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range records {
+		if id, _ := record["id"].(string); id == modelID {
+			record["purposes"] = []any{"generation"}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the fixture commits no model profile %q", modelID)
+	}
+	encoded, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// productionEditorBeginRequest is the reduced BeginGenerationRequest the run
+// admission accepts: one real draft of the seeded project, the visible-text
+// output contract and the canonical prompt keys.
+func productionEditorBeginRequest(nonce string) map[string]any {
+	return map[string]any{
+		"operation":                       productionEditorGenerationOperation,
+		"uiActionNonce":                   nonce,
+		"modelId":                         productionTestModelID,
+		"chapterNumber":                   1,
+		"selectedDraftIds":                []any{1},
+		"selectedFinalizedDraftIds":       []any{},
+		"selectedBlueprintChapterNumbers": []any{},
+		"promptKeys":                      []any{"opening"},
+		"skillStages":                     []any{},
+		"authorInputs":                    []any{},
+		"output":                          "visible-text",
+	}
+}
+
+// productionEditorBeginRefusal asserts one mutating generation:begin answer
+// without pinning a single code: every honest refusal - malformed argument, stale
+// lease, missing committed config - is the business DTO with success false.
+func productionEditorBeginRefusal(t *testing.T, label string, response *httptest.ResponseRecorder) string {
+	t.Helper()
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s: HTTP %d %s", label, response.Code, response.Body.String())
+	}
+	var body struct {
+		Result struct {
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%s: %v %s", label, err, response.Body.String())
+	}
+	if body.Result.Success || !strings.HasPrefix(body.Result.Error, "Error: ") {
+		t.Fatalf("%s: generation:begin reported a usable run: %s", label, response.Body.String())
+	}
+	return body.Result.Error
+}
+
+// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease is the one run
+// admission this lane owns. generation:begin must answer 200 over a real
+// admitted project (not the fail-closed 501), write the ledger root budget row
+// and the run row the reused S1 admission writes, hand back a run whose budget
+// projection reads back through generation:read, refuse a stale lease, and leave
+// the author database byte-identical after a malformed call. It must not
+// dispatch: the run it opens has no attempt, and generation:execute stays 501.
+func TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease(t *testing.T) {
+	root, projectPath, contract, _, generation := productionEditorReadsRoot(t)
+	productionCommitGenerationPurpose(t, root, productionTestModelID)
+	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
+		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	author := newProductionDurableClient(t, handler, productionEditorTab)
+	var opened productionDurableOpenWire
+	author.decode(t, "project:open", []any{projectPath, "generation-begin-open-1", projectPath}, &opened)
+	if !opened.Success || !opened.DBReady || opened.Error != "" {
+		t.Fatalf("project:open refused an admitted project: %+v", opened)
+	}
+	frozen := map[string]any{
+		"projectId":   opened.Project["id"],
+		"projectPath": opened.Project["path"],
+		"leaseId":     opened.Project["sessionLease"],
+	}
+	if frozen["leaseId"] == "" || frozen["leaseId"] == nil {
+		t.Fatalf("project:open returned no session lease: %v", opened.Project)
+	}
+
+	// The name is bound: it is not the lane's fail-closed 501, and the admission
+	// really opens a run instead of refusing everything.
+	response := author.call(t, "generation:begin", []any{productionEditorBeginRequest("production-begin-nonce-1"), frozen})
+	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("generation:begin is still fail-closed in the production lane: %d %s", response.Code, response.Body.String())
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("generation:begin: HTTP %d %s", response.Code, response.Body.String())
+	}
+	var beginWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &beginWire); err != nil || beginWire.Result == nil {
+		t.Fatalf("generation:begin envelope: %v %s", err, response.Body.String())
+	}
+	run := beginWire.Result
+	if run["status"] != "running" || run["operation"] != productionEditorGenerationOperation {
+		t.Fatalf("generation:begin returned the wrong run: %v", run)
+	}
+	if run["nonReplayable"] != false || run["inFlight"] != false {
+		t.Fatalf("a freshly opened run is not replayable: %v", run)
+	}
+	handle, ok := run["handle"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation:begin returned no handle: %v", run)
+	}
+	if handle["projectId"] != productionEditorProjectID || handle["epoch"] != frozen["leaseId"] ||
+		handle["runId"] == "" || handle["rootActionId"] == "" {
+		t.Fatalf("generation:begin returned the wrong run identity: %v", handle)
+	}
+	if handle["runId"] == generation.RunID {
+		t.Fatalf("generation:begin reused the seeded run instead of opening one: %v", handle)
+	}
+	// Nothing was dispatched, so the run has no attempt to diagnose yet.
+	if diagnostics, ok := run["budgetDiagnostics"].([]any); !ok || len(diagnostics) != 0 {
+		t.Fatalf("generation:begin dispatched an attempt: %v", run["budgetDiagnostics"])
+	}
+
+	// The ledger rows the admission wrote are readable back through
+	// generation:read: the root budget row first, then the run row. An empty
+	// budget projection here is exactly the insert-order defect this asserts
+	// against, so every bound it carries must come back populated.
+	var view map[string]any
+	productionEditorDecode(t, author, "generation:read", []any{handle, frozen}, &view)
+	if view["status"] != "running" || view["operation"] != productionEditorGenerationOperation {
+		t.Fatalf("generation:read returned the wrong run: %v", view)
+	}
+	if view["nonReplayable"] != false {
+		t.Fatalf("generation:read reports the live run as non-replayable: %v", view)
+	}
+	budget, ok := view["budget"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation:read returned no budget projection: %v", view)
+	}
+	if budget["maxAttempts"] != float64(syntheticMaxPhysicalRequests) {
+		t.Fatalf("generation:read lost the ledger's attempt bound: %v", budget)
+	}
+	if tokenCap, ok := budget["maxRequestedOutputTokens"].(float64); !ok || tokenCap <= 0 {
+		t.Fatalf("generation:read lost the ledger's token liability bound: %v", budget)
+	}
+	if deadline, ok := budget["deadlineAt"].(float64); !ok || deadline <= 0 {
+		t.Fatalf("generation:read lost the active-elapsed deadline: %v", budget)
+	}
+	ledger, ok := view["ledger"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation:read returned no ledger diagnostics: %v", view)
+	}
+	policy, ok := ledger["policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation:read returned no committed budget policy: %v", ledger)
+	}
+	if policy["maxPhysicalRequests"] != float64(syntheticMaxPhysicalRequests) ||
+		policy["maxActiveElapsedMs"] != float64(syntheticMaxActiveElapsedMs) {
+		t.Fatalf("generation:read returned the wrong budget policy: %v", policy)
+	}
+	if outputCap, ok := policy["maxOutputPerRequest"].(float64); !ok || outputCap <= 0 {
+		t.Fatalf("generation:read returned no per-request output cap: %v", policy)
+	}
+	// Opening a run reserved nothing: no attempt, no dispatch, no liability.
+	if ledger["physicalRequests"] != float64(0) || ledger["tokenLiability"] != float64(0) {
+		t.Fatalf("generation:begin reserved a request without dispatching: %v", ledger)
+	}
+
+	// A stale lease is refused under the same fence the read half uses, and it
+	// must not open a second run.
+	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
+	if code := productionEditorBeginRefusal(t, "stale lease",
+		author.call(t, "generation:begin", []any{productionEditorBeginRequest("production-begin-nonce-2"), stale})); code == "" {
+		t.Fatal("a stale-lease generation:begin was not refused")
+	}
+
+	// A malformed argument is refused before the admission touches the database:
+	// the author database bytes are unchanged and the ledger gained no run.
+	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
+	before, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := productionEditorBeginRequest("production-begin-nonce-3")
+	malformed["unknownAuthority"] = "renderer-supplied"
+	code := productionEditorBeginRefusal(t, "malformed request",
+		author.call(t, "generation:begin", []any{malformed, frozen}))
+	if !strings.Contains(code, "GENERATION_BEGIN_INVALID") {
+		t.Fatalf("a malformed generation:begin refused with %q instead of the admission's own code", code)
+	}
+	after, err := os.ReadFile(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a malformed generation:begin changed the admitted author database")
+	}
+	var runs []map[string]any
+	productionEditorDecode(t, author, "generation:list", []any{frozen}, &runs)
+	if len(runs) != 2 {
+		t.Fatalf("generation:list returned %d runs; want the seeded run and the one admitted run: %v", len(runs), runs)
+	}
+
+	// The dispatch half is still not this lane's: execute keeps failing closed.
+	if response := author.call(t, "generation:execute", []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
+		!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("generation:execute answered %d instead of the lane's fail-closed 501: %s", response.Code, response.Body.String())
 	}
 }
