@@ -17,6 +17,21 @@ import (
 // is intentionally not installed by scratch-only main.
 func(s *Server) BindGlobalConfig(config *globalconfig.Service,startup *globalconfig.Startup)error {
  if config==nil||startup==nil{return errors.New("GLOBAL_CONFIG_PROVIDER_REQUIRED")}
+ return s.bindOperations(globalConfigHandlers(config,startup,true))
+}
+
+// BindGlobalConfigReads publishes only the read and acknowledgement half of the
+// same family. It exists for a lane admitted read-only over a real author data
+// directory: config:set writes the author's committed global generation, so it
+// keeps failing closed at GO_OPERATION_NOT_MIGRATED until a lane owns that
+// write. Publication stays atomic, and the shared handler bodies below keep the
+// two surfaces from drifting apart.
+func(s *Server) BindGlobalConfigReads(config *globalconfig.Service,startup *globalconfig.Startup)error {
+ if config==nil||startup==nil{return errors.New("GLOBAL_CONFIG_PROVIDER_REQUIRED")}
+ return s.bindOperations(globalConfigHandlers(config,startup,false))
+}
+
+func globalConfigHandlers(config *globalconfig.Service,startup *globalconfig.Startup,writable bool)map[string]Operation {
  handlers:=map[string]Operation{}
  handlers["config:get"]=func(ctx context.Context,caller Caller,args []any)(any,error){
   if len(args)!=0{return nil,security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
@@ -25,7 +40,7 @@ func(s *Server) BindGlobalConfig(config *globalconfig.Service,startup *globalcon
   value,err:=config.Get();if err!=nil{return nil,globalConfigPublicError(err)}
   return publicConfig(value),nil
  }
- handlers["config:set"]=func(ctx context.Context,caller Caller,args []any)(any,error){
+ if writable{handlers["config:set"]=func(ctx context.Context,caller Caller,args []any)(any,error){
   if len(args)!=1{return nil,security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
   input,ok:=args[0].(map[string]any);if !ok{return nil,security.NewHTTPError(http.StatusBadRequest,"CONFIG_INVALID")}
   for key:=range input{if (!configPublicFields[key]||key=="stageModelIds")&&key!="proxy"{return nil,security.NewHTTPError(http.StatusBadRequest,"CONFIG_FIELD_DENIED")}}
@@ -37,7 +52,7 @@ func(s *Server) BindGlobalConfig(config *globalconfig.Service,startup *globalcon
   result:=config.Set(input)
   if !result.Success{return map[string]any{"success":false,"error":"GLOBAL_CONFIG_WRITE_FAILED"},nil}
   return map[string]any{"success":true},nil
- }
+ }}
  handlers["startup:get-state"]=func(ctx context.Context,caller Caller,args []any)(any,error){
   if len(args)!=0{return nil,security.NewHTTPError(http.StatusBadRequest,"INVALID_ARGUMENTS")}
   return startup.State(startupCaller(caller),true),nil
@@ -46,7 +61,7 @@ func(s *Server) BindGlobalConfig(config *globalconfig.Service,startup *globalcon
   if len(args)!=1{return false,nil}
   return startup.AppearanceAck(startupCaller(caller),true,args[0]),nil
  }
- return s.bindOperations(handlers)
+ return handlers
 }
 
 var configPublicFields=map[string]bool{

@@ -46,8 +46,17 @@ func run() error {
 	durableGlobalDir := flag.String("synthetic-durable-global-dir", "", "optional private trusted model config root for the durable generation lane")
 	durableModelOrigins := flag.String("synthetic-durable-model-origins", "", "comma-separated trusted HTTP(S) origins for the durable generation lane")
 	flag.Parse()
-	if os.Getenv("NODE_ENV") == "production" || os.Getenv("NOVEL_DATA_ROOT") != "" {
-		return errors.New("migration scaffold refuses production mode and data mounts")
+	// A configured NOVEL_DATA_ROOT selects the production lane below; the
+	// synthetic lanes keep their own private temporary roots. Neither may be
+	// combined, so a real author data mount can never be reached by a flag that
+	// was meant for a disposable database.
+	dataRoot := strings.TrimSpace(os.Getenv("NOVEL_DATA_ROOT"))
+	if dataRoot == "" {
+		if os.Getenv("NODE_ENV") == "production" {
+			return errors.New("production mode requires NOVEL_DATA_ROOT: this binary serves an author data directory, never a synthetic lane")
+		}
+	} else if *libraryDir != "" || *uploadDir != "" || *globalDir != "" || *completedGlobalParent != "" || *readSchema != "" || *durableDir != "" || *durableGlobalDir != "" || *durableModelOrigins != "" || *modelOrigins != "" {
+		return errors.New("a real NOVEL_DATA_ROOT cannot be combined with a synthetic migration lane")
 	}
 	host, _, err := net.SplitHostPort(*address)
 	if err != nil {
@@ -131,7 +140,12 @@ func run() error {
 	}
 	var handler http.Handler
 	var cleanup func()
-	if *durableDir != "" {
+	if dataRoot != "" {
+		// A real data directory: admit the committed global generation and every
+		// current-schema author database read-only, then serve startup/config/
+		// library reads. Everything else keeps returning GO_OPERATION_NOT_MIGRATED.
+		handler, cleanup, err = productionHandler(registry, *address, *staticDir, dataRoot)
+	} else if *durableDir != "" {
 		handler, cleanup, err = migrationHandlerWithDurable(registry, *address, *staticDir, *durableDir, *durableConfig)
 	} else if *completedGlobalParent != "" {
 		handler, cleanup, err = migrationHandlerWithCompletedGlobal(registry, *address, *staticDir, *completedGlobalParent, origins)
@@ -147,7 +161,11 @@ func run() error {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
-	log.Printf("Go migration scaffold at %s; author writes only in private synthetic lanes; no Node fallback; not production-ready", *address)
+	if dataRoot != "" {
+		log.Printf("Go production read lane at %s over the configured NOVEL_DATA_ROOT; unported operations keep failing closed", *address)
+	} else {
+		log.Printf("Go migration scaffold at %s; author writes only in private synthetic lanes; no Node fallback; not production-ready", *address)
+	}
 	select {
 	case err := <-done:
 		if errors.Is(err, http.ErrServerClosed) {
