@@ -542,7 +542,13 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		}
 		for key := range usage {
 			switch key {
-			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result":
+			// draftCommit and directoryProgress are the two receipts a batch
+			// chapter writes after its draft lands: the first records the draft
+			// row the commit created, the second the directory counter it moved.
+			// Both are projections of rows that exist elsewhere in this database,
+			// so admitting the keys here does not let an attempt claim an effect
+			// the store did not perform.
+			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result", "draftCommit", "directoryProgress":
 			case "graphEffects", "finalizationEffect":
 				if !effectKeys[key] {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")

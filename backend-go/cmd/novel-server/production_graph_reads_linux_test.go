@@ -235,14 +235,15 @@ func productionGraphReadsSeedLedger(t *testing.T, database string) (runID, rootI
 		})
 	ctx := context.Background()
 	graph := productionGraphReadsSeedRun(t, ctx, ledger, productionGraphReadsSeedRequest(t,
-		productionGraphReadsOperation, productionGraphReadsProjectID, productionGraphReadsManifest(t)))
+		productionGraphReadsOperation, productionGraphReadsProjectID, productionGraphReadsFrozenEpoch,
+		productionGraphReadsManifest(t)))
 	owned := productionGraphReadsSlot(productionGraphReadsOwnedFinalizationID)
 	productionGraphReadsSeedRun(t, ctx, ledger, productionGraphReadsSeedRequest(t,
-		productionGraphReadsFinalizationOp, productionGraphReadsProjectID,
+		productionGraphReadsFinalizationOp, productionGraphReadsProjectID, productionGraphReadsFrozenEpoch,
 		productionGraphReadsFinalizationManifest(t, owned)))
 	foreign := productionGraphReadsSlot(productionGraphReadsForeignFinalizationID)
 	productionGraphReadsSeedRun(t, ctx, ledger, productionGraphReadsSeedRequest(t,
-		productionGraphReadsFinalizationOp, productionGraphReadsForeignProjectID,
+		productionGraphReadsFinalizationOp, productionGraphReadsForeignProjectID, productionGraphReadsFrozenEpoch,
 		productionGraphReadsFinalizationManifest(t, foreign)))
 	// The permit hashes the file at project:open, so the seeded rows have to be
 	// on disk before it runs.
