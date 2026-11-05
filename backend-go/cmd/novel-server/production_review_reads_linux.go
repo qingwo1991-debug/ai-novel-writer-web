@@ -39,8 +39,11 @@ import (
 // and no BEGIN IMMEDIATE on this path, so a read here commits nothing and the
 // borrow's release closure is a re-verification, not a write acknowledge. The review and
 // revision mutations (create, replace-pending, merge, mark-merged,
-// mark-discarded) and the remaining review reads (get-latest, next-index) stay
-// unbound on this lane and keep failing closed at GO_OPERATION_NOT_MIGRATED.
+// mark-discarded) are absent here by design: they belong to the write batch
+// (production_review_write_linux.go), which installs them only behind the author
+// write lease. The remaining review reads (get-latest, next-index) are served by
+// the singleton reads, and a lane that binds neither keeps answering
+// GO_OPERATION_NOT_MIGRATED.
 //
 // db:review-cycle-get keeps the original's exact nullable contract: a review
 // with no saved cycle answers null, and a review whose cycle row exists is
