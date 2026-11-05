@@ -1323,3 +1323,36 @@ smoke-tested container as `novel-go-image` (about 43 MB gzipped); `gh run downlo
 to `native-web-image.yml` was reverted: that workflow's publishing job builds the **legacy Node** image and
 only runs on manual dispatch.
 
+### 2026-11-05 — the Go image now serves the React app (browser path unblocked)
+
+Green: `9947b504`, all three jobs, including the container smoke.
+
+**What changed.** `Dockerfile.go` gained a `node:22-bookworm-slim` build stage that reuses the repo's own
+frontend recipe (`pnpm install --ignore-scripts --frozen-lockfile` then
+`vite build --mode web --config vite.web.config.ts`, exactly as `Dockerfile.web:12-17,36`), and copies
+`/build/dist-web` into the final `ubuntu:24.04` stage, which runs the server with
+`-static-dir /app/dist-web`. Node never reaches the runtime stage, so the existing "no node/npm in the
+container" assertion still holds.
+
+**Static serving had three real gaps, now fixed** (`internal/transport/static.go`): client-side routes
+returned 404 (no SPA fallback - now extensionless unresolved paths and trailing-slash routes fall back to
+`index.html`, while 400/403 and dotted paths keep their status); every asset got a flat `max-age=3600`
+(now `assets/<name>-<8-hash>.*` is one-year immutable, `index.html` is `no-store`, other public files 1h);
+and the MIME table lacked fonts/images/maps, so the CJK reading faces shipped as
+`application/octet-stream`. All 193 built asset names match the hash pattern.
+
+**CI now proves it on the built image** (`go-backend.yml:597-616`): `/` is 401 bare and 200 `text/html`
+with the header; a deep client route is byte-identical to the index; a hashed asset returns 200
+`text/javascript`; and the container still has no `node`/`npm`.
+
+**Deployment consequence, now explicit:** static files require `X-Novel-User` just like `/api/*`, and the
+server refuses non-loopback listeners (`main.go:57-59`). So the deployment must run the container with
+`--network host` (as the CI smoke does) and put an authenticating proxy in front that **overwrites** the
+header - `docker/nginx-ai-novel-writer-web.conf` already does Basic Auth into
+`proxy_set_header X-Novel-User $remote_user`; it must be retargeted from the Node port to
+`127.0.0.1:16082`. `-p 16082:16082` cannot work, because the process binds loopback inside its network
+namespace.
+
+**Cost:** the image and the exported artifact grow by roughly 96 MB, most of it the CJK font files under
+`public/fonts`. The container job's timeout went 15 -> 25 minutes for the cold `pnpm install` + Vite build.
+
