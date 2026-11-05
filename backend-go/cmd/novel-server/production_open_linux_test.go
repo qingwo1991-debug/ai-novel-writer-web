@@ -36,6 +36,12 @@ const (
 	productionTestOlderID    = "8c2b7d41-5a6e-4f39-bb02-1d9e4c7a3f58"
 	productionTestUnknownID  = "b41f2c60-9d3a-4a18-8e77-5c0b1a6d2e94"
 	productionTestTab        = "client_1234567890"
+	// The committed generation carries two saved model profiles and a routing
+	// assignment. The three llm reads have to echo exactly these, so a 200 that
+	// returned null or an empty stage map cannot pass as a migrated read.
+	productionTestModelID          = "ci-model-1"
+	productionTestEmbeddingModelID = "ci-embedding-model-1"
+	productionTestModelSecret      = "synthetic-production-model-key"
 )
 
 const (
@@ -90,8 +96,27 @@ func syntheticProductionDataDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	// The deployed extension key must never reach the browser through config:get.
-	committed := `{"theme":"light","editorFontSize":17,"defaultModelId":null,"deploymentExtension":{"hostRoot":"/srv/private"}}`
+	// defaultModelId, defaultEmbeddingModelId and stageModelIds are the committed
+	// routing truth the llm reads project, so the fixture commits real ids instead
+	// of nulls: a read that echoed a null would prove nothing about admission.
+	committed := `{"theme":"light","editorFontSize":17,"defaultModelId":"` + productionTestModelID +
+		`","defaultEmbeddingModelId":"` + productionTestEmbeddingModelID +
+		`","stageModelIds":{"drafting":"` + productionTestModelID +
+		`"},"deploymentExtension":{"hostRoot":"/srv/private"}}`
 	if err := os.WriteFile(filepath.Join(generation, "config.json"), []byte(committed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// models.json is a committed document of the generation (an optional one in
+	// the pinned contract), so the private store exists the way it does on a real
+	// author machine: one story profile and one embedding profile, 0600, with a
+	// credential the browser projection has to withhold.
+	models := `[{"id":"` + productionTestModelID +
+		`","provider":"custom","protocol":"openai","baseUrl":"https://synthetic.invalid/v1","apiKey":"` + productionTestModelSecret +
+		`","name":"合成正文模型","modelName":"ci-story-model","temperature":0.7,"maxTokens":1024},` +
+		`{"id":"` + productionTestEmbeddingModelID +
+		`","provider":"custom","protocol":"openai","baseUrl":"https://synthetic.invalid/v1","apiKey":"synthetic-production-embedding-key"` +
+		`,"name":"合成向量模型","modelName":"ci-embedding-model"}]`
+	if err := os.WriteFile(filepath.Join(generation, "models.json"), []byte(models), 0600); err != nil {
 		t.Fatal(err)
 	}
 	library := filepath.Join(root, productionLibraryDirectory)

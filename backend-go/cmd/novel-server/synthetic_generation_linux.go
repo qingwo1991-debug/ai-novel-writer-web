@@ -1276,6 +1276,57 @@ func (s *syntheticGeneration) Read(ctx context.Context, caller transport.Caller,
 	return s.viewOf(ctx, ledger, db, run)
 }
 
+// ReadCommitted returns the run view for one committed handle whose frozen
+// binding epoch need not equal the caller's current lease. The caller still has
+// to hold a live lease for the project it names: the admission below is the same
+// single-writer fence every other operation uses, so a stale or foreign tab gets
+// a lease refusal, never data.
+//
+// The original's read path checks identity only — projectId plus the exact
+// handle — and reports an older epoch as `nonReplayable` instead of refusing it
+// (electron/services/main-generation-owner.ts:333), because a lease rotates on
+// every save and a committed run outlives the lease it was frozen under.
+// syntheticRequireRun deliberately refuses that case, which is right for a
+// mutation and wrong for history, so the epoch-independent read is its own
+// method rather than a relaxed mutation gate.
+func (s *syntheticGeneration) ReadCommitted(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	handle, err := syntheticParseHandle(arg)
+	if err != nil {
+		return nil, err
+	}
+	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	args, err := syntheticArgs(handle.RunID)
+	if err != nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	value, err := ledger.CallJSON(ctx, "get", args)
+	if err != nil {
+		return nil, err
+	}
+	run := syntheticMap(value)
+	if run == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	binding := syntheticMap(run["binding"])
+	if binding == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	// Identity, exactly as the original's handleOf(run) comparison: the request
+	// must name this run's own project, epoch, root and run id, and the run must
+	// belong to the project this frozen context names. Only the equality between
+	// binding.epoch and the *calling* lease is dropped.
+	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
+		binding["projectId"] != scope.Project || binding["epoch"] != handle.Epoch ||
+		syntheticMap(binding["sourceManifest"]) == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	return s.viewFor(ctx, ledger, db, run, scope.Epoch)
+}
+
 // List returns MainGenerationRunSummary entries (newest first) for the frozen
 // project. It is read-only and only ever projects runs of this project.
 func (s *syntheticGeneration) List(ctx context.Context, caller transport.Caller, expected map[string]any) (any, error) {
@@ -1592,6 +1643,16 @@ func (s *syntheticGeneration) DiscardCandidate(ctx context.Context, caller trans
 // fields match the original projection (artifacts filtered by epoch, discarded
 // artifacts excluded from candidates, token liability per attempt).
 func (s *syntheticGeneration) viewOf(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, runValue any) (map[string]any, error) {
+	return s.viewFor(ctx, ledger, db, runValue, "")
+}
+
+// viewFor is viewOf for callers that hold the caller's current lease. An empty
+// epoch means the run was reached through a path whose fence already proved
+// binding.epoch equals that lease, so the original's epoch inequality folds away
+// as before. A committed history read passes the caller's lease instead: the run
+// it returns may be from an older epoch, and the original reports exactly that as
+// `nonReplayable` rather than hiding it.
+func (s *syntheticGeneration) viewFor(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, runValue any, epoch string) (map[string]any, error) {
 	run := syntheticMap(runValue)
 	if run == nil {
 		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
@@ -1680,10 +1741,14 @@ func (s *syntheticGeneration) viewOf(ctx context.Context, ledger *store.Generati
 	if remaining < 0 {
 		remaining = 0
 	}
-	// The fence already proved binding.epoch equals the frozen lease, so the
-	// original epoch inequality is folded away; only status/budget/in-flight
-	// replayability gates remain.
+	// The begin/resume/mutation paths already proved binding.epoch equals the
+	// frozen lease, so there the original epoch inequality is folded away and
+	// only status/budget/in-flight replayability gates remain. A history read
+	// passes the caller's own lease and adds the epoch term back.
 	nonReplayable := run["status"] != "running" || syntheticBool(blocked) || inFlightValue == true
+	if epoch != "" && syntheticString(binding["epoch"]) != epoch {
+		nonReplayable = true
+	}
 	handle := map[string]any{
 		"projectId":    binding["projectId"],
 		"epoch":        binding["epoch"],

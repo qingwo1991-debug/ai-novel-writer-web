@@ -4,18 +4,22 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 const (
@@ -27,15 +31,23 @@ const (
 	productionEditorSeed        = "第一章原稿：他推开门。"
 	productionEditorCharacter   = "甲"
 	productionEditorChapter     = "第一章 门"
+	// The committed generation history seeded into the same project database: one
+	// settled run frozen under a lease that the live session no longer holds, so
+	// the read has to serve history instead of refusing a stale epoch.
+	productionEditorGenerationEpoch     = "lease-0000000001-history"
+	productionEditorGenerationOperation = "chapter-draft"
+	productionEditorGenerationNonce     = "ci-generation-nonce-1"
+	productionEditorGenerationText      = "草稿候选：门后有人。"
 )
 
 // productionEditorReadsRoot builds a disposable production data root whose only
 // admitted project is a real original-schema v7 database (the shipped baseline)
 // carrying synthetic rows: one core row, one content, one working draft, one
-// character card and one chapter blueprint. Those are exactly the rows the
-// editor's read surface has to hand back, so a 200 that returns an empty list, a
-// default shape or a fabricated stage cannot pass.
-func productionEditorReadsRoot(t *testing.T) (root, projectPath string, contract admission.SchemaContract, seeded []byte) {
+// character card and one chapter blueprint, plus one settled generation run in the
+// project's own ledger. Those are exactly the rows the editor's read surface has
+// to hand back, so a 200 that returns an empty list, a default shape or a
+// fabricated stage cannot pass.
+func productionEditorReadsRoot(t *testing.T) (root, projectPath string, contract admission.SchemaContract, seeded []byte, generation productionEditorGeneration) {
 	t.Helper()
 	oracle := os.Getenv("GO_SQLITE_CONTRACT")
 	if oracle == "" {
@@ -73,10 +85,11 @@ func productionEditorReadsRoot(t *testing.T) (root, projectPath string, contract
 		t.Fatal(err)
 	}
 	seedProductionEditorRows(t, database)
+	generation = seedProductionGenerationRun(t, database)
 	if seeded, err = os.ReadFile(database); err != nil {
 		t.Fatal(err)
 	}
-	return root, projectPath, contract, seeded
+	return root, projectPath, contract, seeded, generation
 }
 
 // seedProductionEditorRows writes the synthetic author rows into the copied
@@ -124,6 +137,13 @@ func seedProductionEditorRows(t *testing.T, database string) {
 	}
 	// The lane admits the file itself, so the seeded write must be checkpointed
 	// into it: no sidecar may carry rows the admitted digest does not cover.
+	productionEditorCheckpoint(t, db, database)
+}
+
+// productionEditorCheckpoint folds the write-ahead log into the admitted file and
+// removes the sidecars, so the bytes the test reads are the bytes the lane admits.
+func productionEditorCheckpoint(t *testing.T, db *sql.DB, database string) {
+	t.Helper()
 	var backfill, logFrames, checkpointed int64
 	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&backfill, &logFrames, &checkpointed); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		_ = db.Close()
@@ -139,6 +159,99 @@ func seedProductionEditorRows(t *testing.T, database string) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+// productionEditorGeneration is the identity of the one settled run seeded into
+// the admitted project database, so the assertions compare against what the ledger
+// actually wrote instead of a hard-coded guess.
+type productionEditorGeneration struct {
+	RootActionID string
+	RunID        string
+	AttemptID    string
+	Epoch        string
+	Text         string
+}
+
+// productionEditorGenerationRequest is the frozen run binding the ledger opens: a
+// real drafting binding with the nine hashes, an opaque source manifest and a
+// budget, exactly the shape the shipped ledger accepts. It is written as JSON text
+// because the ledger parses it with its own order-preserving decoder.
+func productionEditorGenerationRequest() string {
+	hash := strings.Repeat("a", 64)
+	return `{"projectId":"` + productionEditorProjectID + `","epoch":"` + productionEditorGenerationEpoch +
+		`","operation":"` + productionEditorGenerationOperation + `","uiActionNonce":"` + productionEditorGenerationNonce +
+		`","frozenInputHash":"` + hash + `","fingerprint":{"chapterBriefHash":"` + hash + `","authorGuidanceHash":"` + hash +
+		`","dependencyHash":"` + hash + `","contextSnapshotHash":"` + hash + `","templateHash":"` + hash +
+		`","skillSnapshotHash":"` + hash + `","modelLeaseRevision":"` + hash + `","policyHash":"` + hash +
+		`","outputContractHash":"` + hash + `"},"contextSnapshotId":"ci-context-snapshot-1","sourceManifest":{"operation":"` +
+		productionEditorGenerationOperation + `"},"sourceRefs":[],"budget":{"maxPhysicalRequests":3,"maxTokenLiability":4000,` +
+		`"maxOutputPerRequest":1000,"maxActiveElapsedMs":600000}}`
+}
+
+// seedProductionGenerationRun writes one complete settlement chain through the real
+// ledger - open, reserve, dispatch, snapshot, settle - so the generation reads
+// project rows the shipped ledger wrote. A hand-written row set would prove only
+// that the reader can read itself.
+func seedProductionGenerationRun(t *testing.T, database string) productionEditorGeneration {
+	t.Helper()
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
+	uri.RawQuery = "mode=rw&_foreign_keys=on"
+	db, err := sql.Open("sqlite3", uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	ordinal := 0
+	ledger := store.NewGenerationLedger(db, func() int64 { return 1700000000000 }, func() string {
+		ordinal++
+		return fmt.Sprintf("production-ledger-%02d", ordinal)
+	})
+	ctx := context.Background()
+	value, err := ledger.CallJSON(ctx, "open", json.RawMessage("["+productionEditorGenerationRequest()+"]"))
+	if err != nil {
+		t.Fatalf("seed generation open: %v", err)
+	}
+	run, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("seed generation open returned %T", value)
+	}
+	runID, _ := run["runId"].(string)
+	rootID, _ := run["rootActionId"].(string)
+	if runID == "" || rootID == "" {
+		t.Fatalf("seed generation open returned no identity: %v", run)
+	}
+	reserved, err := ledger.Call(ctx, "reserve", []any{runID, productionEditorGenerationNonce, strings.Repeat("b", 64), 200, 100})
+	if err != nil {
+		t.Fatalf("seed generation reserve: %v", err)
+	}
+	receipt, _ := reserved.(map[string]any)
+	attempt, _ := receipt["attempt"].(map[string]any)
+	attemptID, _ := attempt["attemptId"].(string)
+	if attemptID == "" {
+		t.Fatalf("seed generation reserve returned no attempt: %v", reserved)
+	}
+	if _, err := ledger.Call(ctx, "markDispatched", []any{attemptID}); err != nil {
+		t.Fatalf("seed generation markDispatched: %v", err)
+	}
+	if _, err := ledger.Call(ctx, "snapshot", []any{attemptID, 0, productionEditorGenerationText}); err != nil {
+		t.Fatalf("seed generation snapshot: %v", err)
+	}
+	settled, err := ledger.Call(ctx, "settle", []any{attemptID, map[string]any{"trusted": true, "actualTokens": 120}, "stop"})
+	if err != nil {
+		t.Fatalf("seed generation settle: %v", err)
+	}
+	if settled == nil {
+		t.Fatal("seed generation settle returned no receipt")
+	}
+	productionEditorCheckpoint(t, db, database)
+	return productionEditorGeneration{
+		RootActionID: rootID,
+		RunID:        runID,
+		AttemptID:    attemptID,
+		Epoch:        productionEditorGenerationEpoch,
+		Text:         productionEditorGenerationText,
 	}
 }
 
@@ -200,7 +313,7 @@ func productionEditorRefused(t *testing.T, client *productionDurableClient, labe
 // bound, answers 200 with the seeded rows, and refuses a stale, foreign or
 // absent lease without touching the admitted bytes.
 func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
-	root, projectPath, contract, seeded := productionEditorReadsRoot(t)
+	root, projectPath, contract, seeded, _ := productionEditorReadsRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
 		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
 	if err != nil {
@@ -337,5 +450,172 @@ func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 	}
 	if !bytes.Equal(afterRefusals, seeded) {
 		t.Fatal("a refused editor read changed the admitted author database")
+	}
+}
+
+// TestProductionLaneServesCommittedGenerationAndModelReads is the generation
+// family's read half in production. generation:list and generation:read project
+// the author's own committed ledger rows - including a settled run frozen under a
+// lease this session no longer holds - and the four llm reads project the pinned
+// global generation the lane already admitted. Every execution name and the three
+// config setters keep failing closed at 501, and no claimed read may answer 501:
+// a silently empty diagnostics list would be worse than the refusal.
+func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
+	root, projectPath, contract, seeded, generation := productionEditorReadsRoot(t)
+	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
+		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	author := newProductionDurableClient(t, handler, productionEditorTab)
+	var opened productionDurableOpenWire
+	author.decode(t, "project:open", []any{projectPath, "generation-open-1", projectPath}, &opened)
+	if !opened.Success || !opened.DBReady || opened.Error != "" {
+		t.Fatalf("project:open refused an admitted project: %+v", opened)
+	}
+	frozen := map[string]any{
+		"projectId":   opened.Project["id"],
+		"projectPath": opened.Project["path"],
+		"leaseId":     opened.Project["sessionLease"],
+	}
+	if frozen["leaseId"] == "" || frozen["leaseId"] == nil {
+		t.Fatalf("project:open returned no session lease: %v", opened.Project)
+	}
+
+	// generation:list is the project's committed run list, not an empty shelf.
+	var runs []map[string]any
+	productionEditorDecode(t, author, "generation:list", []any{frozen}, &runs)
+	if len(runs) != 1 {
+		t.Fatalf("generation:list returned %d runs; want the one seeded run: %v", len(runs), runs)
+	}
+	handle, ok := runs[0]["handle"].(map[string]any)
+	if !ok {
+		t.Fatalf("generation:list returned no handle: %v", runs[0])
+	}
+	if handle["runId"] != generation.RunID || handle["rootActionId"] != generation.RootActionID ||
+		handle["epoch"] != generation.Epoch || handle["projectId"] != productionEditorProjectID {
+		t.Fatalf("generation:list returned the wrong run identity: %v", handle)
+	}
+	if runs[0]["status"] != "running" || runs[0]["operation"] != productionEditorGenerationOperation {
+		t.Fatalf("generation:list returned the wrong summary: %v", runs[0])
+	}
+
+	// generation:read projects that run through the ledger's own receipts. The
+	// settling attempt is the diagnostics evidence, so an empty list here is the
+	// exact defect this assertion exists for.
+	var view map[string]any
+	productionEditorDecode(t, author, "generation:read", []any{handle, frozen}, &view)
+	if view["status"] != "running" || view["operation"] != productionEditorGenerationOperation {
+		t.Fatalf("generation:read returned the wrong run: %v", view)
+	}
+	diagnostics, ok := view["budgetDiagnostics"].([]any)
+	if !ok || len(diagnostics) != 1 {
+		t.Fatalf("generation:read returned %v budget diagnostics; want the settled attempt", view["budgetDiagnostics"])
+	}
+	if attempt, ok := diagnostics[0].(map[string]any); !ok || attempt["attemptId"] != generation.AttemptID {
+		t.Fatalf("generation:read diagnosed the wrong attempt: %v", diagnostics[0])
+	}
+	if view["inFlight"] != false {
+		t.Fatalf("a settled run reported an in-flight attempt: %v", view["inFlight"])
+	}
+	// The run is frozen under an older epoch: the original reports that as
+	// non-replayable instead of refusing to serve history.
+	if view["nonReplayable"] != true {
+		t.Fatalf("a run frozen under an older epoch is not reported non-replayable: %v", view["nonReplayable"])
+	}
+	candidates, ok := view["candidates"].([]any)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("generation:read lost the settled candidate: %v", view["candidates"])
+	}
+	if candidate, ok := candidates[0].(map[string]any); !ok || candidate["text"] != generation.Text {
+		t.Fatalf("generation:read did not carry the committed draft text: %v", candidates[0])
+	}
+
+	// A handle that does not name this run is refused, not answered with a view.
+	foreignHandle := map[string]any{}
+	for key, value := range handle {
+		foreignHandle[key] = value
+	}
+	foreignHandle["runId"] = "another-run"
+	if response := author.call(t, "generation:read", []any{foreignHandle, frozen}); response.Code == http.StatusOK {
+		t.Fatalf("generation:read answered a handle for another run: %s", response.Body.String())
+	}
+
+	// llm:list-models projects the committed private store with the credential
+	// stripped; the three routing reads echo the committed assignments.
+	var models []map[string]any
+	productionEditorDecode(t, author, "llm:list-models", []any{}, &models)
+	if len(models) != 2 || models[0]["id"] != productionTestModelID || models[0]["hasCredential"] != true ||
+		models[0]["modelName"] != "ci-story-model" || models[1]["id"] != productionTestEmbeddingModelID {
+		t.Fatalf("llm:list-models did not project the committed model store: %v", models)
+	}
+	if listing := author.call(t, "llm:list-models", []any{}); strings.Contains(listing.Body.String(), productionTestModelSecret) {
+		t.Fatalf("llm:list-models leaked the stored credential: %s", listing.Body.String())
+	}
+	var stageModels map[string]any
+	productionEditorDecode(t, author, "llm:get-stage-models", []any{}, &stageModels)
+	if stageModels["drafting"] != productionTestModelID {
+		t.Fatalf("llm:get-stage-models did not read the committed assignment: %v", stageModels)
+	}
+	var defaultModel any
+	productionEditorDecode(t, author, "llm:get-default-model", []any{}, &defaultModel)
+	if defaultModel != productionTestModelID {
+		t.Fatalf("llm:get-default-model did not read the committed default: %v", defaultModel)
+	}
+	var defaultEmbedding any
+	productionEditorDecode(t, author, "llm:get-default-embedding-model", []any{}, &defaultEmbedding)
+	if defaultEmbedding != productionTestEmbeddingModelID {
+		t.Fatalf("llm:get-default-embedding-model did not read the committed default: %v", defaultEmbedding)
+	}
+
+	// The reads did not move the admitted bytes: a ledger read that checkpointed
+	// or repaired the author database would show up here.
+	afterReads, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterReads, seeded) {
+		t.Fatal("a generation read changed the admitted author database")
+	}
+
+	// The fence is the same one the editor reads use: a foreign tab, a stale lease
+	// and an absent lease are refused for the newly bound generation reads too.
+	reads := []struct {
+		operation string
+		args      func(map[string]any) []any
+	}{
+		{"generation:list", func(m map[string]any) []any { return []any{m} }},
+		{"generation:read", func(m map[string]any) []any { return []any{handle, m} }},
+	}
+	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
+	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
+	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	for _, read := range reads {
+		productionEditorRefused(t, foreign, "foreign tab", read.operation, read.args(frozen))
+		productionEditorRefused(t, author, "stale lease", read.operation, read.args(stale))
+		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
+	}
+
+	// The execution half and the three config setters are not installed here, so
+	// they keep answering the lane's fail-closed 501 instead of a fake success.
+	for _, operation := range []string{
+		"generation:begin", "generation:execute", "generation:cancel",
+		"llm:set-stage-model", "llm:set-default-model", "llm:set-default-embedding-model", "llm:save-model",
+	} {
+		if response := author.call(t, operation, []any{handle, frozen}); response.Code != http.StatusNotImplemented ||
+			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("%s answered %d instead of the lane's fail-closed 501: %s", operation, response.Code, response.Body.String())
+		}
+	}
+
+	// Refusals and fail-closed answers are still reads: the bytes did not move.
+	afterRefusals, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterRefusals, seeded) {
+		t.Fatal("a refused generation read changed the admitted author database")
 	}
 }

@@ -132,6 +132,38 @@ func (s *Server) BindGeneration(provider *GenerationProvider) error {
 	return s.bindGenerationOperations(operations)
 }
 
+// BindGenerationReads installs only the committed-state half of the generation
+// family: the run list and one run view. Both are SELECT-only projections of the
+// project's own ledger rows, so a lane with no model profile, no egress policy
+// and no dispatch seam can answer them without inventing a provider.
+//
+// It is deliberately not a partial BindGeneration. BindGeneration registers all
+// thirteen names unconditionally and a nil field answers
+// GENERATION_OPERATION_UNSUPPORTED, which would turn a 501 into a bound handler
+// that can only refuse. Here a nil field installs nothing: the name keeps failing
+// closed at GO_OPERATION_NOT_MIGRATED, and a nil provider is not an error either,
+// because the caller may have nothing to lend yet.
+func (s *Server) BindGenerationReads(provider *GenerationProvider) error {
+	if provider == nil {
+		return nil
+	}
+	operations := make([]generationOperation, 0, 2)
+	if provider.Read != nil {
+		operations = append(operations, generationOperation{"generation:read", 1, false, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.Read(ctx, caller, expected, args[0])
+		}})
+	}
+	if provider.List != nil {
+		operations = append(operations, generationOperation{"generation:list", 0, false, func(ctx context.Context, caller Caller, expected map[string]any, args []any) (any, error) {
+			return provider.List(ctx, caller, expected)
+		}})
+	}
+	if len(operations) == 0 {
+		return nil
+	}
+	return s.bindGenerationOperations(operations)
+}
+
 // generationOperation is one generation-family binding. The shared adapter below
 // is what makes every operation in the family answer with the same envelopes, so
 // the graph binder reuses it instead of copying the rules.

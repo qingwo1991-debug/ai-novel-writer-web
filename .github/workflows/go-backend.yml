@@ -924,6 +924,128 @@ jobs:
             "$(jq -r '.error.code' "$work/stale-overview.json")" \
             | tee -a "$work/statuses.txt"
 
+          # The generation family's committed-state half plus the model
+          # configuration reads. generation:list/generation:read project the
+          # ledger rows the fixture committed through the shipped store, and the
+          # four llm reads project the committed generation's config.json and
+          # models.json. The epoch below is the fixture's frozen historical lease,
+          # which this session never held: the read must serve history and report
+          # it non-replayable instead of refusing a stale epoch. Every value here
+          # mirrors a fixture constant, so a drift fails instead of proving nothing.
+          generation_epoch=lease-0000000001-history
+          generation_operation=chapter-draft
+          generation_text='草稿候选：门后有人。'
+          model_id=ci-model-1
+          embedding_model_id=ci-embedding-model-1
+
+          call generation:list \
+            "$(jq -nc --argjson ctx "$editor_ctx" '{args: [$ctx]}')" \
+            "$work/generation-list.json"
+          assert_json "$work/generation-list.json" '
+            (.result | type) == "array"
+            and (.result | length) == 1
+            and .result[0].status == "running"
+            and .result[0].operation == $operation
+            and .result[0].handle.projectId == $id
+            and .result[0].handle.epoch == $epoch
+            and (.result[0].handle.runId | length) > 0
+            and (.result[0].handle.rootActionId | length) > 0
+          ' --arg id "$project_id" --arg epoch "$generation_epoch" --arg operation "$generation_operation"
+          run_handle=$(jq -c '.result[0].handle' "$work/generation-list.json")
+
+          call generation:read \
+            "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" '{args: [$handle, $ctx]}')" \
+            "$work/generation-read.json"
+          # An empty budgetDiagnostics is the defect this assertion exists for: the
+          # view must carry the settled attempt, its receipt-backed diagnostics and
+          # the committed candidate text, not a 200 with nothing in it.
+          assert_json "$work/generation-read.json" '
+            .result.status == "running"
+            and .result.operation == $operation
+            and (.result.budgetDiagnostics | length) == 1
+            and (.result.budgetDiagnostics[0].attemptId | length) > 0
+            and .result.inFlight == false
+            and .result.nonReplayable == true
+            and (.result.candidates | length) == 1
+            and .result.candidates[0].text == $text
+          ' --arg operation "$generation_operation" --arg text "$generation_text"
+
+          call llm:list-models \
+            "$(jq -nc '{args: []}')" \
+            "$work/llm-list-models.json"
+          assert_json "$work/llm-list-models.json" '
+            (.result | length) == 2
+            and ([.result[] | select(.id == $model and .hasCredential == true and .apiKey == "")] | length) == 1
+            and ([.result[] | select(.id == $embedding)] | length) == 1
+          ' --arg model "$model_id" --arg embedding "$embedding_model_id"
+          # The stored credential must never leave the server, not even masked.
+          if grep -qF 'synthetic-ci-model-key' "$work/llm-list-models.json"; then
+            printf '::error title=llm:list-models leaked a credential::%s\n' "$(head -c 600 "$work/llm-list-models.json")"
+            exit 1
+          fi
+
+          call llm:get-stage-models \
+            "$(jq -nc '{args: []}')" \
+            "$work/llm-stage-models.json"
+          assert_json "$work/llm-stage-models.json" '.result.drafting == $model' --arg model "$model_id"
+
+          call llm:get-default-model \
+            "$(jq -nc '{args: []}')" \
+            "$work/llm-default-model.json"
+          assert_json "$work/llm-default-model.json" '.result == $model' --arg model "$model_id"
+
+          call llm:get-default-embedding-model \
+            "$(jq -nc '{args: []}')" \
+            "$work/llm-default-embedding-model.json"
+          assert_json "$work/llm-default-embedding-model.json" '.result == $model' --arg model "$embedding_model_id"
+
+          # The generation reads are fenced like the editor reads: a lease this
+          # server never issued is refused, not answered with history.
+          expect_refusal generation:list \
+            "$(jq -nc --argjson ctx "$stale_ctx" '{args: [$ctx]}')" \
+            "$work/stale-generation-list.json"
+          expect_refusal generation:read \
+            "$(jq -nc --argjson ctx "$stale_ctx" --argjson handle "$run_handle" '{args: [$handle, $ctx]}')" \
+            "$work/stale-generation-read.json"
+
+          # What this lane does not own stays fail-closed: the execution half and
+          # the three llm setters answer 501 GO_OPERATION_NOT_MIGRATED rather than
+          # a handler that could only refuse.
+          expect_not_migrated() {
+            local operation=$1
+            local body=$2
+            local output=$3
+            local code
+            code=$(curl --silent --show-error --output "$output" --write-out '%{http_code}' \
+              --request POST "$base/api/operations/$operation" \
+              --header "X-Novel-User: $author" \
+              --header "X-Client-Id: $client" \
+              --header "X-CSRF-Token: $csrf" \
+              --header "Origin: $base" \
+              --header 'Content-Type: application/json' \
+              --cookie "$session" \
+              --data-binary "$body")
+            printf '%s -> %s (not migrated)\n' "$operation" "$code" | tee -a "$work/refusals.txt"
+            if test "$code" != 501; then
+              printf '::error title=%s answered %s instead of 501::%s\n' "$operation" "$code" "$(head -c 600 "$output")"
+              exit 1
+            fi
+            if ! jq -e '.error.code == "GO_OPERATION_NOT_MIGRATED"' "$output" > /dev/null; then
+              printf '::error title=%s failed closed with another code::%s\n' "$operation" "$(head -c 600 "$output")"
+              exit 1
+            fi
+          }
+          for operation in generation:execute generation:begin generation:cancel \
+            llm:set-stage-model llm:set-default-model llm:set-default-embedding-model llm:save-model; do
+            expect_not_migrated "$operation" \
+              "$(jq -nc --argjson ctx "$editor_ctx" --argjson handle "$run_handle" \
+                '{args: [$handle, "synthetic-model", $ctx]}')" \
+              "$work/not-migrated-${operation//:/-}.json"
+          done
+          printf 'generation reads: 1 settled run (%s, epoch %s), 1 diagnostic, nonReplayable; models: %s + %s\n' \
+            "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id" \
+            | tee -a "$work/statuses.txt"
+
           # The write is durable outside the process: the body is in the mounted
           # database on the host, not only in the container's memory.
           database="$root/workspaces/ci-novel/.ai-novel/project.db"
@@ -958,6 +1080,10 @@ jobs:
             printf -- '- The same reads refused a lease this server never issued: `%s` and `%s`.\n\n' \
               "$(jq -r '.error.code' "$work/stale-character-get-all.json")" \
               "$(jq -r '.error.code' "$work/stale-overview.json")"
+            printf -- '- `generation:list` and `generation:read` returned the one settled run the fixture committed (`%s`, epoch `%s`) with 1 budget diagnostic and `nonReplayable` set, and `llm:list-models`, `llm:get-stage-models`, `llm:get-default-model` and `llm:get-default-embedding-model` returned the committed model configuration (`%s`, `%s`).\n' "$generation_operation" "$generation_epoch" "$model_id" "$embedding_model_id"
+            printf -- '- Those generation reads refused a lease this server never issued (`%s`, `%s`), and `generation:execute`, `generation:begin`, `generation:cancel` and the three `llm:set-*` setters stayed `501 GO_OPERATION_NOT_MIGRATED`.\n\n' \
+              "$(jq -r '.error.code' "$work/stale-generation-list.json")" \
+              "$(jq -r '.error.code' "$work/stale-generation-read.json")"
             printf 'Body seeded into the v7 database: `%s`\n\n' "$seed"
             printf 'Body saved through the browser operation: `%s`\n\n' "$saved"
             printf 'Body read back from the container over HTTP: `%s`\n\n' "$readback"

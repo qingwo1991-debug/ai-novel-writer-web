@@ -455,6 +455,24 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			return nil, nil, bindErr
 		}
 	}
+	// The generation family's committed-state half plus the model-configuration
+	// reads. generation:list and generation:read project the author's own ledger
+	// rows under the live lease (SELECT-only, no provider call), and the four
+	// llm reads answer from the committed global generation this lane already
+	// pinned. Every execution name stays unbound: this lane configures no model
+	// origins and owns no dispatch seam, so begin/execute/resume and the six
+	// llm setters keep failing closed at GO_OPERATION_NOT_MIGRATED rather than
+	// being installed as handlers that could only refuse.
+	for _, bind := range []func() error{
+		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
+		func() error { return server.BindModelReads(open.config, open.startup) },
+		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
+	} {
+		if bindErr := bind(); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+	}
 	// project:recent-list is bound on its own: the editor navigation family would
 	// also publish fs:list-dir (which has no confined production provider yet)
 	// and would rebind project:recent-list (OPERATION_ALREADY_BOUND).

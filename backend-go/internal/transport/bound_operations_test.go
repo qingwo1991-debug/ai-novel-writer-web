@@ -51,6 +51,25 @@ func TestFamilyBindersPinTheirExactOperationSets(t *testing.T) {
 			},
 		},
 		{
+			// The committed-state half is its own binder: a lane that can only
+			// read registers exactly these two names, never an execution one.
+			name: "generation-reads",
+			bind: func(s *Server) error {
+				return s.BindGenerationReads(&GenerationProvider{
+					Read: func(context.Context, Caller, map[string]any, any) (any, error) { return nil, nil },
+					List: func(context.Context, Caller, map[string]any) (any, error) { return nil, nil },
+				})
+			},
+			want: []string{"generation:list", "generation:read"},
+		},
+		{
+			// A provider with nothing to lend installs nothing, so both names
+			// stay at 501 instead of becoming handlers that can only refuse.
+			name: "generation-reads-unlent",
+			bind: func(s *Server) error { return s.BindGenerationReads(&GenerationProvider{}) },
+			want: []string{},
+		},
+		{
 			name: "graph-generation",
 			bind: func(s *Server) error { return s.BindGraphGeneration(&GraphGenerationProvider{}) },
 			want: []string{"graph-generation:read"},

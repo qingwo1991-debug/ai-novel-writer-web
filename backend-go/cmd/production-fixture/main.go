@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,7 +30,31 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
+
+// The committed model configuration and the one generation run the journey's
+// read assertions name. They are constants because the workflow asserts the same
+// values: a fixture that drifted from them would fail the journey instead of
+// quietly proving nothing.
+const (
+	fixtureModelID          = "ci-model-1"
+	fixtureEmbeddingModelID = "ci-embedding-model-1"
+	fixtureGenerationEpoch  = "lease-0000000001-history"
+	fixtureGenerationOp     = "chapter-draft"
+	fixtureGenerationNonce  = "ci-generation-nonce-1"
+	fixtureGenerationText   = "草稿候选：门后有人。"
+)
+
+// fixtureGeneration is the identity of the settled run the fixture commits, so
+// the journey can name the same run the fixture wrote.
+type fixtureGeneration struct {
+	RootActionID string
+	RunID        string
+	AttemptID    string
+	Epoch        string
+	Text         string
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -106,7 +131,18 @@ func run() error {
 		return err
 	}
 	if err := writeFile(filepath.Join(generationDirectory, "config.json"),
-		`{"theme":"light","editorFontSize":17,"defaultModelId":null}`); err != nil {
+		fmt.Sprintf(`{"theme":"light","editorFontSize":17,"defaultModelId":%[1]q,"defaultEmbeddingModelId":%[2]q,"stageModelIds":{"drafting":%[1]q}}`,
+			fixtureModelID, fixtureEmbeddingModelID)); err != nil {
+		return err
+	}
+	// The private model store of the committed generation. The journey's
+	// llm:list-models assertion needs a profile it can recognise and a credential
+	// that must never come back, and the two routing reads need the ids above to
+	// resolve, exactly as they must on a real author machine.
+	if err := writeFile(filepath.Join(generationDirectory, "models.json"),
+		fmt.Sprintf(`[{"id":%[1]q,"provider":"custom","protocol":"openai","baseUrl":"https://synthetic.invalid/v1","apiKey":"synthetic-ci-model-key","name":"CI 正文模型","modelName":"ci-story-model","temperature":0.7,"maxTokens":1024},`+
+			`{"id":%[2]q,"provider":"custom","protocol":"openai","baseUrl":"https://synthetic.invalid/v1","apiKey":"synthetic-ci-embedding-key","name":"CI 向量模型","modelName":"ci-embedding-model"}]`,
+			fixtureModelID, fixtureEmbeddingModelID)); err != nil {
 		return err
 	}
 	// The six-key canonical project identity contract.
@@ -118,7 +154,8 @@ func run() error {
 	if err := copyFile(*baseline, database); err != nil {
 		return err
 	}
-	if err := seedProjectDatabase(database, "CI Journey Novel", *seed); err != nil {
+	generationSeed, err := seedProjectDatabase(database, *projectID, "CI Journey Novel", *seed)
+	if err != nil {
 		return err
 	}
 	evidence, digest, err := verifyAgainstPinnedContract(context.Background(), database)
@@ -134,6 +171,10 @@ func run() error {
 	fmt.Printf("library project: %s\n", filepath.Join(rootValue, "workspaces", *workspace))
 	fmt.Printf("project id: %s\n", *projectID)
 	fmt.Printf("seeded draft body: %s\n", *seed)
+	fmt.Printf("seeded generation run: root=%s run=%s attempt=%s epoch=%s\n",
+		generationSeed.RootActionID, generationSeed.RunID, generationSeed.AttemptID, generationSeed.Epoch)
+	fmt.Printf("committed models: default=%s embedding=%s stage_drafting=%s\n",
+		fixtureModelID, fixtureEmbeddingModelID, fixtureModelID)
 	return nil
 }
 
@@ -203,18 +244,26 @@ func verifyAgainstPinnedContract(ctx context.Context, database string) (admissio
 }
 
 // seedProjectDatabase replaces the oracle's synthetic contents row with one
-// working draft the browser journey can list, save and read back.
-func seedProjectDatabase(database, projectName, seed string) error {
+// working draft the browser journey can list, save and read back, and commits one
+// settled generation run through the shipped ledger so the journey's
+// generation:list/generation:read assertions read real ledger rows.
+func seedProjectDatabase(database, projectID, projectName, seed string) (fixtureGeneration, error) {
+	var zero fixtureGeneration
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
 	uri.RawQuery = "mode=rw&_foreign_keys=on"
 	db, err := sql.Open("sqlite3", uri.String())
 	if err != nil {
-		return err
+		return zero, err
 	}
 	db.SetMaxOpenConns(1)
 	if err := insertAuthorRows(db, projectName, seed); err != nil {
 		_ = db.Close()
-		return err
+		return zero, err
+	}
+	generation, err := seedGenerationLedger(db, projectID)
+	if err != nil {
+		_ = db.Close()
+		return zero, err
 	}
 	// The container copies the database set into its own scratch directory, so
 	// the fixture leaves no un-checkpointed write-ahead log behind. A database
@@ -222,10 +271,10 @@ func seedProjectDatabase(database, projectName, seed string) error {
 	var backfill, logFrames, checkpointed int64
 	if err := db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&backfill, &logFrames, &checkpointed); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		_ = db.Close()
-		return err
+		return zero, err
 	}
 	if err := db.Close(); err != nil {
-		return err
+		return zero, err
 	}
 	for _, suffix := range []string{"-shm", "-wal", "-journal"} {
 		sidecar := database + suffix
@@ -234,16 +283,94 @@ func seedProjectDatabase(database, projectName, seed string) error {
 			continue
 		}
 		if err != nil {
-			return err
+			return zero, err
 		}
 		if info.Size() != 0 {
-			return fmt.Errorf("the fixture database still has a non-empty %s sidecar", suffix)
+			return zero, fmt.Errorf("the fixture database still has a non-empty %s sidecar", suffix)
 		}
 		if err := os.Remove(sidecar); err != nil {
-			return err
+			return zero, err
 		}
 	}
-	return nil
+	return generation, nil
+}
+
+// fixtureGenerationRequest is the frozen binding of the fixture's run: the same
+// nine hashes, manifest and budget shape a real drafting request carries, written
+// as JSON text so the ledger parses it with its order-preserving decoder.
+func fixtureGenerationRequest(projectID string) string {
+	hash := strings.Repeat("a", 64)
+	return `{"projectId":` + quote(projectID) + `,"epoch":` + quote(fixtureGenerationEpoch) +
+		`,"operation":` + quote(fixtureGenerationOp) + `,"uiActionNonce":` + quote(fixtureGenerationNonce) +
+		`,"frozenInputHash":` + quote(hash) + `,"fingerprint":{"chapterBriefHash":` + quote(hash) +
+		`,"authorGuidanceHash":` + quote(hash) + `,"dependencyHash":` + quote(hash) +
+		`,"contextSnapshotHash":` + quote(hash) + `,"templateHash":` + quote(hash) +
+		`,"skillSnapshotHash":` + quote(hash) + `,"modelLeaseRevision":` + quote(hash) +
+		`,"policyHash":` + quote(hash) + `,"outputContractHash":` + quote(hash) +
+		`},"contextSnapshotId":"ci-context-snapshot-1","sourceManifest":{"operation":` + quote(fixtureGenerationOp) +
+		`},"sourceRefs":[],"budget":{"maxPhysicalRequests":3,"maxTokenLiability":4000,` +
+		`"maxOutputPerRequest":1000,"maxActiveElapsedMs":600000}}`
+}
+
+// quote renders a Go string as a JSON string literal.
+func quote(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	return string(encoded)
+}
+
+// seedGenerationLedger drives the shipped ledger through one complete settlement
+// chain - open, reserve, dispatch, snapshot, settle - so the fixture's committed
+// history has exactly the shape a real one does.
+func seedGenerationLedger(db *sql.DB, projectID string) (fixtureGeneration, error) {
+	var zero fixtureGeneration
+	ordinal := 0
+	ledger := store.NewGenerationLedger(db, func() int64 { return 1700000000000 }, func() string {
+		ordinal++
+		return fmt.Sprintf("fixture-ledger-%02d", ordinal)
+	})
+	ctx := context.Background()
+	value, err := ledger.CallJSON(ctx, "open", json.RawMessage("["+fixtureGenerationRequest(projectID)+"]"))
+	if err != nil {
+		return zero, fmt.Errorf("generation open: %w", err)
+	}
+	run, ok := value.(map[string]any)
+	if !ok {
+		return zero, errors.New("generation open returned no run")
+	}
+	runID, _ := run["runId"].(string)
+	rootID, _ := run["rootActionId"].(string)
+	if runID == "" || rootID == "" {
+		return zero, errors.New("generation open returned no run identity")
+	}
+	reserved, err := ledger.Call(ctx, "reserve", []any{runID, fixtureGenerationNonce, strings.Repeat("b", 64), 200, 100})
+	if err != nil {
+		return zero, fmt.Errorf("generation reserve: %w", err)
+	}
+	receipt, _ := reserved.(map[string]any)
+	attempt, _ := receipt["attempt"].(map[string]any)
+	attemptID, _ := attempt["attemptId"].(string)
+	if attemptID == "" {
+		return zero, errors.New("generation reserve returned no attempt")
+	}
+	if _, err := ledger.Call(ctx, "markDispatched", []any{attemptID}); err != nil {
+		return zero, fmt.Errorf("generation markDispatched: %w", err)
+	}
+	if _, err := ledger.Call(ctx, "snapshot", []any{attemptID, 0, fixtureGenerationText}); err != nil {
+		return zero, fmt.Errorf("generation snapshot: %w", err)
+	}
+	if _, err := ledger.Call(ctx, "settle", []any{attemptID, map[string]any{"trusted": true, "actualTokens": 120}, "stop"}); err != nil {
+		return zero, fmt.Errorf("generation settle: %w", err)
+	}
+	return fixtureGeneration{
+		RootActionID: rootID,
+		RunID:        runID,
+		AttemptID:    attemptID,
+		Epoch:        fixtureGenerationEpoch,
+		Text:         fixtureGenerationText,
+	}, nil
 }
 
 // insertAuthorRows writes the smallest author history the current-schema
