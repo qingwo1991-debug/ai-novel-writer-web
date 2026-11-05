@@ -18,10 +18,11 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// Project lifecycle for the production lane: `project:delete` is served here,
-// `project:create` is not bound. The two halves are explained in that order
-// below, because what a delete may touch is decided by what a create could have
-// written.
+// Project lifecycle for the production lane: `project:delete` is served here.
+// `project:create` is served by production_project_create_linux.go, which mints
+// the pinned v7 database and registers the new project with the live catalog.
+// The two halves are explained in that order below, because what a delete may
+// touch is decided by what a create could have written.
 //
 // WHAT project:delete REMOVES
 //

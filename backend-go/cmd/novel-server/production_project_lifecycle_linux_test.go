@@ -194,11 +194,6 @@ func TestProductionProjectLifecycleDeletesAdmittedProject(t *testing.T) {
 	}
 }
 
-// TestProductionProjectCreateStaysUnbound pins the other half of the lifecycle
-// as an honest refusal instead of a fake success: create cannot mint a v7
-// database and cannot register a project with the live catalog (the header of
-// production_project_lifecycle_linux.go names the missing pieces), so the name
-// keeps answering GO_OPERATION_NOT_MIGRATED and creates nothing at all.
 func TestProductionProjectCreateStaysUnbound(t *testing.T) {
 	root, projectPath := productionDurableDataRoot(t)
 	library := filepath.Join(root, productionLibraryDirectory)

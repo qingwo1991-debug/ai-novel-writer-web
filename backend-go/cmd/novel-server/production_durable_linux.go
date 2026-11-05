@@ -58,8 +58,13 @@ type productionDurableOpen struct {
 	// keys maps a trusted library project path to the process-local catalog key
 	// issued for it at startup. A browser path selects a key; it never becomes
 	// one, and an unlisted path can never reach the runtime.
-	keys   map[string]string
-	closed bool
+	keys map[string]string
+	// catalog is the one live project catalog this process admitted at startup.
+	// project:create registers a new project in it so the created book is
+	// openable in this same process; a second Store would have an empty key map
+	// and would make the new project unopenable until restart.
+	catalog *projectcatalog.Store
+	closed  bool
 }
 
 // newProductionDurable installs the durable author runtime over the admitted
@@ -122,7 +127,7 @@ func newProductionDurable(library *projectfs.Library, layout productionLayout, s
 		}
 		keys[item.listed.Path] = recent.Key
 	}
-	return &productionDurableOpen{lifecycle: lifecycle, manager: manager, keys: keys}, nil
+	return &productionDurableOpen{lifecycle: lifecycle, manager: manager, keys: keys, catalog: catalog}, nil
 }
 
 // Close shuts the admitted runtime down. Every open author database is closed

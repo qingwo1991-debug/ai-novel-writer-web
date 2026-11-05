@@ -622,6 +622,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionEditorWrites(open.durable).Bind(server) },
 		func() error { return newProductionFinalizationWrites(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
+		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()

@@ -363,12 +363,12 @@ func TestProductionLaneServesStartupConfigAndLibrary(t *testing.T) {
 	if len(libraryWire.Projects) != 1 || libraryWire.Projects[0]["name"] != "current-novel" {
 		t.Fatalf("/api/library did not serve exactly the admitted author database: %s", library.Body.String())
 	}
-	// What this lane still does not own stays fail-closed over real data.
-	for _, operation := range []string{"project:create"} {
-		response := rpc(operation, []any{})
-		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("%s did not fail closed: %d %s", operation, response.Code, response.Body.String())
-		}
+	// project:create is served now, so it must not fail closed here: this test's
+	// fixture is an admitted project, and create answers its own refusal code
+	// rather than 501.
+	create := rpc("project:create", []any{})
+	if create.Code == http.StatusNotImplemented {
+		t.Fatalf("project:create still fails closed: %d %s", create.Code, create.Body.String())
 	}
 	// The project lifecycle and the draft surface are bound here now, so they must
 	// be answered instead of 501. This project has no project_core row, so a
