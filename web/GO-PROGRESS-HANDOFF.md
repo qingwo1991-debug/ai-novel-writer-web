@@ -1258,3 +1258,32 @@ for a run whose manifest this lane cannot reproduce (the insertion-order digest 
 dispatch or a settled-artifact proof, and `review-revision` (4) needs four unported composition helpers
 (`freezeChapterGoals`, `findBlueprintContinuityRisks`, `parseHumanConfirmedReviewSnapshot`, `planRecheck`).
 
+### 2026-11-05 — web-native file access landed (durable 133 -> 137)
+
+Green: `67c0571f`. This is the first slice built for the owner's actual product shape - Dockerised Go
+server, browser only, manuscripts on the server.
+
+Bound with **relative, root-confined** paths: `fs:read-file`, `fs:write-file`, `fs:mkdir`,
+`fs:check-exists`. New routes: `POST /api/uploads?path=<relative>` (multipart, CSRF + Origin checked,
+201 with `{success,path,name,size}`) and `GET /api/downloads/<relative>` (attachment, `no-store`,
+`nosniff`). Both resolve the project from the caller's live durable lease, never from the request path.
+
+**Confinement (`internal/projectfs/browser_files.go`), deliberately stricter than the desktop contract:**
+refuses empty/oversize/invalid-UTF-8/NUL/backslash/absolute input, `..`, non-canonical spellings, any
+component beginning with `.` (so `.ai-novel` is unreachable), and storage-reserved names (`project.json`,
+`project.db*`); every hop is pinned with `Lstat` + `OpenRoot` + same-file re-check so symlinks cannot
+escape; writes are temp + fsync + rename inside the same pinned parent, then read back. The tests assert
+**refusal and on-disk absence** for traversal, absolute paths (including the project's own file), and a
+real symlink to the parent root.
+
+**Still 501 and honestly so:** `fs:write-json` (its only caller writes the storage marker), the three
+`fs:grant-*` (a browser has no server-issued external grant), all nine `dialog:*`. Host-folder pickers
+(`select-folder`, `select-legacy-project`, `select-project-restore-target`,
+`select-project-archive-export`) have no web equivalent at all - upload/download replace the *file*
+pickers, not the *folder* pickers. Those need their own design decision: a server-side directory browser
+confined to the storage root is the natural answer, but it is a new UI surface, not a port.
+
+Known risks recorded: the family is now mixed (`fs:list-dir` / `fs:read-json` still take absolute paths),
+no per-file mutex beyond the lane's single writer lock, and the download route has no expiring token -
+lease liveness is the only gate.
+
