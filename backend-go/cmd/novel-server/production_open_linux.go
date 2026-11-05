@@ -593,6 +593,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindNarrativeWrites(newProductionStoryStateWrites(open.durable)) },
 		func() error { return server.BindNarrativeEventConfirm(newProductionStoryStateWrites(open.durable)) },
 		func() error { return newProductionWrites(open).Bind(server) },
+		func() error { return newProductionEditorWrites(open.durable).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
