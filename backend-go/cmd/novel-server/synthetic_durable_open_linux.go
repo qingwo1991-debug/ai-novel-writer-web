@@ -896,6 +896,11 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 			func() error { return server.BindModelReads(models, startup) },
 			func() error { return server.BindModelSave(models, startup, endpoints) },
 			func() error { return server.BindModelDelete(models, startup) },
+			// The six model-routing preference names are config.json reads and
+			// single-document writes only: no provider dispatch, no egress
+			// policy, no execution lease. They therefore share this root's
+			// condition and stay out of the generation lane below.
+			func() error { return server.BindModelRouting(models, startup) },
 		} {
 			if err := bind(); err != nil {
 				cleanup()

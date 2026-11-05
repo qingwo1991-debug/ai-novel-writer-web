@@ -265,7 +265,7 @@ func stageAssignments(value any) map[string]string {
 	if !ok {
 		return result
 	}
-	for _, stage := range []string{"planning", "drafting", "review", "refinement", "finalization"} {
+	for _, stage := range modelStages {
 		text, ok := object[stage].(string)
 		if ok && trimModelStage(text) != "" {
 			result[stage] = trimModelStage(text)

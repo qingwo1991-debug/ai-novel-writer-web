@@ -320,6 +320,168 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || bytes.Contains(raw, []byte("denied-model")) {
 		t.Fatalf("a refused model save persisted a profile: %v", err)
 	}
+	// The six model-routing preference names are bound on this lane by
+	// BindModelRouting: each reads or rewrites config.json alone, so every
+	// effect below is asserted back both over the handler and from the private
+	// file it commits. None of them is project scoped, so none appends a frozen
+	// context argument.
+	routingMap := func(operation string, args []any) map[string]any {
+		t.Helper()
+		response := rpc(operation, args)
+		var wire struct {
+			Result map[string]any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK || wire.Result == nil {
+			t.Fatalf("%s decode failed: %d %s %v", operation, response.Code, response.Body.String(), err)
+		}
+		if strings.Contains(response.Body.String(), globalRoot) || strings.Contains(response.Body.String(), durableModelKey) {
+			t.Fatalf("%s leaked private configuration: %s", operation, response.Body.String())
+		}
+		return wire.Result
+	}
+	routingValue := func(operation string, args []any) any {
+		t.Helper()
+		response := rpc(operation, args)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s failed: %d %s", operation, response.Code, response.Body.String())
+		}
+		var wire struct {
+			Result any `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil {
+			t.Fatalf("%s decode failed: %s %v", operation, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	if stages := routingMap("llm:get-stage-models", []any{}); len(stages) != 0 {
+		t.Fatalf("llm:get-stage-models did not start empty: %v", stages)
+	}
+	if value := routingValue("llm:get-default-model", []any{}); value != nil {
+		t.Fatalf("llm:get-default-model returned a default on a bare root: %v", value)
+	}
+	if value := routingValue("llm:get-default-embedding-model", []any{}); value != nil {
+		t.Fatalf("llm:get-default-embedding-model returned a default on a bare root: %v", value)
+	}
+	if extra := rpc("llm:get-default-model", []any{"durable-extra-argument"}); extra.Code != http.StatusBadRequest || !strings.Contains(extra.Body.String(), "INVALID_ARGUMENTS") {
+		t.Fatalf("llm:get-default-model accepted an argument: %d %s", extra.Code, extra.Body.String())
+	}
+	// Only a saved profile that carries the generation purpose can be routed to
+	// a stage, exactly like availableGenerationModelId in the original: an
+	// unknown id and a saved non-generation profile are both unavailable.
+	const routingModelID = "durable-routing-model"
+	const routingModelKey = "sk-durable-routing-key"
+	const routingEmbeddingID = "durable-embedding-model"
+	if saved := routingMap("llm:save-model", []any{map[string]any{
+		"id": routingModelID, "provider": "custom", "protocol": "openai",
+		"baseUrl": "https://example.invalid/v1", "modelName": "routing-story",
+		"temperature": 0.5, "maxTokens": 1024, "purposes": []any{"generation"},
+		"apiKey": routingModelKey,
+	}}); saved["success"] != true {
+		t.Fatalf("llm:save-model did not accept a generation profile: %v", saved)
+	}
+	if saved := routingMap("llm:save-model", []any{map[string]any{
+		"id": routingEmbeddingID, "provider": "custom", "protocol": "openai",
+		"baseUrl": "https://example.invalid/v1", "modelName": "routing-embedding",
+		"temperature": 0.5, "maxTokens": 1024, "purposes": []any{"embedding"},
+		"apiKey": "sk-durable-embedding-key",
+	}}); saved["success"] != true {
+		t.Fatalf("llm:save-model did not accept an embedding profile: %v", saved)
+	}
+	for name, candidate := range map[string]string{"unknown": "durable-unknown-model", "non-generation": routingEmbeddingID} {
+		unavailable := routingMap("llm:set-stage-model", []any{map[string]any{"stage": "drafting", "modelId": candidate}})
+		if unavailable["success"] != false || unavailable["error"] != "Error: LLM_STAGE_MODEL_UNAVAILABLE" {
+			t.Fatalf("llm:set-stage-model accepted a %s model: %v", name, unavailable)
+		}
+	}
+	if stages := routingMap("llm:get-stage-models", []any{}); len(stages) != 0 {
+		t.Fatalf("a refused stage assignment changed the stored stages: %v", stages)
+	}
+	// The positive assignment is reported by the write, read back by the read,
+	// and found in the private file it commits.
+	assigned := routingMap("llm:set-stage-model", []any{map[string]any{"stage": "drafting", "modelId": routingModelID}})
+	if assigned["success"] != true {
+		t.Fatalf("llm:set-stage-model refused a saved generation profile: %v", assigned)
+	}
+	if stages, ok := assigned["stageModelIds"].(map[string]any); !ok || stages["drafting"] != routingModelID {
+		t.Fatalf("llm:set-stage-model did not report the assignment: %v", assigned)
+	}
+	if stages := routingMap("llm:get-stage-models", []any{}); stages["drafting"] != routingModelID {
+		t.Fatalf("llm:get-stage-models did not read the assignment back: %v", stages)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "config.json")); err != nil || !bytes.Contains(raw, []byte(`"drafting": "`+routingModelID+`"`)) {
+		t.Fatalf("llm:set-stage-model did not commit stageModelIds: %v %s", err, raw)
+	}
+	// A present null modelId clears the assignment; an absent one is refused
+	// above, because the original reads a missing key as undefined.
+	if cleared := routingMap("llm:set-stage-model", []any{map[string]any{"stage": "drafting", "modelId": nil}}); cleared["success"] != true {
+		t.Fatalf("llm:set-stage-model refused a null modelId: %v", cleared)
+	}
+	if stages := routingMap("llm:get-stage-models", []any{}); len(stages) != 0 {
+		t.Fatalf("llm:set-stage-model did not clear the stage: %v", stages)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "config.json")); err != nil || bytes.Contains(raw, []byte(`"drafting"`)) {
+		t.Fatalf("llm:set-stage-model left the assignment on disk: %v %s", err, raw)
+	}
+	for name, request := range map[string]any{
+		"unknown stage":      map[string]any{"stage": "outline", "modelId": routingModelID},
+		"missing modelId":    map[string]any{"stage": "drafting"},
+		"non-string modelId": map[string]any{"stage": "drafting", "modelId": float64(7)},
+		"non-object request": "drafting",
+	} {
+		invalid := routingMap("llm:set-stage-model", []any{request})
+		if invalid["success"] != false || invalid["error"] != "Error: LLM_STAGE_MODEL_REQUEST_INVALID" {
+			t.Fatalf("llm:set-stage-model accepted a %s request: %v", name, invalid)
+		}
+	}
+	// Both default ids are stored verbatim and cleared by a null value, and the
+	// generation default is visible through config:get on the same document.
+	if set := routingMap("llm:set-default-model", []any{routingModelID}); set["success"] != true {
+		t.Fatalf("llm:set-default-model failed: %v", set)
+	}
+	if value := routingValue("llm:get-default-model", []any{}); value != routingModelID {
+		t.Fatalf("llm:get-default-model did not read the default back: %v", value)
+	}
+	if pointed := configRead(); pointed["defaultModelId"] != routingModelID {
+		t.Fatalf("llm:set-default-model did not commit config.json: %v", pointed)
+	}
+	if clearedDefault := routingMap("llm:set-default-model", []any{nil}); clearedDefault["success"] != true {
+		t.Fatalf("llm:set-default-model refused a null default: %v", clearedDefault)
+	}
+	if value := routingValue("llm:get-default-model", []any{}); value != nil {
+		t.Fatalf("llm:set-default-model did not clear the default: %v", value)
+	}
+	if set := routingMap("llm:set-default-embedding-model", []any{routingEmbeddingID}); set["success"] != true {
+		t.Fatalf("llm:set-default-embedding-model failed: %v", set)
+	}
+	if value := routingValue("llm:get-default-embedding-model", []any{}); value != routingEmbeddingID {
+		t.Fatalf("llm:get-default-embedding-model did not read the default back: %v", value)
+	}
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "config.json")); err != nil || !bytes.Contains(raw, []byte(routingEmbeddingID)) {
+		t.Fatalf("llm:set-default-embedding-model did not commit config.json: %v %s", err, raw)
+	}
+	if clearedEmbedding := routingMap("llm:set-default-embedding-model", []any{nil}); clearedEmbedding["success"] != true {
+		t.Fatalf("llm:set-default-embedding-model refused a null default: %v", clearedEmbedding)
+	}
+	if value := routingValue("llm:get-default-embedding-model", []any{}); value != nil {
+		t.Fatalf("llm:set-default-embedding-model did not clear the default: %v", value)
+	}
+	// The seven remaining llm names stay unbound on this lane. llm:generate,
+	// llm:generate-stream and llm:test-connection only take effect through a
+	// live provider round trip, llm:discover-models only through an outbound
+	// /models request, llm:cancel only against a stream this lane cannot start,
+	// and the two execution-lease names only through an in-flight lease registry
+	// no bound operation here can populate. Faking any of them would mean
+	// inventing a provider, so they keep failing closed with the honest
+	// migration code.
+	for _, unboundModel := range []string{
+		"llm:begin-execution-lease", "llm:close-execution-lease", "llm:cancel",
+		"llm:discover-models", "llm:generate", "llm:generate-stream", "llm:test-connection",
+	} {
+		unboundRec := rpc(unboundModel, []any{map[string]any{"modelId": routingModelID}})
+		if unboundRec.Code != http.StatusNotImplemented || !strings.Contains(unboundRec.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("llm name %s was bound on the durable lane: %d %s", unboundModel, unboundRec.Code, unboundRec.Body.String())
+		}
+	}
 	// The eight mcp names stay unbound on this lane. BindMCP needs a pristine
 	// *mcp.Manager plus a host-captured administrator predicate
 	// (transport/mcp.go:26), and this lane owns neither: it has no trusted MCP
