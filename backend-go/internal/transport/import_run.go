@@ -127,17 +127,22 @@ func (s *Server) BindImportRuns(provider ImportRunProvider) error {
 		name             string
 		arity, pathIndex int
 	}{
-		{"db:import-run-get", 2, 1},
-		{"db:import-run-list-resumable", 1, 0},
-		{"db:import-run-list-chapters", 4, 3},
-		{"db:import-run-start-resume", 3, 2},
-		{"db:import-run-renew-execution", 3, 2},
-		{"db:import-run-request-cancel", 3, 2},
-		{"db:import-run-cancel-at-boundary", 3, 2},
-		{"db:import-run-complete-batch", 5, 4},
-		{"db:import-run-advance-stage", 5, 4},
-		{"db:import-run-complete", 3, 2},
+		{"db:import-run-get", 3, 1},
+		{"db:import-run-list-resumable", 2, 0},
+		{"db:import-run-list-chapters", 5, 3},
+		{"db:import-run-start-resume", 4, 2},
+		{"db:import-run-renew-execution", 4, 2},
+		{"db:import-run-request-cancel", 4, 2},
+		{"db:import-run-cancel-at-boundary", 4, 2},
+		{"db:import-run-complete-batch", 6, 4},
+		{"db:import-run-advance-stage", 6, 4},
+		{"db:import-run-complete", 4, 2},
 	}
+	// arity counts the trailing frozen context too, because the check below is
+	// len(args) != arity and draftExpectedContext reads args[arity-1] as that
+	// context. The ten values above were each one short, so every real renderer
+	// call was answered 400 INVALID_ARGUMENTS; the header at the top of this
+	// binder has the correct counts.
 	names := make([]string, 0, len(operations))
 	handlers := make(map[string]Operation, len(operations))
 	for _, operation := range operations {
