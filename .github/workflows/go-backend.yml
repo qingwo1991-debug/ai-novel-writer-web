@@ -360,11 +360,16 @@ jobs:
             writeFileSync(join(process.env.RUNNER_TEMP, "novel-go-contract", "recognized-only.json"),
               JSON.stringify(recognized, null, 2) + "\n", { flag: "wx", mode: 0o600 });
           '
-      - name: Upload original recognized schemas
+      # baseline-v7.db is exported here, by the lane whose schema the Go code
+      # must match, and is the only project database the container journey ever
+      # starts from. Uploading it keeps the journey from re-declaring any DDL.
+      - name: Upload original recognized schemas and v7 baseline database
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: go-recognized-contract-${{ github.sha }}
-          path: ${{ runner.temp }}/novel-go-contract/recognized-only.json
+          path: |
+            ${{ runner.temp }}/novel-go-contract/recognized-only.json
+            ${{ runner.temp }}/novel-go-contract/baseline-v7.db
           retention-days: 7
           if-no-files-found: error
       - name: Match original TypeScript schemas to pinned Go contract
@@ -482,7 +487,10 @@ jobs:
         run: |
           mkdir -p out
           CGO_ENABLED=1 go build -trimpath -buildvcs=true -o out/novel-server ./cmd/novel-server
-          sha256sum out/novel-server > out/SHA256SUMS
+          # CI-only fixture generator for the container journey below. It ships
+          # as a job artifact and never inside the image.
+          CGO_ENABLED=1 go build -trimpath -buildvcs=true -o out/production-fixture ./cmd/production-fixture
+          sha256sum out/novel-server out/production-fixture > out/SHA256SUMS
       - name: Original TypeScript reopens Go-written disposable global generation
         timeout-minutes: 3
         run: node --import ./contract/register-typescript.mjs ./contract/global-go-node-rollback.mjs
@@ -551,7 +559,7 @@ jobs:
         run: |
           printf '### Go migration foundation\n\nGo tests, race detector, compiler and smoke ran on GitHub, not on the deployment host.\n\nThis binary is **not feature complete**: unported operations return 501. No image push or production deployment was performed.\n' >> "$GITHUB_STEP_SUMMARY"
   image:
-    name: Unpublished Go container with disposable smoke
+    name: Unpublished Go container with disposable smoke and production journey
     needs: [compile, verify]
     runs-on: ubuntu-24.04
     # The image now builds the browser app (frozen pnpm install + Vite) before
@@ -569,7 +577,7 @@ jobs:
         run: |
           cd backend-go
           sha256sum -c out/SHA256SUMS
-          chmod +x out/novel-server
+          chmod +x out/novel-server out/production-fixture
       - name: Build local candidate image on GitHub runner
         run: docker build --pull --file Dockerfile.go --tag novel-go:migration-ci .
       - name: Smoke image without author data or Node
@@ -613,6 +621,223 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{content_type}' --header 'X-Novel-User: synthetic-ci' "http://127.0.0.1:16082$asset")" = 'text/javascript; charset=utf-8'
           docker exec novel-go-migration-ci sh -c '! command -v node && ! command -v npm && ! command -v electron'
           printf 'Go migration container passed isolated smoke. It was not published or deployed.\n' >> "$GITHUB_STEP_SUMMARY"
+      # The journey below is the reason this job exists: the same published-shape
+      # image, started with a real (synthetic) NOVEL_DATA_ROOT mounted, replays
+      # the browser's own bootstrap + open + list + save + read sequence over
+      # HTTP. It starts from the v7 database the TypeScript lane exported, so no
+      # schema is re-declared here; the fixture helper re-proves it against the
+      # pinned Go contract before the container starts.
+      - name: Download the original recognized schemas and v7 baseline database
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: go-recognized-contract-${{ github.sha }}
+          path: ${{ runner.temp }}/novel-go-contract
+      - name: Build a disposable production data root
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/novel-go-production-journey"
+          baseline="$RUNNER_TEMP/novel-go-contract/baseline-v7.db"
+          project_id=5f4c9a12-7d3e-4b81-9c26-8a1e0d3b7f42
+          seed='第一章原稿：他推开门，风从走廊尽头涌进来。'
+          test -s "$baseline"
+          test ! -e "$root"
+          # The journey step reads these two values instead of repeating them,
+          # so the body it saves against cannot drift from the body seeded here.
+          printf '%s\n' "$project_id" > "$RUNNER_TEMP/novel-go-journey-project.txt"
+          printf '%s' "$seed" > "$RUNNER_TEMP/novel-go-journey-seed.txt"
+          backend-go/out/production-fixture \
+            -root "$root" \
+            -baseline "$baseline" \
+            -workspace ci-novel \
+            -project-id "$project_id" \
+            -generation 9b7e2c41-3a5d-4e18-8f60-6c2d9b4a1e73 \
+            -seed "$seed"
+          # The image runs as uid 65532 (Dockerfile.go USER), exactly like a
+          # deployment, so the mounted root must be owned by that identity and
+          # must not be group/world writable: the migration receipt, the writer
+          # lock and every author database are re-checked against the runtime's
+          # own effective uid.
+          sudo chown -R 65532:65532 "$root"
+          sudo chmod -R go-rwx "$root"
+          sudo find "$root" -maxdepth 4 -printf '%m %u %g %p\n' | sort
+      - name: Prove the production draft journey inside the real image
+        shell: bash
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/novel-go-production-journey"
+          work="$RUNNER_TEMP/novel-go-journey-evidence"
+          rm -rf "$work"
+          mkdir -p "$work"
+          base=http://127.0.0.1:16086
+          project_path=/data/workspaces/ci-novel
+          project_id=$(cat "$RUNNER_TEMP/novel-go-journey-project.txt")
+          author=synthetic-ci-author
+          client=client_0123456789abcdef0123456789abcdef
+          seed=$(cat "$RUNNER_TEMP/novel-go-journey-seed.txt")
+          saved='第一章改稿：她推开门，雨从走廊尽头涌了进来。'
+          words=22
+
+          call() {
+            local operation=$1
+            local body=$2
+            local output=$3
+            local code
+            code=$(curl --silent --show-error --output "$output" --write-out '%{http_code}' \
+              --request POST "$base/api/operations/$operation" \
+              --header "X-Novel-User: $author" \
+              --header "X-Client-Id: $client" \
+              --header "X-CSRF-Token: $csrf" \
+              --header "Origin: $base" \
+              --header 'Content-Type: application/json' \
+              --cookie "$session" \
+              --data-binary "$body")
+            printf '%s -> %s\n' "$operation" "$code" | tee -a "$work/statuses.txt"
+            if test "$code" != 200; then
+              printf '::error title=%s returned %s::%s\n' "$operation" "$code" "$(head -c 600 "$output")"
+              exit 1
+            fi
+          }
+          assert_json() {
+            local file=$1
+            local filter=$2
+            shift 2
+            if ! jq -e "$@" "$filter" "$file" > /dev/null; then
+              printf '::error title=unexpected response from %s::%s\n' "$(basename "$file")" "$(head -c 600 "$file")"
+              exit 1
+            fi
+          }
+
+          # The image is started the way a deployment starts it: no Node, no
+          # writable root filesystem, the data root as the only writable mount.
+          # --network host is required for the same reason as the smoke step
+          # above: the entrypoint binds a loopback address.
+          docker run -d --name novel-go-journey-ci --network host --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 128 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            --mount "type=bind,source=$root,target=/data" \
+            --env NOVEL_DATA_ROOT=/data \
+            novel-go:migration-ci -listen 127.0.0.1:16086
+          trap 'code=$?; if test "$code" -ne 0; then docker logs --tail 80 novel-go-journey-ci 2>&1 || true; fi; docker rm -f novel-go-journey-ci >/dev/null 2>&1 || true' EXIT
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail "$base/healthz" > "$work/health.json"; then healthy=1; break; fi
+            if test "$(docker inspect --format '{{.State.Running}}' novel-go-journey-ci)" != true; then
+              docker logs novel-go-journey-ci 2>&1 || true
+              printf '::error title=container exited::the production lane refused the disposable data root\n'
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$healthy" = 1
+          assert_json "$work/health.json" '.ok == true and .runtime == "go" and .electron == false'
+
+          code=$(curl --silent --show-error --output "$work/bootstrap.json" --dump-header "$work/bootstrap.headers" \
+            --write-out '%{http_code}' \
+            --header "X-Novel-User: $author" \
+            --header "X-Client-Id: $client" \
+            "$base/api/bootstrap")
+          printf 'bootstrap -> %s\n' "$code" | tee -a "$work/statuses.txt"
+          test "$code" = 200
+          # A synthetic-lane generation would mean the production data root was
+          # never admitted, so the journey below would prove nothing.
+          assert_json "$work/bootstrap.json" '.generation == "go-production-admitted" and (.csrfToken | length) > 0'
+          csrf=$(jq -er '.csrfToken' "$work/bootstrap.json")
+          session=$(grep -i '^set-cookie:' "$work/bootstrap.headers" | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/;.*//' | tr -d '\r' | head -1 || true)
+          case "$session" in
+            novel_session=*) ;;
+            *) printf '::error title=no session cookie::%s\n' "$session"; exit 1 ;;
+          esac
+
+          call project:open \
+            "$(jq -nc --arg path "$project_path" '{args: [$path, "open-token-ci", $path]}')" \
+            "$work/open.json"
+          assert_json "$work/open.json" '
+            .result.success == true
+            and (.result.error // "") == ""
+            and .result.dbReady == true
+            and .result.requestToken == "open-token-ci"
+            and .result.project.id == $id
+            and .result.project.path == $path
+            and (.result.project.sessionLease | length) > 0
+          ' --arg id "$project_id" --arg path "$project_path"
+          lease=$(jq -er '.result.project.sessionLease' "$work/open.json")
+
+          call db:draft-list \
+            "$(jq -nc --arg path "$project_path" --arg id "$project_id" --arg lease "$lease" \
+              '{args: [1, $path, {projectId: $id, leaseId: $lease, projectPath: $path}]}')" \
+            "$work/draft-list.json"
+          assert_json "$work/draft-list.json" '
+            (.result | type) == "array"
+            and ([.result[] | select(.id == 1 and .chapterNumber == 1 and .version == 1 and .status == "draft")] | length) == 1
+            and (.result[0] | has("content") | not)
+          '
+
+          call db:draft-update-content \
+            "$(jq -nc --arg path "$project_path" --arg id "$project_id" --arg lease "$lease" \
+              --arg body "$saved" --arg baseline "$seed" --argjson words "$words" \
+              '{args: [1, $body, $words, $path, $baseline, {projectId: $id, leaseId: $lease, projectPath: $path}]}')" \
+            "$work/save.json"
+          assert_json "$work/save.json" '
+            .result.success == true
+            and (.result.errorCode // "") == ""
+            and .result.projectSession.projectId == $id
+            and .result.projectSession.projectPath == $path
+            and (.result.projectSession.leaseId | length) > 0
+          ' --arg id "$project_id" --arg path "$project_path"
+          fresh=$(jq -er '.result.projectSession.leaseId' "$work/save.json")
+          test "$fresh" != "$lease"
+
+          call db:draft-get-full \
+            "$(jq -nc --arg path "$project_path" --arg id "$project_id" --arg lease "$fresh" \
+              '{args: [1, $path, {projectId: $id, leaseId: $lease, projectPath: $path}]}')" \
+            "$work/draft-get-full.json"
+          assert_json "$work/draft-get-full.json" '
+            .result.id == 1
+            and .result.chapterNumber == 1
+            and .result.status == "draft"
+            and .result.content == $body
+            and .result.wordCount == $words
+          ' --arg body "$saved" --argjson words "$words"
+          readback=$(jq -er '.result.content' "$work/draft-get-full.json")
+          test "$readback" = "$saved"
+
+          # The write is durable outside the process: the body is in the mounted
+          # database on the host, not only in the container's memory.
+          database="$root/workspaces/ci-novel/.ai-novel/project.db"
+          # The root is owned by the container's uid and has no group/world
+          # permission bits, so these reads run elevated, exactly like an
+          # operator inspecting a deployment mount.
+          sudo test -s "$database" || { printf '::error title=project database missing::%s\n' "$database"; exit 1; }
+          if sudo grep -aqF -- "$saved" "$database" 2>/dev/null; then
+            durable=project.db
+          elif sudo grep -aqF -- "$saved" "$database-wal" 2>/dev/null; then
+            durable=project.db-wal
+          else
+            printf '::error title=save was not durable::the saved body is not in the mounted project.db\n'
+            exit 1
+          fi
+          printf 'durable write observed in the mounted %s\n' "$durable" | tee -a "$work/statuses.txt"
+          # The journey image must still carry no Node at all.
+          docker exec novel-go-journey-ci sh -c '! command -v node && ! command -v npm && ! command -v electron'
+          docker logs novel-go-journey-ci 2>&1 | tail -20
+
+          {
+            printf '\n### Production draft journey inside the real container image\n\n'
+            printf 'The unpublished image ran with `--read-only`, a disposable `NOVEL_DATA_ROOT=/data` owned by uid 65532, and no Node on `PATH`.\n\n'
+            printf '```\n'
+            cat "$work/statuses.txt"
+            printf '```\n\n'
+            printf -- '- `project:open` admitted project `%s` at `%s` and issued a lease.\n' "$project_id" "$project_path"
+            printf -- '- `db:draft-list` returned the seeded draft with metadata only and no body.\n'
+            printf -- '- `db:draft-update-content` committed by compare-and-swap and rotated the lease `%s` -> `%s`.\n' "$lease" "$fresh"
+            printf -- '- `db:draft-get-full` returned the stored body and `wordCount` `%s`.\n\n' "$words"
+            printf 'Body seeded into the v7 database: `%s`\n\n' "$seed"
+            printf 'Body saved through the browser operation: `%s`\n\n' "$saved"
+            printf 'Body read back from the container over HTTP: `%s`\n\n' "$readback"
+            printf 'The same bytes are present in `%s` on the host, so the save survived the process.\n' "$durable"
+          } >> "$GITHUB_STEP_SUMMARY"
       # The smoke-tested container is exported so it can be loaded and inspected
       # locally without registry credentials: pulling from GHCR needs the
       # read:packages scope, while a repository-scoped token may download
