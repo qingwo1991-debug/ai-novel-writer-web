@@ -352,13 +352,12 @@ func TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution(t *test
 	author := newProductionDurableClient(t, handler, productionTestTab)
 	// generation:begin is the admitted run-admission name (asserted by
 	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease) and
-	// generation:execute the admitted dispatch name; every other name stays
-	// unbound even with a policy in place.
+	// generation:execute the admitted dispatch name. The ledger mutations and the
+	// two family cancels are bound by the generation write batch now, so the one
+	// name left here is the one that re-dispatches a request the browser never
+	// froze: it must keep failing closed even with a policy in place.
 	for _, operation := range []string{
-		"generation:bind-material-decision",
-		"generation:restart",
-		"generation:discard-candidate", "generation:retry-draft-short-outline",
-		"graph-generation:cancel", "finalization-generation:cancel",
+		"generation:retry-draft-short-outline",
 	} {
 		response := author.call(t, operation, []any{})
 		if response.Code != http.StatusNotImplemented ||

@@ -548,9 +548,17 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		}
 		// generation:cancel, generation:pause and generation:resume settle or advance
 		// an admitted run through the ledger and dial nothing, so the same owner lends
-		// them under the same committed gates. generation:restart is deliberately not
-		// among them: it begins a replacement run with its own admission path.
+		// them under the same committed gates.
 		if bindErr := server.BindGenerationLifecycle(&transport.GenerationProvider{Cancel: owner.Cancel, Pause: owner.Pause, Resume: owner.Resume}); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+		// The remaining ledger mutations of the family - material decisions, candidate
+		// discards, restart and the two family cancels - travel the same owner, because
+		// none of them dials: restart runs the begin body and then stops the old root,
+		// so it is not a second run-admission path. retry-draft-short-outline is absent:
+		// it synthesises a task the browser never froze and re-dispatches it.
+		if bindErr := newProductionGenerationWrites(owner).Bind(server); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
@@ -594,6 +602,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindNarrativeEventConfirm(newProductionStoryStateWrites(open.durable)) },
 		func() error { return newProductionWrites(open).Bind(server) },
 		func() error { return newProductionEditorWrites(open.durable).Bind(server) },
+		func() error { return newProductionFinalizationWrites(open.durable).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()

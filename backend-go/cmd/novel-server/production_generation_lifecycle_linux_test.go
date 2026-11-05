@@ -151,9 +151,9 @@ func productionLifecycleRefusal(t *testing.T, label string, response *httptest.R
 // the ledger rows their name promises (root and run), leave generation:read
 // reporting the new status, refuse a stale lease before any row moves, treat a
 // settled run as documented instead of succeeding silently, and never reach the
-// dispatch seam. generation:restart is deliberately not asserted here: it re-begins
-// a replacement run instead of transitioning the admitted one, so it stays unbound
-// and keeps failing closed at 501.
+// dispatch seam. generation:restart is not asserted here: it is served by the
+// generation write batch, which proves it runs the begin body and then stops the
+// old root without dialing.
 func TestProductionLaneSettlesAndAdvancesAdmittedRunsWithoutDialing(t *testing.T) {
 	tests := []struct {
 		operation    string
