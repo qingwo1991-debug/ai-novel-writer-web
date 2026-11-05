@@ -506,23 +506,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// The editor's read surface, bound to the same admitted author database under
 	// the same live lease: the three character reads, the two stage reads
 	// (project core and the whole blueprint list the chapter/volume tree is built
-	// from), the single blueprint read, the project overview aggregate, and the
-	// review half of the editor (production_review_reads_linux.go): the review
-	// and revision metadata lists, the two full-row reads, and the review-cycle
-	// read that answers null for a review with no saved cycle. Each one is a
-	// SELECT-only path inside the runtime's read-only transaction; nothing here
-	// grants a write, and these seven distinct binders never overlap, so no
-	// operation is double-bound. The review/revision mutations, and the two reads
-	// whose only seam borrows a write-capable handle (db:review-get-latest,
-	// db:review-next-index), stay unbound and keep failing closed.
+	// from), the single blueprint read, and the project overview aggregate. Each
+	// one is a SELECT-only path; nothing here grants a write, and these four
+	// distinct binders never overlap, so no operation is double-bound.
 	for _, bind := range []func() error{
 		func() error { return server.BindCharacterLiveReads(open.durable) },
 		func() error { return server.BindEditorStageReads(open.durable) },
 		func() error { return server.BindBlueprintGetRead(open.durable) },
 		func() error { return server.BindCurrentOverview(open.durable) },
-		func() error { return server.BindEditorReviewReads(open.durable) },
-		func() error { return server.BindEditorReviewFullReads(open.durable) },
-		func() error { return server.BindEditorReviewCycleAbsentRead(open.durable) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
