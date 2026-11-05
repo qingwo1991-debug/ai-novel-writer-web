@@ -1740,3 +1740,20 @@ writing operations with 501.
 - Line drift: the lease is at `production_open_linux.go:157` (not `:141`); the editor binders are called
   at `:512-517` (not `:448-451`).
 
+### 2026-11-05 — review-read batch reverted; main is green at `ff0c8569`
+
+A batch binding six review/revision reads (`db:review-list`, `db:revision-list`, `db:revision-get-pending`,
+`db:review-get-full`, `db:revision-get-full`, `db:review-cycle-get`) turned the "Go format, vet, synthetic
+tests, race and binary" job red with **no readable annotation** beyond `unit=failure` - the check-run
+annotations carried only the job outcome, not the failing assertion. Rather than leave main red with an
+undiagnosed failure, the commit was reverted (`232e0b6f` -> `ff0c8569`), and the revert run is green.
+
+**Do not re-land that batch blind.** The next attempt must reproduce the failure with a narrower step: push
+only the adapter file plus its test, and if the annotation stays empty, split the test so the failing
+assertion names itself (assert one operation per subtest rather than a loop over six). An empty annotation
+means the failure message never reached the annotation channel - assume it is a `t.Fatalf` inside a loop
+whose message the harness dropped, not that the code is correct.
+
+**Standing after the revert:** 38 of 281 operations served in production, 243 unbound, main green
+(`ff0c8569`), working tree clean, no real author data touched, production deployment unchanged.
+
