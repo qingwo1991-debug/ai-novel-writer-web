@@ -1918,3 +1918,40 @@ configured (`kb-controller.ts:379-390`), and this lane's committed config names 
 (`production_open_linux_test.go:103`). FTS-only would be silent degradation, so it is refused rather than
 downgraded. `internal/transport/knowledge_test.go:270` already pins it at 501.
 
+### 2026-11-05 — 77 of 281 verified; two traps that cost a CI cycle each
+
+Green: `7a0f7fb1`. Seventeen names were added in three commits after the 60: import-run reads
+(`db:import-run-get`, `-list-resumable`, `-list-chapters`), the confined file reads (`fs:read-file`,
+`fs:check-exists`, `fs:read-json`), draft authority and narrative reads (`db:draft-authority-sequence`,
+`db:draft-export-snapshot`, `db:draft-export-authority-current`, `db:narrative-thread-list`,
+`db:narrative-thread-list-relevant`, `db:consistency-exemption-list`), and five singletons
+(`db:review-get-latest`, `db:review-next-index`, `db:revision-next-index`, `db:recovery-candidate-list`,
+`skills:list-user`).
+
+**Trap 1: the node-free scan reads prose.** `.github/workflows/go-backend.yml:527-538` asserts that no Go
+source outside tests contains the regex `(?<![A-Za-z0-9_])node:|worker\.mjs|dist-server`, and that the only
+`"os/exec"` importer is `internal/mcp/transports.go`. A comment explaining why `fs:list-dir` leaks host paths
+read "ABSOLUTE host path per node: `node := VisibleNode{...`" and the bare `node:` failed the scan. The job
+reported `contracts=success unit=success race=success` with the binary healthy, so the failure looked like
+infrastructure; the run log would not download (`zip: not a valid zip file`). What worked was
+(a) `gh run view --json jobs --jq` to name the failing step, (b) reading that step to find its inline Python
+scan, (c) replaying the scan locally, which printed the offending file and line. Replay that scan before
+committing prose about Electron paths; it is seconds, and the alternative is a ten minute round trip.
+
+**Trap 2: `BindImportRuns` counted every wire arity one short.** The table at
+`internal/transport/import_run.go:130-139` compared `len(args) != arity` while `args` ends with the frozen
+context, so every real renderer call answered 400 `INVALID_ARGUMENTS`. The header comment above the table had
+the correct counts; the table did not. Fixed by adding one to all ten values, with the invariant now written
+next to the table. Only the synthetic lane called that binder, so nothing shipped was broken by it - but the
+production adapter for those three reads had to derive the arities from the wire contract instead, which is
+how the discrepancy surfaced.
+
+**Also fixed:** `fs:read-json` answered 500 because the handler borrowed
+`authorruntime.ReadLifecycle.ReadArchCheckpoint`, which asserts `handle.(*admittedRead)`
+(`internal/authorruntime/editor_checkpoint.go:31-34`); the production lease admits `*admittedAuthor`
+(`durable_linux.go:194`), so the assertion always failed with `ErrInvalid` and fell through to the default
+500. The fix reads the marker through `projectfs.Project.OpenFileRead` under the same 1 MiB ceiling, and the
+empty case stays the nullable `{success:false,data:null}` the runtime itself returns.
+
+**Standing: 77 of 281 served and CI-verified, 204 unbound.**
+
