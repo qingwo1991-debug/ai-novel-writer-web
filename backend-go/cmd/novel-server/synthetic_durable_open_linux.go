@@ -443,6 +443,24 @@ func (s *syntheticDurableOpen) BeginSummary(ctx context.Context, caller transpor
 	return store.NewSummary(db), release, nil
 }
 
+// BeginDrafts is the durable lane's draft repository for the six names the live
+// draft binders leave unbound: the three self-contained author mutations
+// (db:draft-create, db:draft-update-status, db:draft-delete) and the three
+// authoritative export reads (db:draft-authority-sequence,
+// db:draft-export-snapshot, db:draft-export-authority-current). All six are
+// plain SQLite work on the admitted author database: none needs a generation
+// owner, a source project, LanceDB or a filesystem path, and none rotates the
+// frozen lease, because the original never changed the session for them. The
+// draft body CAS keeps its own override (CommitDraftContent) and the eight live
+// reads keep BindDraftLiveReads, so nothing here is bound twice.
+func (s *syntheticDurableOpen) BeginDrafts(ctx context.Context, caller transport.Caller, raw any) (*store.Drafts, func(), error) {
+	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewDrafts(db), release, nil
+}
+
 // BeginReviewRevisions is the durable lane's review and revision repository.
 func (s *syntheticDurableOpen) BeginReviewRevisions(ctx context.Context, caller transport.Caller, raw any) (*store.ReviewRevisions, func(), error) {
 	db, release, err := s.beginAuthorRepository(ctx, caller, raw)
@@ -763,6 +781,14 @@ func migrationHandlerWithDurable(registry *policy.Registry, address, staticDir, 
 		func() error { return server.BindCharacterLiveReads(durable) },
 		func() error { return server.BindDraftLiveReads(durable) },
 		func() error { return server.BindDraftLiveWrites(durable) },
+		// The rest of the draft family is plain SQLite on that same admitted
+		// author database: three self-contained mutations (create, update-status,
+		// delete) through the same borrow-and-refresh permit path, and the three
+		// authoritative export reads. None of them is in the live read row set or
+		// the body CAS above, so the family is served completely except the
+		// import batch, which belongs to the import pipeline.
+		func() error { return server.BindDraftAuthorWrites(durable) },
+		func() error { return server.BindDraftAuthorityReads(durable) },
 		func() error { return server.BindEditorNavigation(durable) },
 		func() error { return server.BindCurrentOverview(durable) },
 		func() error { return server.BindEditorCheckpoint(durable) },

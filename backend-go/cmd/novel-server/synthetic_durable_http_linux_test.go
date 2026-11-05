@@ -1564,6 +1564,241 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		unknownID["error"] != "FINALIZATION_COMMIT_NOT_FOUND" {
 		t.Fatalf("durable finalization:retry accepted an unknown id: %v", unknownID)
 	}
+	// The three authoritative-export reads are served from that same admitted
+	// author database. After the commit above there is exactly one finalized
+	// chapter, so the continuity verdict and the export snapshot are real facts
+	// read back from the committed rows, not constants: the sequence must be
+	// continuous at chapter 1, and its fingerprint must be the sha256 of the
+	// original's payload shape over the frozen draft's body hash.
+	fingerprintPayload := `[{"draftId":` + strconv.FormatInt(draftID, 10) +
+		`,"chapterNumber":1,"version":1,"bodyHash":"` + finalDigest + `"}]`
+	fingerprintSum := sha256.Sum256([]byte(fingerprintPayload))
+	wantFingerprint := hex.EncodeToString(fingerprintSum[:])
+	authorityRec := rpc("db:draft-authority-sequence", []any{projectPath, freshSession})
+	var authorityWire struct {
+		Result struct {
+			Status                  string  `json:"status"`
+			LastChapterNumber       int64   `json:"lastChapterNumber"`
+			NextChapterNumber       int64   `json:"nextChapterNumber"`
+			FirstGapChapterNumber   *int64  `json:"firstGapChapterNumber"`
+			DuplicateChapterNumbers []int64 `json:"duplicateChapterNumbers"`
+			AuthorityFingerprint    string  `json:"authorityFingerprint"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(authorityRec.Body.Bytes(), &authorityWire); err != nil || authorityRec.Code != http.StatusOK {
+		t.Fatal("db:draft-authority-sequence decode failed", authorityRec.Code, authorityRec.Body.String(), err)
+	}
+	if got := authorityWire.Result; got.Status != "continuous" || got.LastChapterNumber != 1 ||
+		got.NextChapterNumber != 2 || got.FirstGapChapterNumber != nil ||
+		len(got.DuplicateChapterNumbers) != 0 || got.AuthorityFingerprint != wantFingerprint {
+		t.Fatalf("db:draft-authority-sequence did not read the committed chapter: %+v", got)
+	}
+	exportRec := rpc("db:draft-export-snapshot", []any{projectPath, freshSession})
+	var exportWire struct {
+		Result []map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(exportRec.Body.Bytes(), &exportWire); err != nil || exportRec.Code != http.StatusOK {
+		t.Fatal("db:draft-export-snapshot decode failed", exportRec.Code, exportRec.Body.String(), err)
+	}
+	if len(exportWire.Result) != 1 {
+		t.Fatalf("db:draft-export-snapshot did not select exactly the committed chapter: %d %s",
+			len(exportWire.Result), exportRec.Body.String())
+	}
+	exported := exportWire.Result[0]
+	if exported["draftId"] != float64(draftID) || exported["chapterNumber"] != float64(1) ||
+		exported["version"] != float64(1) || exported["finalizationId"] != finalID ||
+		exported["contentHash"] != finalDigest || exported["title"] != finalTitle ||
+		exported["content"] != finalBody {
+		t.Fatalf("db:draft-export-snapshot returned a different snapshot: %v", exported)
+	}
+	// The receipt the snapshot itself describes is current; a receipt with one
+	// altered hash, an empty receipt and a non-array receipt are all not current
+	// and are answered as a bare false instead of an error.
+	exportReceipt := []any{map[string]any{"draftId": draftID, "chapterNumber": 1,
+		"version": 1, "finalizationId": finalID, "contentHash": finalDigest}}
+	exportCurrent := func(receipt any) bool {
+		t.Helper()
+		response := rpc("db:draft-export-authority-current", []any{receipt, projectPath, freshSession})
+		var wire struct {
+			Result bool `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || response.Code != http.StatusOK {
+			t.Fatalf("db:draft-export-authority-current decode failed: %d %s %v",
+				response.Code, response.Body.String(), err)
+		}
+		return wire.Result
+	}
+	if !exportCurrent(exportReceipt) {
+		t.Fatal("db:draft-export-authority-current refused the receipt its own snapshot describes")
+	}
+	tampered := []any{map[string]any{"draftId": draftID, "chapterNumber": 1, "version": 1,
+		"finalizationId": finalID, "contentHash": strings.Repeat("0", 64)}}
+	if exportCurrent(tampered) || exportCurrent([]any{}) || exportCurrent("not-a-receipt") {
+		t.Fatal("db:draft-export-authority-current accepted a receipt that is not current")
+	}
+	// The three remaining draft mutations write the same admitted author
+	// database. db:draft-create ignores the requested version and allocates
+	// MAX(version)+1 inside its transaction, so the stored chapter starts at 1
+	// even though 3 was asked for; the body is read back through the already
+	// bound db:draft-get-full.
+	const authorChapter = 5
+	const authorBody = "第五章作者草稿🐍"
+	createdDraft := coreWrite("db:draft-create", []any{map[string]any{
+		"chapterNumber": authorChapter, "version": 3, "source": "write",
+		"content": authorBody, "wordCount": 4,
+	}, projectPath, freshSession})
+	if createdDraft["success"] != true || createdDraft["error"] != nil {
+		t.Fatalf("db:draft-create reported failure: %v", createdDraft)
+	}
+	createdNumber, _ := createdDraft["id"].(float64)
+	if createdNumber < 1 {
+		t.Fatalf("db:draft-create returned no draft id: %v", createdDraft)
+	}
+	createdID := int64(createdNumber)
+	createdFull := rpc("db:draft-get-full", []any{createdNumber, projectPath, freshSession})
+	var createdFullWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(createdFull.Body.Bytes(), &createdFullWire); err != nil || createdFull.Code != http.StatusOK {
+		t.Fatal("db:draft-get-full decode failed", createdFull.Code, createdFull.Body.String(), err)
+	}
+	if got := createdFullWire.Result; got["id"] != createdNumber ||
+		got["chapterNumber"] != float64(authorChapter) || got["version"] != float64(1) ||
+		got["status"] != "draft" || got["source"] != "write" ||
+		got["wordCount"] != float64(4) || got["content"] != authorBody ||
+		got["dependenciesStale"] != false {
+		t.Fatalf("db:draft-create did not persist the requested draft: %v", got)
+	}
+	var createdContentID sql.NullInt64
+	durableQuery(t, database, "SELECT content_id FROM drafts WHERE id="+
+		strconv.FormatInt(createdID, 10), &createdContentID)
+	if !createdContentID.Valid || createdContentID.Int64 < 1 {
+		t.Fatalf("db:draft-create stored no content row: %v", createdContentID)
+	}
+	// db:draft-update-status changes the working status and the word count and
+	// leaves the content alone, which the bound read proves.
+	statusWrite := coreWrite("db:draft-update-status", []any{createdNumber, "reviewed", 7, projectPath, freshSession})
+	if statusWrite["success"] != true || statusWrite["error"] != nil {
+		t.Fatalf("db:draft-update-status reported failure: %v", statusWrite)
+	}
+	statusMeta := rpc("db:draft-get-meta", []any{createdNumber, projectPath, freshSession})
+	var statusMetaWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(statusMeta.Body.Bytes(), &statusMetaWire); err != nil || statusMeta.Code != http.StatusOK {
+		t.Fatal("db:draft-get-meta decode failed", statusMeta.Code, statusMeta.Body.String(), err)
+	}
+	if got := statusMetaWire.Result; got["status"] != "reviewed" || got["wordCount"] != float64(7) ||
+		got["contentId"] != float64(createdContentID.Int64) {
+		t.Fatalf("db:draft-update-status was not persisted: %v", got)
+	}
+	// A working draft may not be promoted to a receipted status, and a receipted
+	// draft may not change status at all: both refusals keep the family's
+	// "Error: CODE" envelope.
+	promoteWrite := coreWrite("db:draft-update-status", []any{createdNumber, "finalized", nil, projectPath, freshSession})
+	if promoteWrite["success"] != false || promoteWrite["error"] != "Error: DRAFT_FINALIZATION_REQUIRES_COMMIT" {
+		t.Fatalf("db:draft-update-status promoted a working draft: %v", promoteWrite)
+	}
+	receiptWrite := coreWrite("db:draft-update-status", []any{draftID, "draft", nil, projectPath, freshSession})
+	if receiptWrite["success"] != false || receiptWrite["error"] != "Error: DRAFT_FINALIZED_READ_ONLY" {
+		t.Fatalf("db:draft-update-status rewrote a receipted draft: %v", receiptWrite)
+	}
+	// db:draft-delete answers the one receipted code as errorCode with no error
+	// string at all, and the frozen draft survives.
+	deleteFinalRec := rpc("db:draft-delete", []any{draftID, projectPath, freshSession})
+	var deleteFinalWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(deleteFinalRec.Body.Bytes(), &deleteFinalWire); err != nil || deleteFinalRec.Code != http.StatusOK {
+		t.Fatal("db:draft-delete decode failed", deleteFinalRec.Code, deleteFinalRec.Body.String(), err)
+	}
+	if deleteFinalWire.Result["success"] != false ||
+		deleteFinalWire.Result["errorCode"] != "FINALIZED_DRAFT_DELETE_REQUIRED" ||
+		strings.Contains(deleteFinalRec.Body.String(), `"error":`) {
+		t.Fatalf("db:draft-delete refused a finalized draft with the wrong envelope: %s", deleteFinalRec.Body.String())
+	}
+	var finalizedStill int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM drafts WHERE id="+
+		strconv.FormatInt(draftID, 10), &finalizedStill)
+	if finalizedStill != 1 {
+		t.Fatal("db:draft-delete removed a finalized draft")
+	}
+	// The working draft is deletable, and both the draft row and its content row
+	// are gone: db:draft-get-meta answers null and SQLite agrees.
+	deleteRec := coreWrite("db:draft-delete", []any{createdNumber, projectPath, freshSession})
+	if deleteRec["success"] != true || deleteRec["error"] != nil {
+		t.Fatalf("db:draft-delete reported failure: %v", deleteRec)
+	}
+	goneRec := rpc("db:draft-get-meta", []any{createdNumber, projectPath, freshSession})
+	var goneWire struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(goneRec.Body.Bytes(), &goneWire); err != nil || goneRec.Code != http.StatusOK || goneWire.Result != nil {
+		t.Fatalf("db:draft-delete left the draft readable: %d %s %v", goneRec.Code, goneRec.Body.String(), err)
+	}
+	var draftsLeft, contentsLeft int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM drafts WHERE id="+
+		strconv.FormatInt(createdID, 10), &draftsLeft)
+	durableQuery(t, database, "SELECT COUNT(*) FROM contents WHERE id="+
+		strconv.FormatInt(createdContentID.Int64, 10), &contentsLeft)
+	if draftsLeft != 0 || contentsLeft != 0 {
+		t.Fatalf("db:draft-delete left rows behind: drafts=%d contents=%d", draftsLeft, contentsLeft)
+	}
+	// A malformed dependency list and a stale but well-formed one are both
+	// refused before any INSERT, so neither adds a draft or a content row.
+	var draftsBefore int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM drafts", &draftsBefore)
+	invalidDep := coreWrite("db:draft-create", []any{map[string]any{
+		"chapterNumber": 6, "source": "write", "content": "不得写入", "wordCount": 1,
+		"sourceDependencies": []any{map[string]any{"draftId": 1, "contentHash": "short"}},
+	}, projectPath, freshSession})
+	if invalidDep["success"] != false || invalidDep["error"] != "Error: GENERATION_DRAFT_DEPENDENCY_INVALID" {
+		t.Fatalf("db:draft-create accepted a malformed dependency: %v", invalidDep)
+	}
+	staleDep := coreWrite("db:draft-create", []any{map[string]any{
+		"chapterNumber": 6, "source": "write", "content": "不得写入", "wordCount": 1,
+		"sourceDependencies": []any{map[string]any{"draftId": 987654, "contentHash": strings.Repeat("a", 64)}},
+	}, projectPath, freshSession})
+	if staleDep["success"] != false || staleDep["error"] != "Error: GENERATION_DRAFT_DEPENDENCY_STALE" {
+		t.Fatalf("db:draft-create accepted a stale dependency: %v", staleDep)
+	}
+	var draftsAfter int64
+	durableQuery(t, database, "SELECT COUNT(*) FROM drafts", &draftsAfter)
+	if draftsAfter != draftsBefore {
+		t.Fatalf("a refused db:draft-create wrote a draft: %d -> %d", draftsBefore, draftsAfter)
+	}
+	// The names this lane still does not serve keep failing closed at 501. The
+	// import pipeline is a separate lane's job, db:project-core-commit-generated
+	// needs a generation owner, db:blueprint-clear-all and
+	// db:project-clear-generated-data both retire generation runs through
+	// repositories this lane does not own, db:blueprint-character-sync-complete
+	// must prove a character-proposal or roster receipt this lane cannot mint,
+	// db:blueprint-update-notes and db:plot-tree-save are refused unconditionally
+	// by the original itself, and db:review-cycle-list-pending-rechecks needs the
+	// M03 receipt proof and recheck projection that are not ported. The registry
+	// exposes all of them, so the 501 is the durable binding, not a 404.
+	for _, remainingDraftName := range []string{
+		"db:project-core-commit-generated", "db:project-clear-generated-data",
+		"db:import-global-facts-commit",
+		"db:import-run-prepare-inspection", "db:import-run-author-preview",
+		"db:import-run-finalize-parsing", "db:import-run-get", "db:import-run-list-resumable",
+		"db:import-run-list-chapters", "db:import-run-effect-receipt-get",
+		"db:import-run-effect-receipt-prepare", "db:import-run-effect-receipt-commit",
+		"db:import-run-start-resume", "db:import-run-renew-execution", "db:import-run-restart",
+		"db:import-run-request-cancel", "db:import-run-cancel-at-boundary",
+		"db:import-run-complete-batch", "db:import-run-advance-stage", "db:import-run-fail",
+		"db:import-run-complete", "db:draft-import-finalized-batch",
+		"db:blueprint-character-sync-complete", "db:blueprint-update-notes",
+		"db:blueprint-clear-all", "db:plot-tree-save", "db:review-cycle-list-pending-rechecks",
+	} {
+		unboundDraft := rpc(remainingDraftName, []any{map[string]any{}, projectPath, freshSession})
+		if unboundDraft.Code != http.StatusNotImplemented ||
+			!strings.Contains(unboundDraft.Body.String(), "GO_OPERATION_NOT_MIGRATED") ||
+			strings.Contains(unboundDraft.Body.String(), projectPath) {
+			t.Fatalf("%s was bound or leaked a path on the durable lane: %d %s",
+				remainingDraftName, unboundDraft.Code, unboundDraft.Body.String())
+		}
+	}
 	// The eight cloud-backup names stay unbound: every one of them needs the
 	// safeStorage credential/binding store, a deployment-supplied WebDAV dispatch,
 	// portable export/restore into the author's tree, or an in-flight backup
