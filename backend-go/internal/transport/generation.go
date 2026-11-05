@@ -229,27 +229,34 @@ func generationSymbolicCode(err error) string {
 	return code
 }
 
-// familyRequestHandle unwraps the `{ handle }` envelope the graph and finalization
-// families use. It is not the same wire shape as `generation:cancel`, which
-// takes the handle itself: the renderer sends `{ handle: view.handle }` for the
-// family channels (src/services/graph-generation.ts:40,
-// src/services/finalization-generation.ts:27) and the Node owner rejects any
-// request carrying a key other than `handle` before it looks at the run.
-// Passing the envelope straight through would make every real call fail while a
-// test that only checks "not 501" still passed.
-func familyRequestHandle(value any, invalidCode string) (any, error) {
+// familyRequestField unwraps the single-key request envelope the graph and
+// finalization families use. It is not the same wire shape as `generation:cancel`,
+// which takes the handle itself: the renderer sends `{ handle: view.handle }` for
+// the handle-carrying family channels (src/services/graph-generation.ts:40,
+// src/services/finalization-generation.ts:27) and `{ slot }` for the finalization
+// slot read (src/shared/finalization-generation.ts:39). The Node owner rejects any
+// request carrying a key other than the documented one before it looks at the
+// run, so the unwrap is refused here too. Passing the envelope straight through
+// would make every real call fail while a test that only checks "not 501" still
+// passed.
+func familyRequestField(value any, field, invalidCode string) (any, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
 		return nil, errors.New(invalidCode)
 	}
 	for key := range object {
-		if key != "handle" {
+		if key != field {
 			return nil, errors.New(invalidCode)
 		}
 	}
-	handle, present := object["handle"]
+	inner, present := object[field]
 	if !present {
 		return nil, errors.New(invalidCode)
 	}
-	return handle, nil
+	return inner, nil
+}
+
+// familyRequestHandle is the `{ handle }` form of familyRequestField.
+func familyRequestHandle(value any, invalidCode string) (any, error) {
+	return familyRequestField(value, "handle", invalidCode)
 }

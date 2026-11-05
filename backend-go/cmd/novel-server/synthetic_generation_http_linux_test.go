@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -56,7 +57,8 @@ func sha256Hex(text string) string {
 // execute (length stop) → retry-draft-short-outline (completed) → read → list
 // → begin review run → bind-material-decision → execute → pause → resume →
 // restart → discard-candidate. It asserts the browser DTO field names, the
-// textHash invariant, the read-only SQLite ledger rows, and that all 32
+// textHash invariant, the read-only SQLite ledger rows, the finalization slot
+// read (absent, conflicting and unprovable), and that all 28
 // non-S1 generation-family operations still return GO_OPERATION_NOT_MIGRATED.
 func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 	oracle := os.Getenv("GO_SQLITE_CONTRACT")
@@ -110,6 +112,29 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		t.Fatalf("real synthetic project.db missing: %v", err)
 	}
 	draftID, _ := seedSyntheticDurableRows(t, database)
+	// finalization-generation:read is a real look-up, so the test needs runs that
+	// own a slot: one owned by this project and one owned by another. They are
+	// written before project:open so the write admission fingerprints exactly this
+	// database, and the key is rebuilt here from the original formula
+	// (finalizationSlotKey hashes the array draftId, finalizationId,
+	// chapterNumber, contentHash, stepKey) rather than from the lane's own helper.
+	slotSource := func(finalizationID string) map[string]any {
+		return map[string]any{
+			"draftId": float64(7), "chapterNumber": float64(3),
+			"finalizationId": finalizationID, "contentHash": strings.Repeat("d", 64),
+		}
+	}
+	slotOwned := map[string]any{"source": slotSource("synthetic-owned-finalization"), "stepKey": "chapter_notes"}
+	slotForeign := map[string]any{"source": slotSource("synthetic-foreign-finalization"), "stepKey": "chapter_notes"}
+	slotAbsent := map[string]any{"source": slotSource("synthetic-absent-finalization"), "stepKey": "chapter_notes"}
+	slotKey := func(slot map[string]any) string {
+		source := slot["source"].(map[string]any)
+		return sha256Hex("[" + strconv.FormatInt(int64(source["draftId"].(float64)), 10) +
+			`,"` + source["finalizationId"].(string) + `",` +
+			strconv.FormatInt(int64(source["chapterNumber"].(float64)), 10) +
+			`,"` + source["contentHash"].(string) + `","` + slot["stepKey"].(string) + `"]`)
+	}
+	seedSyntheticDurableFinalizationSlots(t, database, slotKey(slotOwned), slotKey(slotForeign))
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	bootRequest.Header.Set("X-Novel-User", "synthetic-author")
 	boot := httptest.NewRecorder()
@@ -436,7 +461,7 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		t.Fatalf("unprotected revision create = %d %s", unprotected.Code, unprotected.Body.String())
 	}
 
-	// --- all 32 non-S1 generation-family operations stay unmigrated. ---
+	// --- all 28 non-S1 generation-family operations stay unmigrated. ---
 	unmigrated := append([]string{
 		"generation:begin-batch", "generation:commit-draft", "generation:compose-visible",
 		"generation:confirm-batch-finalization", "generation:find-blueprint-recovery",
@@ -448,13 +473,13 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		"agent-generation:finish-tool", "agent-generation:read", "agent-generation:register-workflow",
 		"agent-generation:resume", "agent-generation:round",
 		"finalization-generation:begin", "finalization-generation:commit",
-		"finalization-generation:execute", "finalization-generation:read",
+		"finalization-generation:execute",
 		"graph-generation:begin", "graph-generation:confirm",
 		"graph-generation:execute",
 		"import-generation:execute", "import-generation:read",
 	}...)
-	if len(unmigrated) != 29 {
-		t.Fatalf("unmigrated list = %d, want 29", len(unmigrated))
+	if len(unmigrated) != 28 {
+		t.Fatalf("unmigrated list = %d, want 28", len(unmigrated))
 	}
 	for _, operation := range unmigrated {
 		response := rpc(operation, []any{expected})
@@ -477,6 +502,64 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		}
 		if strings.Contains(body, "REQUEST_INVALID") {
 			t.Fatalf("graph-generation:read rejected the { handle } envelope: %d %s", response.Code, body)
+		}
+	}
+
+	// --- finalization-generation:read is bound: it validates the `{ slot }`
+	// envelope, derives the slot key the original derives, and answers null for a
+	// slot no run owns. The two seeded rows prove the look-up is real: the row in
+	// this project is refused as an unprovable context (its manifest was written by
+	// something other than this lane, which cannot reproduce the insertion-order
+	// digest the desktop build froze), and the row in another project is the
+	// original's slot conflict. ---
+	absentSlot := rpc("finalization-generation:read", []any{map[string]any{"slot": slotAbsent}, expected})
+	var absentWire struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(absentSlot.Body.Bytes(), &absentWire); err != nil ||
+		absentSlot.Code != http.StatusOK || string(absentWire.Result) != "null" {
+		t.Fatalf("finalization slot read = %d %s, want an absent (null) result", absentSlot.Code, absentSlot.Body.String())
+	}
+	for _, owned := range []struct {
+		name string
+		slot map[string]any
+		code string
+	}{
+		{"a run in this project", slotOwned, "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+		{"a run in another project", slotForeign, "GENERATION_FINALIZATION_SLOT_CONFLICT"},
+	} {
+		response := rpc("finalization-generation:read", []any{map[string]any{"slot": owned.slot}, expected})
+		if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("finalization-generation:read is still unmigrated: %d %s", response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), owned.code) {
+			t.Fatalf("finalization slot read of %s = %d %s, want %s", owned.name, response.Code, response.Body.String(), owned.code)
+		}
+	}
+	slotWith := func(mutate func(source map[string]any)) map[string]any {
+		source := slotSource("synthetic-refused-finalization")
+		mutate(source)
+		return map[string]any{"source": source, "stepKey": "chapter_notes"}
+	}
+	for _, refusal := range []struct {
+		name    string
+		request any
+	}{
+		{"an extra key", map[string]any{"slot": slotAbsent, "handle": slotAbsent}},
+		{"no slot", map[string]any{"handle": slotAbsent}},
+		{"a bare slot", slotAbsent},
+		{"an unknown step key", map[string]any{"source": slotSource("synthetic-refused-finalization"), "stepKey": "prose"}},
+		{"an unknown source key", slotWith(func(source map[string]any) { source["extra"] = float64(1) })},
+		{"a fractional draft id", slotWith(func(source map[string]any) { source["draftId"] = float64(1.5) })},
+		{"a string draft id", slotWith(func(source map[string]any) { source["draftId"] = "7" })},
+		{"a zero chapter number", slotWith(func(source map[string]any) { source["chapterNumber"] = float64(0) })},
+		{"a blank finalization id", slotWith(func(source map[string]any) { source["finalizationId"] = "   " })},
+		{"a short content hash", slotWith(func(source map[string]any) { source["contentHash"] = "d" })},
+	} {
+		response := rpc("finalization-generation:read", []any{refusal.request, expected})
+		if !strings.Contains(response.Body.String(), "GENERATION_FINALIZATION_SLOT_INVALID") {
+			t.Fatalf("finalization-generation:read with %s = %d %s, want GENERATION_FINALIZATION_SLOT_INVALID",
+				refusal.name, response.Code, response.Body.String())
 		}
 	}
 
@@ -570,5 +653,53 @@ func assertStringField(t *testing.T, object map[string]any, key, want string) {
 	}
 	if got, ok := current.(string); !ok || got != want {
 		t.Fatalf("%s = %#v, want %q", key, current, want)
+	}
+}
+
+// seedSyntheticDurableFinalizationSlots writes one generation run that owns a
+// finalization slot in this project and one that owns a slot in another project,
+// in the exact column shape the original ledger fixture uses
+// (contract/m03-generated-contract.mjs:81). It runs while no lease is admitted.
+//
+// The rows carry nothing but the slot key in their frozen manifest: the lane must
+// answer null when no row matches and refuse when one does, and it must tell the
+// project's own row (an unprovable context) from a foreign one (the original's
+// slot conflict). Each run gets its parent root row because the write admission
+// runs PRAGMA foreign_key_check (internal/admission/snapshot.go:143) and an
+// orphan run would fail the whole project open. created_at_ms is 1 and no attempt
+// or artifact row is added, so the newest-first run list the same test asserts on
+// is untouched.
+func seedSyntheticDurableFinalizationSlots(t *testing.T, database, ownedKey, foreignKey string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	fail := func(err error) {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	for _, seed := range []struct{ runID, projectID, key string }{
+		{"synthetic-slot-owned-run", syntheticDurableProjectID, ownedKey},
+		{"synthetic-slot-foreign-run", "synthetic-foreign-project", foreignKey},
+	} {
+		rootID := "synthetic-slot-root-" + seed.runID
+		action := `{"projectId":"` + seed.projectID + `","epoch":"synthetic-slot-epoch",` +
+			`"operation":"finalized-chapter-notes","uiActionNonce":"` + rootID + `",` +
+			`"rootActionId":"` + rootID + `","status":"active"}`
+		if _, err := db.Exec(`INSERT INTO generation_roots(root_action_id,idempotency_key,action_json,budget_json)
+			VALUES(?,?,?,?)`, rootID, "synthetic-slot-idempotency-"+seed.runID, action, `{"version":1,"attempts":[]}`); err != nil {
+			fail(err)
+		}
+		binding := `{"projectId":"` + seed.projectID + `","epoch":"synthetic-slot-epoch","sourceManifest":` +
+			`{"operation":"finalized-chapter-notes","finalizationGenerationSlotKey":"` + seed.key + `"}}`
+		if _, err := db.Exec(`INSERT INTO generation_runs(run_id,root_action_id,binding_json,status,created_at_ms,open_key)
+			VALUES(?,?,?,?,?,?)`, seed.runID, rootID, binding, "completed", 1, "open-"+seed.runID); err != nil {
+			fail(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
