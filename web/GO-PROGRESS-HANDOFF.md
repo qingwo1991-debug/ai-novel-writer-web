@@ -1813,3 +1813,27 @@ Parallelism needs file ownership or it corrupts:
 - Agents never commit or push; the parent stages explicit paths after reading the full `git status`
   (a truncated `head -8` once cost a full CI cycle by omitting the file that defined the function).
 
+### 2026-11-05 — 60 of 281; three batches landed in parallel
+
+Three independent batches were prepared simultaneously and landed as three commits
+(`8fce3f3c`, `0e6f901a`, `f672ef91`). GitHub cancels superseded runs in this workflow's concurrency
+group, so only the last commit's run verifies the cumulative tree - attribution of a failure therefore
+comes from the file names in the annotations, not from the commit that introduced it.
+
+- **Generation lifecycle** (+3): `generation:cancel`, `:pause`, `:resume`, via a new
+  `Server.BindGenerationLifecycle` (`internal/transport/generation.go`) that installs each name only when
+  its provider field is non-nil. `generation:restart` is refused: it begins a replacement run with its own
+  admission path rather than transitioning the admitted one. `production_generation_lifecycle_linux.go`
+  pre-reads the run through `inner.Read` so a cancel of an already-settled run refuses with
+  `GENERATION_RUN_ALREADY_SETTLED` instead of the store's silent no-op.
+- **Prompt** (+1): `prompt:load-global` only. `BindPromptSkillsReads` publishes it atomically with
+  `skills:list-user`, so taking the pair would steal a name this lane does not serve and later fail with
+  `OPERATION_ALREADY_BOUND`; the binding is per-name instead. Six chapter/prompt names were refused with
+  proof: three mutate `chapter_deletion_operations`, two write prompt files, and
+  `chapter:list-incomplete-deletions` is Electron-only with zero Go references.
+- **Review/revision reads** (+6): all six are single SELECTs. `db:review-cycle-get` returns `null` when no
+  cycle row exists and still answers 501 when one does, because that projection needs a proof this lane
+  cannot mint - a refusal, not an omission.
+
+**Standing: 60 of 281 served, 221 unbound.**
+
