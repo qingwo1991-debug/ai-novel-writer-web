@@ -453,6 +453,10 @@ func glEffectKeyAllowed(key, operation string) bool {
 		}
 	case "finalizationEffect":
 		return operation == "finalized-character-state"
+	case "visibleComposition":
+		// The visible composition receipt belongs to the attempt that composed it
+		// from that run's own artifacts, so any non-empty operation may carry it.
+		return operation != ""
 	}
 	return false
 }
@@ -548,7 +552,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 			// Both are projections of rows that exist elsewhere in this database,
 			// so admitting the keys here does not let an attempt claim an effect
 			// the store did not perform.
-			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result", "draftCommit", "directoryProgress":
+			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition":
 			case "graphEffects", "finalizationEffect":
 				if !effectKeys[key] {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")

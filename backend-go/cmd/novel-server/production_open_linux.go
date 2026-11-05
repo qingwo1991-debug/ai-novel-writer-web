@@ -570,6 +570,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:compose-visible stores the visible composition receipt on the
+		// attempt that composed it; generation:read-visible-composition reads it
+		// back and re-verifies its hash. Neither dials a provider.
+		if bindErr := newProductionComposition(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
