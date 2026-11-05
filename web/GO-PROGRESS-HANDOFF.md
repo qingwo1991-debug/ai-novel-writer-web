@@ -1757,3 +1757,34 @@ whose message the harness dropped, not that the code is correct.
 **Standing after the revert:** 38 of 281 operations served in production, 243 unbound, main green
 (`ff0c8569`), working tree clean, no real author data touched, production deployment unchanged.
 
+## Cut-over runbook (not yet authorised - 243 operations still answer 501)
+
+Do not follow this until the operation matrix is green. It is written down now so that the decision, when it
+comes, rests on a checklist rather than on memory.
+
+1. **Back up the author data first, and verify the backup.** `/root/AI/ai-novel-writer-data` is the
+   library; `/root/AI/ai-novel-writer-backups/` is where its copies live. A backup that has never been
+   restored is a hope, not a backup - restore one project into a scratch directory and open it before
+   touching production.
+2. **Pin the image by digest, never by tag.** `:latest` moves. Record the digest from the CI run that
+   produced it and pull that exact digest. Note that GHCR needs the `read:packages` scope; the
+   repository-scoped fallback is the `novel-go-image` artifact plus `docker load`.
+3. **Keep the rollback digest to hand.**
+   `ghcr.io/qingwo1991-debug/ai-novel-writer-web@sha256:84801a8a9016f115899c5be419cf2a29a1d112f82be3312fdc12609b0e95cf37`
+   is the last known-good Node image. The compose file is `docker/compose.web.yaml` with
+   `--env-file .env`.
+4. **Run the container with `--network host`.** The server binds loopback and refuses non-loopback
+   listeners (`main.go:57-59`), so `-p` port mapping cannot work; and static files require the
+   `X-Novel-User` header exactly like `/api/*`, so the nginx in `docker/nginx-ai-novel-writer-web.conf`
+   must front it and overwrite that header.
+5. **Point it at the data root** with `NOVEL_DATA_ROOT`. Without it the lane refuses to start in
+   production mode; with an invalid one it fails closed rather than creating anything.
+6. **Verify immediately, in this order:** `/` returns the app, `startup:get-state` returns 200,
+   `project:open` returns 200 with a lease, one chapter saves and reads back, and a second browser tab is
+   refused with `PROJECT_OPEN_IN_ANOTHER_TAB`. If any of these fails, put the Node image back - the data
+   is untouched at this point, which is the whole reason the Go lane never opens a database that failed
+   its pinned v7 check.
+7. **Only after that**, open the project the author actually cares about, and watch for a WAL left behind
+   by a crash: the pinned verification refuses such a database rather than repairing it, so a crash mid-run
+   is a manual-intervention event, not a silent recovery.
+
