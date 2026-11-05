@@ -23,8 +23,41 @@ import (
 // execution-lease names only through an in-flight lease registry no bound
 // operation here can populate. Binding them would mean inventing a provider.
 func (s *Server) BindModelRouting(models *globalconfig.Service, startup *globalconfig.Startup) error {
+	handlers, err := modelRoutingHandlers(models, startup)
+	if err != nil {
+		return err
+	}
+	return s.bindOperations(handlers)
+}
+
+// modelRoutingReadNames are the three routing names that only read a committed
+// config document. None of them stores a preference, so none of them can move
+// the pinned global generation a read-only lane serves.
+var modelRoutingReadNames = [...]string{"llm:get-stage-models", "llm:get-default-model", "llm:get-default-embedding-model"}
+
+// BindModelRoutingReads installs only the three routing reads above from the
+// same pinned private global root BindModelRouting uses. A lane that serves the
+// author's committed generation must not receive the three setters: each one
+// rewrites config.json in place, which is a global-config write this lane has
+// never owned (config:set is unbound for exactly that reason), so they keep
+// failing closed at GO_OPERATION_NOT_MIGRATED instead of being installed.
+func (s *Server) BindModelRoutingReads(models *globalconfig.Service, startup *globalconfig.Startup) error {
+	handlers, err := modelRoutingHandlers(models, startup)
+	if err != nil {
+		return err
+	}
+	reads := make(map[string]Operation, len(modelRoutingReadNames))
+	for _, name := range modelRoutingReadNames {
+		reads[name] = handlers[name]
+	}
+	return s.bindOperations(reads)
+}
+
+// modelRoutingHandlers is the single implementation shared by both binders, so
+// the read half can never drift from the six-name family.
+func modelRoutingHandlers(models *globalconfig.Service, startup *globalconfig.Startup) (map[string]Operation, error) {
 	if models == nil || startup == nil {
-		return errors.New("MODEL_ROUTING_PROVIDER_REQUIRED")
+		return nil, errors.New("MODEL_ROUTING_PROVIDER_REQUIRED")
 	}
 	handlers := map[string]Operation{}
 	handlers["llm:get-stage-models"] = func(ctx context.Context, caller Caller, args []any) (any, error) {
@@ -147,7 +180,7 @@ func (s *Server) BindModelRouting(models *globalconfig.Service, startup *globalc
 		}
 		return map[string]any{"success": true}, nil
 	}
-	return s.bindOperations(handlers)
+	return handlers, nil
 }
 
 // modelRoutingRefusal is the original's `{ success: false, error: String(error) }`
