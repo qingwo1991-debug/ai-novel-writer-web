@@ -413,7 +413,7 @@ func productionSingletonRecoveryFailure(err error) error {
 //     can reach.
 //   - internal/projectfs/read_tree.go:34-80 does offer a relative-path entry
 //     point (ListVisibleTree), but its projection still hands the page an
-//     ABSOLUTE host path per node: `node := VisibleNode{Name: name, Path:
+//     ABSOLUTE host path in every entry, built as `VisibleNode{Name: name, Path:
 //     filepath.Join(p.path, childRelative)}` (:132), with VisibleNode.Path
 //     documented as the browser's fs:list-dir shape (:21-27). Confining the
 //     request therefore does not confine the RESPONSE: the caller would learn the
