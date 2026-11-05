@@ -594,3 +594,20 @@ jobs:
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:16082/api/bootstrap)" = 401
           docker exec novel-go-migration-ci sh -c '! command -v node && ! command -v npm && ! command -v electron'
           printf 'Go migration container passed isolated smoke. It was not published or deployed.\n' >> "$GITHUB_STEP_SUMMARY"
+      # The smoke-tested container is exported so it can be loaded and inspected
+      # locally without registry credentials: pulling from GHCR needs the
+      # read:packages scope, while a repository-scoped token may download
+      # artifacts. Nothing is published or deployed here.
+      - name: Export the smoke-tested container as an artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker save novel-go:migration-ci | gzip -1 > novel-go-image.tar.gz
+          ls -lh novel-go-image.tar.gz
+      - name: Upload the container artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: novel-go-image
+          path: novel-go-image.tar.gz
+          retention-days: 7
+          compression-level: 0
