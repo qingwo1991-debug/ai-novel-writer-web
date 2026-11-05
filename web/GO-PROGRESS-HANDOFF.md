@@ -1607,3 +1607,32 @@ with full-body CAS, character/blueprint/overview reads, generation list/read/beg
 React app is served by the Go image, and the production journey is proven inside the real container. 250
 operations remain, and no real author data has been through this lane.
 
+### 2026-11-05 — production executes generation through the egress allowlist (32 operations)
+
+Green: `b1919a16`.
+
+`generation:execute` is bound in production. One executor is built in `newProductionGeneration`
+(`production_generation_begin_linux.go:99`, literal at `:173-178`): the same `Registry` the admission uses,
+`generationowner.PlaintextCredential{}`, and the `ModelEgress()` policy the lane already derived. The
+synthetic lane's `DispatchFunc` seam stays nil in production. Bind site `production_open_linux.go:540-548`
+through `Server.BindGenerationExecute` (`internal/transport/generation.go:199`, one name, mutating DTO).
+
+Ledger ordering is the shared service's, unchanged: `reserve` (`internal/generation/service.go:358`)
+writes the attempt, `markDispatched` (`:378`) runs before the executor is called, and a dispatch error
+settles that attempt with null usage and a failure code (`:515-540`). The ledger marks a failed dispatch
+`unknown`, never `settled` (`internal/store/generation_ledger.go:1079-1084`), so an out-of-allowlist origin
+is recorded as a refused attempt rather than a completed candidate.
+
+**First CI run went red**, exactly where the implementing agent predicted: a test pinned the egress
+refusal's code as `NETWORK_ERROR`, but a dispatch the executor never completes is recorded by the shared
+service as a provider failure. Pinning that string encoded the adapter's mapping instead of the invariant;
+the assertion now requires a non-empty failure code and no settled usage (`b1919a16`).
+
+**Still 501:** `generation:cancel`, the pause/resume/restart family, `bind-material-decision`,
+`discard-candidate`, `retry-draft-short-outline`, the three `llm:set-*` setters and `llm:save-model`/
+`delete-model`/`discover-models`/`test-connection`/`generate`/`generate-stream`/`begin-`/`close-execution-lease`.
+
+**Standing:** 32 of 281 operations answer in production. The AI loop can now admit a run, dispatch it
+through an allowlisted origin, and record refusal honestly - but no test has ever talked to a real
+provider, and no author data has been through the lane.
+
