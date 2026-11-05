@@ -410,67 +410,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:import-run-list-chapters")
 	})
 
-	// db:import-run-start-resume: refused. store.ImportRuns.StartOrResume mints
-	// the execution lease with `UPDATE import_runs` (store/importrun.go:1154).
-	t.Run("db:import-run-start-resume", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-start-resume",
-			[]any{productionImportRunResumableID, productionImportRunOwner, projectPath, frozen})
-		unchanged(t, "db:import-run-start-resume")
-	})
-
-	// db:import-run-renew-execution: refused. store.ImportRuns.RenewExecution
-	// rewrites the lease with `UPDATE import_runs SET lease_expires_at`
-	// (store/importrun.go:1207).
-	t.Run("db:import-run-renew-execution", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-renew-execution",
-			[]any{productionImportRunResumableID, productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-renew-execution")
-	})
-
-	// db:import-run-request-cancel: refused. store.ImportRuns.RequestCancel writes
-	// `UPDATE import_runs SET cancel_requested = 1` (store/importrun.go:1235).
-	t.Run("db:import-run-request-cancel", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-request-cancel",
-			[]any{productionImportRunResumableID, productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-request-cancel")
-	})
-
-	// db:import-run-cancel-at-boundary: refused. store.ImportRuns.CancelAtBoundary
-	// moves the run with `UPDATE import_runs` (store/importrun.go:1272).
-	t.Run("db:import-run-cancel-at-boundary", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-cancel-at-boundary",
-			[]any{productionImportRunResumableID, productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-cancel-at-boundary")
-	})
-
-	// db:import-run-complete-batch: refused. store.ImportRuns.CompleteBatch
-	// rewrites the ledger and the run: `UPDATE import_effect_ledger`
-	// (store/importrun.go:889), `INSERT INTO import_effect_ledger` (:899) and
-	// `UPDATE import_runs` (:910) in importRunApplyBatchCheckpoint (:849), plus
-	// `UPDATE import_runs SET completed_batches_json` (:934) in
-	// importRunWriteCompletedBatches (:929).
-	t.Run("db:import-run-complete-batch", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-complete-batch",
-			[]any{productionImportRunResumableID, "knowledge", "1-2-aaaaaaaa", productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-complete-batch")
-	})
-
-	// db:import-run-advance-stage: refused. store.ImportRuns.AdvanceStage writes
-	// the next stage with `UPDATE import_runs` (store/importrun.go:1376).
-	t.Run("db:import-run-advance-stage", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-advance-stage",
-			[]any{productionImportRunResumableID, "knowledge", "global", productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-advance-stage")
-	})
-
-	// db:import-run-complete: refused. store.ImportRuns.Complete retires the run
-	// with `UPDATE import_runs` (store/importrun.go:1422).
-	t.Run("db:import-run-complete", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-complete",
-			[]any{productionImportRunResumableID, productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-complete")
-	})
-
 	// db:import-run-restart: refused. Run creation is not in this repository at
 	// all, so a binding here could only fabricate a run row.
 	t.Run("db:import-run-restart", func(t *testing.T) {

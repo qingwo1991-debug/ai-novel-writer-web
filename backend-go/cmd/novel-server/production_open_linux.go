@@ -590,6 +590,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindEditorReviewFullReads(newProductionReviewReads(open.durable)) },
 		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
 		func() error { return newProductionImportRunReads(open.durable).Bind(server) },
+		func() error { return newProductionImportRunWrites(open.durable).Bind(server) },
 		func() error { return newProductionFSReads(open).Bind(server) },
 		func() error { return newProductionGlobalWrites(open).Bind(server) },
 		func() error { return newProductionFileWrites(open).Bind(server) },
