@@ -1287,3 +1287,39 @@ Known risks recorded: the family is now mixed (`fs:list-dir` / `fs:read-json` st
 no per-file mutex beyond the lane's single writer lock, and the download route has no expiring token -
 lease liveness is the only gate.
 
+### 2026-11-05 — first real local run of the Go image: it works, but there is no browser UI
+
+Built by CI (`9c574f31`), exported as an artifact, downloaded, `docker load`ed and run here. This is the
+first time the Go server has been exercised outside a test harness, and it changed the picture.
+
+**What works.** The container starts and serves HTTP. Authentication is a trusted-proxy identity header:
+`security.Authenticate` (`internal/security/security.go:67`) reads `X-Novel-User` and fails closed with
+401 `AUTHENTICATION_REQUIRED` - correct for a server behind a reverse proxy, and it means the browser
+cannot talk to it directly without that proxy. With the header, `GET /api/bootstrap` returns a CSRF token
+and the runtime descriptor, and `GET /api/library` answers `CLIENT_ID_REQUIRED` (the single-writer client
+identity doing its job).
+
+**What does not work, and it is the whole product.** `GET /` returns **404 `NOT_FOUND`**. The binary
+serves no frontend: `-static-dir` (`cmd/novel-server/main.go:38`) defaults to empty and the image ships no
+built assets. **So the current image is an API-only server; there is nothing to open in a browser.**
+
+That single fact outranks every remaining 501. The owner's requirement is "open a browser and write"; an
+API that passes 137 operation tests cannot satisfy it.
+
+**Consequences, which reorder the remaining work:**
+1. Build the React app in CI (npm runs there, not here), copy the output into the Go image, pass
+   `-static-dir`. Until then nothing is browser-usable.
+2. Establish how the browser authenticates through the proxy in the local deployment (the compose file
+   currently fronts the *Node* container; the proxy must inject `X-Novel-User` for the Go one).
+3. The React side must speak the HTTP transport to this server. `web/browser/browser-transport.mjs`
+   exists, so the piece may already be written - verify rather than assume, and verify it against this
+   binary rather than against a mock.
+4. Only then does the operation count mean anything, because only then can a real author click through.
+
+**Artifact route (recorded because it unblocks local verification):** GHCR pulls need the
+`read:packages` scope, which the available token lacks. `.github/workflows/go-backend.yml` now exports the
+smoke-tested container as `novel-go-image` (about 43 MB gzipped); `gh run download -n novel-go-image` plus
+`docker load` gives the same image with repository-scoped credentials only. The earlier attempt to add this
+to `native-web-image.yml` was reverted: that workflow's publishing job builds the **legacy Node** image and
+only runs on manual dispatch.
+
