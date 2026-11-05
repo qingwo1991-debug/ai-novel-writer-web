@@ -1460,3 +1460,31 @@ baseline under a live lease is `DRAFT_CONTENT_CONFLICT` with the body unchanged;
 lease before the handles (guarded only by `Shutdown`'s error path), and a crash leaves a WAL the next
 start must recover - the pinned verification refuses rather than repairs.
 
+### 2026-11-05 — the production journey now passes inside the real container
+
+Green: `2a34bb7e`, and the third job is renamed to say so: "Unpublished Go container with disposable
+smoke and production journey".
+
+This is the first time the writing journey has been proven in the **shipped image** rather than in a Go
+test or a replayed curl script. The job builds a synthetic production data root with a new CI-only helper
+(`backend-go/cmd/production-fixture/main.go`), whose only schema input is the TypeScript lane's own
+`baseline-v7.db` from `export-sqlite-contract.mjs` - no DDL is re-declared, and the helper re-proves the
+result against `admission.PinnedSchemaContract` before the server starts. The tree is chowned to uid 65532
+with group/world bits stripped, because the receipt, writer lock and project files are checked against the
+runtime's own euid.
+
+Then, against the container on `--network host` with `NOVEL_DATA_ROOT`: bootstrap 200, `project:open` 200,
+`db:draft-list` 200, `db:draft-update-content` 200, `db:draft-get-full` 200 - every step asserted exactly,
+so a 501 or a `success:false` fails the job. The saved and read-back CJK text is printed in the step
+summary, and the body is also found in the mounted `project.db`/WAL on the host, proving it is durable
+outside the process. Bootstrap reporting `go-production-admitted` is what distinguishes this from a
+synthetic lane.
+
+**What this settles:** a Docker container, no Node inside it, browser-facing, opens a project, saves a
+chapter with CAS, and reads the exact text back. That was the owner's stated requirement, and it now has
+CI evidence rather than a claim.
+
+**What it does not settle:** 264 of 281 operations still answer 501, the editor's other reads (characters,
+overview, navigation, reviews, generation) are absent, and no real author data has been through this lane.
+Switching the production deployment is still wrong.
+
