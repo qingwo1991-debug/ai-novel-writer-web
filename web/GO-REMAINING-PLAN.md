@@ -109,6 +109,18 @@
 - `blueprint-clear-all`：`blueprint_character_sync_operations` → `blueprint_commit_operations` → `blueprints`（`:205-207`），且在冻结读取与恢复退役之后。
 - `project-clear-generated-data`：先 `finalized_draft_import_operations, post_process_steps, post_process_runs, reviews, revisions, drafts, contents, summary_snapshots`（`:102-109`），再 blueprint 三表（`:114`），最后身份退役 + `UPDATE project_core SET writing_style, reference_works, global_guidance, golden_finger, premise, worldbuilding, synopsis, character_states`（`:135-147`）。注意它**不清** `core_outline` / `world_setting` / `protagonist_profile`，和 `resetCreativeFields` 不是一回事。
 
+### 2.7 部署面：健康探针与切换用 compose
+
+- 镜像里没有 node、没有 curl、没有 shell 工具，所以**健康探针就是服务二进制自己**：`novel-server -healthcheck -listen 127.0.0.1:16082`，探 `/healthz` 并要求 `runtime=="go"`。这个字段不是装饰——被替换的 Node 镜像也答同一个路径，只检查 200 会把过期容器、错标签和挡在前面的代理都当成健康。
+- 新增 `docker/compose.go.yaml`：与 `docker/compose.web.yaml` 保持**容器名、发布端口（127.0.0.1:6081）、数据挂载、cap_drop、只读根文件系统、重启策略**完全一致，只改镜像、启动参数和探针。这样切换与回滚都只是换一个 compose 文件，nginx 不用动。
+- 不设 `NODE_ENV`、不传 proxy/origins：Go 车道从作者数据目录读出口策略与浏览器来源，留一个陈旧的环境变量只会制造虚假的安全感。
+- 两个容器共用同一份 SQLite 与同一把排他写锁，**必须先停旧容器再起新容器**，否则第二个启动的直接拒绝。
+
+### 2.8 已知的"半通"流程：graph-generation
+
+`graph-generation:begin` / `read` / `cancel` 已服务，但 `execute` / `confirm` 未绑定。也就是说剧情树生成能开、不能跑。
+这不是漏改常量，而是这条流程的第二段确实没有 Go 实现。我选择**保留 begin**（它在准入阶段干净失败）而不是为了好看去绑定一个只会拒绝的 execute。验收时若点到这个按钮，会看到明确的 `501 GO_OPERATION_NOT_MIGRATED`，不是静默卡死。
+
 ## 三、未完成
 
 ### 3.1 写作闭环还差的最后一块（最高优先）
