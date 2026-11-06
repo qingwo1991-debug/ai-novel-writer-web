@@ -461,8 +461,13 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 		if !reopened.Success || !reopened.DBReady {
 			t.Fatalf("project:open stopped working after a create: %+v", reopened)
 		}
-		if reopened.Project["path"] != openedPath {
-			t.Fatalf("project:open answered a different project after a create: %v", reopened.Project)
+		// The answer's `project` is the project's own core, not a location record:
+		// it names the project by its name and id, and the path the caller passed
+		// is echoed nowhere. So identity is checked the way a caller can check it -
+		// the reopened project must be the one that was opened, by name.
+		if name, _ := reopened.Project["name"].(string); name != productionCreateCleanName {
+			t.Fatalf("project:open answered the project named %q after a create, want %q: %v",
+				name, productionCreateCleanName, reopened.Project)
 		}
 		response := author.call(t, "project:recent-list", []any{})
 		var wire struct {
