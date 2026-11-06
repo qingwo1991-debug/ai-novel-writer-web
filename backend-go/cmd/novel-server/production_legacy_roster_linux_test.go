@@ -156,10 +156,16 @@ func TestProductionLegacyRosterServesTheSource(t *testing.T) {
 		if before != after {
 			t.Fatalf("a replayed read answered different bytes:\n%s\n%s", before, after)
 		}
-		// Order of the answer's keys is part of the contract the renderer decodes.
-		want := `{"snapshot":`
-		if !strings.HasPrefix(before, want) {
-			t.Fatalf("the answer starts with %.40s, want the snapshot first", before)
+		// The answer carries a snapshot object. Its key order is NOT asserted: a JSON
+		// object has no order, the renderer parses it, and Go writes map keys sorted -
+		// so a positional check here would fail on a correct answer and pass on a
+		// wrong one that happened to start with the right key.
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(before), &decoded); err != nil {
+			t.Fatalf("the answer is not a JSON object: %v", err)
+		}
+		if _, ok := decoded["snapshot"].(map[string]any); !ok {
+			t.Fatalf("the answer carries no snapshot object: %v", before)
 		}
 	})
 

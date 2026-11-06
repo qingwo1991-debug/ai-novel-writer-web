@@ -894,6 +894,10 @@ func TestProductionMCPReadsAnEventStreamAnswer(t *testing.T) {
 	client := fixture.client(t, productionTestTab)
 	fixture.admitted.mu.Lock()
 	fixture.admitted.stream = true
+	// The stub echoes whatever credential it holds, so it holds none here: the
+	// assertion below is about the event-stream answer not publishing a credential,
+	// and a stub with one baked in would make that assertion measure the stub.
+	fixture.admitted.secret = ""
 	fixture.admitted.mu.Unlock()
 	fixture.writeConfig(t, map[string]any{
 		"echo": map[string]any{"url": fixture.admittedURL},
@@ -909,7 +913,12 @@ func TestProductionMCPReadsAnEventStreamAnswer(t *testing.T) {
 		t.Fatalf("mcp:call-tool answered success=%v error=%s: %s", call.Success, call.Error, body)
 	}
 	if strings.Contains(body, productionMCPTestSecret) {
-		t.Fatalf("the event-stream answer published the configured credential: %s", body)
+		t.Fatalf("the event-stream answer published a credential it was never given: %s", body)
+	}
+	// The stub had no credential, so a relayed answer is exactly its echo prefix:
+	// "no secret" is not the same as "no answer".
+	if call.Content != "echo:" {
+		t.Fatalf("the event-stream answer relayed %v, want the stub's bare echo", call.Content)
 	}
 }
 
