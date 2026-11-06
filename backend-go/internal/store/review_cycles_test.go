@@ -607,7 +607,8 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 	}
 
 	// A replay answers the same receipt and writes nothing: the file is what the
-	// first commit left, and the tables hold one row each.
+	// first commit left, and the tables hold exactly the rows the first commit
+	// wrote - one review, one cycle, and the report's five findings.
 	before := rrctxDigest(t, fixture.path)
 	replayed, err := fixture.commit(fixture.request)
 	if err != nil {
@@ -620,8 +621,8 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 	if after := rrctxDigest(t, fixture.path); after != before {
 		t.Fatal("a replayed commit changed the database")
 	}
-	one := [3]int64{1, 1, 1}
-	if counts := rccCounts(t, rccReadOnly(t, fixture.path)); counts != one {
+	once := [3]int64{1, 1, 5}
+	if counts := rccCounts(t, rccReadOnly(t, fixture.path)); counts != once {
 		t.Fatalf("row counts after replay: %v", counts)
 	}
 	// The same run, presented for a different artifact, is a conflict rather than a
