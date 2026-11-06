@@ -8,8 +8,8 @@
 | 项 | 值 |
 | --- | --- |
 | 清单里的操作总数 | 281 |
-| 生产车道已服务 | **161**（`c98ac3fa` 全绿） |
-| 仍未服务 | 120 |
+| 生产车道已服务 | **162**（`e9dc6440` 全绿） |
+| 仍未服务 | 119 |
 | 承载方式 | 单个 Go 进程 + 单个容器，无 Node 运行时 |
 | 生产容器 | **未动**，仍跑旧镜像，回滚摘要已记录 |
 
@@ -89,6 +89,16 @@
 
 1. **CI annotation 在第一个引号处截断**。用 `%q` 格式化错误信息时，日志里的"空错误码"多半是截断，不是真的空。测试里禁用 `%q`。
 2. **在空表上 `UPDATE` 是无声空操作**。基线建的 `continuity_projection_meta` 是空表，夹具用 `UPDATE ... WHERE id='main'` 一行没写，而源读取是 `INNER JOIN`，于是每条读都在第一个守卫处返回 `SOURCE_CHANGED`。一个原因伪装成三个不同的失败。
+
+### 2.5 审稿/修订闭环：prepare 已通，其余三个还差写入侧
+
+`review-revision:prepare` 已服务（`e9dc6440` 全绿）。这一条不是"接线"——它需要三样东西同时存在：
+
+1. **冻结生产者**（`internal/store/review_revision_context.go`，1725 行）：把章节、设定、历史、蓝图、目标、预检风险冻结成一段文本，`ContextHash` 与校验器逐字节一致。
+2. **进程内手柄注册表**（`internal/reviewrevprep`）：桌面端靠 `webContents.id` 把令牌存在主进程内存里，浏览器没有这个，所以 id 必须能被服务端映射回冻结上下文。id 不可猜、绑定 caller/epoch/operation、有有效期、消费时 CAS。
+3. **运行准入真的会冻结它**：`generation:begin` 接受 `reviewRevisionContextId`，从注册表取回上下文，**再对数据库重算一次**——不一致就拒绝，一行都不写。这一条是最容易被跳过、也最容易变成"手柄是死的"的地方。
+
+`commit-review` / `commit-revision` / `read-recovery` 仍缺：`review_cycles` 写入者、`isNoopRevision` + `assertMateriallyCompleteRevision` 两个门槛、以及 effect 戳。账本已经允许 `reviewRevisionEffect`（三处），剩下的是写入侧。
 
 ### 2.6 六个 db 维护操作：全部 C 类（能力缺口），一个都没绑
 
