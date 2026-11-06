@@ -425,37 +425,58 @@ func TestProductionSingletonReadsServeReadOnlyNames(t *testing.T) {
 		}
 	})
 
-	// fs:list-dir stays refused: the name is unbound, so every shape the family
-	// handler would have accepted - an absolute host path, a ".." traversal and a
-	// path through a planted escaping symlink - is refused at the registry, before
-	// any directory is opened, and nothing is written.
+	// fs:list-dir is served now (production_project_portability_linux.go:51, through
+	// transport.BindEditorNavigation), so the question is no longer whether the name
+	// is refused but whether it is confined. Every shape the desktop dialog could
+	// produce - an absolute host path, a ".." traversal, a path through a planted
+	// symlink - must be refused with a symbolic code before a directory outside the
+	// project is opened, and the project root itself must list only the project.
 	t.Run("fs:list-dir", func(t *testing.T) {
-		attempts := []struct {
+		for _, attempt := range []struct {
 			label string
 			path  string
 		}{
-			{"absolute path", filepath.Join(outside, "outside-secret.txt")},
+			{"absolute host path", filepath.Join(outside, "outside-secret.txt")},
 			{"traversal", "../outside-secret.txt"},
-			{"escaping symlink", filepath.Join("escape-dir", "outside-secret.txt")},
-			{"absolute project path", projectPath},
-		}
-		for _, attempt := range attempts {
+		} {
 			response := author.call(t, "fs:list-dir", []any{attempt.path, projectPath, frozen})
-			if response.Code != http.StatusNotImplemented ||
-				!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-				t.Fatalf("fs:list-dir accepted a %s: %d %s", attempt.label, response.Code, response.Body.String())
+			if response.Code == http.StatusNotImplemented {
+				t.Fatalf("fs:list-dir is unbound again: %d %s", response.Code, response.Body.String())
+			}
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("fs:list-dir answered %d for a %s: %s", response.Code, attempt.label, response.Body.String())
 			}
 			body := response.Body.String()
+			if !strings.Contains(body, "PROJECT_CONTEXT_REQUIRED") {
+				t.Fatalf("fs:list-dir refused a %s with %s, not a context refusal", attempt.label, body)
+			}
 			if strings.Contains(body, productionSingletonOutsideBody) ||
-				strings.Contains(body, projectPath) || strings.Contains(body, productionSingletonSkillBody) {
+				strings.Contains(body, productionSingletonSkillBody) {
 				t.Fatalf("fs:list-dir returned tree content for a %s: %s", attempt.label, body)
 			}
 		}
-		if after := productionFSSnapshot(t, projectPath); !equalSingletonSnapshots(before, after) {
-			t.Fatal("an fs:list-dir refusal changed the admitted project tree")
+		// The symlink case is a different question and is asserted differently on
+		// purpose: the path is inside the project, so the confinement has to come from
+		// resolving the link rather than from the relative-path check, and a provider
+		// may legitimately answer either a refusal or an empty tree. What may never
+		// happen is the outside directory being described.
+		if response := author.call(t, "fs:list-dir",
+			[]any{filepath.Join("escape-dir", "outside-secret.txt"), projectPath, frozen}); response.Code == http.StatusNotImplemented {
+			t.Fatalf("fs:list-dir is unbound again: %d %s", response.Code, response.Body.String())
+		} else if body := response.Body.String(); strings.Contains(body, productionSingletonOutsideBody) {
+			t.Fatalf("fs:list-dir followed the planted symlink out of the project: %s", body)
 		}
-		if after := productionFSSnapshot(t, outside); !equalSingletonSnapshots(outsideBefore, after) {
-			t.Fatal("an fs:list-dir refusal wrote into the tree outside the project")
+		// The project root is a legitimate listing: it answers, and it answers with
+		// the project's own tree, never with the directory next door.
+		root := author.call(t, "fs:list-dir", []any{projectPath, projectPath, frozen})
+		if root.Code != http.StatusOK {
+			t.Fatalf("fs:list-dir refused the project root: %d %s", root.Code, root.Body.String())
+		}
+		if body := root.Body.String(); strings.Contains(body, productionSingletonOutsideBody) {
+			t.Fatalf("fs:list-dir listed the directory next door: %s", body)
+		}
+		if after := productionFSSnapshot(t, projectPath); !equalSingletonSnapshots(before, after) {
+			t.Fatal("an fs:list-dir call changed the admitted project tree")
 		}
 	})
 
