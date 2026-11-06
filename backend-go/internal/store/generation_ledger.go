@@ -433,8 +433,25 @@ func glFamilyManifestAllowed(key, operation string) bool {
 			"narrative-thread-event-candidate", "finalized-chapter-notes":
 			return true
 		}
-	case "finalizationGenerationSlotKey":
-		return operation == "finalized-character-state"
+	case "finalizationGenerationSlotKey",
+		"finalizationGenerationSlot", "finalizationGenerationContext",
+		"finalizationGenerationContextHash", "finalizationGenerationOriginEpoch",
+		"finalizationGenerationTask", "finalizationGenerationTaskHash":
+		// The slot key is what the finalization read matches a run on, and the
+		// context, its hash, the origin epoch and the task are what that read
+		// re-proves before it hands a run back as the author's slot. Both steps
+		// freeze all of it (finalization-generation-source.ts:588-592), so both
+		// operations may carry it - and no other operation may, because a run of
+		// another family holding this key would be handed back as a slot's
+		// recovery and would block the real begin behind SLOT_CONFLICT.
+		return operation == "finalized-character-state" || operation == "finalized-chapter-notes"
+	case "graphGenerationInput", "graphGenerationKey", "graphGenerationContextHash",
+		"graphGenerationOriginEpoch", "graphGenerationTask", "graphGenerationTaskHash":
+		switch operation {
+		case "plot-tree-snapshot", "narrative-thread-plan-candidate",
+			"narrative-thread-event-candidate":
+			return true
+		}
 	}
 	return false
 }
@@ -452,7 +469,12 @@ func glEffectKeyAllowed(key, operation string) bool {
 			return true
 		}
 	case "finalizationEffect":
-		return operation == "finalized-character-state"
+		// The reference stamps this effect for BOTH steps
+		// (electron/services/finalization-generation.ts:113-114); allowing only
+		// the character-state step would make a notes commit unstampable, and
+		// allowing it elsewhere would let an ordinary attempt present an effect
+		// with no domain write behind it.
+		return operation == "finalized-character-state" || operation == "finalized-chapter-notes"
 	case "visibleComposition":
 		// The visible composition receipt belongs to the attempt that composed it
 		// from that run's own artifacts, so any non-empty operation may carry it.
@@ -474,7 +496,12 @@ func glOrdinaryBinding(binding map[string]any) error {
 		}
 	}
 	manifest := glMap(binding["sourceManifest"])
-	for _, key := range []string{"agentSession", "graphGenerationContext", "importSlot", "legacyRosterContext", "finalizationGenerationSlotKey"} {
+	for _, key := range []string{"agentSession", "graphGenerationContext", "importSlot", "legacyRosterContext",
+		"finalizationGenerationSlotKey", "finalizationGenerationSlot", "finalizationGenerationContext",
+		"finalizationGenerationContextHash", "finalizationGenerationOriginEpoch", "finalizationGenerationTask",
+		"finalizationGenerationTaskHash", "graphGenerationInput", "graphGenerationKey",
+		"graphGenerationContextHash", "graphGenerationOriginEpoch", "graphGenerationTask",
+		"graphGenerationTaskHash"} {
 		if _, ok := manifest[key]; !ok {
 			continue
 		}

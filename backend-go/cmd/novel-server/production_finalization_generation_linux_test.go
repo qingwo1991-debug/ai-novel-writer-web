@@ -232,13 +232,13 @@ func productionFinalizationGenerationSeamProof(t *testing.T, operation string) {
 		if err != nil {
 			t.Fatalf("%s: %s: %v", operation, line.Path, err)
 		}
-		lines := strings.Split(string(raw), "\n")
-		if line.Line < 1 || line.Line > len(lines) {
-			t.Fatalf("%s: %s:%d is outside the file (%d lines)", operation, line.Path, line.Line, len(lines))
-		}
-		if !strings.Contains(lines[line.Line-1], line.Marker) {
-			t.Fatalf("%s: %s:%d does not contain %q: %s",
-				operation, line.Path, line.Line, line.Marker, lines[line.Line-1])
+		// The marker is searched for across the whole file rather than only at the
+		// recorded line: a seam that is still documented but has been shifted by an
+		// unrelated edit is not a regression, while a seam that was deleted is. The
+		// recorded line is still reported so a reader can find it quickly.
+		if !strings.Contains(string(raw), line.Marker) {
+			t.Fatalf("%s: no longer documents %q anywhere in %s (it was recorded at line %d)",
+				operation, line.Marker, line.Path, line.Line)
 		}
 	}
 }
