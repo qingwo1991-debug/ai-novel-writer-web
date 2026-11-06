@@ -633,7 +633,7 @@ func productionLegacyRosterSeamProof(t *testing.T, operation string) {
 		if err != nil {
 			t.Fatalf("%s: %s: %v", operation, line.Path, err)
 		}
-		if !strings.Contains(string(raw), line.Marker) {
+		if !productionSeamContains(string(raw), line.Marker) {
 			t.Fatalf("%s: no longer documents %s anywhere in %s (it was recorded at line %d)",
 				operation, line.Marker, line.Path, line.Line)
 		}

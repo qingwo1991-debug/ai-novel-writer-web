@@ -734,3 +734,329 @@ func TestProductionReviewRevisionCommitPrepared(t *testing.T) {
 		}
 	}
 }
+
+// TestProductionReviewRevisionCommitReview is the family's write half, and the
+// only test in this repo that calls `review-revision:commit-review` at all. It
+// drives the whole workflow the renderer drives - prepare, begin, execute, commit -
+// over the real HTTP handler and reads every row back through a connection of the
+// test's own (mode=ro), never through the lane's admitted handle:
+//
+//   - the review row, its content row, its cycle row and every finding land in one
+//     transaction, and the receipt the browser receives is a projection of those
+//     rows (the store re-reads them before answering, review_cycles.go:290-298);
+//   - the attempt that produced the artifact carries the stamped review effect, so
+//     the run can never commit a second review for another artifact;
+//   - every refusal happens before the first write: the whole database file stays
+//     byte for byte what it was and no row is added (review_cycles.go:186-241, and
+//     the first INSERT is at :259).
+//
+// The replay arm is not a refusal and this test says so: the reference answers the
+// saved receipt for an identical request (review-revision-generation.ts:192-201 -
+// `saved()` at :195 runs before `assertPrepared` at :201), so the run that has
+// already committed refuses only a DIFFERENT artifact.
+func TestProductionReviewRevisionCommitReview(t *testing.T) {
+	t.Run("review-revision:commit-review", testProductionReviewRevisionCommitReview)
+}
+
+const (
+	// productionReviewRevisionCommitReport is the settled artifact this test
+	// dispatches: a version 2 review report in the model's own output shape, whose
+	// one finding quotes the fixture's chapter body so the finding can be anchored.
+	productionReviewRevisionCommitReport = `{"summary":"审稿通过","items":[{"category":"风格","severity":"warning","description":"开篇推门一句可以更紧凑","quote":"他推开门"}]}`
+	// productionReviewRevisionCommitNonce names the one dispatch this test makes.
+	productionReviewRevisionCommitNonce = "review-revision-commit-1"
+	// productionReviewRevisionCommitForeignProject is the project id a body that
+	// names another database presents. The borrow is the lease's, so this can never
+	// reach a second project's rows.
+	productionReviewRevisionCommitForeignProject = "proj-0000-review-commit-foreign"
+)
+
+// productionReviewRevisionCommitArtifact reads one run's settled artifact back over
+// a connection of the test's own. It returns the identity the browser presents and
+// the text, and it proves the stored textHash is the sha256 of the stored text, so
+// the commit below is asserted against what the ledger really wrote.
+func productionReviewRevisionCommitArtifact(t *testing.T, projectPath, runID string) (string, int64, string) {
+	t.Helper()
+	readback := productionStoryStateWriteReadback(t, projectPath)
+	var artifactID string
+	productionStoryStateWriteScan(t, readback,
+		"SELECT artifact_id FROM generation_artifacts WHERE run_id=? ORDER BY rowid LIMIT 1",
+		[]any{runID}, &artifactID)
+	if artifactID == "" {
+		t.Fatalf("the executed run wrote no artifact row")
+	}
+	var stored string
+	var revision int64
+	productionStoryStateWriteScan(t, readback,
+		"SELECT artifact_json,revision FROM generation_artifacts WHERE artifact_id=?",
+		[]any{artifactID}, &stored, &revision)
+	var artifact struct {
+		Text     string `json:"text"`
+		TextHash string `json:"textHash"`
+	}
+	if err := json.Unmarshal([]byte(stored), &artifact); err != nil {
+		t.Fatalf("the settled artifact is not JSON: %v", err)
+	}
+	if got := productionReviewRevisionContentHash(artifact.Text); artifact.TextHash != got {
+		t.Fatalf("the settled artifact claims hash %v; its own text hashes %v", artifact.TextHash, got)
+	}
+	if artifact.Text != productionReviewRevisionCommitReport {
+		t.Fatalf("the settled artifact is not the report the seam dispatched: %v", artifact.Text)
+	}
+	return artifactID, revision, artifact.TextHash
+}
+
+// productionReviewRevisionCommitCounts is a read-only count of the three tables a
+// commit writes, so a refusal can be proven to have written nothing even when the
+// transaction it never reached would have rolled back.
+func productionReviewRevisionCommitCounts(t *testing.T, projectPath string) [3]int64 {
+	t.Helper()
+	readback := productionStoryStateWriteReadback(t, projectPath)
+	var counts [3]int64
+	for index, query := range []string{
+		"SELECT COUNT(*) FROM reviews",
+		"SELECT COUNT(*) FROM review_cycles",
+		"SELECT COUNT(*) FROM review_findings",
+	} {
+		productionStoryStateWriteScan(t, readback, query, nil, &counts[index])
+	}
+	return counts
+}
+
+// productionReviewRevisionCommitRefused asserts one commit refusal: a symbolic code
+// and neither a 200 nor the lane's fail-closed 501, with the whole database file
+// unchanged and the three committed tables exactly as they were.
+func productionReviewRevisionCommitRefused(t *testing.T, client *productionDurableClient, label string,
+	args []any, lane *productionGenerationWriteLane, counts [3]int64, want ...string) {
+	t.Helper()
+	before := lane.bytes(t)
+	response := client.call(t, productionReviewRevisionCommitReview, args)
+	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("%s: %s is still the lane's fail-closed 501: %s", label,
+			productionReviewRevisionCommitReview, response.Body.String())
+	}
+	if response.Code == http.StatusOK {
+		t.Fatalf("%s: a refused commit answered 200: %s", label, response.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%s: %v %s", label, err, response.Body.String())
+	}
+	matched := false
+	for _, code := range want {
+		if body.Error.Code == code {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatalf("%s: refused with %v; want one of %v: %s", label, body.Error.Code, want, response.Body.String())
+	}
+	if after := lane.bytes(t); !bytes.Equal(before, after) {
+		t.Fatalf("%s: a refused commit changed the committed database file", label)
+	}
+	if after := productionReviewRevisionCommitCounts(t, lane.projectPath); after != counts {
+		t.Fatalf("%s: a refused commit wrote rows: %v -> %v", label, counts, after)
+	}
+}
+
+// testProductionReviewRevisionCommitReview is the served path and the refusals that
+// fence it, over one lane and one settled run.
+func testProductionReviewRevisionCommitReview(t *testing.T) {
+	seam := &productionGenerationSeam{text: productionReviewRevisionCommitReport}
+	lane := productionGenerationWriteOpen(t, seam.dispatch, nil)
+	prepare := productionReviewRevisionPrepareArgs(store.ReviewRevisionOperationReviewChapter,
+		productionReviewRevisionContentHash(productionEditorSeed))
+	prepared := productionReviewRevisionPrepareOnce(t, lane, prepare)
+	handle := lane.begin(t, productionReviewRevisionSelection(t, prepared.ContextID, prepared))
+	runID := syntheticString(handle["runId"])
+	projectID := syntheticString(handle["projectId"])
+	if runID == "" || projectID == "" {
+		t.Fatalf("the admitted review run carries no identity: %v", handle)
+	}
+	// One dispatch settles the report above as the run's own artifact. Nothing here
+	// dials: the seam stands in for the model, exactly as the execute tests do.
+	executed := productionExecuteAnswer(t, lane.author,
+		productionExecuteRequest(handle, productionReviewRevisionCommitNonce), lane.frozen)
+	if calls := seam.dispatched(); calls != 1 {
+		t.Fatalf("generation:execute dispatched %v times; want one", calls)
+	}
+	outcome := syntheticMap(executed["outcome"])
+	if syntheticString(outcome["finishReason"]) != "stop" ||
+		syntheticString(outcome["content"]) != productionReviewRevisionCommitReport {
+		t.Fatalf("the run did not settle the report it dispatched: %v", outcome)
+	}
+	artifactID, revision, textHash := productionReviewRevisionCommitArtifact(t, lane.projectPath, runID)
+
+	// The wire request the renderer builds (review-chapter.command.ts:173-176): the
+	// prepared context id, the main run handle, and the artifact the recovery read
+	// handed back - three keys, nothing else.
+	wire := map[string]any{
+		"contextId": prepared.ContextID,
+		"handle": map[string]any{
+			"projectId":    projectID,
+			"epoch":        handle["epoch"],
+			"rootActionId": handle["rootActionId"],
+			"runId":        runID,
+		},
+		"artifact": map[string]any{"artifactId": artifactID, "revision": revision, "textHash": textHash},
+	}
+
+	counts := productionReviewRevisionCommitCounts(t, lane.projectPath)
+	// A context id this process never minted: the handle proof runs before the first
+	// write, and the reference's own answer is "prepare again" (:120).
+	unminted := productionReviewRevisionCommitCopy(wire)
+	unminted["contextId"] = productionReviewRevisionAbsentHandle
+	productionReviewRevisionCommitRefused(t, lane.author, "an unminted handle",
+		[]any{unminted, lane.frozen}, lane, counts, "GENERATION_REVIEW_CONTEXT_REQUIRED")
+	// A handle and artifact that belong to another project: the body's project id is
+	// the lease's own, and the borrowed database is that project's, so a body naming
+	// another project is a request about a database this handler never opened
+	// (production_review_revision_linux.go:556-562, the family's own invalid code).
+	foreign := productionReviewRevisionCommitCopy(wire)
+	foreign["handle"].(map[string]any)["projectId"] = productionReviewRevisionCommitForeignProject
+	productionReviewRevisionCommitRefused(t, lane.author, "a foreign project",
+		[]any{foreign, lane.frozen}, lane, counts, "GENERATION_REVIEW_CONTEXT_INVALID")
+	// A lease this server never issued: the borrow refuses before the request is read.
+	productionReviewRevisionCommitRefused(t, lane.author, "a stale lease",
+		[]any{productionReviewRevisionCommitCopy(wire), lane.stale()}, lane, counts,
+		"PROJECT_SESSION_STALE", "PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_ROOT_MISMATCH",
+		"PROJECT_CONTEXT_CHANGED", "PROJECT_NOT_OPEN")
+	// The binder table's arity: one request plus the frozen context, and the renderer
+	// sends exactly that (src/shared/review-revision-generation.ts:175 is arity 1,
+	// the project session is the trailing wire argument).
+	productionReviewRevisionCommitRefused(t, lane.author, "a short wire call",
+		[]any{productionReviewRevisionCommitCopy(wire)}, lane, counts, "INVALID_ARGUMENTS")
+
+	// The commit itself, over the same handler the renderer posts to.
+	raw := productionEditorCall(t, lane.author, productionReviewRevisionCommitReview,
+		[]any{productionReviewRevisionCommitCopy(wire), lane.frozen})
+	var receipt struct {
+		Success     bool   `json:"success"`
+		Kind        string `json:"kind"`
+		ID          int64  `json:"id"`
+		Index       int64  `json:"index"`
+		Content     string `json:"content"`
+		ContentHash string `json:"contentHash"`
+		Source      struct {
+			ID            int64  `json:"id"`
+			ChapterNumber int64  `json:"chapterNumber"`
+			Version       int64  `json:"version"`
+			Status        string `json:"status"`
+			Content       string `json:"content"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatalf("%s: %v %s", productionReviewRevisionCommitReview, err, raw)
+	}
+	if !receipt.Success || receipt.Kind != "review" || receipt.ID < 1 || receipt.Index < 1 {
+		t.Fatalf("the commit answered %v %v %v %v; want a saved review receipt", receipt.Success,
+			receipt.Kind, receipt.ID, receipt.Index)
+	}
+	if receipt.ContentHash != productionReviewRevisionContentHash(receipt.Content) {
+		t.Fatalf("the receipt claims hash %v; its own content hashes %v", receipt.ContentHash,
+			productionReviewRevisionContentHash(receipt.Content))
+	}
+	if receipt.Source.ID != 1 || receipt.Source.ChapterNumber != 1 || receipt.Source.Version != 1 ||
+		receipt.Source.Status != "draft" || receipt.Source.Content != productionEditorSeed {
+		t.Fatalf("the receipt names another source draft: %+v", receipt.Source)
+	}
+	if !strings.Contains(receipt.Content, "审稿") {
+		t.Fatalf("the review body is not the built report: %v", receipt.Content)
+	}
+
+	// The rows, read back over a connection of the test's own.
+	after := productionReviewRevisionCommitCounts(t, lane.projectPath)
+	if after[0] != counts[0]+1 || after[1] != counts[1]+1 || after[2] <= counts[2] {
+		t.Fatalf("the commit wrote %v rows (reviews, cycles, findings); it started from %v", after, counts)
+	}
+	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	var storedIndex, storedContentID, storedBaseDraft, storedChapter, storedVersion int64
+	var storedStatus, storedSource, storedBody string
+	productionStoryStateWriteScan(t, readback,
+		`SELECT r.review_index,r.base_draft_id,r.source_draft_chapter_number,r.source_draft_version,
+ r.source_draft_status,r.source_content,c.body,r.content_id
+ FROM reviews r JOIN contents c ON c.id=r.content_id WHERE r.id=?`, []any{receipt.ID},
+		&storedIndex, &storedBaseDraft, &storedChapter, &storedVersion, &storedStatus,
+		&storedSource, &storedBody, &storedContentID)
+	if storedIndex != receipt.Index || storedBaseDraft != 1 || storedChapter != 1 ||
+		storedVersion != 1 || storedStatus != "draft" || storedSource != productionEditorSeed {
+		t.Fatalf("the committed review row reads back as index %v draft %v chapter %v version %v status %v",
+			storedIndex, storedBaseDraft, storedChapter, storedVersion, storedStatus)
+	}
+	// The row the browser was handed is the row that was written: the receipt's
+	// content is the stored body, byte for byte.
+	if storedBody != receipt.Content || productionReviewRevisionContentHash(storedBody) != receipt.ContentHash {
+		t.Fatalf("the committed review body is not the receipt's content")
+	}
+	var cycleReview, cycleVersion, cycleRecheck int64
+	var cycleHash, cycleSourceHash, cycleRevisionStatus string
+	productionStoryStateWriteScan(t, readback,
+		`SELECT review_id,review_content_hash,source_hash,comparison_version,revision_status,recheck_count
+ FROM review_cycles WHERE review_id=?`, []any{receipt.ID},
+		&cycleReview, &cycleHash, &cycleSourceHash, &cycleVersion, &cycleRevisionStatus, &cycleRecheck)
+	if cycleReview != receipt.ID || cycleHash != receipt.ContentHash ||
+		cycleSourceHash != productionReviewRevisionContentHash(productionEditorSeed) ||
+		cycleVersion != 1 || cycleRevisionStatus != "not-generated" || cycleRecheck != 0 {
+		t.Fatalf("the committed cycle row reads back as review %v hash %v source %v version %v status %v recheck %v",
+			cycleReview, cycleHash, cycleSourceHash, cycleVersion, cycleRevisionStatus, cycleRecheck)
+	}
+	// Every finding belongs to that cycle, and the count is the report's own items
+	// plus the goal projections the builder adds for the frozen blueprint goals.
+	var cycleID string
+	productionStoryStateWriteScan(t, readback, "SELECT cycle_id FROM review_cycles WHERE review_id=?",
+		[]any{receipt.ID}, &cycleID)
+	var findings, misfiled int64
+	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM review_findings WHERE cycle_id=?",
+		[]any{cycleID}, &findings)
+	productionStoryStateWriteScan(t, readback,
+		"SELECT COUNT(*) FROM review_findings WHERE cycle_id<>? OR cycle_id IS NULL", []any{cycleID}, &misfiled)
+	if findings < 1 || misfiled != 0 {
+		t.Fatalf("the cycle holds %v findings and %v belong to another cycle", findings, misfiled)
+	}
+	// The effect that makes this run's review spent: the attempt carries it, so no
+	// second artifact can be committed for the same run.
+	var effectKind string
+	productionStoryStateWriteScan(t, readback,
+		"SELECT json_extract(usage_receipt_json,'$.reviewRevisionEffect.kind') FROM generation_attempts WHERE run_id=?",
+		[]any{runID}, &effectKind)
+	if effectKind != "review" {
+		t.Fatalf("the settled attempt carries effect %v; want review", effectKind)
+	}
+
+	// The replay: the reference answers the saved receipt instead of writing twice
+	// (review_cycles.go:206-217), so the file and every count stay as they are.
+	committed := lane.bytes(t)
+	replayed := productionEditorCall(t, lane.author, productionReviewRevisionCommitReview,
+		[]any{productionReviewRevisionCommitCopy(wire), lane.frozen})
+	var again struct {
+		Success     bool   `json:"success"`
+		ID          int64  `json:"id"`
+		Index       int64  `json:"index"`
+		ContentHash string `json:"contentHash"`
+	}
+	if err := json.Unmarshal(replayed, &again); err != nil {
+		t.Fatalf("the replayed commit is not a receipt: %v", err)
+	}
+	if !again.Success || again.ID != receipt.ID || again.Index != receipt.Index ||
+		again.ContentHash != receipt.ContentHash {
+		t.Fatalf("the replay answered another receipt: %v against %v", again, receipt.ID)
+	}
+	if now := productionReviewRevisionCommitCounts(t, lane.projectPath); now != after {
+		t.Fatalf("the replay wrote rows: %v -> %v", after, now)
+	}
+	if now := lane.bytes(t); !bytes.Equal(committed, now) {
+		t.Fatalf("the replay changed the committed database file")
+	}
+
+	// The spent arm: the same run, already spent on one artifact, presented for
+	// another one. This is the conflict the reference raises, and it is raised
+	// before the handle is even consulted.
+	spent := productionReviewRevisionCommitCopy(wire)
+	spent["artifact"].(map[string]any)["revision"] = revision + 1
+	productionReviewRevisionCommitRefused(t, lane.author, "a spent artifact",
+		[]any{spent, lane.frozen}, lane, after, "GENERATION_REVIEW_COMMIT_CONFLICT")
+}

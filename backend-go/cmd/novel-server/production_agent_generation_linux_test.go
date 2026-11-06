@@ -238,7 +238,7 @@ func productionAgentGenerationSeamProof(t *testing.T, operation string) {
 		if err != nil {
 			t.Fatalf("%v: %v: %v", operation, line.Path, err)
 		}
-		if !strings.Contains(string(raw), line.Marker) {
+		if !productionSeamContains(string(raw), line.Marker) {
 			t.Fatalf("%v no longer documents %v anywhere in %v (recorded at line %d)",
 				operation, line.Marker, line.Path, line.Line)
 		}

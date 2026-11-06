@@ -37,7 +37,7 @@ import (
 //     key allowlist (synthetic_generation_linux.go:396-405) has no finalization
 //     slot and no context field, so a finalization begin is refused with
 //     GENERATION_BEGIN_INVALID before the ledger is reached.
-//   - syntheticManifest (synthetic_generation_linux.go:704-726) writes no
+//   - syntheticManifest (synthetic_generation_linux.go:736-758) writes no
 //     finalizationGenerationSlotKey, no finalizationGenerationContext and no
 //     finalization task, so no run this lane opens can name a slot at all - and
 //     the slot key is the only key the served read matches
@@ -56,29 +56,50 @@ import (
 //
 // A claimed slot would also be unreadable: FinalizationRead refuses every row
 // that carries the slot key with GENERATION_FINALIZATION_CONTEXT_INVALID
-// (synthetic_graph_linux.go:143) because it cannot prove the frozen context
+// (synthetic_graph_linux.go:156) because it cannot prove the frozen context
 // digest. The renderer asks that read first (src/services/finalization-generation.ts:38),
 // so a begin written by this file would hand the author a run whose very next
 // read throws.
 //
 // # execute
 //
-// The one dispatch path this lane may reuse is syntheticGeneration.Execute
-// (synthetic_generation_linux.go:1015), and it requires a browser-frozen
-// invocationNonce (:1024) and task (:1055). The finalization contract carries
-// neither: it sends `{ handle, retryOf?, recoverFrom? }`
-// (src/shared/finalization-generation.ts:42) because the desktop owner
-// authors the task from the frozen context. Supplying one here would make this
-// lane a prompt author and a second dispatcher, so execute stays unbound and
-// keeps failing closed.
+// The earlier reason for this name was that the contract carries no task, so a
+// handler would have to author one. That is wrong, and the sharper seam is
+// worse for it: main freezes the task at begin (generation-source-binding.ts:590-591)
+// and execute only re-proves its hash (electron/services/finalization-generation.ts:46-49),
+// so reading a frozen task back would not make this lane a prompt author. What
+// is missing is everything around that task:
+//
+//   - No row can become this session's run. begin is the refusal documented
+//     above, and the served read refuses every row that does carry the slot key
+//     with GENERATION_FINALIZATION_CONTEXT_INVALID (synthetic_graph_linux.go:156)
+//     because it cannot prove the frozen context.
+//   - The freeze has no Go producer. finalizationGenerationTask
+//     (electron/services/finalization-generation-source.ts:47) renders a
+//     PromptTemplate through renderPrompt, and no Go file in this module names
+//     either; the task and context keys exist here only as allowlist entries
+//     (internal/store/generation_ledger.go:437).
+//   - The one dispatch path this lane owns takes its task from the browser
+//     request (synthetic_generation_linux.go:1337) and its nonce from the same
+//     request (:1306). This contract carries neither
+//     (src/shared/finalization-generation.ts:42), and the frozen task it does
+//     have is reachable only after the context proof above.
+//   - The reference execute is not one call. It runs up to three ordinals when a
+//     character-cards answer does not parse, and every repair task is authored
+//     from literal bilingual prose in main
+//     (electron/services/main-generation-owner.ts:1285-1303). Porting that
+//     would be authoring prompts in Go, which this lane forbids outright.
 //
 // # commit
 //
 // The reference commit is one IMMEDIATE transaction over the frozen context:
 // readFinalizationGenerationContext first, the notes-baseline CAS, then the
 // domain writes and the effect stamped into the attempt's usage receipt
-// (electron/services/finalization-generation.ts:86-113). Its writers are
-// inventoried denials in this module:
+// (electron/services/finalization-generation.ts:86-114). The stamp itself is
+// not the gap - the ledger can patch usage_receipt_json with finalizationEffect
+// (internal/store/generation_ledger.go:471, recordEffect at :1211). The gap is
+// the domain write the stamp has to be atomic with. Its writers are inventoried
+// denials in this module:
 //
 //	db:continuity-save-finalized                     internal/transport/summary.go:45
 //	db:continuity-save-character-state-candidates    internal/transport/summary.go:45
@@ -91,10 +112,12 @@ import (
 // already records that judgement for the notes write: it is "deliberately NOT
 // bound, here or anywhere else in this lane", because satisfying it needs
 // exactly this admission plus the artifact/ACK transaction, and "there is no
-// UpdateNotes store method at all". A commit also needs a settled artifact from
-// an attempt, which only execute can produce. With begin and execute refused
-// there is no artifact and no provable context, so a commit handler could only
-// ever answer GENERATION_FINALIZATION_CONTEXT_INVALID.
+// UpdateNotes store method at all". The receipt is not a projection either:
+// chapter_notes needs buildFinalizedContinuityFacts and character_cards needs
+// the finalized proof, neither of which exists in Go. A commit also needs a
+// settled artifact from an attempt, which only execute can produce. With begin
+// and execute refused there is no artifact and no provable context, so a commit
+// handler could only ever answer GENERATION_FINALIZATION_CONTEXT_INVALID.
 //
 // What is left is this: the exact seam, name by name, so the next change starts
 // from the code that has to move instead of from a guess.
@@ -140,16 +163,18 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 		{
 			Operation: productionFinalizationBegin,
 			Missing: []productionFinalizationLine{
-				{Path: "synthetic_generation_linux.go", Line: 704, Marker: "func syntheticManifest("},
-				{Path: "synthetic_graph_linux.go", Line: 143, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 437, Marker: "finalized-character-state"},
+				{Path: "synthetic_generation_linux.go", Line: 736, Marker: "func syntheticManifest("},
+				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+				{Path: "../../internal/store/generation_ledger.go", Line: 447, Marker: "finalized-character-state"},
 			},
 		},
 		{
 			Operation: productionFinalizationExecute,
 			Missing: []productionFinalizationLine{
-				{Path: "synthetic_generation_linux.go", Line: 1055, Marker: "request[\"task\"]"},
-				{Path: "synthetic_generation_linux.go", Line: 1024, Marker: "request[\"invocationNonce\"]"},
+				{Path: "synthetic_generation_linux.go", Line: 1337, Marker: "request[\"task\"]"},
+				{Path: "synthetic_generation_linux.go", Line: 1306, Marker: "request[\"invocationNonce\"]"},
+				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+				{Path: "../../internal/store/generation_ledger.go", Line: 439, Marker: "finalizationGenerationTask"},
 			},
 		},
 		{
@@ -160,6 +185,7 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 				{Path: "../../internal/transport/blueprints.go", Line: 26, Marker: "db:blueprint-update-notes"},
 				{Path: "../../internal/store/summary.go", Line: 446, Marker: "func (s *Summary) ReadFinalizedSource"},
 				{Path: "production_blueprint_write_linux.go", Line: 40, Marker: "deliberately NOT bound"},
+				{Path: "../../internal/store/generation_ledger.go", Line: 471, Marker: "finalizationEffect"},
 			},
 		},
 	}
@@ -185,6 +211,11 @@ func productionFinalizationGenerationSeam(operation string) (productionFinalizat
 // The nil-server refusal is the same one every other binder in this package
 // answers, so wiring this into production_open_linux.go cannot mask a
 // construction bug.
+//
+// The import family's two model-executing names are one answer with these three,
+// so this binder also validates the import seam table
+// (production_import_finalization_generation_linux.go). That keeps one wired
+// entry point for the four names instead of a second binder nothing calls.
 func bindProductionFinalizationGeneration(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
@@ -195,9 +226,12 @@ func bindProductionFinalizationGeneration(server *transport.Server) error {
 			return errors.New("PRODUCTION_FINALIZATION_SEAM_INCOMPLETE")
 		}
 	}
-	// Nothing is bound: the three names keep failing closed at
+	if err := bindProductionImportGeneration(server); err != nil {
+		return err
+	}
+	// Nothing is bound: the five names keep failing closed at
 	// GO_OPERATION_NOT_MIGRATED (internal/transport/server.go:116), exactly the
 	// answer the desktop-mirroring tests already pin for the synthetic lane
-	// (synthetic_generation_http_linux_test.go:475-476).
+	// (synthetic_generation_http_linux_test.go:475-479).
 	return nil
 }

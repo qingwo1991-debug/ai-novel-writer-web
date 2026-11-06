@@ -8,121 +8,136 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is where the generation recovery and retry names would be served, and
-// it serves none of them:
+// This file is the answer for the three names a browser asks for after a crash or
+// a reload, and the answer is not the same for all three:
 //
-//	generation:list-recovery           NOT BOUND, planner projection missing
-//	generation:find-blueprint-recovery NOT BOUND, planner projection missing
-//	generation:retry-draft-short-outline NOT BOUND, no frozen task to re-dispatch
+//	generation:list-recovery             REFUSED  planner recovery context has no Go builder
+//	generation:find-blueprint-recovery   REFUSED  the same context projection is the gap
+//	generation:list-directory-progress   SERVED   by production_batch_reads_linux.go, not here
 //
-// The names, their arities and their wire types are the reference's
-// (src/shared/generation-owner-contract.ts:309-315): the two reads take no argument
-// at all (electron/controllers/generation-controller.ts:279-280) and the retry
-// takes `{ handle, failedAttemptId }` (:264).
+// # generation:list-directory-progress: the port exists, and this file must not bind it
 //
-// # The note that skipped them, and whether it is stale
+// The reference body is listDirectoryProgress
+// (electron/services/main-generation-owner.ts:1550-1553) over
+// repository.listDirectoryProgress (electron/repositories/generation-run-repository.ts:599),
+// answering DirectoryGenerationCatalog {progress, diagnostics}
+// (src/shared/generation-owner-contract.ts:317). That projection exists in Go:
+// store.ListDirectoryGenerationProgress (internal/store/batch_progress.go:280)
+// walks the same run set (directory runs, retirement markers, author-edit effects
+// and runs carrying a directory receipt), derives the same per-receipt proof
+// through bpRecovery (:961), and projects the source run's frozen authorInputs the
+// way the owner adds them on the way out (:1125-1127). It reads inside one deferred
+// transaction and writes nothing.
 //
-// production_generation_reads_linux.go:7-19 says this lane lends exactly the two
-// committed-state reads - the run list and one run view - because those two are
-// SELECT-only projections of the author's own ledger rows that reserve no attempt,
-// touch no model profile, open no egress endpoint and dispatch to no provider, and
-// it adds that every other execution name (resume/restart/pause/cancel and the
-// candidate mutations) stays unbound.
+// It is also already installed: the batch/directory slice names it at
+// production_batch_reads_linux.go:99, calls it at :203, and that slice is wired at
+// production_open_linux.go:701. Binding it here as well would not serve it twice,
+// it would fail startup: server.Bind refuses a name it already holds with
+// OPERATION_ALREADY_BOUND (internal/transport/server.go:76). So this file
+// records the name as served, with the evidence a test re-reads from source
+// (productionGenerationRecoveryServedEvidence), and its binder verifies that
+// evidence instead of installing a handler that cannot be installed.
 //
-// The second half of that note IS stale: resume, pause, restart, cancel,
-// discard-candidate, bind-material-decision, the two family cancels, the batch
-// reads, the draft context pair and graph-generation:begin are all bound now
-// (production_generation_lifecycle_linux.go, production_generation_write_linux.go,
-// production_draft_context_linux.go, production_batch_reads_linux.go and
-// production_generation_begin_linux.go), so "every other execution name stays
-// unbound" no longer describes this lane. That staleness is why this file exists
-// rather than a copy of that paragraph. Being bound is not the same as answering,
-// though: graph-generation:begin is bound and refuses every call, because the
-// frozen selection it mints carries the prompt key graph-plan and the source
-// binding's prompt grammar narrows it to GENERATION_SOURCE_UNSUPPORTED
-// (internal/generationowner/binding.go:35 against
-// electron/services/generation-source-binding.ts:306) - so a graph run cannot be
-// opened until that alternation is widened.
+// Nothing the reference does for this name is out of reach here: the catalog shape,
+// the run set, the per-receipt proof (payloadHash against the blueprint commit
+// operation, both ranges, the derived remainingRange, the child's epoch) and the
+// projected authorInputs are all reproduced, and the only thing this file cannot do
+// is install the handler - because it is installed already.
 //
-// The reason it gives for the two recovery reads is NOT stale, and it is not a
-// reason about the ledger at all. Both names are projections of the planner half of
-// readContext (electron/services/main-generation-owner.ts:912), and that half is
-// exactly what this lane's own generation:read-context refuses to build:
-// productionDraftContextSupported refuses GENERATION_CONTEXT_UNSUPPORTED for any
-// manifest whose operation is not chapter-draft
-// (production_draft_context_linux.go:719-721). So the port that does not exist is
-// one port, described precisely below, and every landed layer - the ledger, the
-// read lane, the llm execution lane - is what makes that description exact instead
-// of speculative.
+// # Refused: generation:list-recovery, because three of its five buckets have no port
 //
-// # Missing port: the planner recovery projection
+// The reference (main-generation-owner.ts:1013-1060) builds a
+// GenerationRecoveryList: {planning, editors, reviews, batches, drafts, partial}
+// (src/shared/generation-owner-contract.ts:254-262). Four of the five buckets are
+// per-run recovery reads - planning and drafts through readContext (:912), reviews
+// and editors through their own family reads - so a list built here would be a list
+// of omissions:
 //
-// readContext answers GenerationRecoveryContext (src/shared/generation-owner-contract.ts:139-169),
-// and for a planning run its content is built from three things this module has no
-// reader for:
+//  1. planning: readContext for a planning run needs blueprintRecovery and
+//     plotOutlineRecovery, and the writeState inside them needs planningContinuation
+//     (:767). None of the three has a Go builder. The run rows themselves CAN exist
+//     in an author database written by the desktop app - bpRecovery
+//     (internal/store/batch_progress.go:961) reads them for the directory catalog -
+//     so the gap is the projection, not the population: bpRecoveryResult
+//     (:947-951) carries kind, progress and diagnostic and drops the authorEdit and
+//     predecessor that a BlueprintRecovery needs, readBlueprintAuthorEdit has no Go
+//     reader at all (generation-run-repository.ts:194), and
+//     readPlanningContinuation (:179) has none either.
+//  2. drafts: the bucket is readContext over chapter-draft runs plus
+//     draftEffects.readRecovery (:1028-1035), and it explicitly lists the
+//     short-outline retry state (:1037). This lane's own generation:read-context
+//     refuses exactly that state - GENERATION_CONTEXT_UNSUPPORTED for a run whose
+//     material decision carries shortOutlinePromptHash or whose attempts carry the
+//     reconcile purpose (production_draft_context_linux.go:719-732).
+//  3. reviews: the bucket needs review-revision:read-recovery, which this lane does
+//     not bind (production_review_revision_linux.go:32).
+//  4. editors: this one has a port - editor-inline:read-recovery is served
+//     (production_editor_inline_linux.go:168) - which is why the refusal is about
+//     the other buckets and not this one.
 //
-//  1. blueprintRecovery - repository.readBlueprintRecovery (main-generation-owner.ts:916),
-//     the incrementally committed blueprint draft rows plus the writeState the page
-//     resumes from. Nothing under internal/store names a blueprint draft recovery
-//     row, and the manifest key that would carry the continuation state is a
-//     planning key the ledger's own gate refuses (internal/store/generation_ledger.go:492
-//     glPlanning, applied to every open at :694). No planning run can even be opened
-//     in this lane, which is why find-blueprint-recovery has no population here: the
-//     only operation it reads, chapter-blueprint-directory
-//     (main-generation-owner.ts:1067), cannot exist.
-//  2. plotOutlineRecovery and planningContinuation - the same readContext body
-//     (:938), with no Go builder.
-//  3. the draft half of readContext - a run carrying a short-outline material
-//     decision, or a settled reconcile attempt, is refused by this lane's own
-//     projection (production_draft_context_linux.go:723-729), so a recovery list
-//     built here would drop exactly the retry state an author needs after a length
-//     stop.
+// A list that silently dropped a resumable blueprint run, or the retry state an
+// author needs after a length stop, would be read as "there is nothing to resume",
+// which is worse than a 501. So the name stays unbound and fails closed at
+// GO_OPERATION_NOT_MIGRATED (internal/transport/server.go:116).
 //
-// listRecovery also mixes in four buckets this lane can partly answer (reviews,
-// editors, batches, drafts) and one it cannot (planning) - and a list that omits a
-// resumable blueprint run after a crash is worse than a plain 501, because the
-// author reads the omission as "there is nothing to resume". So neither name is
-// installed: both keep failing closed at GO_OPERATION_NOT_MIGRATED
-// (internal/transport/server.go:116).
+// # Refused: generation:find-blueprint-recovery, one field short of a port
 //
-// # Refused: generation:retry-draft-short-outline, and why it is not a prompt author
+// The reference walks the newest chapter-blueprint-directory runs and returns the
+// first GenerationRecoveryContext whose blueprintRecovery.writeState is not
+// complete and whose planningContinuation is not complete
+// (main-generation-owner.ts:1065-1072). The record it returns is a full
+// GenerationRecoveryContext, not the catalog: modelId, handle, operation,
+// authorInputs, selectedDraftIds, composition, attemptedPurposes, draftSave and the
+// blueprintRecovery union {sourceHandle, leaseEpoch, draft, editRange, writeState,
+// saved} (src/shared/generation-owner-contract.ts:139-169 and :185-199).
 //
-// The existing derivation of this refusal (production_generation_write_linux.go:92)
-// says the operation "synthesizes its own task and message". That is still true of
-// the only implementation in this module: syntheticGeneration.RetryDraftShortOutline
-// builds one hardcoded user message (synthetic_generation_linux.go:1450) and
-// dispatches it, so lending it would make this lane an author of the text the
-// provider receives.
+// That union is the missing symbol. Everything the catalog needs lives in
+// bpRecovery's Go port; what it does not carry is precisely writeState:
+// state is derived from planningContinuation (:767), which reads
+// readPlanningContinuation (generation-run-repository.ts:179),
+// readBlueprintAuthorEdit (:194), the committed blueprint rows against
+// blueprints, and a source-binding rebuild (deps.rebuildBinding). None of those
+// four has a Go reader, and the retry-window question - can a planner run still be
+// opened here at all - is answered no by the ledger's own gate
+// (internal/store/generation_ledger.go:694, GENERATION_OPERATION_UNSUPPORTED for
+// every glPlanning operation at :492-494), so a writeState derived in this lane
+// would describe rows this lane can read but can never have written. Serving a
+// null instead would tell the blueprint page there is nothing to recover.
 //
-// The reference does not author anything: it re-dispatches the task the failed
-// attempt itself froze, read back from the attempt's usage receipt
-// (main-generation-owner.ts:189 `const task = usage.replayTask`), and proves it
-// against the material decision's short-outline hash and the stored request hash
-// (:190-196). Porting that would not be prompt authoring - so the honest statement
-// of the gap is narrower than the old note's: this lane's own dispatch never records
-// a replayTask, because OrdinaryService.Execute hands the generation service a
-// request with no ReplayTask field at all
-// (internal/generationowner/ordinary.go:149). Every attempt this lane writes has
-// nothing for a faithful retry to re-dispatch, so the missing port is the frozen
-// task record on the dispatch path; until it exists, the only available retry is
-// the authored one, and that one this lane refuses.
+// # Refused: generation:retry-draft-short-outline, for the narrower reason
+//
+// The only implementation in this module authors its own task:
+// syntheticGeneration.RetryDraftShortOutline builds one hardcoded message
+// (synthetic_generation_linux.go:1450), so lending it would make this lane the
+// author of the text the provider receives. The reference authors nothing - it
+// re-dispatches the task the failed attempt froze, read back from the attempt's
+// usage receipt (main-generation-owner.ts:189) and proved against the material
+// decision's short-outline hash and the stored request hash (:190-196). Faithful
+// porting would not be prompt authoring, but this lane's dispatch never records a
+// replayTask: OrdinaryService.Execute hands the generation service a request with
+// no ReplayTask field (internal/generationowner/ordinary.go:149), so every attempt
+// written here has nothing for a faithful retry to re-dispatch. The missing port is
+// the frozen task record on the dispatch path; until it exists the only available
+// retry is the authored one, and that one this lane refuses
+// (production_generation_write_linux.go:92).
 //
 // Nothing here writes, so a refused call leaves the author database byte-identical;
-// the tests prove that against a live lease with a genuinely interrupted run, a
+// the tests prove that against a live lease holding a genuinely interrupted run, a
 // completed one and a real failed-attempt id, so the refusal cannot be explained
 // away as "there was nothing to answer".
 
 const (
-	productionGenerationRecoveryList  = "generation:list-recovery"
-	productionGenerationRecoveryFind  = "generation:find-blueprint-recovery"
-	productionGenerationRecoveryRetry = "generation:retry-draft-short-outline"
+	productionGenerationRecoveryList      = "generation:list-recovery"
+	productionGenerationRecoveryFind      = "generation:find-blueprint-recovery"
+	productionGenerationRecoveryDirectory = "generation:list-directory-progress"
+	productionGenerationRecoveryRetry     = "generation:retry-draft-short-outline"
 )
 
-// productionGenerationRecoveryLine is one declaration that has to move before a
-// name can be served: the path of the file, the line inside it, and a marker that
-// must be on that line. TestProductionLaneRefusesGenerationRecovery re-reads every
-// one of them, so a moved declaration fails this lane's test instead of leaving a
-// note that points at nothing.
+// productionGenerationRecoveryLine is one declaration that has to exist for a
+// claim in this file to stay true: the path of the file, the line inside it, and a
+// marker that must appear in that file. The tests re-read every one of them, so a
+// moved or deleted declaration fails this lane's test instead of leaving a note
+// that points at nothing.
 type productionGenerationRecoveryLine struct {
 	Path   string
 	Line   int
@@ -136,11 +151,24 @@ type productionGenerationRecoverySeam struct {
 	Missing   []productionGenerationRecoveryLine
 }
 
-// productionGenerationRecoveryOperations is the three names, reads first and the
-// retry last, spelled once so the binder and the test cannot drift from the
-// controller that registers them
-// (electron/controllers/generation-controller.ts:264, :279-280).
-func productionGenerationRecoveryOperations() []string {
+// productionGenerationRecoveryServed is one name this file does not bind because a
+// sibling slice already serves it, plus the declarations that make that true.
+type productionGenerationRecoveryServed struct {
+	Operation string
+	Evidence  []productionGenerationRecoveryLine
+}
+
+// productionGenerationRecoveryServedOperations is the one name of the three that
+// has a port in this lane, spelled once so the binder and the test cannot drift.
+func productionGenerationRecoveryServedOperations() []string {
+	return []string{productionGenerationRecoveryDirectory}
+}
+
+// productionGenerationRecoveryRefusedOperations is the two names that stay 501,
+// plus the retry this file also refuses, spelled once so the binder, the seam table
+// and the test cannot drift from the controller that registers them
+// (electron/controllers/generation-controller.ts:264, :279-281).
+func productionGenerationRecoveryRefusedOperations() []string {
 	return []string{
 		productionGenerationRecoveryList,
 		productionGenerationRecoveryFind,
@@ -148,10 +176,34 @@ func productionGenerationRecoveryOperations() []string {
 	}
 }
 
-// productionGenerationRecoverySeams is the whole answer of this file: for each
-// refused name, the exact code that has to move first. The markers are quotes from
-// the files, so the test proves the gap is still there and still described the way
-// this table describes it.
+// productionGenerationRecoveryServedEvidence is the served name's proof. It is not
+// an argument: each row names a declaration in another file that the test re-reads
+// from disk, so "already served" cannot quietly become "served by nobody" - which
+// is exactly what would happen if the batch/directory slice lost this name.
+func productionGenerationRecoveryServedEvidence() []productionGenerationRecoveryServed {
+	return []productionGenerationRecoveryServed{
+		{
+			Operation: productionGenerationRecoveryDirectory,
+			Evidence: []productionGenerationRecoveryLine{
+				// The sibling slice names it, calls the store port for it, and is
+				// wired into the finished lane.
+				{Path: "production_batch_reads_linux.go", Line: 99, Marker: `productionBatchDirectoryName = "generation:list-directory-progress"`},
+				{Path: "production_batch_reads_linux.go", Line: 203, Marker: "store.ListDirectoryGenerationProgress(ctx, db)"},
+				{Path: "production_open_linux.go", Line: 701, Marker: "newProductionBatchReads(open.durable).Bind(server)"},
+				// The port: the catalog derivation itself.
+				{Path: "../../internal/store/batch_progress.go", Line: 280,
+					Marker: "func ListDirectoryGenerationProgress(ctx context.Context, db *sql.DB) (*DirectoryGenerationCatalog, error)"},
+				// The inventory entry that makes the binding legal at all.
+				{Path: "../../../web/operations.json", Line: 224, Marker: `"generation:list-directory-progress": "project"`},
+			},
+		},
+	}
+}
+
+// productionGenerationRecoverySeams is the whole refusal answer of this file: for
+// each refused name, the exact code that has to move first. The markers are quotes
+// from the files, so the test proves the gap is still there and still described the
+// way this table describes it.
 func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 	return []productionGenerationRecoverySeam{
 		{
@@ -163,10 +215,15 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// Its first bucket is the planner projection this lane cannot build.
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1021, Marker: "planning: (handle: MainGenerationRunHandle)"},
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 912, Marker: "const readContext = (handle: MainGenerationRunHandle): GenerationRecoveryContext"},
-				// This lane's read-context refuses exactly that half.
+				// The writeState inside that projection needs a continuation reader
+				// this lane has no port of.
+				{Path: "../../../electron/services/main-generation-owner.ts", Line: 767, Marker: "const planningContinuation = (run: DurableGenerationRun): PlanningContinuation | undefined"},
+				// The drafts bucket lists the short-outline retry state, which this
+				// lane's read-context refuses.
+				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1037, Marker: "recovery.draftShortOutline?.retry?.kind === 'available'"},
 				{Path: "production_draft_context_linux.go", Line: 720, Marker: "!= productionDraftContextOperation"},
-				// And no planning run can be opened at all, so the bucket has no rows.
-				{Path: "../../internal/store/generation_ledger.go", Line: 492, Marker: "func glPlanning(operation string) bool"},
+				// The reviews bucket's only port is unbound in this lane.
+				{Path: "production_review_revision_linux.go", Line: 32, Marker: "review-revision:read-recovery    NOT bound (see below)"},
 			},
 		},
 		{
@@ -176,10 +233,16 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// returns the first one whose blueprint draft is not finished.
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1065, Marker: "const findBlueprintRecovery = (): GenerationRecoveryContext | null"},
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1070, Marker: "recovery.blueprintRecovery.writeState !== 'complete'"},
-				// The recovery record itself: rows plus writeState, with no Go reader.
-				{Path: "../../../electron/services/main-generation-owner.ts", Line: 916, Marker: "repository.readBlueprintRecovery(run.runId)"},
-				// The ledger refuses to open the one operation this name reads, so the
-				// population is empty rather than merely unprojected.
+				// writeState is derived from the continuation receipt, which has no
+				// Go reader at all.
+				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 179, Marker: "readPlanningContinuation(runId: string): PlanningContinuationReceipt | null"},
+				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 194, Marker: "readBlueprintAuthorEdit(runId: string): BlueprintAuthorEditReceipt | null"},
+				// The Go blueprint reader stops at kind/progress/diagnostic, one
+				// field short of the union the wire type wants.
+				{Path: "../../internal/store/batch_progress.go", Line: 947, Marker: "type bpRecoveryResult struct {"},
+				{Path: "../../internal/store/batch_progress.go", Line: 1025, Marker: `return bpRecoveryResult{kind: "available", progress: progress}, nil`},
+				// And the ledger refuses to open the operation this name reads, so no
+				// such run can be created here either.
 				{Path: "../../internal/store/generation_ledger.go", Line: 694, Marker: `if glPlanning(glText(request["operation"])) {`},
 			},
 		},
@@ -210,22 +273,62 @@ func productionGenerationRecoverySeamFor(operation string) (productionGeneration
 	return productionGenerationRecoverySeam{}, false
 }
 
+// productionGenerationRecoveryServedEvidenceFor does the same for the served name.
+func productionGenerationRecoveryServedEvidenceFor(operation string) (productionGenerationRecoveryServed, bool) {
+	for _, served := range productionGenerationRecoveryServedEvidence() {
+		if served.Operation == operation {
+			return served, true
+		}
+	}
+	return productionGenerationRecoveryServed{}, false
+}
+
+// productionGenerationRecoveryServedBy reports whether the finished lane really
+// installs the one name this file records as served elsewhere.
+func productionGenerationRecoveryServedBy(bound []string) bool {
+	for _, operation := range productionGenerationRecoveryServedOperations() {
+		found := false
+		for _, name := range bound {
+			if name == operation {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // bindProductionGenerationRecovery installs nothing, so wiring it moves no count:
-// the served set stays where this batch put it. It is wired the way the agent and
-// finalization refusal slices are - one entry in the binder list in
-// production_open_linux.go, next to bindProductionAgentGeneration - and what that
-// buys is the seam check running in the real lane instead of only in this test.
+// it verifies this file's claims against the lane that is actually being built
+// instead. It has one ordering requirement - it must run after the batch/directory
+// slice (production_open_linux.go:701), because that slice is what installs the
+// name this file records as served - and it says so with a symbolic code rather
+// than serving a second handler that Bind would reject anyway
+// (OPERATION_ALREADY_BOUND).
 func bindProductionGenerationRecovery(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
-	for _, operation := range productionGenerationRecoveryOperations() {
+	for _, operation := range productionGenerationRecoveryServedOperations() {
+		evidence, found := productionGenerationRecoveryServedEvidenceFor(operation)
+		if !found || len(evidence.Evidence) == 0 {
+			return errors.New("PRODUCTION_GENERATION_RECOVERY_EVIDENCE_INCOMPLETE")
+		}
+	}
+	if !productionGenerationRecoveryServedBy(server.BoundOperations()) {
+		return errors.New("PRODUCTION_GENERATION_RECOVERY_SERVED_MISSING")
+	}
+	for _, operation := range productionGenerationRecoveryRefusedOperations() {
 		seam, found := productionGenerationRecoverySeamFor(operation)
 		if !found || len(seam.Missing) == 0 {
 			return errors.New("PRODUCTION_GENERATION_RECOVERY_SEAM_INCOMPLETE")
 		}
 	}
-	// Nothing is bound: the three names keep failing closed at
-	// GO_OPERATION_NOT_MIGRATED.
+	// Nothing is bound: the three refused names keep failing closed at
+	// GO_OPERATION_NOT_MIGRATED, and the served one keeps the handler the
+	// batch/directory slice already installed.
 	return nil
 }

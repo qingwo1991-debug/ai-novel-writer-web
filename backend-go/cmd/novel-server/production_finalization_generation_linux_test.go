@@ -236,7 +236,7 @@ func productionFinalizationGenerationSeamProof(t *testing.T, operation string) {
 		// recorded line: a seam that is still documented but has been shifted by an
 		// unrelated edit is not a regression, while a seam that was deleted is. The
 		// recorded line is still reported so a reader can find it quickly.
-		if !strings.Contains(string(raw), line.Marker) {
+		if !productionSeamContains(string(raw), line.Marker) {
 			t.Fatalf("%s: no longer documents %q anywhere in %s (it was recorded at line %d)",
 				operation, line.Marker, line.Path, line.Line)
 		}

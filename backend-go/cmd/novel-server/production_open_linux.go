@@ -699,6 +699,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionGraphReads(open.durable).Bind(server) },
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return newProductionBatchReads(open.durable).Bind(server) },
+		// The recovery reads: generation:list-recovery and :find-blueprint-recovery stay
+		// refused with their buckets named, and this binder verifies that
+		// generation:list-directory-progress really is bound by the batch slice above
+		// rather than claiming it twice (production_generation_recovery_linux.go).
+		func() error { return bindProductionGenerationRecovery(server) },
 		func() error { return bindProductionFinalizationGeneration(server) },
 		// The eight agent-generation names install nothing: each one needs a port this
 		// lane does not have (an agent-context prompt renderer, a tool-manifest dispatch,
