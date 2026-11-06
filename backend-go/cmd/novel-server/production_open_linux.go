@@ -504,7 +504,16 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// that live on the author's own machine, and a skill package that installs from
 	// those bytes. None of them accepts a host path, and none of them writes
 	// (production_browser_pickers_linux.go, internal/librarypath).
-	if bindErr := newProductionBrowserPickersFrom(open, uploads).Bind(server); bindErr != nil {
+	pickers := newProductionBrowserPickersFrom(open, uploads)
+	// skills:install-local was the one picker name with no port behind it: the
+	// candidate inspection existed and the publish gate did not. The local install
+	// now publishes from the same re-verified bytes through the gate the GitHub
+	// install uses (production_skill_install_linux.go, internal/promptskills).
+	if bindErr := bindProductionSkillInstall(pickers, newProductionSkillInstalls(open)); bindErr != nil {
+		_ = open.Close()
+		return nil, nil, bindErr
+	}
+	if bindErr := pickers.Bind(server); bindErr != nil {
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
@@ -804,6 +813,17 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// legacy-roster:read-source is served from the admitted project database; the six
 		// generation names in that family each wait on a port this lane does not have
 		// (production_legacy_roster_linux.go).
+		// dialog:select-novel-files: the import picker now names the manuscript uploads
+		// the caller actually staged, instead of the desktop's native file dialog
+		// (production_import_selection_linux.go).
+		func() error {
+			selection, selectionErr := newProductionImportSelection(open, uploads)
+			if selectionErr != nil {
+				log.Printf("novel-server: import selection unavailable (%v); dialog:select-novel-files will refuse", selectionErr)
+				return nil
+			}
+			return selection.Bind(server)
+		},
 		func() error { return newProductionLegacyRoster(open.durable).Bind(server) },
 		// The document half and the search half of the same family, sharing the
 		// import binder's per-project gate so one admission decision covers all ten
