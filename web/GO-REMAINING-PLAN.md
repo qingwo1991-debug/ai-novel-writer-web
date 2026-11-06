@@ -8,10 +8,30 @@
 | 项 | 值 |
 | --- | --- |
 | 清单里的操作总数 | 281 |
-| 生产车道已服务 | **211** / 281（未服务 70；`883a8fc9` 证实 211） |
-| 仍未服务 | 119 |
+| 生产车道已服务 | **231** / 281（未服务 50，由 CI 断言计数） |
+| 仍未服务 | 50（每个都有具名端口缺口，见下） |
 | 承载方式 | 单个 Go 进程 + 单个容器，无 Node 运行时 |
 | 生产容器 | **未动**，仍跑旧镜像，回滚摘要已记录 |
+
+### 未服务的 50 个：不是"没做"，是"缺端口"
+
+每个未服务名字要么已经绑定、要么在文件头写明缺哪个符号（`file:line` 可复核）。
+按家族：`db` 13、`agent-generation` 8、`legacy-roster` 6、`generation` 3、
+`finalization-generation` 3、`import-generation` 2、`graph-generation` 2、
+`character-proposal` 2、`editor-inline` 2、`review-revision` 2、`cloud-backup` 2、
+其余 5。代表性缺口：导入/定稿生成需要一种本车道开不出的 run（`synthetic_generation_linux.go:386`
+的准入表里没有 import 槽）；`generation:list-recovery` 三个桶里的两个没有 `planningContinuation`；
+`db:*` 13 个要么读时自修复（`internal/store/blueprints.go:137` 的 `INSERT OR IGNORE`），
+要么需要跨表同事务（没有导出的 `BEGIN IMMEDIATE` 句柄）。
+
+**本轮学到的两条硬规则**（否则会反复踩）：
+
+1. **CI 会在跑测试前格式化源码**：`gofmt -w ./cmd ./internal`（`go-backend.yml:56`、`:445`）。
+   所以任何"读源码某一行当证据"的 seam 断言必须按 token 比较（`productionSeamContains`），
+   逐字节比较会对完全正确的文本误报漂移。
+2. **"已绑定"不等于"能回答"**：`graph-generation:begin` 曾长期在计数里，却因为
+   `internal/generationowner/binding.go:35` 的 prompt key 正则拒绝 `graph-plan` 而拒绝每一次真实调用。
+   计数只能证明装了 handler；成功路径必须有测试跑过一遍。
 
 ## 一之二、验收门槛（两段，别混）
 

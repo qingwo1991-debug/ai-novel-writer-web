@@ -1,8 +1,18 @@
 # 交接状态（每次中断后先读这一段）
 
-## 当前事实（2026-11-06）
+## 当前事实（2026-11-07）
 
-- 已服务 **211 / 281**，未服务 **70**。计数已由 CI 在 `883a8fc9` 证实（此前手工少算了 6 个）。
+- 已服务 **231 / 281**，未服务 **50**。计数是构建断言，不是手数；每次运行的日志里还会打出
+  未服务名单（`production_served_count_linux_test.go` 的 `unserved=` 行）。
+- 浏览器上传通道已通：`POST /api/uploads`、`POST /api/upload-folders`（`internal/uploadstore`）。
+  桌面能读本地文件，浏览器不能，所以所有导入都必须走这条路；这条通道落地后
+  `kb:import-*`、`character-avatar:choose`、`dialog:select-knowledge-*`、`skills:pick-local`、
+  `skills:install-local`、`dialog:select-novel-files` 才真正可用。
+- 未服务的 50 个都带着具名端口缺口（见 `web/GO-REMAINING-PLAN.md`"未服务的 50 个"一节）。
+- 曾长期"已绑定但从不工作"的 `graph-generation:begin` 已修：prompt key 正则漏了 `graph-plan`。
+- `llm:close-execution-lease` 现在与桌面一致（关闭两次是幂等，保留 5 分钟墓碑），
+  此前第二次关闭会让渲染层弹 `LEASE_CLOSE_FAILED`。
+- 旧记录（保留以便追溯）：已服务 211 时的结论由 CI 在 `883a8fc9` 证实。
 - 新增家族：dialog 8/9、cloud-backup 6/8、character-avatar 4/4、kb 导入 6 个 + 检索 2 个、legacy-roster 1/7。
 - 缺口（70）分两类：**能做的 21**（kb 面板 5、project 5、fs 1、dialog 1、generation 3、skills 2、graph 3、import-generation 2、finalization-generation 3…）
   与**没有端口可做的 49**（agent-generation 8、legacy-roster 6、mcp 8、db 回执写 13…，每个都在文件头写明了缺哪个端口）。
