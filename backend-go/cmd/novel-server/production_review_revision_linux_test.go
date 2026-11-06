@@ -8,12 +8,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/reviewrevprep"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -518,5 +521,216 @@ func testProductionReviewRevisionRegistryRefusals(t *testing.T) {
 	if _, err := productionReviewRevisionFreezeWith(registry, context.Background(), owner, db, scope, selection,
 		productionReviewRevisionAbsentHandle); productionReviewRevisionFailureCode(err) != "GENERATION_REVIEW_CONTEXT_REQUIRED" {
 		t.Fatalf("an unminted handle refused with %v", err)
+	}
+}
+
+// productionReviewRevisionCommitCopy is the wire request plus its two nested objects,
+// copied so one table arm cannot edit the next one.
+func productionReviewRevisionCommitCopy(source map[string]any) map[string]any {
+	copied := make(map[string]any, len(source))
+	for key, value := range source {
+		copied[key] = value
+	}
+	for _, key := range []string{"handle", "artifact"} {
+		inner, ok := source[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		clone := make(map[string]any, len(inner))
+		for innerKey, innerValue := range inner {
+			clone[innerKey] = innerValue
+		}
+		copied[key] = clone
+	}
+	return copied
+}
+
+// TestProductionReviewRevisionCommitRequestReadsTheWireShape pins the commit request
+// to its exact shape: three request keys, four handle keys, three artifact keys, a
+// whole non-negative revision, a lowercase digest, and the lease the lane admits. A
+// request this file does not read is refused before the store sees it, so a wrong
+// shape can never reach the transaction.
+func TestProductionReviewRevisionCommitRequestReadsTheWireShape(t *testing.T) {
+	contextValue := projectsession.Context{ProjectID: "proj-commit", LeaseID: "lease-commit",
+		ProjectPath: "/tmp/project"}
+	digest := productionReviewRevisionContentHash("an answer")
+	valid := map[string]any{
+		"contextId": "00000000-0000-4000-8000-000000000001",
+		"handle": map[string]any{
+			"projectId":    "proj-commit",
+			"epoch":        "lease-commit",
+			"rootActionId": "root-1",
+			"runId":        "run-1",
+		},
+		"artifact": map[string]any{"artifactId": "artifact-1", "revision": int64(0), "textHash": digest},
+	}
+	parsed, err := productionReviewRevisionCommitRequest(valid, contextValue)
+	if err != nil {
+		t.Fatalf("the production parser refused a well-formed commit: %v", err)
+	}
+	if parsed.ContextID != "00000000-0000-4000-8000-000000000001" ||
+		parsed.Request.ProjectID != "proj-commit" || parsed.Request.LiveEpoch != "lease-commit" ||
+		parsed.Request.Handle.ProjectID != "proj-commit" || parsed.Request.Handle.Epoch != "lease-commit" ||
+		parsed.Request.Handle.RootActionID != "root-1" || parsed.Request.Handle.RunID != "run-1" ||
+		parsed.Request.Artifact.ArtifactID != "artifact-1" || parsed.Request.Artifact.Revision != 0 ||
+		parsed.Request.Artifact.TextHash != digest || parsed.Request.AssertPrepared != nil {
+		t.Fatalf("the parser read the request as %+v", parsed)
+	}
+	for _, arm := range []struct {
+		label  string
+		mutate func(map[string]any)
+	}{
+		{"an extra request key", func(request map[string]any) { request["extra"] = true }},
+		{"a missing context id", func(request map[string]any) { delete(request, "contextId") }},
+		{"a blank context id", func(request map[string]any) { request["contextId"] = "   " }},
+		{"a handle that is not an object", func(request map[string]any) { request["handle"] = "root-1" }},
+		{"an extra handle key", func(request map[string]any) {
+			request["handle"].(map[string]any)["extra"] = true
+		}},
+		{"a missing handle key", func(request map[string]any) {
+			delete(request["handle"].(map[string]any), "runId")
+		}},
+		{"a blank run id", func(request map[string]any) {
+			request["handle"].(map[string]any)["runId"] = ""
+		}},
+		{"an artifact that is not an object", func(request map[string]any) { request["artifact"] = digest }},
+		{"a missing artifact key", func(request map[string]any) {
+			delete(request["artifact"].(map[string]any), "textHash")
+		}},
+		{"an uppercase digest", func(request map[string]any) {
+			request["artifact"].(map[string]any)["textHash"] = strings.ToUpper(digest)
+		}},
+		{"a short digest", func(request map[string]any) {
+			request["artifact"].(map[string]any)["textHash"] = digest[:63]
+		}},
+		{"a fractional revision", func(request map[string]any) {
+			request["artifact"].(map[string]any)["revision"] = 1.5
+		}},
+		{"a negative revision", func(request map[string]any) {
+			request["artifact"].(map[string]any)["revision"] = int64(-1)
+		}},
+		{"a revision that is a string", func(request map[string]any) {
+			request["artifact"].(map[string]any)["revision"] = "0"
+		}},
+		{"another project's handle", func(request map[string]any) {
+			request["handle"].(map[string]any)["projectId"] = "proj-other"
+		}},
+	} {
+		request := productionReviewRevisionCommitCopy(valid)
+		arm.mutate(request)
+		if _, err := productionReviewRevisionCommitRequest(request, contextValue); err == nil {
+			t.Fatalf("the production parser accepted %s", arm.label)
+		}
+	}
+}
+
+// TestProductionReviewRevisionCommitRefusalCodes proves the commit half's codes are
+// reachable at the boundary: each sentinel resolves to the reference's own string
+// through the one mapping table, and wrapping a refusal never widens it into a
+// neighbour's code.
+func TestProductionReviewRevisionCommitRefusalCodes(t *testing.T) {
+	for _, arm := range []struct {
+		refusal error
+		code    string
+	}{
+		{store.ErrReviewCommitInvalid, "GENERATION_REVIEW_COMMIT_INVALID"},
+		{store.ErrReviewCommitConflict, "GENERATION_REVIEW_COMMIT_CONFLICT"},
+		{store.ErrReviewCommitArtifact, "GENERATION_REVIEW_ARTIFACT_INVALID"},
+		{store.ErrReviewCommitIdentity, "GENERATION_RUN_IDENTITY_MISMATCH"},
+		{store.ErrReviewCommitCancelled, "GENERATION_ACTION_CANCELLED"},
+		{store.ErrReviewCommitReceipt, "GENERATION_REVIEW_RECEIPT_INVALID"},
+		{store.ErrReviewCommitContextRequired, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{store.ErrReviewCommitContextUnproven, "GENERATION_REVIEW_CONTEXT_INVALID"},
+		{store.ErrReviewCommitContextChanged, "GENERATION_REVIEW_CONTEXT_CHANGED"},
+		{store.ErrReviewCycleConflict, "REVIEW_CYCLE_CONFLICT"},
+		{store.ErrSourceDraftChanged, "GENERATION_SOURCE_CHANGED"},
+		{reviewrevprep.ErrHandleUnknown, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{reviewrevprep.ErrHandleExpired, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{reviewrevprep.ErrHandleRevoked, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{reviewrevprep.ErrCallerMismatch, "GENERATION_REVIEW_CONTEXT_INVALID"},
+		{reviewrevprep.ErrPurposeMismatch, "GENERATION_REVIEW_CONTEXT_INVALID"},
+	} {
+		if got := productionReviewRevisionCode(arm.refusal); got != arm.code {
+			t.Fatalf("a named refusal resolves to %v instead of its own code", got)
+		}
+		if got := productionReviewRevisionFailureCode(arm.refusal); got != arm.code {
+			t.Fatalf("the browser would receive %v instead of %v", got, arm.code)
+		}
+	}
+	wrapped := fmt.Errorf("commit: %w", store.ErrReviewCommitConflict)
+	if got := productionReviewRevisionFailureCode(wrapped); got != "GENERATION_REVIEW_COMMIT_CONFLICT" {
+		t.Fatalf("a wrapped conflict answered %v", got)
+	}
+	// A failure this lane does not name is the family's invalid code, never a SQLite
+	// message and never a draft body.
+	if got := productionReviewRevisionFailureCode(errors.New("sqlite3: disk I/O error")); got !=
+		errProductionReviewRevisionInvalid.Error() {
+		t.Fatalf("an unnamed failure answered %v", got)
+	}
+}
+
+// TestProductionReviewRevisionCommitPrepared proves the closure the binder hands the
+// writer: a handle this process minted answers for its own operation and its own
+// bytes, and every other presentation is the boundary's published answer rather than
+// a write. Only the bytes arm reaches the store's own sentinel; the rest are the
+// registry's identity refusals, which the mapping table publishes.
+func TestProductionReviewRevisionCommitPrepared(t *testing.T) {
+	handle := "00000000-0000-4000-8000-000000000002"
+	caller := transport.Caller{Principal: "production-author", SessionID: "session-1", ClientID: "client_commit"}
+	epoch := "lease-commit"
+	operation := ReviewRevisionOperationReviewChapter
+	frozen := "  灯影摇晃  "
+	key := make([]byte, productionReviewRevisionServerKeyBytes)
+	for index := range key {
+		key[index] = byte(index)
+	}
+	registry, err := reviewrevprep.NewStore(key, reviewrevprep.StoreOptions{
+		ID: func() (string, error) { return handle, nil },
+	})
+	if err != nil {
+		t.Fatalf("a fresh registry: %v", err)
+	}
+	minted, err := registry.Prepare(productionReviewRevisionBinding(caller, epoch, operation),
+		reviewrevprep.PreparedContext{ProjectID: "proj-commit", Operation: operation, Status: "revised",
+			DraftID: 1, ChapterNumber: 1, Version: 1, SourceHash: productionReviewRevisionContentHash("灯影摇晃"),
+			Text: frozen, ContextHash: productionReviewRevisionContentHash(frozen)})
+	if err != nil {
+		t.Fatalf("minting a handle: %v", err)
+	}
+	if minted != handle {
+		t.Fatalf("the registry minted a handle this test did not name")
+	}
+	assert := productionReviewRevisionCommitPrepared(registry, caller, epoch, "proj-commit", handle)
+	if err := assert(operation, frozen); err != nil {
+		t.Fatalf("a minted handle refused its own operation and bytes: %v", err)
+	}
+	for _, arm := range []struct {
+		label  string
+		assert func(string, string) error
+		code   string
+	}{
+		{"another operation", assert, "GENERATION_REVIEW_CONTEXT_INVALID"},
+		{"other bytes", assert, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{"another caller", productionReviewRevisionCommitPrepared(registry,
+			transport.Caller{Principal: "production-author", SessionID: "session-1",
+				ClientID: productionReviewRevisionOtherTab}, epoch, "proj-commit", handle),
+			"GENERATION_REVIEW_CONTEXT_INVALID"},
+		{"another project", productionReviewRevisionCommitPrepared(registry, caller, epoch,
+			"proj-other", handle), "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+		{"an unminted handle", productionReviewRevisionCommitPrepared(registry, caller, epoch,
+			"proj-commit", productionReviewRevisionAbsentHandle), "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+	} {
+		// The two arms that share the minted closure differ only in what they present.
+		presented, text := operation, frozen
+		switch arm.label {
+		case "another operation":
+			presented = ReviewRevisionOperationRefineDraft
+		case "other bytes":
+			text = frozen + " "
+		}
+		err := arm.assert(presented, text)
+		if got := productionReviewRevisionFailureCode(err); got != arm.code {
+			t.Fatalf("%s answered %v instead of %v", arm.label, got, arm.code)
+		}
 	}
 }

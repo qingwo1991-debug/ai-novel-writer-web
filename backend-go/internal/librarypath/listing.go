@@ -6,6 +6,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/collate"
+	"golang.org/x/text/language"
 )
 
 // Listing bounds. A chooser needs one screenful, not a whole tree: DefaultListEntries
@@ -48,6 +51,13 @@ type Listing struct {
 // re-verifies the target before opening it, skips symlinks, hidden names and
 // non-regular entries rather than following or failing on them, and reads no file
 // contents. maxEntries may be zero for DefaultListEntries.
+//
+// The order is the one the shipped listing already uses, not readdir order and not
+// plain byte order: internal/projectfs/read_tree.go:169-177 sorts a directory's
+// entries with the Simplified-Chinese collation, directories first and byte order
+// as the tie-break - that is what fs:list-dir answers and what the page draws. The
+// cap selects the first maxEntries ENTRIES IN THAT ORDER, so it bounds the answer
+// without letting readdir order decide which names survive.
 func ListDirectory(target Target, maxEntries int) (Listing, error) {
 	if maxEntries == 0 {
 		maxEntries = DefaultListEntries
@@ -76,34 +86,58 @@ func ListDirectory(target Target, maxEntries int) (Listing, error) {
 	}
 	defer func() { _ = directory.Close() }()
 
-	listing := Listing{Relative: target.Relative, Entries: make([]Entry, 0, maxEntries)}
+	// One collator per answer, exactly as internal/projectfs/read_tree.go:168
+	// builds one per directory it reads: a collator is not safe for concurrent
+	// use, and two requests may list two directories at once.
+	collator := collate.New(language.SimplifiedChinese)
+	// One entry beyond the cap is retained, so a truncated answer and a complete
+	// one are distinguishable without a second pass over the directory.
+	listing := Listing{Relative: target.Relative, Entries: make([]Entry, 0, maxEntries+1)}
 	for {
 		batch, readErr := directory.ReadDir(listBatch)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return Listing{}, ErrPathUnavailable
 		}
 		for _, item := range batch {
-			entry, usable := listingEntry(root, item.Name())
-			if !usable {
-				continue
+			if entry, usable := listingEntry(root, item.Name()); usable {
+				listing.Entries = append(listing.Entries, entry)
 			}
-			if len(listing.Entries) == maxEntries {
-				listing.Truncated = true
-				break
-			}
-			listing.Entries = append(listing.Entries, entry)
 		}
-		if listing.Truncated || errors.Is(readErr, io.EOF) || len(batch) == 0 {
+		// Trim to the best maxEntries+1 in reference order after each batch. The
+		// trimming is what makes the cap a bound on memory and on the answer, and
+		// it happens after the ordering so the cap never decides which names are
+		// dropped: readdir order is not the order the page draws.
+		if len(listing.Entries) > maxEntries+1 {
+			listing.Entries = sortListing(collator, listing.Entries)[:maxEntries+1]
+		}
+		if errors.Is(readErr, io.EOF) || len(batch) == 0 {
 			break
 		}
 	}
-	// ReadDir on an open directory returns directory order, which is not sorted;
-	// the page needs a stable order, and sorting after the cap keeps the answer
-	// bounded either way.
-	sort.Slice(listing.Entries, func(left, right int) bool {
-		return listing.Entries[left].Name < listing.Entries[right].Name
-	})
+	listing.Entries = sortListing(collator, listing.Entries)
+	if len(listing.Entries) > maxEntries {
+		listing.Truncated = true
+		listing.Entries = listing.Entries[:maxEntries]
+	}
 	return listing, nil
+}
+
+// sortListing puts entries in the order the shipped listing draws them: the
+// comparator is copied from internal/projectfs/read_tree.go:169-177 - directories
+// before files, then collate.New(language.SimplifiedChinese), then byte order as
+// the tie-break so two names the collation treats as equal still have one stable
+// order. It sorts in place and returns the same slice.
+func sortListing(collator *collate.Collator, entries []Entry) []Entry {
+	sort.SliceStable(entries, func(left, right int) bool {
+		if entries[left].Dir != entries[right].Dir {
+			return entries[left].Dir
+		}
+		if comparison := collator.CompareString(entries[left].Name, entries[right].Name); comparison != 0 {
+			return comparison < 0
+		}
+		return entries[left].Name < entries[right].Name
+	})
+	return entries
 }
 
 // listingEntry projects one directory entry, or reports that the browser must not

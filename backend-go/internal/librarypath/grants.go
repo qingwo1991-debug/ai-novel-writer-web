@@ -320,63 +320,125 @@ func (r *Registry) Mint(binding Binding, target Target, ops Op, options MintOpti
 	return token, nil
 }
 
-// Redeem spends one use of a token and returns the target it authorises. The
-// order of the checks is the admission policy: expiry, then the MAC (a record
-// that cannot be proved to come from this registry is dropped, not trusted), then
-// the caller, then the epoch, then the operation, then the budget. The caller
-// comparison precedes the epoch comparison deliberately - an epoch nobody moved
-// is zero, so the other order would report a foreign token as revoked. The
-// decrement and the re-MAC happen under the same lock hold as the read, which is
-// what makes the usage record single-writer safe: two concurrent callers cannot
-// both spend the last use.
-func (r *Registry) Redeem(token string, binding Binding, required Op) (Grant, error) {
-	if r == nil {
-		return Grant{}, ErrRegistryUnavailable
-	}
+// check applies the shape rules that do not need the lock: a binding that could
+// not have come from an authenticated session, an operation mask, and a token that
+// can be a map key at all.
+func (r *Registry) check(token string, binding Binding, required Op) error {
 	if !binding.Valid() {
-		return Grant{}, ErrBindingInvalid
+		return ErrBindingInvalid
 	}
 	if !required.valid() {
-		return Grant{}, ErrGrantOperationDenied
+		return ErrGrantOperationDenied
 	}
 	if !validTokenID(token) {
-		return Grant{}, ErrGrantUnknown
+		return ErrGrantUnknown
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	return nil
+}
+
+// admitLocked applies the admission policy to one record and answers it, or the
+// refusal that stops it. The order is the policy: expiry, then the MAC (a record
+// that cannot be proved to come from this registry is dropped, not trusted), then
+// the caller, then the epoch, then the operation, then the budget. The caller
+// comparison precedes the epoch comparison deliberately - an epoch nobody moved is
+// zero, so the other order would report a foreign token as revoked. It mutates
+// only by dropping records that have expired or can no longer be proved: the usage
+// record is left to the caller, so Peek and Spend run the same test and differ only
+// in whether a use is taken.
+func (r *Registry) admitLocked(token string, binding Binding, required Op) (record, error) {
 	item, live := r.entries[token]
 	if !live {
-		return Grant{}, ErrGrantUnknown
+		return record{}, ErrGrantUnknown
 	}
 	if r.now().UnixMilli() >= item.expires {
 		delete(r.entries, token)
-		return Grant{}, ErrGrantExpired
+		return record{}, ErrGrantExpired
 	}
 	if !hmac.Equal([]byte(r.recordDigest(token, item)), []byte(item.mac)) {
 		delete(r.entries, token)
-		return Grant{}, ErrGrantUnknown
+		return record{}, ErrGrantUnknown
 	}
 	if item.binding != binding {
-		return Grant{}, ErrCallerMismatch
+		return record{}, ErrCallerMismatch
 	}
 	if r.revisions[binding.key()].revision != item.revision {
 		delete(r.entries, token)
-		return Grant{}, ErrGrantRevoked
+		return record{}, ErrGrantRevoked
 	}
 	if item.revoked != 0 {
-		return Grant{}, ErrGrantRevoked
+		return record{}, ErrGrantRevoked
 	}
 	if !item.ops.Permits(required) {
-		return Grant{}, ErrGrantOperationDenied
+		return record{}, ErrGrantOperationDenied
 	}
 	if item.remaining <= 0 {
-		return Grant{}, ErrGrantExhausted
+		return record{}, ErrGrantExhausted
+	}
+	return item, nil
+}
+
+// grantOf is the value a caller sees: the target, the operations and the budget,
+// and never the binding or the MAC.
+func grantOf(item record) Grant {
+	return Grant{Target: item.target, Ops: item.ops, Expires: item.expires, Remaining: item.remaining}
+}
+
+// Peek validates a token exactly as Spend does and answers the target it
+// authorises, but takes no use. It exists so that "this path is refused" and "this
+// token is spent" stay different answers: a caller who mistypes a path three times
+// must not be locked out, and a token must not be spent on a request that never
+// reached a path. This is the desktop's own revalidate/resolve split
+// (electron/services/external-file-grant-service.ts:265-303): every check runs
+// first, including the path at :287-299, and the use is decremented at :300-303
+// only after them. Peek is advisory on its own - the caller must still reach Spend,
+// which re-runs all of this.
+func (r *Registry) Peek(token string, binding Binding, required Op) (Grant, error) {
+	if r == nil {
+		return Grant{}, ErrRegistryUnavailable
+	}
+	if err := r.check(token, binding, required); err != nil {
+		return Grant{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, err := r.admitLocked(token, binding, required)
+	if err != nil {
+		return Grant{}, err
+	}
+	return grantOf(item), nil
+}
+
+// Spend consumes one use of a token and returns the target it authorises. Every
+// admission check is re-run under the one lock hold that also mutates the record,
+// which is what makes the usage record single-writer safe: two concurrent callers
+// cannot both take the last use, and the one that loses performs no operation. A
+// spend after a Peek therefore either lands or answers ErrGrantExhausted - it can
+// never spend a use Peek already saw taken.
+func (r *Registry) Spend(token string, binding Binding, required Op) (Grant, error) {
+	if r == nil {
+		return Grant{}, ErrRegistryUnavailable
+	}
+	if err := r.check(token, binding, required); err != nil {
+		return Grant{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item, err := r.admitLocked(token, binding, required)
+	if err != nil {
+		return Grant{}, err
 	}
 	item.remaining--
 	item.uses++
 	item.mac = r.recordDigest(token, item)
 	r.entries[token] = item
-	return Grant{Target: item.target, Ops: item.ops, Expires: item.expires, Remaining: item.remaining}, nil
+	return grantOf(item), nil
+}
+
+// Redeem is Peek and Spend in one call, for a caller that has nothing to validate
+// between them. It is exactly Spend: the same checks, the same single lock hold,
+// the same decrement.
+func (r *Registry) Redeem(token string, binding Binding, required Op) (Grant, error) {
+	return r.Spend(token, binding, required)
 }
 
 // Revoke drops one token and leaves a tombstone until its expiry, so a page that

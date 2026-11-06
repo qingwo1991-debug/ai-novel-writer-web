@@ -311,10 +311,17 @@ func (g *productionFSGrants) roots(ctx context.Context, caller transport.Caller)
 	return roots, binding, nil
 }
 
-// resolve is the one path from a request to an operation: rebuild the allowlist,
-// spend one use of the token, extend the grant's own relative path with the
-// request's extent, and re-resolve the result through the allowlist so the
-// physical identity and every symlink on the way are proved again at use time.
+// resolve is the one path from a request to an operation, and the order of its
+// three steps is the contract: admit the caller and the token without spending
+// anything, validate the request's extent as a path inside the grant's own target,
+// and only then spend one use - which re-checks every rule atomically. A refused
+// path therefore costs the caller nothing and answers its own code instead of
+// FS_GRANT_EXHAUSTED, and a last use two requests race over is refused rather than
+// double spent. That is the desktop's order too (electron/services/
+// external-file-grant-service.ts:265-303: the path is validated at :287-299, the
+// use is decremented at :300-303 only after it, and its controller calls the same
+// resolver twice - once consuming, once not - at
+// electron/controllers/external-file-grant-controller.ts:66-82).
 func (g *productionFSGrants) resolve(ctx context.Context, caller transport.Caller, token string, required librarypath.Op, relative string) (librarypath.Grant, librarypath.Target, error) {
 	roots, binding, err := g.roots(ctx, caller)
 	if err != nil {
@@ -323,10 +330,15 @@ func (g *productionFSGrants) resolve(ctx context.Context, caller transport.Calle
 	if g.grants == nil {
 		return librarypath.Grant{}, librarypath.Target{}, productionFSGrantUnavailable
 	}
-	grant, err := g.grants.Redeem(token, binding, required)
+	// 1. Who is calling, what the token may do, and whether it has budget left -
+	//    asked, not spent. No filesystem call has happened yet.
+	grant, err := g.grants.Peek(token, binding, required)
 	if err != nil {
 		return librarypath.Grant{}, librarypath.Target{}, err
 	}
+	// 2. The request's extent, validated as a path inside the grant's own target
+	//    and re-resolved through this request's allowlist, so a traversal, an
+	//    absolute path and a symlink are all refused before the budget is touched.
 	combined, err := librarypath.JoinRelative(grant.Target.Relative, relative)
 	if err != nil {
 		return librarypath.Grant{}, librarypath.Target{}, err
@@ -335,12 +347,30 @@ func (g *productionFSGrants) resolve(ctx context.Context, caller transport.Calle
 	if err != nil {
 		return librarypath.Grant{}, librarypath.Target{}, err
 	}
+	// 3. Now, and only now, one use. Spend re-runs every admission check under the
+	//    lock that mutates the record, so the peek above cannot have handed out a
+	//    use that is already gone.
+	if _, err := g.grants.Spend(token, binding, required); err != nil {
+		return librarypath.Grant{}, librarypath.Target{}, err
+	}
 	return grant, target, nil
 }
 
 // readFile serves fs:grant-read-file. The bytes come from the grant's resolved
 // target, read through a pinned parent directory, bounded by the same 64 MiB
 // budget as fs:read-file, and refused unless they are text.
+//
+// A refusal here is a refusal of the OPERATION, so it comes after the use was
+// spent: the path was real, the caller asked for something the file cannot do
+// (too large, not text), and the desktop answers the same way - its resolve
+// consumes the use before the fs call that can still fail
+// (electron/controllers/external-file-grant-controller.ts:115-124).
+//
+// A request that creates AND writes spends one use, not two: the wire here is one
+// call, where the desktop's controller resolves "write" and then "create"
+// separately and so decrements twice
+// (electron/controllers/external-file-grant-controller.ts:127-152). The budget
+// counts browser requests, not the internal checks one request happens to need.
 func (g *productionFSGrants) readFile(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 	token, relative, ok := productionFSGrantRequest(args, productionFSGrantReadArity)
 	if !ok {
@@ -402,6 +432,13 @@ func (g *productionFSGrants) writeFile(ctx context.Context, caller transport.Cal
 // mkdir serves fs:grant-mkdir. The ancestors of the relative path are created one
 // component at a time through a pinned parent, and a target that is author data is
 // refused before the first mkdir.
+//
+// A request with missing ancestors therefore makes several mkdir calls, and it is
+// still ONE redemption: the grant's use counts requests, not path components - the
+// desktop's mkdir spends one use for one resolveGrantPath call regardless of how
+// deep the target is (electron/controllers/external-file-grant-controller.ts:
+// 163-170). The refusal to create more than the path names is the entry cap and the
+// component grammar, not the budget.
 func (g *productionFSGrants) mkdir(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 	token, relative, ok := productionFSGrantRequest(args, productionFSGrantMkdirArity)
 	if !ok {

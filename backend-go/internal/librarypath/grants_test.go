@@ -224,6 +224,58 @@ func TestRegistryRefusesEveryWrongUse(t *testing.T) {
 	}
 }
 
+// TestRegistryPeekCostsNothingAndSpendCostsOne is the two-phase rule a refused path
+// depends on: Peek answers the target over and over without touching the budget, so
+// a caller who mistypes a path is not locked out, and Spend is what takes the use -
+// with the budget re-read under the same lock, so a spend that arrives after the
+// last use was taken is refused rather than double counted.
+func TestRegistryPeekCostsNothingAndSpendCostsOne(t *testing.T) {
+	fixture := newGrantsFixture(t)
+	token, err := fixture.registry.Mint(fixture.binding, fixture.target, OpRead, MintOptions{})
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		grant, err := fixture.registry.Peek(token, fixture.binding, OpRead)
+		if err != nil {
+			t.Fatalf("Peek %d: %v", attempt, err)
+		}
+		if grant.Target != fixture.target || grant.Remaining != 1 {
+			t.Fatalf("Peek %d answered %v remaining=%d; want the minted target and 1",
+				attempt, grant.Target.Relative, grant.Remaining)
+		}
+	}
+	// Three peeks and the single use is still there.
+	spent, err := fixture.registry.Spend(token, fixture.binding, OpRead)
+	if err != nil {
+		t.Fatalf("Spend after three peeks: %v", err)
+	}
+	if spent.Remaining != 0 {
+		t.Fatalf("Spend left %d uses; want 0", spent.Remaining)
+	}
+	if _, err := fixture.registry.Peek(token, fixture.binding, OpRead); !errors.Is(err, ErrGrantExhausted) {
+		t.Fatalf("Peek after the last use = %v; want %v", err, ErrGrantExhausted)
+	}
+	if _, err := fixture.registry.Spend(token, fixture.binding, OpRead); !errors.Is(err, ErrGrantExhausted) {
+		t.Fatalf("Spend after the last use = %v; want %v", err, ErrGrantExhausted)
+	}
+	// Peek is not a way around the caller, the operation or the expiry checks
+	// either: it runs exactly the same admission policy.
+	if _, err := fixture.registry.Peek(token, Binding{SessionID: "session-2", ClientID: "tab-1"}, OpRead); !errors.Is(err, ErrCallerMismatch) {
+		t.Fatalf("Peek from another caller = %v; want %v", err, ErrCallerMismatch)
+	}
+	if _, err := fixture.registry.Peek("not-a-minted-token", fixture.binding, OpRead); !errors.Is(err, ErrGrantUnknown) {
+		t.Fatalf("Peek of an unknown token = %v; want %v", err, ErrGrantUnknown)
+	}
+	if _, err := fixture.registry.Peek(token, fixture.binding, OpWrite); !errors.Is(err, ErrGrantOperationDenied) {
+		t.Fatalf("Peek of an operation the grant lacks = %v; want %v", err, ErrGrantOperationDenied)
+	}
+	*fixture.now = fixture.now.Add(defaultGrantTTL + time.Second)
+	if _, err := fixture.registry.Peek(token, fixture.binding, OpRead); !errors.Is(err, ErrGrantExpired) {
+		t.Fatalf("Peek of an expired token = %v; want %v", err, ErrGrantExpired)
+	}
+}
+
 // TestRegistryRefusesATamperedRecord is the MAC's own test. A record that was put
 // into the map by anything other than Mint no longer matches the keyed digest, so
 // the store drops it and answers "unknown" rather than honouring a budget the

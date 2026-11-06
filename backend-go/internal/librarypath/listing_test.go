@@ -60,7 +60,10 @@ func TestListDirectoryRespectsItsCap(t *testing.T) {
 		t.Fatalf("resolve the listing root: %v", err)
 	}
 	// Eight visible entries, so a cap of three must answer three and say more
-	// exist, in name order.
+	// exist, in the order the shipped listing draws them: the comparator is copied
+	// from internal/projectfs/read_tree.go:169-177, so directories come first and
+	// only then the names. With four directories the first three are all
+	// directories - a name-first order would have put draft.md second.
 	capped, err := ListDirectory(target, 3)
 	if err != nil {
 		t.Fatalf("ListDirectory(cap 3): %v", err)
@@ -74,17 +77,34 @@ func TestListDirectoryRespectsItsCap(t *testing.T) {
 	if capped.Relative != "" {
 		t.Fatalf("ListDirectory(cap 3) relative = %v; want the root itself", capped.Relative)
 	}
-	want := []string{"chapters", "draft.md", "exports"}
+	want := []string{"chapters", "exports", "notes"}
 	for index, name := range want {
 		if capped.Entries[index].Name != name {
-			t.Fatalf("entry %d = %v; want %v", index, capped.Entries[index].Name, name)
+			t.Fatalf("entry %d = %v; want %v (read_tree.go:169-177 order)", index, capped.Entries[index].Name, name)
+		}
+		if !capped.Entries[index].Dir {
+			t.Fatalf("entry %d = %v; want a directory", index, capped.Entries[index].Name)
 		}
 	}
-	if !capped.Entries[0].Dir {
-		t.Fatal("a directory entry was reported as a file")
+
+	// A cap of five reaches into the files: the four directories still come first,
+	// then the first file by name, and the file carries its size.
+	five, err := ListDirectory(target, 5)
+	if err != nil {
+		t.Fatalf("ListDirectory(cap 5): %v", err)
 	}
-	if capped.Entries[1].Dir || capped.Entries[1].Size != 4 {
-		t.Fatalf("file entry = %+v; want a 4-byte regular file", capped.Entries[1])
+	wantFive := []string{"chapters", "exports", "notes", "outline", "draft.md"}
+	if len(five.Entries) != len(wantFive) || !five.Truncated {
+		t.Fatalf("ListDirectory(cap 5) answered %d entries truncated=%v; want 5 and true",
+			len(five.Entries), five.Truncated)
+	}
+	for index, name := range wantFive {
+		if five.Entries[index].Name != name {
+			t.Fatalf("entry %d = %v; want %v (read_tree.go:169-177 order)", index, five.Entries[index].Name, name)
+		}
+	}
+	if !five.Entries[3].Dir || five.Entries[4].Dir || five.Entries[4].Size != 4 {
+		t.Fatalf("cap 5 boundary = %+v; want the last directory then a 4-byte file", five.Entries[4])
 	}
 
 	// The whole directory fits in eight, so a cap of exactly eight is complete.
@@ -97,6 +117,13 @@ func TestListDirectoryRespectsItsCap(t *testing.T) {
 	}
 	if whole.Truncated {
 		t.Fatal("ListDirectory(cap 8) truncated a directory that fits")
+	}
+	wantWhole := []string{"chapters", "exports", "notes", "outline",
+		"draft.md", "notes.md", "readme.md", "todo.md"}
+	for index, name := range wantWhole {
+		if whole.Entries[index].Name != name {
+			t.Fatalf("entry %d = %v; want %v (read_tree.go:169-177 order)", index, whole.Entries[index].Name, name)
+		}
 	}
 	for _, entry := range whole.Entries {
 		if entry.Name == "escape.md" || entry.Name == ".hidden.md" || entry.Name == ".storage" {

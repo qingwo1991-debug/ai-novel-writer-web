@@ -543,9 +543,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			return nil, nil, bindErr
 		}
 		// review-revision:prepare mints the frozen review-revision context a
-		// review/revise begin resolves by id (production_review_revision_linux.go).
-		// It is bound only beside generation:begin, because a handle is only useful
-		// to a begin that can resolve it; the family's other three names stay 501.
+		// review/revise begin resolves by id, and review-revision:commit-review
+		// spends that run's artifact into one review cycle
+		// (production_review_revision_linux.go). Both are bound only beside
+		// generation:begin, because a handle is only useful to a begin that can
+		// resolve it. commit-revision and read-recovery stay 501 until the
+		// revision gates and the binding rebuild exist; the header there names the
+		// exact missing port for each.
 		if bindErr := newProductionReviewRevisions(open.durable).Bind(server); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
@@ -702,10 +706,18 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// The chapter family's four deletion names. The state machine lives in the
 		// store (internal/store/finalized_chapter_deletion.go); this binder owns the
 		// two halves the store deliberately left to the adapter: the manuscript
-		// verdict, and the portable-runtime freeze. A knowledge-base writer does not
-		// exist in this lane, so a deletion reports its knowledge projection as
-		// still pending rather than claiming a cleanup it never performed.
+		// verdict, and the portable-runtime freeze. A knowledge-base document can be
+		// written in this lane (production_knowledge_import_linux.go), but removing
+		// one is kb:remove-document, which is still unserved, so a deletion reports
+		// its knowledge projection as still pending rather than claiming a cleanup
+		// it never performed.
 		func() error { return newProductionChapterDeletions(open.durable).Bind(server) },
+		// kb:import-text and kb:import-finalized-text are the two names 终稿 calls
+		// before it can succeed (finalize-chapter.command.ts:130-135). They commit a
+		// canonical FTS-only document into the knowledge copy the served readers
+		// already decode, and link the finalization, without ever claiming a vector
+		// index this lane cannot write (production_knowledge_import_linux.go).
+		func() error { return newProductionKnowledgeImports(open.durable).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()

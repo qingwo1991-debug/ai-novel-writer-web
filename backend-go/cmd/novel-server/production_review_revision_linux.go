@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
@@ -20,12 +21,13 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file serves `review-revision:prepare` and supplies the begin-time freeze
-// that makes `generation:begin` open a review/revise run over a prepared context.
-// The family is four names (web/operations.json:312-315):
+// This file serves `review-revision:prepare` and `review-revision:commit-review`,
+// and supplies the begin-time freeze that makes `generation:begin` open a
+// review/revise run over a prepared context. The family is four names
+// (web/operations.json:312-315):
 //
 //	review-revision:prepare          BOUND here (arity 1)
-//	review-revision:commit-review    NOT bound (see below)
+//	review-revision:commit-review    BOUND here (arity 1)
 //	review-revision:commit-revision  NOT bound (see below)
 //	review-revision:read-recovery    NOT bound (see below)
 //
@@ -69,30 +71,39 @@ import (
 // admission call the same accessor, because a second construction would mint
 // handles the admission cannot resolve.
 //
-// # Why three names stay unbound
+// # Why two names stay unbound
 //
-// A name that can only refuse stays unbound, and each of the three has a concrete
+// A name that can only refuse stays unbound, and each of the two has a concrete
 // missing port rather than an unfinished adapter:
 //
-//	commit-review    needs ReviewCycleRepository.create (electron/repositories/
-//	                 review-cycle-repository.ts, 826 lines; no review_cycles writer
-//	                 exists in internal/store), and the cycle row is the whole point
-//	                 of the name: a later recheck departs from it. The ledger now
-//	                 admits reviewRevisionEffect (internal/store/generation_ledger.go
-//	                 :478, :562, :589) but nothing in this lane stamps one, so the
-//	                 receipt half of the same commit has no writer either.
 //	commit-revision  needs assertMateriallyCompleteRevision (src/services/workflows/
-//	                 commands/refinement-completeness.ts:1-52) and isNoopRevision
-//	                 (src/shared/review-cycle.ts). Neither is ported, so a commit
-//	                 here would persist a revision the reference refuses - an empty
-//	                 or a no-op replacement of the author's own chapter - which is
-//	                 worse than a 501.
-//	read-recovery    needs `saved`, whose proof recomputes the saved review body
-//	                 through reviewBody() (review-revision-generation.ts:78-91) and
-//	                 re-proves the persisted review row. Since nothing in this lane
-//	                 can stamp an effect, `saved` is always undefined here, so the
-//	                 name would answer a recovery object that can never report the
-//	                 one fact the workflow looks for; it stays a 501.
+//	                 commands/refinement-completeness.ts:1-52), whose first gate is
+//	                 assertMechanicallyCompleteVisibleText
+//	                 (src/shared/visible-text-integrity.ts): a set of JavaScript \s
+//	                 and \p{...} expressions over visible text with no port anywhere
+//	                 in this module. Without it a truncated or a fenced-off revision
+//	                 would be persisted as the author's own chapter. isNoopRevision
+//	                 (src/shared/review-cycle.ts:95-98) is missing for the same
+//	                 reason, so a no-op replacement would be accepted instead of
+//	                 refused. The write itself needs RevisionRepository
+//	                 .replacePending (electron/repositories/revision-repository.ts)
+//	                 inside the same transaction, and that is unported too. The
+//	                 difference from commit-review is not adapter shape - the handle,
+//	                 artifact and receipt types are already here - it is that this
+//	                 name writes the author's chapter.
+//	read-recovery    needs `sourceStatus` and `latestArtifact`. The reference takes
+//	                 both as callbacks (review-revision-generation.ts:272-273):
+//	                 sourcesMatch -> compareGenerationSourceBindings, and snapshot ->
+//	                 MainGenerationSnapshot. The first rebuilds a run's binding and
+//	                 deep-compares it to the frozen one, and its rebuildBinding half
+//	                 has no port in this module either (internal/store/
+//	                 draft_commit_tx.go:54-57 records the same gap for the draft
+//	                 commit); the second has no port at all outside the synthetic
+//	                 lane's own receipt reader. `saved` - the one piece this family
+//	                 was missing - is now proved by internal/store/review_cycles.go,
+//	                 but a recovery object that cannot answer sourceStatus or
+//	                 latestArtifact would still be worse than this 501: the workflow
+//	                 reads `canResume` to decide whether to spend another model call.
 //
 // # The admission
 //
@@ -104,14 +115,19 @@ import (
 // pair. Capture itself writes nothing - it opens a deferred read transaction on one
 // reserved connection - so a prepare that is refused, and one that succeeds, both
 // leave the author's database byte for byte as they found it: the handle lives in
-// this process only.
+// this process only. commit-review borrows through the same call, and every row it
+// writes - the review, its cycle and its findings, plus the effect stamped on the
+// attempt - is written inside the store's one BEGIN IMMEDIATE transaction
+// (internal/store/review_cycles.go), so a refused commit leaves the file byte for
+// byte as it found it.
 type productionReviewRevisions struct {
 	durable *productionDurableOpen
 }
 
-// The one name this file binds, spelled once so a test and the binder cannot drift
-// apart.
+// The two names this file binds, spelled once so a test and the binder cannot
+// drift apart.
 const productionReviewRevisionPrepare = "review-revision:prepare"
+const productionReviewRevisionCommitReview = "review-revision:commit-review"
 
 // productionReviewRevisionAuthorInputID is the sourceManifest.authorInputs id the
 // frozen context itself is carried under: the producer's own literal
@@ -127,9 +143,10 @@ const productionReviewRevisionServerKeyBytes = 32
 // The family's own symbolic refusals. The first three are the reference's own
 // strings (review-revision-generation.ts:118-124); the last is the lane's
 // fail-closed answer for a registry this process could not construct. The fourth
-// reference code, GENERATION_REVIEW_CONTEXT_REQUIRED, is published by the table
-// below for the three "prepare again" refusals instead of being a sentinel here,
-// because no code path in this lane raises it by identity.
+// reference code, GENERATION_REVIEW_CONTEXT_REQUIRED, has no sentinel of this
+// file's own: the three "prepare again" registry refusals are published under it,
+// and commit-review raises the store's sentinel of that name when the handle it
+// was handed no longer resolves for this run.
 var (
 	errProductionReviewRevisionInvalid  = errors.New("GENERATION_REVIEW_CONTEXT_INVALID")
 	errProductionReviewRevisionMismatch = errors.New("GENERATION_REVIEW_CONTEXT_MISMATCH")
@@ -215,6 +232,42 @@ var productionReviewRevisionRefusals = [...]struct {
 	// (review-revision-generation.ts:122-143).
 	{errProductionReviewRevisionMismatch, "GENERATION_REVIEW_CONTEXT_MISMATCH"},
 	{errProductionReviewRevisionChanged, "GENERATION_REVIEW_CONTEXT_CHANGED"},
+	// The commit half (electron/services/review-revision-generation.ts:198-231 and
+	// electron/repositories/review-cycle-repository.ts:577-629). Every code is the
+	// reference's own string, and each is a state the reference also refuses.
+	//
+	// A request this lane cannot read: the three-key guard, an operation that is not
+	// review-chapter, a handle whose project/epoch/root/run is not the run's own.
+	{store.ErrReviewCommitInvalid, "GENERATION_REVIEW_COMMIT_INVALID"},
+	// A review this run already saved, presented for a different artifact.
+	{store.ErrReviewCommitConflict, "GENERATION_REVIEW_COMMIT_CONFLICT"},
+	// :210 the artifact is not the settled receipt the run's own usage proves.
+	{store.ErrReviewCommitArtifact, "GENERATION_REVIEW_ARTIFACT_INVALID"},
+	// :218-223 the run identity, then the operation, is not the one the handle names.
+	{store.ErrReviewCommitIdentity, "GENERATION_RUN_IDENTITY_MISMATCH"},
+	// A cancelled root action (:225-227).
+	{store.ErrReviewCommitCancelled, "GENERATION_ACTION_CANCELLED"},
+	// :229 the row this lane would write and the row it reads back disagree.
+	{store.ErrReviewCommitReceipt, "GENERATION_REVIEW_RECEIPT_INVALID"},
+	// The prepared handle no longer resolves for this run: the same "prepare again"
+	// code prepare publishes for an unknown, expired or foreign handle.
+	{store.ErrReviewCommitContextRequired, "GENERATION_REVIEW_CONTEXT_REQUIRED"},
+	// The run's own manifest cannot prove the context this handle froze: no frozen
+	// field, a version this lane does not read, or author inputs rewritten after the
+	// freeze. The caller holds a handle, so this is misuse rather than absence, and
+	// it publishes the same code as a handle minted for another binding.
+	{store.ErrReviewCommitContextUnproven, "GENERATION_REVIEW_CONTEXT_INVALID"},
+	// The frozen context the run carries is not what this database reproduces now.
+	// This is the reference's assertSourcesCurrent GENERATION_SOURCE_CHANGED seen
+	// from the context side: the same state, the registered code the workflow already
+	// renders (src/i18n/app-errors.ts:77 -> error.generationSourceChanged).
+	{store.ErrReviewCommitContextChanged, "GENERATION_REVIEW_CONTEXT_CHANGED"},
+	// The source row moved between the reproof and the insert. assertSources passes
+	// on the same five columns rrctxCapture re-proves, so the context arm above
+	// normally answers first; this is the fence, not a second path.
+	{store.ErrSourceDraftChanged, "GENERATION_SOURCE_CHANGED"},
+	// The cycle this review belongs to already exists under a different review.
+	{store.ErrReviewCycleConflict, "REVIEW_CYCLE_CONFLICT"},
 }
 
 // productionReviewRevisionCode is the reference's symbolic code for a refusal, or
@@ -299,11 +352,12 @@ func newProductionReviewRevisions(durable *productionDurableOpen) *productionRev
 	return &productionReviewRevisions{durable: durable}
 }
 
-// Bind installs `review-revision:prepare` and nothing else. A nil or closed bridge
-// installs nothing, so the name keeps failing closed at GO_OPERATION_NOT_MIGRATED
-// instead of being published as a handler that can only refuse. Bind is called
-// beside BindGenerationBegin on purpose: a handle is only useful to a begin that
-// can resolve it.
+// Bind installs `review-revision:prepare` and `review-revision:commit-review`. A
+// nil or closed bridge installs nothing, so both names keep failing closed at
+// GO_OPERATION_NOT_MIGRATED instead of being published as handlers that can only
+// refuse. Bind is called beside BindGenerationBegin on purpose: a handle is only
+// useful to a begin that can resolve it, and the commit that reads the run back
+// only ever sees a run a begin opened.
 func (r *productionReviewRevisions) Bind(server *transport.Server) error {
 	if r == nil || r.durable == nil {
 		return nil
@@ -311,9 +365,12 @@ func (r *productionReviewRevisions) Bind(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
-	// The reference's register call takes 1 argument; the frozen context follows it,
-	// exactly as every other binder in this lane spells the fence.
-	return server.Bind(productionReviewRevisionPrepare, r.operation(1, r.prepare))
+	// The reference's register calls take 1 argument each; the frozen context follows
+	// it, exactly as every other binder in this lane spells the fence.
+	if err := server.Bind(productionReviewRevisionPrepare, r.operation(1, r.prepare)); err != nil {
+		return err
+	}
+	return server.Bind(productionReviewRevisionCommitReview, r.operation(1, r.commitReview))
 }
 
 // operation is the adapter all four names would share: the arity check, the frozen
@@ -399,6 +456,169 @@ func productionReviewRevisionPrepareContext(ctx context.Context, caller transpor
 		"contextId": id,
 		"context":   json.RawMessage(frozen.Text),
 	}, nil
+}
+
+// commitReview serves `review-revision:commit-review`: the author-visible review
+// row, its cycle row and every finding, written in one transaction or not at all.
+//
+// The request is ReviewGenerationCommitRequest (src/shared/review-revision-
+// generation.ts:174): exactly `{contextId, handle, artifact}`. Nothing in it names
+// a project or an epoch, because the run's own identity is what the write is
+// fenced on, so the lease's project id is used and a body that tries to name
+// another one is not even read.
+func (r *productionReviewRevisions) commitReview(ctx context.Context, caller transport.Caller, db *sql.DB,
+	contextValue projectsession.Context, args []any) (any, error) {
+	request, ok := args[0].(map[string]any)
+	if !ok || request == nil {
+		return nil, errProductionReviewRevisionInvalid
+	}
+	parsed, err := productionReviewRevisionCommitRequest(request, contextValue)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := productionReviewRevisionRegistry()
+	if err != nil {
+		return nil, err
+	}
+	// assertPrepared (:136-138 `this.assertPrepared(request.contextId, run)`): the
+	// handle must be the one this caller minted for this run, and it must still
+	// carry the bytes the run froze. The purpose is the run's operation, read by the
+	// store from the run itself, so a handle prepared for a refine cannot be spent
+	// on a review even though both are arity 1 in the same family.
+	parsed.Request.AssertPrepared = productionReviewRevisionCommitPrepared(registry, caller,
+		contextValue.LeaseID, contextValue.ProjectID, parsed.ContextID)
+	return store.NewReviewRevisions(db).CommitReview(ctx, parsed.Request)
+}
+
+// productionReviewRevisionCommitPrepared is the handle proof commit-review hands
+// the write. The purpose is bound per call from the run's own operation, so this
+// closure resolves exactly the handle a begin for that operation would have
+// resolved, and never a handle minted for the other one.
+func productionReviewRevisionCommitPrepared(registry *reviewrevprep.Store, caller transport.Caller,
+	epoch, projectID, contextID string) func(operation, frozenText string) error {
+	return func(operation, frozenText string) error {
+		prepared, err := registry.Peek(contextID, productionReviewRevisionBinding(caller, epoch, operation))
+		if err != nil {
+			return err
+		}
+		// The registry proves who minted the handle; the project and the bytes are
+		// proved here, because a handle can only be spent on the context it froze.
+		if prepared.ProjectID != projectID || prepared.Operation != operation || prepared.Text != frozenText {
+			return store.ErrReviewCommitContextRequired
+		}
+		return nil
+	}
+}
+
+// productionReviewRevisionCommit is the parsed commit-review request: the handle
+// the assertion closure resolves, and the store request the write runs on.
+type productionReviewRevisionCommit struct {
+	ContextID string
+	Request   store.ReviewCommitRequest
+}
+
+// productionReviewRevisionCommitRequest reads ReviewGenerationCommitRequest
+// (src/shared/review-revision-generation.ts:174-177). Every field is checked by
+// type and by shape before anything touches the database, because the store's own
+// guards would otherwise have to parse a request it never sees in the reference.
+func productionReviewRevisionCommitRequest(request map[string]any,
+	contextValue projectsession.Context) (productionReviewRevisionCommit, error) {
+	var parsed productionReviewRevisionCommit
+	if !productionReviewRevisionExactKeys(request, "contextId", "handle", "artifact") {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	contextID, ok := productionReviewRevisionText(request["contextId"])
+	if !ok {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	handle, ok := request["handle"].(map[string]any)
+	if !ok || !productionReviewRevisionExactKeys(handle, "projectId", "epoch", "rootActionId", "runId") {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	artifact, ok := request["artifact"].(map[string]any)
+	if !ok || !productionReviewRevisionExactKeys(artifact, "artifactId", "revision", "textHash") {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	projectID, projectOK := productionReviewRevisionText(handle["projectId"])
+	epoch, epochOK := productionReviewRevisionText(handle["epoch"])
+	rootActionID, rootOK := productionReviewRevisionText(handle["rootActionId"])
+	runID, runOK := productionReviewRevisionText(handle["runId"])
+	artifactID, artifactOK := productionReviewRevisionText(artifact["artifactId"])
+	textHash, hashOK := productionReviewRevisionText(artifact["textHash"])
+	// An artifact revision is a whole JS-safe number (generation-run-repository.ts:
+	// `artifact.revision + 1`), so a fractional or unbounded value is not a handle
+	// this lane can prove and is refused instead of truncated.
+	revision, revisionOK := productionBatchInteger(artifact["revision"])
+	if !projectOK || !epochOK || !rootOK || !runOK || !artifactOK || !hashOK || !revisionOK ||
+		revision < 0 || !productionReviewRevisionDigest(textHash) {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	// The handle's project is the lease's own. The reference reads it from the run it
+	// is about to write (`requireRun` then `binding.projectId`), and the borrowed
+	// database is that project's, so a body naming another project is a request
+	// about a database this handler never opened.
+	if projectID != contextValue.ProjectID {
+		return parsed, errProductionReviewRevisionInvalid
+	}
+	parsed.ContextID = contextID
+	handleValue := store.ReviewCommitHandle{
+		ProjectID:    projectID,
+		Epoch:        epoch,
+		RootActionID: rootActionID,
+		RunID:        runID,
+	}
+	artifactValue := store.ReviewCommitArtifact{ArtifactID: artifactID, Revision: revision, TextHash: textHash}
+	// The live lease epoch, never the body's: a commit is fenced on the epoch the
+	// author's session holds right now (review-revision-generation.ts:206
+	// `binding.epoch !== this.scope.epoch`).
+	parsed.Request = store.ReviewCommitRequest{
+		ProjectID: contextValue.ProjectID,
+		LiveEpoch: contextValue.LeaseID,
+		Handle:    handleValue,
+		Artifact:  artifactValue,
+	}
+	return parsed, nil
+}
+
+// productionReviewRevisionExactKeys reports whether a JSON object carries exactly
+// these keys. The reference spells the same test as
+// `Object.keys(request).some(key => !allowed.includes(key))`, but a missing key is
+// refused there by the next line, so this reads both directions at once: a request
+// with an extra key and a request with a missing one are both shapes this lane
+// never agreed to serve.
+func productionReviewRevisionExactKeys(value map[string]any, keys ...string) bool {
+	if len(value) != len(keys) {
+		return false
+	}
+	for _, key := range keys {
+		if _, present := value[key]; !present {
+			return false
+		}
+	}
+	return true
+}
+
+// productionReviewRevisionText is a non-empty JSON string. A blank id names
+// nothing, and the reference's requireRun would report it as a run identity
+// mismatch, which is the wrong story for an empty body field.
+func productionReviewRevisionText(value any) (string, bool) {
+	text, ok := value.(string)
+	return text, ok && strings.TrimSpace(text) != ""
+}
+
+// productionReviewRevisionDigest is a lowercase sha256 hex digest, the only form
+// textHash ever takes (generation-run-repository.ts:92).
+func productionReviewRevisionDigest(text string) bool {
+	if len(text) != 64 {
+		return false
+	}
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // productionReviewRevisionFreeze is the begin-time half. A begin that carries a

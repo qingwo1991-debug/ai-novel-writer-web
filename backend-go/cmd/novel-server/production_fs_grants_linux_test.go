@@ -288,8 +288,10 @@ func TestProductionFSGrantsServeAllowlistedPaths(t *testing.T) {
 		// A grant that carries every operation still may not write author data: the
 		// operation that owns the project tree, under the author database's
 		// single-writer lease, is the only writer there.
+		// Two refusals below, and each of them is a refusal of the OPERATION, so each
+		// legitimately spends a use: the budget is not what this subtest measures.
 		token := fixture.mint(t, fixture.author, librarypath.ProjectRootID, "",
-			librarypath.OpRead|librarypath.OpWrite|librarypath.OpMkdir, librarypath.MintOptions{})
+			librarypath.OpRead|librarypath.OpWrite|librarypath.OpMkdir, librarypath.MintOptions{MaxUses: 4})
 		productionFSGrantRefused(t, fixture.author, productionFSGrantWriteName, "write into the project",
 			[]any{token, "manuscript/grant.md", "body"}, "FS_GRANT_AUTHOR_DATA")
 		productionFSGrantRefused(t, fixture.author, productionFSGrantMkdirName, "mkdir in the project",
@@ -377,6 +379,75 @@ func TestProductionFSGrantsServeAllowlistedPaths(t *testing.T) {
 			t.Fatal("the export lane changed the admitted project tree")
 		}
 	})
+}
+
+// TestProductionFSGrantRefusalCostsNoUse is the budget-order guard, and the reason
+// the adapter resolves in three steps instead of one. A request whose path is
+// refused must answer its own refusal and leave the token's uses alone - a caller
+// who mistypes a path three times is not locked out - and a use is taken only once a
+// path inside the grant's own target has been proved to exist. The order is the
+// desktop's: electron/services/external-file-grant-service.ts:265-303 runs every
+// check, including the path at :287-299, and decrements usesRemaining at :300-303
+// only after them.
+func TestProductionFSGrantRefusalCostsNoUse(t *testing.T) {
+	fixture := newProductionFSGrantFixture(t)
+	outputDir := filepath.Join(fixture.library, productionFSGrantOutputName)
+	// One use, and nothing below spends it until a real path is named.
+	token := fixture.mint(t, fixture.author, librarypath.LibraryRootID, productionFSGrantOutputName,
+		librarypath.OpWrite|librarypath.OpMkdir, librarypath.MintOptions{})
+	for _, refused := range []struct {
+		operation string
+		label     string
+		args      []any
+		want      string
+	}{
+		{productionFSGrantWriteName, "a traversal", []any{token, "../escaped.md", "body"}, "FS_GRANT_PATH_REFUSED"},
+		{productionFSGrantWriteName, "an absolute path", []any{token, "/etc/passwd", "body"}, "FS_GRANT_PATH_REFUSED"},
+		{productionFSGrantWriteName, "a hidden component", []any{token, ".storage/x.md", "body"}, "FS_GRANT_PATH_REFUSED"},
+		{productionFSGrantMkdirName, "a link out of the root", []any{token, "escape/nested"}, "FS_GRANT_PATH_ESCAPE"},
+	} {
+		wire := productionFSGrantInvoke(t, fixture.author, refused.operation, refused.args)
+		if wire.Success || wire.Error != refused.want {
+			t.Fatalf("%v of %v answered %+v; want %v", refused.operation, refused.label, wire, refused.want)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.library, "escaped.md")); !os.IsNotExist(err) {
+		t.Fatal("a refused traversal wrote beside the grant")
+	}
+	if _, err := os.Lstat(filepath.Join(fixture.outside, "nested")); !os.IsNotExist(err) {
+		t.Fatal("a refused link created a directory outside the root")
+	}
+
+	// The use is still there, so the one path the grant does name succeeds.
+	wire := productionFSGrantInvoke(t, fixture.author, productionFSGrantWriteName,
+		[]any{token, "spent-once.md", "第一行"})
+	if !wire.Success || wire.Error != "" || wire.CommitState != "" {
+		t.Fatalf("the use survived four refusals but the write failed: %+v", wire)
+	}
+	survivor := filepath.Join(outputDir, "spent-once.md")
+	if body, err := os.ReadFile(survivor); err != nil || string(body) != "第一行" {
+		t.Fatalf("the surviving use published nothing: %v", err)
+	}
+
+	// Now it is gone, and the answer is the budget - a token the caller holds is not
+	// an oracle about anything but its own remaining uses.
+	wire = productionFSGrantInvoke(t, fixture.author, productionFSGrantWriteName,
+		[]any{token, "spent-once.md", "第二行"})
+	if wire.Success || wire.Error != "FS_GRANT_EXHAUSTED" {
+		t.Fatalf("a spent token answered %+v; want FS_GRANT_EXHAUSTED", wire)
+	}
+	// The budget is tested before the path, so an exhausted token answers the same
+	// way for a bad path; that order is deliberate - it is the check every request
+	// needs, and it cannot tell a holder of the token anything they did not already
+	// know.
+	wire = productionFSGrantInvoke(t, fixture.author, productionFSGrantWriteName,
+		[]any{token, "../escaped.md", "body"})
+	if wire.Success || wire.Error != "FS_GRANT_EXHAUSTED" {
+		t.Fatalf("a spent token with a refused path answered %+v; want FS_GRANT_EXHAUSTED", wire)
+	}
+	if body, err := os.ReadFile(survivor); err != nil || string(body) != "第一行" {
+		t.Fatalf("an exhausted grant rewrote the file: %v", err)
+	}
 }
 
 // TestProductionFSGrantNamesAreBoundOnce is the wiring guard: the three names are
