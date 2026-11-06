@@ -15,8 +15,8 @@ import (
 	"path/filepath"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/archiveformat"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -187,19 +187,19 @@ var productionChapterDeletionErrFreezeInvalid = errors.New(productionChapterDele
 // (src/shared/chapter-deletion.ts:32-37). Operation is the store's own record, so
 // the wire object and the database row cannot drift apart.
 type productionChapterDeletionResult struct {
-	Success   bool                              `json:"success"`
-	Committed bool                              `json:"committed"`
-	Operation *store.ChapterDeletionOperation   `json:"operation,omitempty"`
-	Error     string                            `json:"error,omitempty"`
+	Success   bool                            `json:"success"`
+	Committed bool                            `json:"committed"`
+	Operation *store.ChapterDeletionOperation `json:"operation,omitempty"`
+	Error     string                          `json:"error,omitempty"`
 }
 
 // productionChapterDeletionListResult is the list channel's answer
 // (src/shared/ipc-channels.ts:1287-1290). Operations is never nil: the reference
 // answers an empty array, not null.
 type productionChapterDeletionListResult struct {
-	Success    bool                              `json:"success"`
-	Operations []store.ChapterDeletionOperation  `json:"operations"`
-	Error      string                            `json:"error,omitempty"`
+	Success    bool                             `json:"success"`
+	Operations []store.ChapterDeletionOperation `json:"operations"`
+	Error      string                           `json:"error,omitempty"`
 }
 
 // productionChapterDeletionRequest is DeleteFinalizedChapterRequest
@@ -228,7 +228,7 @@ func (d *productionChapterDeletions) Bind(server *transport.Server) error {
 		return nil
 	}
 	if server == nil {
-		return errors.New("PRODUCTION_CHAPTER_DELETION_BINDER_INVALID")
+		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
 	if err := server.Bind(productionChapterDeletionDeleteName, d.deleteOperation()); err != nil {
 		return err

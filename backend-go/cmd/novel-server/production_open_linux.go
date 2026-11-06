@@ -672,6 +672,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionCharacterStateCandidates(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
+		// The chapter family's four deletion names. The state machine lives in the
+		// store (internal/store/finalized_chapter_deletion.go); this binder owns the
+		// two halves the store deliberately left to the adapter: the manuscript
+		// verdict, and the portable-runtime freeze. A knowledge-base writer does not
+		// exist in this lane, so a deletion reports its knowledge projection as
+		// still pending rather than claiming a cleanup it never performed.
+		func() error { return newProductionChapterDeletions(open.durable).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()

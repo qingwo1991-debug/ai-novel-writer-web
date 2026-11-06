@@ -16,51 +16,16 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the production lane's adapter for the two smallest remaining
-// families in web/operations.json: `chapter` (4 names) and `prompt` (3 names).
-// It binds exactly one of those seven names and refuses the other six by not
-// installing a handler for them, so they keep failing closed at
-// 501 GO_OPERATION_NOT_MIGRATED instead of being published as handlers that
-// could only refuse or, worse, that could write.
+// This file is the production lane's adapter for the `prompt` family and used to
+// also carry the `chapter` refusal argument. The chapter half is now served: the
+// four deletion names live in production_chapter_deletion_linux.go, on top of
+// internal/store/finalized_chapter_deletion.go, and the pinned baseline does carry
+// chapter_deletion_operations (internal/admission/baseline_v7_ddl.go:74) - the
+// earlier claim that this lane had no such table was simply wrong, and it is the
+// reason this file bound none of the four for as long as it did.
 //
-// # chapter: nothing here is bound, and nothing here may be
-//
-// The family is the finalized-chapter deletion lane, not a read lane:
-//
-//   - `chapter:delete-finalized` deletes the finalized fact and every derived
-//     projection. Its first durable step is
-//     `INSERT INTO chapter_deletion_operations ...`
-//     (electron/repositories/chapter-deletion-repository.ts:280-301) followed by
-//     `deleteChapterFacts` (:304). A Go binding would have to create that row
-//     before it could delete anything, which is exactly the "backfill before a
-//     select" this adapter refuses.
-//   - `chapter:retry-deletion` re-runs the cleanup: it increments and re-pends
-//     the row with `UPDATE chapter_deletion_operations SET attempt_count =
-//     attempt_count + 1, status = 'pending'` (:402-406) and then deletes
-//     manuscript/knowledge projections and marks each one completed
-//     (`markProjection`, :420-424). It mutates a ledger and a filesystem.
-//   - `chapter:confirm-legacy-knowledge-absent` consumes the legacy
-//     authorization with `UPDATE chapter_deletion_operations SET
-//     legacy_knowledge_authorization = 'consumed', knowledge_status =
-//     'not_required', status = 'pending'` (:345-359) and then deletes the
-//     finalized facts on the strength of that write. Binding it would let a
-//     browser authorize an irreversible deletion this lane cannot perform.
-//   - `chapter:list-incomplete-deletions` is the family's only SELECT
-//     (`SELECT * FROM chapter_deletion_operations WHERE status != 'completed'
-//     ...`, :380-386), but it is not a read this lane can answer honestly. It is
-//     implemented only in the Electron main process
-//     (electron/services/chapter-deletion-service.ts:132-135), it projects the
-//     19-field ChapterDeletionOperation wire object
-//     (src/shared/chapter-deletion.ts:10-30), and it filters every row through
-//     the portable-runtime freeze document (`readPortableRuntimeFreeze`). The Go
-//     backend has no part of that: `grep -rn chapter_deletion backend-go` and
-//     `grep -rn '"chapter:' backend-go` both return nothing, so there is no
-//     store repository, no row type, no freeze guard and no transport binder to
-//     borrow. Answering it would mean writing raw SQL in package main over a
-//     table nothing in this lane ever populates, and returning an empty list for
-//     a project whose deletions the author's other tool already recorded -- a
-//     fabricated 200. So all four names stay unbound here, and this file adds no
-//     mutation to the lane.
+// What remains here is `prompt:load-global` and the two prompt writes that stay
+// unbound because they install files on the host.
 //
 // # prompt: one read bound, two writes refused
 //

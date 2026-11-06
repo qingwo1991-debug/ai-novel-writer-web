@@ -176,14 +176,6 @@ func TestProductionPromptAndChapterFamilies(t *testing.T) {
 		}
 		productionPromptCompare(t, promptDirectory, promptsBefore, label)
 	}
-	// The table the chapter family reads and writes does not exist in the
-	// admitted author database of this lane: chapter:list-incomplete-deletions
-	// could only answer an invented empty list, and the three deletions have no
-	// ledger to begin. If this ever becomes false, the family has a schema and
-	// the refusal below has to be re-decided instead of silently kept.
-	if bytes.Contains(seededDatabase, []byte("chapter_deletion_operations")) {
-		t.Fatal("the admitted author database carries chapter_deletion_operations; rebind or re-refuse the chapter family")
-	}
 
 	// prompt:load-global: the one bound name. It reads the two seeded prompt
 	// objects out of the pinned root and reports no diagnostics.
@@ -239,38 +231,5 @@ func TestProductionPromptAndChapterFamilies(t *testing.T) {
 			}
 		}
 		unchanged(t, "prompt:load-global")
-	})
-
-	// chapter:delete-finalized: refused. The shipped path INSERTs the deletion
-	// operation row and then deletes the finalized facts.
-	t.Run("chapter:delete-finalized", func(t *testing.T) {
-		request := map[string]any{"draftId": float64(1), "chapterNumber": float64(1)}
-		productionFamilyNotMigrated(t, author, "chapter:delete-finalized", []any{request, projectPath, frozen})
-		productionFamilyNotMigrated(t, author, "chapter:delete-finalized", []any{request, projectPath, stale})
-		unchanged(t, "chapter:delete-finalized")
-	})
-	// chapter:retry-deletion: refused. The shipped path re-pends the operation
-	// row and deletes the manuscript and knowledge projections again.
-	t.Run("chapter:retry-deletion", func(t *testing.T) {
-		productionFamilyNotMigrated(t, author, "chapter:retry-deletion", []any{"ci-operation", projectPath, frozen})
-		productionFamilyNotMigrated(t, author, "chapter:retry-deletion", []any{"ci-operation", projectPath, stale})
-		unchanged(t, "chapter:retry-deletion")
-	})
-	// chapter:confirm-legacy-knowledge-absent: refused. The shipped path consumes
-	// the legacy authorization and then deletes the finalized facts on the
-	// strength of that write.
-	t.Run("chapter:confirm-legacy-knowledge-absent", func(t *testing.T) {
-		productionFamilyNotMigrated(t, author, "chapter:confirm-legacy-knowledge-absent", []any{"ci-operation", projectPath, frozen})
-		productionFamilyNotMigrated(t, author, "chapter:confirm-legacy-knowledge-absent", []any{"ci-operation", projectPath, stale})
-		unchanged(t, "chapter:confirm-legacy-knowledge-absent")
-	})
-	// chapter:list-incomplete-deletions: refused. Its only SELECT reads a table
-	// this lane's schema does not carry and is filtered by a portable-runtime
-	// freeze this backend does not implement, so an answer could only be a
-	// fabricated empty list.
-	t.Run("chapter:list-incomplete-deletions", func(t *testing.T) {
-		productionFamilyNotMigrated(t, author, "chapter:list-incomplete-deletions", []any{projectPath, frozen})
-		productionFamilyNotMigrated(t, author, "chapter:list-incomplete-deletions", []any{projectPath, stale})
-		unchanged(t, "chapter:list-incomplete-deletions")
 	})
 }
