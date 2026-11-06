@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -12,9 +13,30 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// GraphRead is the graph generation recovery projection: it returns the run
-// view, the validated frozen context and the facts the UI needs to decide
+// GraphRead is the graph generation recovery projection for one browser handle:
+// the run view, the validated frozen context and the facts the UI needs to decide
 // whether the run can still be continued.
+func (s *syntheticGeneration) GraphRead(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	handle, err := syntheticParseHandle(arg)
+	if err != nil {
+		return nil, err
+	}
+	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	run, _, _, err := syntheticRequireRun(ctx, ledger, scope, handle)
+	if err != nil {
+		return nil, err
+	}
+	return s.graphRecovery(ctx, ledger, db, scope.Project, run)
+}
+
+// graphRecovery projects one admitted graph run into the browser's
+// GraphGenerationRecovery (src/shared/graph-generation.ts:30-39). A handle read
+// and a replayed begin answer exactly this, so it is one function rather than two
+// copies of the same five projections.
 //
 // Two pieces of the browser contract are deliberately absent, and both are
 // absent for the same reason - they can only be answered for a run that has
@@ -27,29 +49,17 @@ import (
 //     the stored result without that check would present unverified text as a
 //     result, which is exactly what the original refuses to do.
 //
-// sourceStatus currently reflects only the first half of assertFinalizationSources
-// (a cancelled root is never current). The second half - rebuilding the source
-// binding from current project state and comparing it with the frozen one - has
-// to land before any operation that confirms or writes is bound.
-func (s *syntheticGeneration) GraphRead(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
-	handle, err := syntheticParseHandle(arg)
+// sourceStatus is syntheticGraphSourceStatus, which answers "current" only for a
+// kind whose sources this lane re-reads and proves unchanged. Confirmation writes
+// finalized text over what the author already has, so a kind with no
+// re-derivation still reads "conflict".
+func (s *syntheticGeneration) graphRecovery(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, projectID string, run map[string]any) (map[string]any, error) {
+	manifest := syntheticMap(syntheticMap(run["binding"])["sourceManifest"])
+	contextValue, _, err := syntheticGraphContext(manifest, projectID)
 	if err != nil {
 		return nil, err
 	}
-	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
-	if err != nil {
-		return nil, err
-	}
-	defer done()
-	run, _, manifest, err := syntheticRequireRun(ctx, ledger, scope, handle)
-	if err != nil {
-		return nil, err
-	}
-	contextValue, _, err := syntheticGraphContext(manifest, scope.Project)
-	if err != nil {
-		return nil, err
-	}
-	attempts, err := syntheticGraphAttemptIDs(ctx, db, handle.RunID)
+	attempts, err := syntheticGraphAttemptIDs(ctx, db, syntheticString(run["runId"]))
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +77,9 @@ func (s *syntheticGeneration) GraphRead(ctx context.Context, caller transport.Ca
 	if err != nil {
 		return nil, err
 	}
+	// The frozen input is returned in the browser's own key order, after the digest
+	// checks above read it as the document it is frozen as.
+	contextValue["input"] = syntheticGraphContextInput(contextValue)
 	return map[string]any{
 		"view":         view,
 		"modelId":      syntheticString(manifest["modelId"]),
@@ -231,16 +244,18 @@ func syntheticGraphAttemptIDs(ctx context.Context, db *sql.DB, runID string) ([]
 // The default is "conflict", not "current". This value gates confirmation, and
 // confirmation writes finalized text over what the author already has, so an
 // unverifiable source state must read as changed rather than as fine. Only a kind
-// whose current state can actually be re-read gets to answer "current"; today
-// that is the event kind, whose context freezes the exact
-// draftId/finalizationId/contentHash triple the finalization outbox stores.
+// whose current state can actually be re-read gets to answer "current": the event
+// kind earns it from the draftId/finalizationId/contentHash triple its context
+// freezes and the finalization outbox stores, the plan kind from the three facts
+// re-read below.
 //
-// The plot and plan kinds still need their own re-derivation, and neither is a
-// shortcut away: the frozen plot baseline is only a CAS over the raw
-// plot_tree_snapshot column, so a run whose other plot sources moved would read
-// "current" on it. Until the binding rebuild exists, a run of either kind reports
-// "conflict" - visibly wrong rather than invisibly permissive, which is the right
-// way round for a value this one gates.
+// The plot kind still needs its own re-derivation and is not a shortcut away: the
+// frozen plot baseline is only a CAS over the raw plot_tree_snapshot column, so a
+// run whose other plot sources moved would read "current" on it. Until the binding
+// rebuild exists, a plot run reports "conflict" - visibly wrong rather than
+// invisibly permissive, which is the right way round for a value this one gates.
+// The plan kind is re-derived here from the three facts its task is built from, so
+// it answers "current" only when all three still read back unchanged.
 func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, rootActionID string, contextValue map[string]any) (string, error) {
 	budgetValue, err := syntheticCall(ctx, ledger, "budget", rootActionID)
 	if err != nil {
@@ -249,6 +264,23 @@ func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLed
 	root := syntheticMap(syntheticMap(budgetValue)["root"])
 	if strings.TrimSpace(syntheticString(root["status"])) == "cancelled" {
 		return "conflict", nil
+	}
+	if kind := syntheticString(contextValue["kind"]); kind == "plan" {
+		// The plan task is built from exactly three frozen facts - the blueprint
+		// row, the total chapter count and the writing language - so re-reading
+		// those three from the admitted database and digesting them the same way is
+		// a real re-derivation, not an assumption. A blueprint or a project core
+		// that no longer reads back leaves the current digest empty, which the
+		// equality rule reports as a changed source.
+		current, err := syntheticGraphPlanCurrentHash(ctx, db, contextValue)
+		if err != nil {
+			return "", err
+		}
+		frozen, err := syntheticGraphPlanFrozenHash(contextValue)
+		if err != nil {
+			return "", err
+		}
+		return syntheticGraphHashFreshness(current, frozen), nil
 	}
 	if syntheticString(contextValue["kind"]) != "event" {
 		return syntheticGraphFreshness("", "", ""), nil
@@ -274,14 +306,215 @@ func syntheticGraphSourceStatus(ctx context.Context, ledger *store.GenerationLed
 }
 
 // syntheticGraphFreshness is the decision rule on its own, so the fail-closed
-// direction can be pinned by a test that needs no database. `kind` is empty for
-// the kinds whose current state is not re-derived yet.
+// direction can be pinned by a test that needs no database. Only the kind whose
+// current state the caller re-reads may answer anything but "conflict"; every
+// other kind - today the plot kind, and the empty kind, which names no operation
+// at all - proves nothing and must keep reporting the safe answer.
 func syntheticGraphFreshness(kind, currentHash, frozenHash string) string {
-	if kind != "event" || currentHash == "" || frozenHash == "" {
+	if kind != "event" {
+		return "conflict"
+	}
+	return syntheticGraphHashFreshness(currentHash, frozenHash)
+}
+
+// syntheticGraphHashFreshness is the equality half of the source-status rule: only
+// two non-empty digests that match prove the sources did not move.
+func syntheticGraphHashFreshness(currentHash, frozenHash string) string {
+	if currentHash == "" || frozenHash == "" {
 		return "conflict"
 	}
 	if currentHash == frozenHash {
 		return "current"
 	}
 	return "conflict"
+}
+
+// syntheticGraphInputJSON is one graph input in the browser's own key order:
+// `kind` first and then exactly the numbers that kind carries. The zero numbers
+// are dropped, which is what the renderer's own literals omit
+// (src/shared/graph-generation.ts:9).
+type syntheticGraphInputJSON struct {
+	Kind          string `json:"kind"`
+	ChapterNumber int64  `json:"chapterNumber,omitempty"`
+	PlanID        int64  `json:"planId,omitempty"`
+	DraftID       int64  `json:"draftId,omitempty"`
+}
+
+// syntheticGraphInput is one validated GraphGenerationInput. Only the plan kind is
+// served by this lane, but every kind is recognised so an unsupported kind is
+// refused as unsupported rather than as malformed.
+type syntheticGraphInput struct {
+	Kind          string
+	ChapterNumber int64
+	PlanID        int64
+	DraftID       int64
+}
+
+// syntheticGraphInputKeys is the key set each input kind may carry
+// (electron/services/graph-generation-source.ts:18-21).
+var syntheticGraphInputKeys = map[string][]string{
+	"plot":  {"kind"},
+	"plan":  {"kind", "chapterNumber"},
+	"event": {"kind", "planId", "draftId"},
+}
+
+// syntheticGraphInputOf validates one graph input and returns it typed. The rules
+// are the desktop's: a known kind, no key outside that kind's set, and a positive
+// safe integer wherever the kind carries a number.
+func syntheticGraphInputOf(value any) (syntheticGraphInput, error) {
+	invalid := errors.New("GENERATION_GRAPH_INPUT_INVALID")
+	object := syntheticMap(value)
+	if object == nil {
+		return syntheticGraphInput{}, invalid
+	}
+	kind := syntheticString(object["kind"])
+	keys, known := syntheticGraphInputKeys[kind]
+	if !known {
+		return syntheticGraphInput{}, invalid
+	}
+	for key := range object {
+		listed := false
+		for _, allowed := range keys {
+			if key == allowed {
+				listed = true
+			}
+		}
+		if !listed {
+			return syntheticGraphInput{}, invalid
+		}
+	}
+	input := syntheticGraphInput{Kind: kind}
+	var err error
+	if kind == "plan" {
+		if input.ChapterNumber, err = syntheticGraphCount(object["chapterNumber"]); err != nil {
+			return syntheticGraphInput{}, err
+		}
+	}
+	if kind == "event" {
+		if input.PlanID, err = syntheticGraphCount(object["planId"]); err != nil {
+			return syntheticGraphInput{}, err
+		}
+		if input.DraftID, err = syntheticGraphCount(object["draftId"]); err != nil {
+			return syntheticGraphInput{}, err
+		}
+	}
+	return input, nil
+}
+
+// syntheticGraphCount is the Number.isSafeInteger-and-positive guard the original
+// applies to every graph input number
+// (electron/services/graph-generation-source.ts:20-21).
+func syntheticGraphCount(value any) (int64, error) {
+	number, ok := syntheticFloat64(value)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) ||
+		number != math.Trunc(number) || number < 1 || number > 1<<53-1 {
+		return 0, errors.New("GENERATION_GRAPH_INPUT_INVALID")
+	}
+	return int64(number), nil
+}
+
+// syntheticGraphInputData is the input as the frozen context stores it, and the
+// document a same-nonce begin compares against.
+func syntheticGraphInputData(input syntheticGraphInput) map[string]any {
+	data := map[string]any{"kind": input.Kind}
+	switch input.Kind {
+	case "plan":
+		data["chapterNumber"] = input.ChapterNumber
+	case "event":
+		data["planId"] = input.PlanID
+		data["draftId"] = input.DraftID
+	}
+	return data
+}
+
+// syntheticGraphContextInput renders the frozen input in the browser's own key
+// order. The renderer compares JSON.stringify(recovery.context.input) with the
+// request it just sent (src/services/graph-generation.ts:56), and JSON.stringify
+// is insertion-ordered: a map would sort chapterNumber ahead of kind and every
+// begin would fail GRAPH_GENERATION_CONTEXT_MISMATCH.
+func syntheticGraphContextInput(contextValue map[string]any) syntheticGraphInputJSON {
+	input := syntheticMap(contextValue["input"])
+	projected := syntheticGraphInputJSON{Kind: syntheticString(input["kind"])}
+	switch projected.Kind {
+	case "plan":
+		projected.ChapterNumber = syntheticNumber(input["chapterNumber"])
+	case "event":
+		projected.PlanID = syntheticNumber(input["planId"])
+		projected.DraftID = syntheticNumber(input["draftId"])
+	}
+	return projected
+}
+
+// syntheticGraphKey is the main-issued context/owner lookup key
+// (src/shared/graph-generation.ts:14-16). The desktop mints a random UUID and
+// never compares it with a renderer value, so this lane mints one stable value per
+// (project, nonce) instead: a duplicate begin then freezes the same context rather
+// than a second key.
+func syntheticGraphKey(projectID, nonce string) string {
+	return syntheticHash(projectID + "\x00" + nonce)
+}
+
+// syntheticGraphWritingLanguage is resolveWritingLanguage
+// (src/shared/writing-language.ts:7-11), the same coercion the source capture
+// applies to the project row.
+func syntheticGraphWritingLanguage(value any) string {
+	language := syntheticString(value)
+	if language != "zh-CN" && language != "en-US" {
+		return "zh-CN"
+	}
+	return language
+}
+
+// syntheticGraphValue is the manifest form of a value: exactly the JSON document
+// the ledger stores, so the digest frozen beside it and the copy the read path
+// re-digests are the same bytes.
+func syntheticGraphValue(value any) (any, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return nil, err
+	}
+	return generic, nil
+}
+
+// syntheticGraphPlanFrozenHash digests the three facts a plan task is built from,
+// as the run froze them.
+func syntheticGraphPlanFrozenHash(contextValue map[string]any) (string, error) {
+	return syntheticGraphDigest(map[string]any{
+		"blueprint":       contextValue["blueprint"],
+		"totalChapters":   syntheticNumber(contextValue["totalChapters"]),
+		"writingLanguage": syntheticString(contextValue["writingLanguage"]),
+	})
+}
+
+// syntheticGraphPlanCurrentHash digests the same three facts as the admitted author
+// database holds them now. An empty answer means the blueprint or the project core
+// no longer reads back, which is a changed source.
+func syntheticGraphPlanCurrentHash(ctx context.Context, db *sql.DB, contextValue map[string]any) (string, error) {
+	chapter := syntheticNumber(syntheticMap(contextValue["input"])["chapterNumber"])
+	if chapter < 1 {
+		return "", nil
+	}
+	core, err := store.NewProjectCore(db).Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	if core == nil {
+		return "", nil
+	}
+	blueprint, err := store.NewBlueprints(db).Get(ctx, chapter)
+	if err != nil {
+		return "", err
+	}
+	if blueprint == nil {
+		return "", nil
+	}
+	return syntheticGraphDigest(map[string]any{
+		"blueprint":       blueprint,
+		"totalChapters":   syntheticNumber(core["totalChapters"]),
+		"writingLanguage": syntheticGraphWritingLanguage(core["writingLanguage"]),
+	})
 }

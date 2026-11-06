@@ -70,7 +70,20 @@ var (
 	syntheticPurposePattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9:_-]{0,127}$`)
 	syntheticHashPattern      = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	syntheticPromptKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	// syntheticGraphPromptKeyPattern is the one prompt key each graph operation
+	// freezes (electron/services/generation-source-binding.ts:292). It is not part
+	// of the renderer grammar above, so it is only accepted where a frozen graph
+	// manifest is read back, never as renderer input.
+	syntheticGraphPromptKeyPattern = regexp.MustCompile(`^graph-(?:plot|plan|event)$`)
 )
+
+// syntheticPromptSourceKey reports whether a prompt source key may be resolved:
+// the ordinary renderer grammar, plus the three graph template keys the ledger
+// freezes for a graph run. Only a source read accepts them, so a begin of another
+// family gains no key it did not have.
+func syntheticPromptSourceKey(key string) bool {
+	return syntheticPromptKeyPattern.MatchString(key) || syntheticGraphPromptKeyPattern.MatchString(key)
+}
 
 // syntheticPlanning mirrors the ledger's planning gate so the reduced lane
 // refuses planning/blueprint authority exactly like the ordinary binder.
@@ -616,7 +629,7 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 	}
 	set.Sources.Prompt = func(ctx context.Context, scope generationowner.Scope, key generationowner.SourceKey) (generationowner.SourceValue, error) {
 		parts := strings.SplitN(key.ID, ":", 2)
-		if len(parts) != 2 || !syntheticPromptKeyPattern.MatchString(parts[0]) || (parts[1] != "zh-CN" && parts[1] != "en-US") {
+		if len(parts) != 2 || !syntheticPromptSourceKey(parts[0]) || (parts[1] != "zh-CN" && parts[1] != "en-US") {
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
 		}
 		text, err := syntheticCanonical(map[string]any{
@@ -703,9 +716,9 @@ func syntheticBudget(plan generationowner.Plan) (map[string]any, error) {
 // (electron/repositories/generation-run-repository.ts:944), so a run that froze
 // no author inputs answers an empty list there. Writing null here would make the
 // two builds disagree on a field a renderer may iterate.
-func syntheticAuthorInputs(inputs []map[string]any) []map[string]any {
+func syntheticAuthorInputs(inputs []any) []any {
 	if inputs == nil {
-		return []map[string]any{}
+		return []any{}
 	}
 	return inputs
 }
@@ -834,6 +847,19 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 		return nil, err
 	}
 	defer done()
+	runValue, err := s.openRun(ctx, ledger, db, scope, selection, nil)
+	if err != nil {
+		return nil, err
+	}
+	return s.viewOf(ctx, ledger, db, runValue)
+}
+
+// openRun is the lane's one run-admission path: the model lease, the frozen
+// source binding, the nine derived hashes, the canonical budget and the ledger's
+// own open. extra is merged into the frozen source manifest before the ledger
+// sees it, which is how a graph begin stamps the context it froze; an ordinary
+// begin passes nil and freezes exactly the manifest it always froze.
+func (s *syntheticGeneration) openRun(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, scope generationowner.Scope, selection syntheticSelection, extra map[string]any) (any, error) {
 	receipt, err := s.registry.Begin(ctx, scope, selection.ModelID, syntheticGenerationPurpose)
 	if err != nil {
 		return nil, err
@@ -867,12 +893,16 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 	if err != nil {
 		return nil, errors.New("GENERATION_BEGIN_INVALID")
 	}
+	manifest := syntheticManifest(selection, scope, receipt.LeaseID, binding.Fingerprint())
+	for key, value := range extra {
+		manifest[key] = value
+	}
 	request := map[string]any{
 		"projectId":        scope.Project,
 		"epoch":            scope.Epoch,
 		"fingerprint":      fingerprint,
 		"contextSnapshotId": syntheticHash(set.CoreText),
-		"sourceManifest":   syntheticManifest(selection, scope, receipt.LeaseID, binding.Fingerprint()),
+		"sourceManifest":   manifest,
 		"sourceRefs":       refs,
 		"operation":        selection.Operation,
 		"uiActionNonce":    selection.UIActionNonce,
@@ -890,7 +920,230 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 	if err != nil {
 		return nil, err
 	}
-	return s.viewOf(ctx, ledger, db, runValue)
+	return runValue, nil
+}
+
+// BeginGraph answers graph-generation:begin for one graph input, and only for the
+// plan kind: the plot kind would have to freeze the whole plot-tree source bundle
+// and the event kind a finalized chapter, and this lane captures neither. An
+// unsupported kind is refused before any row is written.
+//
+// The same-nonce look-up runs first, exactly like the desktop owner
+// (electron/services/main-generation-owner.ts:1192-1198): a nonce this project
+// already spent is a replay when it froze the same input, the original's conflict
+// when it did not, and a replay answers the stored run's recovery so a retried
+// begin never opens a second root.
+func (s *syntheticGeneration) BeginGraph(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	request, err := syntheticParseGraphRequest(arg)
+	if err != nil {
+		return nil, err
+	}
+	if request.Input.Kind != "plan" {
+		return nil, errors.New("GENERATION_OPERATION_UNSUPPORTED")
+	}
+	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	replay, err := syntheticGraphNonceRun(ctx, ledger, db, scope.Project, request.UIActionNonce, request.Input)
+	if err != nil {
+		return nil, err
+	}
+	if replay != nil {
+		return s.graphRecovery(ctx, ledger, db, scope.Project, replay)
+	}
+	// The frozen selection is the desktop's own literal
+	// (electron/services/main-generation-owner.ts:1201-1203): the graph operation,
+	// the browser nonce, the structured-data output and the family's one prompt
+	// template key. The context key is not taken from the request - main mints it -
+	// so this lane mints its own.
+	selection := syntheticSelection{
+		Operation:     syntheticGraphOperations[request.Input.Kind],
+		UIActionNonce: request.UIActionNonce,
+		ModelID:       request.ModelID,
+		PromptKeys:    []string{"graph-" + request.Input.Kind},
+		Output:        "structured-data",
+	}
+	extra, err := s.syntheticFreezeGraphContext(ctx, db, scope, selection, request.Input)
+	if err != nil {
+		return nil, err
+	}
+	runValue, err := s.openRun(ctx, ledger, db, scope, selection, extra)
+	if err != nil {
+		return nil, err
+	}
+	run := syntheticMap(runValue)
+	if run == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	return s.graphRecovery(ctx, ledger, db, scope.Project, run)
+}
+
+// syntheticGraphRequest is the graph-generation:begin request the browser sends
+// (src/shared/graph-generation.ts:41): the graph input, the model and the action
+// nonce, and nothing else. It carries no context key because the renderer never
+// has one - main mints it and freezes it beside the input.
+type syntheticGraphRequest struct {
+	Input         syntheticGraphInput
+	ModelID       string
+	UIActionNonce string
+}
+
+// syntheticParseGraphRequest validates that request the way the desktop owner
+// does (electron/services/main-generation-owner.ts:1191-1193): three keys, a
+// usable model, and a nonce. Every shape refusal is the original's single code.
+func syntheticParseGraphRequest(value any) (syntheticGraphRequest, error) {
+	invalid := errors.New("GENERATION_GRAPH_INPUT_INVALID")
+	object := syntheticMap(value)
+	if object == nil {
+		return syntheticGraphRequest{}, invalid
+	}
+	for key := range object {
+		switch key {
+		case "input", "modelId", "uiActionNonce":
+		default:
+			return syntheticGraphRequest{}, invalid
+		}
+	}
+	input, err := syntheticGraphInputOf(object["input"])
+	if err != nil {
+		return syntheticGraphRequest{}, err
+	}
+	modelID := syntheticString(object["modelId"])
+	nonce := syntheticString(object["uiActionNonce"])
+	if modelID == "" || nonce == "" || strings.TrimSpace(nonce) == "" || len([]rune(nonce)) > 256 {
+		return syntheticGraphRequest{}, invalid
+	}
+	return syntheticGraphRequest{Input: input, ModelID: modelID, UIActionNonce: nonce}, nil
+}
+
+// syntheticGraphNonceRun is the same-nonce look-up before admission: the run this
+// project already opened for that nonce, or nil when the nonce is unspent. Two
+// rows is the original's conflict, and so is a row whose frozen input differs from
+// the one being requested. Only a run of this family is matched, which is the same
+// filter the desktop query applies to the frozen graph context.
+func syntheticGraphNonceRun(ctx context.Context, ledger *store.GenerationLedger, db *sql.DB, projectID, nonce string, input syntheticGraphInput) (map[string]any, error) {
+	rows, err := db.QueryContext(ctx, `SELECT r.run_id FROM generation_runs r
+		JOIN generation_roots g ON g.root_action_id=r.root_action_id
+		WHERE json_extract(g.action_json,'$.projectId')=? AND json_extract(g.action_json,'$.uiActionNonce')=?
+		AND json_extract(r.binding_json,'$.sourceManifest.graphGenerationContext') IS NOT NULL
+		ORDER BY r.rowid`, projectID, nonce)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	runIDs := make([]string, 0, 1)
+	for rows.Next() {
+		var runID string
+		if err := rows.Scan(&runID); err != nil {
+			return nil, err
+		}
+		runIDs = append(runIDs, runID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	if len(runIDs) > 1 {
+		return nil, errors.New("GENERATION_NONCE_CONFLICT")
+	}
+	args, err := syntheticArgs(runIDs[0])
+	if err != nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	value, err := ledger.CallJSON(ctx, "get", args)
+	if err != nil {
+		return nil, err
+	}
+	run := syntheticMap(value)
+	if run == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	// The frozen context is proved by graphRecovery; here only the input the nonce
+	// was spent on decides between a replay and the original's conflict.
+	frozen := syntheticMap(syntheticMap(syntheticMap(run["binding"])["sourceManifest"])["graphGenerationContext"])
+	if frozen == nil {
+		return nil, errors.New("GENERATION_GRAPH_CONTEXT_INVALID")
+	}
+	frozenDigest, err := syntheticGraphDigest(frozen["input"])
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_CONTEXT_INVALID")
+	}
+	requestDigest, err := syntheticGraphDigest(syntheticGraphInputData(input))
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_INPUT_INVALID")
+	}
+	if frozenDigest != requestDigest {
+		return nil, errors.New("GENERATION_NONCE_CONFLICT")
+	}
+	return run, nil
+}
+
+// syntheticFreezeGraphContext captures the plan context from the admitted author
+// database the way the desktop does
+// (electron/services/graph-generation-source.ts:26-50) and returns the manifest
+// keys the graph read re-proves: the input twice (inside the context and beside
+// it), the context and its digest, the origin epoch, and the task with its digest.
+//
+// The context key is this lane's own. The desktop mints a random UUID
+// (electron/services/main-generation-owner.ts:1203) and never compares it with a
+// renderer value, so a stable per-(project, nonce) key is a valid main-issued key
+// and makes a duplicate begin freeze the same context.
+func (s *syntheticGeneration) syntheticFreezeGraphContext(ctx context.Context, db *sql.DB, scope generationowner.Scope, selection syntheticSelection, input syntheticGraphInput) (map[string]any, error) {
+	core, err := store.NewProjectCore(db).Get(ctx)
+	if err != nil || core == nil {
+		return nil, errors.New("GENERATION_GRAPH_PROJECT_REQUIRED")
+	}
+	totalChapters := syntheticNumber(core["totalChapters"])
+	if totalChapters < 1 || input.ChapterNumber > totalChapters {
+		return nil, errors.New("GENERATION_GRAPH_BLUEPRINT_REQUIRED")
+	}
+	blueprint, err := store.NewBlueprints(db).Get(ctx, input.ChapterNumber)
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_CONTEXT_INVALID")
+	}
+	if blueprint == nil || syntheticNumber(blueprint["chapterNumber"]) != input.ChapterNumber {
+		return nil, errors.New("GENERATION_GRAPH_BLUEPRINT_REQUIRED")
+	}
+	contextValue := map[string]any{
+		"projectId":       scope.Project,
+		"originEpoch":     scope.Epoch,
+		"key":             syntheticGraphKey(scope.Project, selection.UIActionNonce),
+		"createdAt":       time.Now().UTC().Format(time.RFC3339Nano),
+		"input":           syntheticGraphInputData(input),
+		"writingLanguage": syntheticGraphWritingLanguage(core["writingLanguage"]),
+		"kind":            input.Kind,
+		"blueprint":       blueprint,
+		"totalChapters":   totalChapters,
+	}
+	task, err := syntheticGraphTask(input.Kind, contextValue)
+	if err != nil {
+		return nil, err
+	}
+	taskValue, err := syntheticGraphValue(task)
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_TASK_INVALID")
+	}
+	taskHash, err := syntheticGraphDigest(taskValue)
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_TASK_INVALID")
+	}
+	contextHash, err := syntheticGraphDigest(contextValue)
+	if err != nil {
+		return nil, errors.New("GENERATION_GRAPH_CONTEXT_INVALID")
+	}
+	return map[string]any{
+		"graphGenerationInput":       contextValue["input"],
+		"graphGenerationKey":         contextValue["key"],
+		"graphGenerationContext":     contextValue,
+		"graphGenerationContextHash": contextHash,
+		"graphGenerationOriginEpoch": scope.Epoch,
+		"graphGenerationTask":        taskValue,
+		"graphGenerationTaskHash":    taskHash,
+	}, nil
 }
 
 func syntheticRefsAsAny(refs []generationowner.Ref) ([]any, error) {

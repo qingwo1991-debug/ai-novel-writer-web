@@ -21,10 +21,13 @@ import (
 // answers GENERATION_OPERATION_UNSUPPORTED. That is a bound name that can only
 // refuse, and this lane does not ship those: a browser user would get a 500 for
 // a feature that does not exist instead of the fail-closed 501 that says the
-// server cannot do it yet. graph-generation:read therefore stays unbound until a
-// begin that freezes the graph context is itself served. generation:begin here
-// is the reduced begin and freezes no graph context, so a graph projection would
-// have nothing to project.
+// server cannot do it yet. The begin that freezes a graph context is now served
+// (graph-generation:begin, production_open_linux.go), so the original reason for
+// leaving this read unbound - a projection with nothing to project - no longer
+// holds. It stays unbound because this binder lends exactly one name, and because
+// the run a begin answers is already the projection the browser needs: begin's
+// replay returns graphRecovery, so a resumed plan run never asks for a handle.
+// The handle read itself exists (GraphRead) and is what that replay answers.
 //
 // The finalization slot read is a real projection: it answers the recovery of
 // the run that the slot currently owns, JSON null when it owns none, or its

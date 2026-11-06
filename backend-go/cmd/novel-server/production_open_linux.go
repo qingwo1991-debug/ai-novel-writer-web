@@ -542,6 +542,18 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// graph-generation:begin freezes the plan context of one graph run and
+		// opens its ledger row through the same reduced admission
+		// (production_generation_begin_linux.go BeginGraph). It is the only graph
+		// name this lane serves: execute, confirm and the handle read stay unbound,
+		// so a begun run is recoverable by replaying its nonce and cannot yet be
+		// dispatched or settled here.
+		if bindErr := server.Bind("graph-generation:begin", productionGenerationMutation(1, func(ctx context.Context, caller transport.Caller, expected map[string]any, args []any) (any, error) {
+			return owner.BeginGraph(ctx, caller, expected, args[0])
+		})); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		if bindErr := server.BindGenerationExecute(&transport.GenerationProvider{Execute: owner.Execute}); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr

@@ -57,6 +57,21 @@ func (g *productionGeneration) Begin(ctx context.Context, caller transport.Calle
 	return g.inner.Begin(ctx, caller, expected, arg)
 }
 
+// BeginGraph answers graph-generation:begin for the frozen browser session: the
+// same reduced run admission as Begin, for the one graph family whose context
+// this lane can capture (currently the plan kind). The egress gate comes first,
+// exactly as it does for Begin, so a lane with no committed allowlist refuses
+// before a root row exists rather than freezing a run it could never dispatch.
+func (g *productionGeneration) BeginGraph(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	if g == nil || g.open == nil || g.inner == nil {
+		return nil, errProductionGenerationUnavailable
+	}
+	if _, err := g.open.ModelEgress(); err != nil {
+		return nil, err
+	}
+	return g.inner.BeginGraph(ctx, caller, expected, arg)
+}
+
 // Execute answers generation:execute for the frozen browser session: the dispatch
 // half of the same admitted run. The egress gate comes first, so a lane with no
 // committed allowlist refuses symbolically and never dispatches without a
