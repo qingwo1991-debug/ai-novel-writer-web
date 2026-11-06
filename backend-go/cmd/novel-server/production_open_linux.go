@@ -489,6 +489,15 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
+	// The ten picker names are the browser's replacement for the desktop's native
+	// dialogs: a chooser query over the library roots, an upload slot for the files
+	// that live on the author's own machine, and a skill package that installs from
+	// those bytes. None of them accepts a host path, and none of them writes
+	// (production_browser_pickers_linux.go, internal/librarypath).
+	if bindErr := newProductionBrowserPickers(open).Bind(server); bindErr != nil {
+		_ = open.Close()
+		return nil, nil, bindErr
+	}
 	// One knowledge bridge for the ten served names of that family: the import
 	// binder owns the per-project gate the document and search binders reuse, so a
 	// single admission decision covers all of them.
@@ -734,6 +743,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionCharacterProposals(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
+		// The six cloud-backup names a self-hosted product actually needs: a verified
+		// archive with a manifest, a listing, and a restore that proves the payload and
+		// protects the live project with a pre-restore generation before it refuses to
+		// overwrite it. connect and clear-credential stay unbound: an endpoint named by
+		// a request has no admittable egress policy in this lane
+		// (production_cloud_backup_linux.go, internal/cloudbackup).
+		func() error { return newProductionCloudBackup(open, config).Bind(server) },
 		// The chapter family's four deletion names. The state machine lives in the
 		// store (internal/store/finalized_chapter_deletion.go); this binder owns the
 		// two halves the store deliberately left to the adapter: the manuscript
