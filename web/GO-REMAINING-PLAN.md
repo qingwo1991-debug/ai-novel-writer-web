@@ -8,8 +8,8 @@
 | 项 | 值 |
 | --- | --- |
 | 清单里的操作总数 | 281 |
-| 生产车道已服务 | **156**（`e94c1da6` 全绿） |
-| 仍未服务 | 125 |
+| 生产车道已服务 | **158**（`4208fb91` 全绿） |
+| 仍未服务 | 123 |
 | 承载方式 | 单个 Go 进程 + 单个容器，无 Node 运行时 |
 | 生产容器 | **未动**，仍跑旧镜像，回滚摘要已记录 |
 
@@ -58,6 +58,10 @@
 | 终稿角色上下文读（`finalized-character:read-context`） | 已服务 |
 | 角色状态候选（`list` / `read` / `decide`） | 已服务 |
 | 终稿章节删除（`delete-finalized` / `retry-deletion` / `confirm-legacy-knowledge-absent` / `list-incomplete-deletions`） | 已服务 |
+| 终稿草稿导入（`db:draft-import-finalized-batch`，一条 `BEGIN IMMEDIATE` 导入整批） | 已服务 |
+| `db:import-run-author-preview` | **已绑定但按设计拒绝**：参考实现要一个进程内 inspection id，本车道没有那个持有者，所以 id 形式答 `IMPORT_INSPECTION_OWNER_UNAVAILABLE`；直接传 chapters 才是真的预览 |
+
+> 158 里有 1 个是"绑定但告知名牌缺口"，别把它读成 159 个都能用。
 
 ### 2.3 支撑性资产（这些让后面的活变可能）
 
