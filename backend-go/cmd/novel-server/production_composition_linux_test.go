@@ -46,6 +46,12 @@ const (
 	productionCompositionTamperNonce        = "production-composition-tamper-1"
 	productionCompositionTamperReserveNonce = "production-composition-tamper-reserve-1"
 	productionCompositionTamperText         = "篡改候选：门后无人。"
+	// productionCompositionAuthorInputID and ...Text are the one author input the
+	// journey's run freezes. The reference spreads a run's frozen inputs onto the
+	// read answer (main-generation-owner.ts:1585) and never writes them into
+	// visibleComposition, so a read is the only place they can be observed.
+	productionCompositionAuthorInputID   = "draft:target-units"
+	productionCompositionAuthorInputText = "1200"
 )
 
 // productionCompositionDigest is textHash (generation-run-repository.ts:92) as this
@@ -130,7 +136,9 @@ func productionCompositionRefusal(t *testing.T, label string, response *httptest
 func TestProductionCompositionComposesAndReadsBack(t *testing.T) {
 	seam := &productionGenerationSeam{text: productionCompositionText}
 	lane := productionGenerationWriteOpen(t, seam.dispatch, nil)
-	handle := lane.begin(t, productionEditorBeginRequest(productionCompositionBeginNonce))
+	begin := productionEditorBeginRequest(productionCompositionBeginNonce)
+	begin["authorInputs"] = []any{map[string]any{"id": productionCompositionAuthorInputID, "text": productionCompositionAuthorInputText}}
+	handle := lane.begin(t, begin)
 
 	// A run with no receipt answers null, not an empty receipt.
 	if receipt, ok := productionCompositionAnswer(t, lane.author, "generation:read-visible-composition", []any{handle, lane.frozen}); ok {
@@ -238,8 +246,20 @@ func TestProductionCompositionComposesAndReadsBack(t *testing.T) {
 	if stored["text"] != receipt["text"] || stored["textHash"] != receipt["textHash"] {
 		t.Fatalf("the re-read receipt %v does not reproduce the composed one %v", stored, receipt)
 	}
-	if _, present := stored["authorInputs"]; !present {
+	// The answer carries the run's frozen inputs because the owner spreads them onto
+	// the read answer (main-generation-owner.ts:1585), and the composition itself
+	// never holds them: the stored record is the repository's own
+	// {algorithm,textHash,artifactIds,sources} (generation-run-repository.ts:691).
+	inputs, isInputs := stored["authorInputs"].([]any)
+	if !isInputs || len(inputs) != 1 {
 		t.Fatalf("the re-read receipt dropped the frozen author inputs: %v", stored)
+	}
+	input, isInput := inputs[0].(map[string]any)
+	if !isInput || input["id"] != productionCompositionAuthorInputID || input["text"] != productionCompositionAuthorInputText {
+		t.Fatalf("the re-read receipt echoed %v; want the frozen input %s=%s", inputs[0], productionCompositionAuthorInputID, productionCompositionAuthorInputText)
+	}
+	if _, present := receipt["authorInputs"]; present {
+		t.Fatalf("the composed receipt carries authorInputs, which the reference stores without: %v", receipt)
 	}
 	reReadText, isText := stored["text"].(string)
 	if !isText || stored["textHash"] != productionCompositionDigest(reReadText) {

@@ -698,6 +698,18 @@ func syntheticBudget(plan generationowner.Plan) (map[string]any, error) {
 	}, nil
 }
 
+// syntheticAuthorInputs freezes an empty selection as [] rather than as null.
+// The desktop normalises the same field with `?? []` when it reads a run back
+// (electron/repositories/generation-run-repository.ts:944), so a run that froze
+// no author inputs answers an empty list there. Writing null here would make the
+// two builds disagree on a field a renderer may iterate.
+func syntheticAuthorInputs(inputs []any) []any {
+	if inputs == nil {
+		return []any{}
+	}
+	return inputs
+}
+
 // syntheticManifest is the reduced lane's frozen source manifest. The
 // goOwnerSourceFingerprint is the Binding digest and must be reproduced by the
 // same sources at execute time; modelLeaseId is the only model secret handle.
@@ -711,7 +723,7 @@ func syntheticManifest(selection syntheticSelection, scope generationowner.Scope
 		"output":                     selection.Output,
 		"promptKeys":                 selection.PromptKeys,
 		"skillStages":                selection.SkillStages,
-		"authorInputs":               selection.AuthorInputs,
+		"authorInputs":               syntheticAuthorInputs(selection.AuthorInputs),
 		"selectedDraftIds":           selection.SelectedDraftIDs,
 		"selectedFinalizedDraftIds":  selection.SelectedFinalizedDraftIDs,
 		"selectedBlueprintChapterNumbers": selection.SelectedBlueprintChapters,

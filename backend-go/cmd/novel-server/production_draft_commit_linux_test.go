@@ -237,10 +237,24 @@ func (f *productionDraftCommitFixture) compose(t *testing.T, runID, attemptID st
 
 // request is the store request the served handler would build for this handle.
 func (f *productionDraftCommitFixture) request(rootID, runID string, chapter int64, batchID, hash string) store.DraftCommitRequest {
+	return f.requestAt(productionDraftCommitEpoch, rootID, runID, chapter, batchID, hash)
+}
+
+// batchRequest is the same request for a run that lives under the batch root. The
+// frozen epoch has to be that root's own, because binding.epoch is what reserve
+// compares with the root's epoch and what assertSources compares with the live
+// lease.
+func (f *productionDraftCommitFixture) batchRequest(rootID, runID string, chapter int64, batchID, hash string) store.DraftCommitRequest {
+	return f.requestAt(productionBatchEpoch, rootID, runID, chapter, batchID, hash)
+}
+
+// requestAt freezes one epoch in both places the reference reads it: the handle the
+// caller holds and the live lease the transaction asserts.
+func (f *productionDraftCommitFixture) requestAt(epoch, rootID, runID string, chapter int64, batchID, hash string) store.DraftCommitRequest {
 	return store.DraftCommitRequest{
 		Handle: store.BatchRunHandle{
 			ProjectID:    productionEditorProjectID,
-			Epoch:        productionDraftCommitEpoch,
+			Epoch:        epoch,
 			RootActionID: rootID,
 			RunID:        runID,
 		},
@@ -248,7 +262,7 @@ func (f *productionDraftCommitFixture) request(rootID, runID string, chapter int
 		ChapterNumber:           chapter,
 		Source:                  "write",
 		BatchID:                 batchID,
-		LiveEpoch:               productionDraftCommitEpoch,
+		LiveEpoch:               epoch,
 	}
 }
 
@@ -306,6 +320,20 @@ func (f *productionDraftCommitFixture) refused(t *testing.T, label string, reque
 // target units among the author inputs, and the batch it belongs to when the caller
 // names one.
 func productionDraftCommitRunRequest(nonce string, chapter int64, targetUnits, hash, batchID, parentRootID string) string {
+	return productionDraftCommitRunRequestAt(productionDraftCommitEpoch, nonce, chapter, targetUnits, hash, batchID, parentRootID)
+}
+
+// productionDraftCommitBatchRunRequest is the same binding frozen under the batch
+// epoch. A run that hangs from a batch root has to carry that root's own epoch:
+// open refuses a parent whose action epoch differs from the request's
+// (internal/store/generation_ledger.go:757), and reserve would refuse the same
+// mismatch afterwards as GENERATION_EPOCH_STALE, which is why the batch fixtures
+// already open both the batch root and its chapters under productionBatchEpoch.
+func productionDraftCommitBatchRunRequest(nonce string, chapter int64, targetUnits, hash, batchID, parentRootID string) string {
+	return productionDraftCommitRunRequestAt(productionBatchEpoch, nonce, chapter, targetUnits, hash, batchID, parentRootID)
+}
+
+func productionDraftCommitRunRequestAt(epoch, nonce string, chapter int64, targetUnits, hash, batchID, parentRootID string) string {
 	number := fmt.Sprintf("%d", chapter)
 	batch, parent := "", ""
 	if batchID != "" {
@@ -314,7 +342,7 @@ func productionDraftCommitRunRequest(nonce string, chapter int64, targetUnits, h
 	if parentRootID != "" {
 		parent = `,"parentRootActionId":"` + parentRootID + `"`
 	}
-	return `{"projectId":"` + productionEditorProjectID + `","epoch":"` + productionDraftCommitEpoch +
+	return `{"projectId":"` + productionEditorProjectID + `","epoch":"` + epoch +
 		`","operation":"chapter-draft","uiActionNonce":"` + nonce + `","frozenInputHash":"` + hash +
 		`","fingerprint":` + productionBatchFingerprint(hash) + `,"contextSnapshotId":"ci-draft-commit-context-` + number +
 		`"` + parent + `,"sourceManifest":{"operation":"chapter-draft"` + batch + `,"chapterNumber":` + number +
@@ -643,17 +671,18 @@ func testProductionDraftCommitStaleEpoch(t *testing.T) {
 	fixture.accepted(t, "commit under the frozen epoch", fixture.request(rootID, runID, 6, "", composedHash))
 }
 
-// testProductionDraftCommitBatchConflict proves the batch guard: a batch whose first
-// chapter is already saved refuses a second save of that chapter, and the refusal
+// testProductionDraftCommitBatchConflict proves the batch guard: a batch whose
+// chapter 2 is already saved refuses a second save of that chapter, and the refusal
 // happens inside the transaction that would have written it.
 //
-// Two rows are rewritten before the commit, and only rows the fixtures own: the
-// shipped ledger mints a fresh root for every open, while the reference gives a
-// batch and its chapter runs one root action, so the batch root and the saved
-// chapter run are pointed at the committing run's root. The saved chapter's receipt
-// itself is written the way production_batch_reads_linux_test.go:295 writes the
-// receipts the family writers would have written, because this lane owns no batch
-// writer either.
+// The ledger's parent rule is what makes these three rows one batch: a chapter run
+// opened with parentRootActionId=the batch root is inserted under that root
+// (internal/store/generation_ledger.go:756-757 and :809) and has to carry the batch
+// root's own projectId and epoch (:748-759), so the batch root, the saved chapter
+// run and the committing run all already report the same rootActionId and no row
+// has to be rewritten. The saved chapter's receipt itself is written the way
+// production_batch_reads_linux_test.go:295 writes the receipts the family writers
+// would have written, because this lane owns no batch writer either.
 func testProductionDraftCommitBatchConflict(t *testing.T) {
 	fixture := productionDraftCommitOpen(t)
 	batchID, batchRootID := fixture.open(t, productionBatchRootRequest())
@@ -665,24 +694,19 @@ func testProductionDraftCommitBatchConflict(t *testing.T) {
  VALUES (2, 2, 1, 'draft', 'write', 2, 0, '[]', '2024-05-06 07:08:09', '2024-05-06 07:08:09')`); err != nil {
 		t.Fatalf("seed the saved chapter's draft: %v", err)
 	}
-	savedRunID, _ := fixture.open(t, productionBatchChapterRequest(2, batchID, batchRootID))
-	// The run under test: a chapter-2 run of the same batch, under its own root.
-	runID, rootID := fixture.open(t, productionDraftCommitRunRequest("ci-draft-commit-batch", 2,
+	savedRunID, savedRootID := fixture.open(t, productionBatchChapterRequest(2, batchID, batchRootID))
+	// The run under test: a chapter-2 run of the same batch, under the batch root
+	// and under the batch's own epoch. A chapter run of a batch can never be frozen
+	// under a lease of its own, which is exactly what the parent rule enforces.
+	runID, rootID := fixture.open(t, productionDraftCommitBatchRunRequest("ci-draft-commit-batch", 2,
 		productionDraftCommitBatchTarget, strings.Repeat("c", 64), batchID, batchRootID))
-	// Every ledger write happens before the two rows are repointed, so no settlement
-	// runs against a root that is no longer the run's own.
+	if savedRootID != batchRootID || rootID != batchRootID {
+		t.Fatalf("the batch's runs report roots %s/%s, not the batch root %s", savedRootID, rootID, batchRootID)
+	}
 	savedAttempt := productionBatchSettle(t, fixture.ledger, savedRunID, productionBatchChapterTwoText)
 	texts := []string{productionDraftCommitProse(productionDraftCommitSentence, 200)}
 	attempts := fixture.settle(t, runID, texts...)
 	fixture.compose(t, runID, attempts[0], fixture.artifacts(t, runID), texts)
-	for _, update := range []struct {
-		runID string
-		label string
-	}{{batchID, "the batch root"}, {savedRunID, "the saved chapter run"}} {
-		if _, err := fixture.db.Exec("UPDATE generation_runs SET root_action_id=? WHERE run_id=?", rootID, update.runID); err != nil {
-			t.Fatalf("share the root with %s: %v", update.label, err)
-		}
-	}
 	// The already-saved chapter 2, receipted the way the batch fixtures receipt one.
 	productionBatchPatchReceipt(t, fixture.db, savedAttempt, map[string]any{
 		"artifactIdentity": map[string]any{"epoch": productionBatchEpoch},
@@ -710,6 +734,6 @@ func testProductionDraftCommitBatchConflict(t *testing.T) {
 		},
 	})
 	fixture.refused(t, "commit over a saved chapter",
-		fixture.request(rootID, runID, 2, batchID, generation.TextHash(productionDraftCommitComposed(texts))),
+		fixture.batchRequest(rootID, runID, 2, batchID, generation.TextHash(productionDraftCommitComposed(texts))),
 		store.ErrDraftCommitBatchConflict)
 }
