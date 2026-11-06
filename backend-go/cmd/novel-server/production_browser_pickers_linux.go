@@ -87,7 +87,8 @@ import (
 // Every picker answers one object:
 //
 //	{success, grantId, displayName, rootId, relativePath, identity, kind,
-//	 path?, entries:[{name, isDirectory, size}], truncated, maxEntries}
+//	 exists, creatable, path?, entries:[{name, isDirectory, size}], truncated,
+//	 maxEntries}
 //
 // `grantId` and `displayName` are the desktop's own ExternalDirectoryGrant /
 // ProjectDirectoryGrant (ipc-channels.ts:680-685), which is what every shipped
@@ -105,6 +106,14 @@ import (
 // never file contents - so a page can draw a tree and descend by asking again with
 // a child's relativePath; `truncated` says more names exist instead of presenting
 // a partial directory as complete.
+//
+// `kind`, `exists` and `creatable` are three answers to three different questions,
+// and none of them is inferred from the others: `kind` is what the pick resolved to
+// and, for a name that is not there yet, it is the REQUEST FORM's answer (a browse
+// is a directory the author may create), never a failed stat's; `exists` says
+// whether the server already saw it; `creatable` says whether this name will accept
+// a create. A page therefore never has to read "no entries" as "directory" or
+// "file" as "not a directory yet".
 //
 // `path` is answered by dialog:select-folder alone, and only because that name has
 // one consumer the identity cannot serve: stores/project-store.ts:664 forwards
@@ -128,6 +137,20 @@ import (
 // calls the same name again presenting the ids that route returned. `grants` is
 // empty by construction - no server file exists yet - and an id this process never
 // issued, or one staged for another tab, is refused by name rather than read.
+//
+// A folder upload's member names are LABELS, not host paths. The bytes are already
+// staged by the transfer owner and nothing here resolves a member against any
+// filesystem, so the rule is structural: any valid UTF-8 component is a fine name,
+// including CJK, spaces and a dot-prefixed one, and a member may sit below a
+// subdirectory, because the browser's folder picker forwards whatever the author's
+// tree held (素材/设定/世界观.md, .obsidian/workspace.json). What is refused is a
+// name that could address something outside the upload - empty, ".", "..", an
+// absolute leading separator, any backslash, a control byte - plus the bounds:
+// productionPickerMaxMemberBytes per component, productionPickerMaxUploadDepth
+// components, MaxPathBytes in all (productionPickerUploadMember). promptskills' own
+// ASCII segment pattern is NOT applied here; it exists so a skill package is one
+// promptskills can install, which is a different question from what an author may
+// call a note.
 //
 // # The two skills names install uploaded bytes, with the GitHub path's checks
 //
@@ -207,6 +230,8 @@ const (
 	productionPickerMaxCallerBytes       = int64(256 << 20)
 	productionPickerMaxKnowledgeFiles    = 16
 	productionPickerMaxKnowledgeBytes    = int64(8 << 20)
+	productionPickerMaxUploadDepth       = 8
+	productionPickerMaxMemberBytes       = 255
 )
 
 // Candidate bounds. One pending local candidate per caller, ten minutes old and
@@ -1149,7 +1174,7 @@ func (p *productionBrowserPickers) knowledgeFolder(_ context.Context, caller tra
 	verified := make([]any, 0, len(staged))
 	var total int64
 	for _, file := range staged {
-		if !productionPickerUploadPath(file.Relative) {
+		if !productionPickerUploadMember(file.Relative) {
 			return productionPickerKnowledgeRefusal(productionPickerKnowledgeFolder, productionPickerPathRefusedCode), nil
 		}
 		total += int64(len(file.Data))
@@ -1534,12 +1559,47 @@ func productionPickerHiddenPath(relative string) bool {
 	return false
 }
 
-// productionPickerUploadPath is a safe path that is also not hidden: the knowledge
-// names copy text an author selected, and a dotfile in that answer is a request to
-// read something the author did not select. There is no package walk to mirror
-// there, so the stricter rule applies.
-func productionPickerUploadPath(relative string) bool {
-	return productionPickerSafePath(relative) && !productionPickerHiddenPath(relative)
+// productionPickerUploadMember bounds one member name of an uploaded folder. A
+// member is a LABEL for bytes that are already staged, never a host path, and
+// nothing here resolves it: knowledgeFolder only echoes it back as the identity of
+// the upload it verified. So the rule is structural, not library-relative, because
+// the browser's folder picker forwards whatever the author's tree had:
+//
+//   - any valid UTF-8 component is a fine name, including CJK, spaces and a
+//     dot-prefixed one; an author with 素材/设定/世界观.md or a stray .obsidian
+//     entry must still be able to upload the folder;
+//   - no component may address anything outside the upload: empty, "." and ".."
+//     are refused, so are an absolute leading separator and every backslash;
+//   - bounded: one component at most productionPickerMaxMemberBytes, at most
+//     productionPickerMaxUploadDepth components, no control byte, and the whole
+//     name inside MaxPathBytes.
+//
+// productionPickerSafePath is deliberately NOT used here: it is promptskills' own
+// ASCII-and-dots package-segment pattern, which exists because a skill package must
+// be a package that can install, and it has no business rejecting an author's
+// Chinese file name.
+func productionPickerUploadMember(relative string) bool {
+	if relative == "" || len(relative) > librarypath.MaxPathBytes || !utf8.ValidString(relative) {
+		return false
+	}
+	if strings.HasPrefix(relative, "/") || strings.ContainsAny(relative, "\\\x00") {
+		return false
+	}
+	parts := strings.Split(relative, "/")
+	if len(parts) > productionPickerMaxUploadDepth {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || len(part) > productionPickerMaxMemberBytes {
+			return false
+		}
+		for _, char := range part {
+			if char < 0x20 || char == 0x7f {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // productionPickerTextName bounds a reference target to the text kinds

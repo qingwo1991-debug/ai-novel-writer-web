@@ -829,19 +829,43 @@ func TestProductionBrowserPickersRequireUploadsForKnowledge(t *testing.T) {
 	})
 
 	t.Run("folds-a-folder-upload", func(t *testing.T) {
+		// What the browser's folder picker actually forwards: the author's own tree.
+		// A member name is a label for bytes that were already uploaded, so it may be
+		// Chinese, carry a subdirectory or start with a dot - none of that is a host
+		// path, and none of it may be refused as one.
+		members := []string{"世界观.md", "人物.md", "设定/人物小传.md", ".笔记.md"}
+		staged := make([]productionPickerUploaded, 0, len(members))
+		for _, member := range members {
+			staged = append(staged, productionPickerUploaded{Relative: member, Data: []byte(productionPickerFixtureNotes)})
+		}
 		fixture.uploads.stageFolder(fixture.author.cookie.Value, fixture.author.tab, productionPickerFixtureFolderA,
-			"素材", []productionPickerUploaded{
-				{Relative: "世界观.md", Data: []byte(productionPickerFixtureNotes)},
-				{Relative: "人物.md", Data: []byte(productionPickerFixtureNotes)},
-			})
+			"素材", staged)
 		envelope := fixture.call(t, fixture.author, productionPickerKnowledgeFolder,
 			[]any{map[string]any{"folderUploadId": productionPickerFixtureFolderA}}).business(t)
 		if success, _ := envelope["success"].(bool); !success {
 			t.Fatalf("the folder pick refused a staged folder: %v", envelope)
 		}
 		files, ok := envelope["files"].([]any)
-		if !ok || len(files) != 2 {
-			t.Fatalf("the folder answer verified %v files; want two", envelope["files"])
+		if !ok || len(files) != len(members) {
+			t.Fatalf("the folder answer verified %v files; want %v", envelope["files"], len(members))
+		}
+		// The answer names every member exactly as it was staged: a label is
+		// echoed, never rewritten. Order is the owner's business, so compare as a set.
+		answered := map[string]bool{}
+		for _, item := range files {
+			file, ok := item.(map[string]any)
+			if !ok {
+				t.Fatalf("a verified file is not an object: %v", item)
+			}
+			answered[productionPickerFixtureText(t, file, "displayName")] = true
+		}
+		for _, member := range members {
+			if !answered[member] {
+				t.Fatalf("the folder answer lost the member %v: %v", member, answered)
+			}
+		}
+		if len(answered) != len(members) {
+			t.Fatalf("the folder answer named %v members; want %v", len(answered), len(members))
 		}
 		slot := productionPickerFixtureSlot(t, envelope)
 		resume, ok := slot["resume"].(map[string]any)
@@ -850,13 +874,21 @@ func TestProductionBrowserPickersRequireUploadsForKnowledge(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses-a-folder-member-that-names-a-path", func(t *testing.T) {
-		fixture.uploads.stageFolder(fixture.author.cookie.Value, fixture.author.tab, productionPickerFixtureFolderBad,
-			"素材", []productionPickerUploaded{
-				{Relative: "../世界观.md", Data: []byte(productionPickerFixtureNotes)},
-			})
-		fixture.businessRefused(t, fixture.author, productionPickerKnowledgeFolder, "a traversal member",
-			[]any{map[string]any{"folderUploadId": productionPickerFixtureFolderBad}}, productionPickerPathRefusedCode)
+	t.Run("refuses-a-folder-member-that-is-not-a-name", func(t *testing.T) {
+		// The same walk refuses what is not a name at all: a member that leaves the
+		// upload, one that is absolute, one that uses the other separator, and one
+		// nested past the bound. Each is refused for the folder as a whole, because
+		// answering with part of the folder would answer a question nobody asked.
+		deep := ""
+		for index := 0; index < productionPickerMaxUploadDepth+1; index++ {
+			deep += "层/"
+		}
+		for _, member := range []string{"../世界观.md", "/etc/passwd", "设定\\人物.md", deep + "世界观.md"} {
+			fixture.uploads.stageFolder(fixture.author.cookie.Value, fixture.author.tab, productionPickerFixtureFolderBad,
+				"素材", []productionPickerUploaded{{Relative: member, Data: []byte(productionPickerFixtureNotes)}})
+			fixture.businessRefused(t, fixture.author, productionPickerKnowledgeFolder, member,
+				[]any{map[string]any{"folderUploadId": productionPickerFixtureFolderBad}}, productionPickerPathRefusedCode)
+		}
 	})
 
 	t.Run("refuses-when-the-lane-has-no-upload-owner", func(t *testing.T) {
