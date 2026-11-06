@@ -543,39 +543,20 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 			t.Fatalf("unverified finding carries %s = %v", column, row[column])
 		}
 	}
-	// The stored set hash covers exactly the stored rows, recomputed here without the
-	// writer's own reader.
+	// The stored set hash covers exactly the stored rows. The rows are mapped back
+	// through the same projection the store itself verifies with - the reference
+	// does the same at review-cycle-repository.ts:600, where persistedFinding()
+	// re-reads what the writer inserted instead of trusting the in-memory set.
 	identities := make([]admission.M03FindingIdentity, 0, len(rows))
 	for _, stored := range rows {
-		revision, ok := rrInteger(stored["source_revision"], 0)
-		if !ok {
-			t.Fatalf("stored finding revision: %v", stored["source_revision"])
+		identity, err := rccStoredIdentity(stored)
+		if err != nil {
+			t.Fatalf("stored finding %v: %v", stored["finding_id"], err)
 		}
-		identities = append(identities, admission.M03FindingIdentity{
-			FindingID:         glText(stored["finding_id"]),
-			SourceProjectID:   glText(stored["source_project_id"]),
-			SourceEpoch:       glText(stored["source_epoch"]),
-			SourceID:          glText(stored["source_id"]),
-			SourceRevision:    revision,
-			SourceContentHash: glText(stored["source_content_hash"]),
-			Category:          glText(stored["category"]),
-			Kind:              glText(stored["kind"]),
-			ProblemText:       glText(stored["problem_text"]),
-		})
+		identities = append(identities, identity)
 	}
 	if findingSetHash != admission.CanonicalM03FindingSetHash(identities) {
 		t.Fatalf("stored set hash does not cover the stored rows")
-	}
-	identity := admission.M03FindingIdentity{
-		FindingID:         glText(row["finding_id"]),
-		SourceProjectID:   glText(row["source_project_id"]),
-		SourceEpoch:       glText(row["source_epoch"]),
-		SourceID:          glText(row["source_id"]),
-		SourceRevision:    sourceRevision,
-		SourceContentHash: glText(row["source_content_hash"]),
-		Category:          glText(row["category"]),
-		Kind:              glText(row["kind"]),
-		ProblemText:       glText(row["problem_text"]),
 	}
 	// The receipt summarises the same row the reader maps.
 	written := reviewCycleSource{rrctxTestProjectID, rccTestEpoch, "draft:1", 1, rrctxSHA(rrctxChapterOne)}
@@ -586,7 +567,7 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 	// The reader must address the warning the writer stored. How many other items
 	// it maps is the reader's own contract, covered by the projection test above,
 	// so this does not pin a total that a five-finding report would change.
-	if _, ok := indices[identity.FindingID]; !ok {
+	if _, ok := indices[glText(row["finding_id"])]; !ok {
 		t.Fatalf("reader does not address the written finding: %v", indices)
 	}
 
