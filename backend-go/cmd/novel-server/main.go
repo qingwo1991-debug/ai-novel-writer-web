@@ -45,7 +45,13 @@ func run() error {
 	durableDir := flag.String("synthetic-durable-dir", "", "optional private disposable library for a real synthetic durable author project")
 	durableGlobalDir := flag.String("synthetic-durable-global-dir", "", "optional private trusted model config root for the durable generation lane")
 	durableModelOrigins := flag.String("synthetic-durable-model-origins", "", "comma-separated trusted HTTP(S) origins for the durable generation lane")
+	// The container healthcheck is this same binary: the image is a single static
+	// executable with no shell utilities, so probing over HTTP has to live here.
+	healthcheck := flag.Bool("healthcheck", false, "probe this server's own /healthz once and exit non-zero when it is not healthy")
 	flag.Parse()
+	if *healthcheck {
+		return runHealthProbe(*address)
+	}
 	// A configured NOVEL_DATA_ROOT selects the production lane below; the
 	// synthetic lanes keep their own private temporary roots. Neither may be
 	// combined, so a real author data mount can never be reached by a flag that

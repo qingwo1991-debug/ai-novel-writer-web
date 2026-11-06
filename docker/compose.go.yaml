@@ -1,0 +1,81 @@
+name: ai-novel-writer-native
+
+# Go cutover compose. This file replaces docker/compose.web.yaml at the moment the
+# author moves from the Node image to the Go image; both files stay in the tree so
+# the rollback is a compose file swap and nothing else.
+#
+# What is deliberately identical to compose.web.yaml, and must stay identical:
+# the container name, the published loopback port, the data mount, the dropped
+# capabilities, the read-only root filesystem and the restart policy. The trusted
+# nginx in front of 127.0.0.1:6081 does not know which image answers, so any of
+# these changing turns a cutover into an nginx edit.
+#
+# What changes, and why:
+#   - image: the Go binary image (ubuntu base, entrypoint /usr/local/bin/novel-server).
+#   - command: the Go binary takes its listen address as a flag, not PORT env, and
+#     must bind 0.0.0.0 inside the container while still publishing on loopback only.
+#   - healthcheck: the Go image contains no node, no shell utilities and no curl, so
+#     the probe is the server binary itself (-healthcheck). The old check asserted
+#     runtime "node"; this one asserts runtime "go", which is what catches a stale
+#     container or a wrong tag during the cutover window.
+#   - NODE_ENV is gone: no Node process reads it. NOVEL_DATA_ROOT is what selects
+#     the production lane, and without it the binary refuses to serve a real data
+#     directory at all.
+#   - The proxy and allowed-origin variables are gone: the Go lane reads egress
+#     policy and browser origins from the author data directory, not from the
+#     environment, so a stale env var here would be a false comfort.
+#
+# Order of operations (never start this while the Node container is running - both
+# take the same exclusive writer lease on the same SQLite files, and the second one
+# to start refuses):
+#   1. docker compose -f docker/compose.web.yaml --env-file .env down
+#   2. docker compose -f docker/compose.go.yaml --env-file .env.go up -d
+#   3. docker inspect --format '{{.State.Health.Status}}' ai-novel-writer-web   # healthy
+#   4. poll http://127.0.0.1:6081/healthz and require runtime "go"
+# Rollback is the same two commands with the files swapped back.
+
+services:
+  ai-novel-writer-web:
+    image: "${NOVEL_IMAGE:?Set NOVEL_IMAGE to a reviewed immutable image digest or ID}"
+    container_name: ai-novel-writer-web
+    init: true
+    # The existing volume is root:root. Do not opt into another uid until every
+    # file, folder and encrypted key has had an offline ownership review.
+    user: "${NOVEL_UID:-0}:${NOVEL_GID:-0}"
+    command:
+      - "-listen"
+      - "0.0.0.0:16082"
+      - "-static-dir"
+      - "/app/dist-web"
+      # No -policy flag: the image's working directory is /backend-go and its
+      # default policy path resolves to the /web/operations.json the Dockerfile
+      # copies in. Passing a path here would only be a second place to get wrong.
+    ports:
+      # Never publish beyond loopback: the trusted gateway is the only client.
+      - "127.0.0.1:6081:16082"
+    volumes:
+      - /root/AI/ai-novel-writer-data:/data
+    environment:
+      NOVEL_DATA_ROOT: /data
+    restart: unless-stopped
+    # The single-writer lease is released on a clean stop; give the process the
+    # same grace the Node service had so an in-flight commit is not cut in half.
+    stop_grace_period: 30s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/novel-server
+        - "-healthcheck"
+        - "-listen"
+        - "127.0.0.1:16082"
+      interval: 30s
+      timeout: 8s
+      start_period: 30s
+      retries: 3
