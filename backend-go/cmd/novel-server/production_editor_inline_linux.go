@@ -543,13 +543,22 @@ func productionEditorInlineStoredContext(ctx context.Context, db *sql.DB, runID 
 	if !ok || len(raw) == 0 {
 		return nil, errors.New(productionEditorInlineContextInvalid)
 	}
+	// Only the object shape is this family's frozen context. A value stored as a
+	// quoted string would reach the hash with its quotes and escapes still attached,
+	// which is not the text the desktop hashed, so it is refused rather than hashed
+	// as something else.
+	if raw[0] != '{' {
+		return nil, errors.New(productionEditorInlineContextInvalid)
+	}
 	return raw, nil
 }
 
 // productionEditorInlineRawMember returns the raw bytes of one member of a JSON
 // object, without re-serializing anything: json.RawMessage receives the value's
-// exact input segment, so the answer is the stored text. A repeated key resolves to
-// the last occurrence, which is the value JSON.parse keeps.
+// exact input segment, so an object member comes back as the object's own text
+// (a string member comes back quoted and escaped, which is the segment, not the
+// string). A repeated key resolves to the last occurrence, which is the value
+// JSON.parse keeps.
 func productionEditorInlineRawMember(document []byte, name string) ([]byte, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.UseNumber()

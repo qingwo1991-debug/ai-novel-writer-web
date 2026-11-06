@@ -154,16 +154,22 @@ func productionEditorInlineRequestText(name, projectID, epoch, operation, contex
 }
 
 // productionEditorInlineSeedOne writes one run through the shipped ledger and then
-// rewrites ONLY the frozen digest, which the ledger cannot know: it is the sha256 of
-// the context text as stored, and the stored text is asserted to be exactly the
-// fixture's own literal, so a serializer that escaped it differently fails here
-// instead of silently freezing a digest over something else.
+// asserts, over the bytes the database actually holds, that the digest frozen in
+// that row is the digest of that row's own context text. It rewrites nothing: the
+// fixture is exactly what the ledger wrote.
+//
+// The digest is computed here from the fixture's literal before the insert (the row
+// must carry a real value), so the post-insert byte comparison below is what makes
+// it the digest of the stored row: the stored context must be the same literal, so
+// the insertion order the digest was taken over is the order the row holds.
 func productionEditorInlineSeedOne(t *testing.T, db *sql.DB, ledger *store.GenerationLedger, name, projectID, epoch, operation, contextText, inputText string, tamper bool) productionEditorInlineFixture {
 	t.Helper()
-	placeholder := strings.Repeat("0", 64)
-	digest := placeholder
-	if !tamper {
-		digest = productionEditorInlineDigest(contextText)
+	// The tampered row freezes a digest no context text can produce; every other row
+	// freezes the digest of its own literal.
+	mismatch := strings.Repeat("0", 64)
+	digest := productionEditorInlineDigest(contextText)
+	if tamper {
+		digest = mismatch
 	}
 	request := productionEditorInlineRequestText(name, projectID, epoch, operation, contextText, inputText, digest)
 	value, err := ledger.CallJSON(context.Background(), "open", json.RawMessage("["+request+"]"))
@@ -176,28 +182,28 @@ func productionEditorInlineSeedOne(t *testing.T, db *sql.DB, ledger *store.Gener
 	if runID == "" || rootID == "" {
 		t.Fatalf("seed %v open returned no identity: %v", name, run)
 	}
-	// The stored context must be the fixture's literal. The digest above was taken
-	// over that literal, so this is what makes the fixture's digest the digest of
-	// the row.
 	var stored string
 	if err := db.QueryRow(`SELECT binding_json FROM generation_runs WHERE run_id=?`, runID).Scan(&stored); err != nil {
 		t.Fatalf("seed %v readback: %v", name, err)
 	}
-	if !strings.Contains(stored, contextText) {
-		t.Fatalf("seed %v stored a context this test did not freeze: %v", name, stored)
+	// The exact bytes the row froze for the context, extracted the same way the read
+	// extracts them. Nothing here re-serializes the row.
+	raw, err := productionEditorInlineStoredContext(context.Background(), db, runID)
+	if err != nil {
+		t.Fatalf("seed %v stored context: %v", name, err)
 	}
+	if string(raw) != contextText {
+		t.Fatalf("seed %v stored context %s, want the frozen literal %s: %s", name, raw, contextText, stored)
+	}
+	// The one assertion that matters: the hash frozen in this row is (or, for the
+	// tampered fixture, is not) the digest of this row's stored context text.
+	storedDigest := productionEditorInlineDigest(string(raw))
 	if tamper {
-		// The placeholder stays: the manifest promises a digest the text cannot
-		// produce, which is exactly the tampered row the read must refuse.
-		return productionEditorInlineFixture{Handle: productionEditorInlineHandle(projectID, epoch, rootID, runID),
-			RunID: runID, RootID: rootID}
-	}
-	if !strings.Contains(stored, placeholder) {
-		t.Fatalf("seed %v stored no digest placeholder to replace: %v", name, stored)
-	}
-	patched := strings.Replace(stored, placeholder, digest, 1)
-	if _, err := db.Exec(`UPDATE generation_runs SET binding_json=? WHERE run_id=?`, patched, runID); err != nil {
-		t.Fatalf("seed %v digest: %v", name, err)
+		if strings.Contains(stored, storedDigest) {
+			t.Fatalf("seed %v froze the true digest %v of its own context, so the row is not tampered: %s", name, storedDigest, stored)
+		}
+	} else if !strings.Contains(stored, storedDigest) {
+		t.Fatalf("seed %v froze no digest of its own stored context %v: %s", name, storedDigest, stored)
 	}
 	return productionEditorInlineFixture{Handle: productionEditorInlineHandle(projectID, epoch, rootID, runID),
 		RunID: runID, RootID: rootID}
