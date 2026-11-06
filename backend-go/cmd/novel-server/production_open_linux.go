@@ -121,6 +121,10 @@ type productionOpen struct {
 	library  *projectfs.Library
 	scratch  string
 	projects []productionProject
+	// recentRemoved is the shelf's own memory: the paths project:recent-remove
+	// dropped from the recent list. It is consulted by RecentProjects only, so
+	// removing an entry can never change what this lane admits.
+	recentRemoved map[string]bool
 	// held is the exclusive legacy writer lease this process took before
 	// touching any author database. It is nil once the durable runtime owns it.
 	held *writerlock.Lock
@@ -360,6 +364,13 @@ func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller)
 	for _, item := range p.projects {
 		if len(result) >= productionRecentLimit {
 			break
+		}
+		// A shelf entry the author removed stays admitted: the removal is a
+		// navigation decision, not a withdrawal of the project from this lane, so the
+		// library listing, the admission fence and project:create's own proofs keep
+		// seeing it (production_recent_remove_linux.go).
+		if p.recentRemoved[item.listed.Path] {
+			continue
 		}
 		result = append(result, transport.RecentNavigationProject{
 			Name: item.listed.Name, Path: item.listed.Path,
@@ -834,6 +845,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// no port in this lane, with the reference gate and the missing symbol for each
 		// (production_db_residual_linux.go). It installs nothing.
 		func() error { return bindProductionDBResidual(server) },
+		// fs:write-json is the confined JSON write: same confinement and same frozen
+		// context as fs:write-file, with the document encoded and validated before any
+		// project is borrowed (production_fs_write_json_linux.go).
+		func() error { return newProductionFSWriteJSON(open).Bind(server) },
+		// project:recent-remove drops one entry from the shelf the served list
+		// projects; it never withdraws the project from this lane
+		// (production_recent_remove_linux.go).
+		func() error { return newProductionRecentRemove(open).Bind(server) },
 		func() error { return newProductionLegacyRoster(open.durable).Bind(server) },
 		// The document half and the search half of the same family, sharing the
 		// import binder's per-project gate so one admission decision covers all ten

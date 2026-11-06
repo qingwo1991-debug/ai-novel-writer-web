@@ -103,7 +103,7 @@ import (
 //
 //	fs:write-file  internal/transport/project_files.go:93,147-165 -> projectfs.Project.WriteBrowserFile (browser_files.go:177-210): temp file, Sync, rename, readback. A write.
 //	fs:mkdir       internal/transport/project_files.go:91,166-170 -> projectfs.Project.MakeBrowserDirectory (browser_files.go:316-358): parent.Mkdir at :346. A write.
-//	fs:write-json  internal/transport/project_files.go:69-74 records that it stays at GO_OPERATION_NOT_MIGRATED because its only observed caller writes the .ai-novel storage marker, which this confined surface keeps out of a browser's reach.
+//	fs:write-json  served by production_fs_write_json_linux.go with the same confinement; the .ai-novel marker stays out of reach because the path rule refuses it by name.
 //
 // Grant operations:
 //

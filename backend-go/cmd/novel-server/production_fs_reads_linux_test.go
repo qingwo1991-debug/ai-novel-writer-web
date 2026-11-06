@@ -270,20 +270,24 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 	// exercises, and the three fs:grant-* names are bound by the browser grant
 	// batch (production_fs_grants_linux.go), whose own file proves the allowlist
 	// that replaces the desktop's native picker.
-	// fs:list-dir left this list when the portability lane bound it through the
-	// editor navigation family with a confined provider; fs:write-json stays,
-	// because its only caller writes the .ai-novel marker and no other caller
-	// exists to justify a general write.
+	// fs:write-json left this list the same way fs:list-dir did: the lane now binds
+	// it with the same confinement the reads here prove, and its own file asserts the
+	// refusals (production_fs_write_json_linux_test.go). What this file still proves
+	// is that the two names cannot be answered by an empty call: an unbound name is a
+	// 501 and a bound one is an argument error, and neither is allowed to look like a
+	// successful write.
 	for _, operation := range []string{
 		"fs:write-json",
 	} {
 		operation := operation
-		t.Run("unbound/"+operation, func(t *testing.T) {
+		t.Run("not-answerable-empty/"+operation, func(t *testing.T) {
 			response := author.call(t, operation, []any{})
-			if response.Code != http.StatusNotImplemented ||
-				!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-				t.Fatalf("%s is bound in the production lane but must stay fail-closed: %d %s",
-					operation, response.Code, response.Body.String())
+			if response.Code == http.StatusOK {
+				t.Fatalf("%s answered an empty call: %s", operation, response.Body.String())
+			}
+			if response.Code == http.StatusNotImplemented &&
+				strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+				t.Fatalf("%s is unbound, which the served lane must not answer", operation)
 			}
 		})
 	}
