@@ -82,7 +82,7 @@ func TestProductionLegacyRosterServesTheSource(t *testing.T) {
  (relationship_id, source_character_id, target_character_id, relation,
   source_display_snapshot, target_display_snapshot, provenance_json, approval_id)
  VALUES ('ci-relationship-1', 'ci-character-1', 'ci-character-0-retired', 'mentor',
-         '甲', '乙', '{"origin":"author"}', NULL)`},
+         '甲', '乙', '{"origin":"author"}', '')`},
 		// A writing language that is not the default, so resolveWritingLanguage is
 		// exercised by a value instead of by its fallback.
 		{Query: "UPDATE project_core SET writing_language='en-US' WHERE id='main'"},

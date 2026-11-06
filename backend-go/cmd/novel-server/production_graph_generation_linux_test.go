@@ -141,7 +141,7 @@ func TestProductionLaneServesGraphGenerationRead(t *testing.T) {
 			"rootActionId": "graph-generation-absent-root",
 			"runId":        "graph-generation-absent-run",
 		},
-	}, lane.frozen}, "GENERATION_RUN_NOT_FOUND")
+	}, lane.frozen}, "GENERATION_RUN_MISSING")
 	// Another project's handle carries this session's lease and real run ids, and is
 	// still refused: the binding, not the id alone, is what the read trusts.
 	productionGraphGenerationRefusal(t, lane, "another project's handle", productionGraphGenerationRead, []any{map[string]any{
@@ -151,7 +151,7 @@ func TestProductionLaneServesGraphGenerationRead(t *testing.T) {
 			"rootActionId": handle["rootActionId"],
 			"runId":        handle["runId"],
 		},
-	}, lane.frozen}, "GENERATION_RUN_NOT_FOUND")
+	}, lane.frozen}, "GENERATION_RUN_MISSING")
 	// A run of another kind has no graph context to project, and is refused with the
 	// context code rather than answered as a plan.
 	productionGraphGenerationRefusal(t, lane, "a draft run", productionGraphGenerationRead,
