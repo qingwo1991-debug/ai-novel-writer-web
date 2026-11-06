@@ -557,8 +557,12 @@ func productionFinalizedCharacterCommitSeedWith(t *testing.T, projectPath string
 	}
 	// The baseline creates no roster singleton, and the projection refresh can only
 	// bump one that exists (character_state_candidates.go:639-641).
+	// An upsert, not an INSERT: another fixture in this package may already own the
+	// roster singleton, and a plain INSERT would then fail the seed on a UNIQUE
+	// constraint before the code under test ran at all.
 	productionFinalizedCharacterExec(t, db, `INSERT INTO character_roster_meta(id,schema_version,revision,
- migration_state,legacy_markdown,projection_hash,fact_hash) VALUES('main',1,?,'ready','','','')`,
+ migration_state,legacy_markdown,projection_hash,fact_hash) VALUES('main',1,?,'ready','','','')
+ ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, migration_state=excluded.migration_state`,
 		productionFinalizedCharacterCommitRosterRevision)
 	var revision int64
 	productionStoryStateWriteScan(t, db, "SELECT revision FROM character_roster_meta WHERE id='main'", nil, &revision)
