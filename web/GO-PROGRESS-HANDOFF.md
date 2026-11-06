@@ -4,6 +4,29 @@ Written at a deliberate stopping point (the user asked to wrap up this phase, pu
 everything, and resume later). Everything below is committed and pushed; `main` is
 CI-green. Nothing here claims the migration is complete.
 
+## Live state (updated at 158 served)
+
+- `main` is green at **158 served** (`4208fb91`). `productionServedOperations`
+  is the only source of truth; every batch edits it in the same commit as its
+  binder, or `TestProductionLaneServedOperationCount` fails.
+- Bind lines all go into the one slice in `production_open_linux.go`; append the
+  new entry immediately after the family it belongs to and say in a comment what
+  the batch proves and what it deliberately leaves unbound.
+- The newest ports, all landed and green: `character_state_candidates.go` (1168),
+  `finalized_chapter_deletion.go` (1299), `finalized_draft_import.go` (1057),
+  `finalized_character_commit.go` (1208), `characterstate/state_response.go`,
+  and adapters for each. Read the sibling adapter in the same family before
+  writing a new one; the pattern (arity, frozen three-key context, scope from the
+  lease, ONE mapping layer) is identical everywhere and every deviation so far
+  has been a bug.
+- In flight when this line was written: `finalized-character:commit` adapter,
+  `llm:test-connection` + `llm:discover-models` (the settings screen cannot
+  validate a model without them), and the four `review-revision:*` names (store
+  already existed; suspected adapter-only).
+- `llm:generate` / `generate-stream` being unbound does NOT block writing:
+  generation runs through `generation:execute` and the egress plan in
+  `production_model_egress_linux.go`. Do not "fix" it by binding `llm:generate`.
+
 ## START HERE (next session, cold start)
 
 State: durable lane serves **64 of 281** operations over real HTTP, `main` is CI-green at
