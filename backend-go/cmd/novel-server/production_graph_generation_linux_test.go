@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -142,23 +143,53 @@ func TestProductionLaneServesGraphGenerationRead(t *testing.T) {
 			"runId":        "graph-generation-absent-run",
 		},
 	}, lane.frozen}, "GENERATION_RUN_MISSING")
-	// Another project's handle carries this session's lease and real run ids, and is
-	// still refused: the binding, not the id alone, is what the read trusts.
-	productionGraphGenerationRefusal(t, lane, "another project's handle", productionGraphGenerationRead, []any{map[string]any{
-		"handle": map[string]any{
-			"projectId":    productionGraphReadsForeignProjectID,
-			"epoch":        lane.frozen["leaseId"],
-			"rootActionId": handle["rootActionId"],
-			"runId":        handle["runId"],
-		},
-	}, lane.frozen}, "GENERATION_RUN_MISSING")
+	// The two fixtures must not share an identity, or an arm below could pass because the
+	// values happened to coincide rather than because the fence compared them.
+	if syntheticString(lane.frozen["projectId"]) == productionGraphReadsForeignProjectID ||
+		syntheticString(lane.frozen["leaseId"]) == productionGraphReadsFrozenEpoch {
+		t.Fatalf("the fixture's identities coincide: this lane holds project %v epoch %v, the other project is %v epoch %v",
+			lane.frozen["projectId"], lane.frozen["leaseId"], productionGraphReadsForeignProjectID, productionGraphReadsFrozenEpoch)
+	}
+	// The identity of the handle is fenced on its own, one field at a time, against
+	// values that belong to the other project's fixture rows: its id and its epoch. The
+	// run ids stay this project's on purpose - that is what makes these arms about the
+	// handle's identity rather than about a run this lane does not hold, and it is the
+	// honest form of the question, because a browser can only hold a handle it was given.
+	productionGraphGenerationIdentityRefused(t, lane, "another project's handle", map[string]any{
+		"projectId":    productionGraphReadsForeignProjectID,
+		"epoch":        lane.frozen["leaseId"],
+		"rootActionId": handle["rootActionId"],
+		"runId":        handle["runId"],
+	})
+	productionGraphGenerationIdentityRefused(t, lane, "another project's epoch", map[string]any{
+		"projectId":    lane.frozen["projectId"],
+		"epoch":        productionGraphReadsFrozenEpoch,
+		"rootActionId": handle["rootActionId"],
+		"runId":        handle["runId"],
+	})
+	productionGraphGenerationIdentityRefused(t, lane, "another project's handle and epoch", map[string]any{
+		"projectId":    productionGraphReadsForeignProjectID,
+		"epoch":        productionGraphReadsFrozenEpoch,
+		"rootActionId": handle["rootActionId"],
+		"runId":        handle["runId"],
+	})
 	// A run of another kind has no graph context to project, and is refused with the
 	// context code rather than answered as a plan.
 	productionGraphGenerationRefusal(t, lane, "a draft run", productionGraphGenerationRead,
 		[]any{map[string]any{"handle": draft}, lane.frozen}, "GENERATION_GRAPH_CONTEXT_INVALID")
-	// A lease this session no longer holds never reaches the projection.
+	// A lease this session no longer holds never reaches the projection. The handle is
+	// the one that lease would have frozen, which is the only handle such a client can
+	// hold: the fence above therefore passes it through and the answer is the lease
+	// refusal, not an identity one - the precedence the original has, where the session
+	// is asserted before the handle (electron/services/main-generation-owner.ts:1206-1210).
+	stale := lane.stale()
 	productionEditorRefused(t, lane.author, "stale lease", productionGraphGenerationRead,
-		[]any{map[string]any{"handle": handle}, lane.stale()})
+		[]any{map[string]any{"handle": map[string]any{
+			"projectId":    stale["projectId"],
+			"epoch":        stale["leaseId"],
+			"rootActionId": handle["rootActionId"],
+			"runId":        handle["runId"],
+		}}, stale})
 	// The family request is `{ handle }` and nothing else.
 	productionGraphGenerationRefusal(t, lane, "an extra request key", productionGraphGenerationRead,
 		[]any{map[string]any{"handle": handle, "artifact": nil}, lane.frozen}, "GENERATION_GRAPH_REQUEST_INVALID")
@@ -298,6 +329,49 @@ func productionGraphGenerationRefusal(t *testing.T, lane *productionGenerationWr
 	}
 	if body.Error.Code != code {
 		t.Fatalf("%s: %v refused with %s, want %s: %s", label, operation, body.Error.Code, code, response.Body.String())
+	}
+}
+
+// productionGraphGenerationIdentity asserts the handle fence refuses one identity
+// violation before the lane resolves anything. The failure message prints the three facts
+// that separate a fixture mistake from a cross-project read - the handle that was asked
+// for, the project the answer says its run belongs to, and the project the caller is
+// actually in - so the next reader does not have to reconstruct them from the fixture.
+func productionGraphGenerationIdentityRefused(t *testing.T, lane *productionGenerationWriteLane, label string, handle map[string]any) {
+	t.Helper()
+	asked := fmt.Sprintf("projectId %v epoch %v rootActionId %v runId %v",
+		handle["projectId"], handle["epoch"], handle["rootActionId"], handle["runId"])
+	caller := syntheticString(lane.frozen["projectId"])
+	response := lane.author.call(t, productionGraphGenerationRead,
+		[]any{map[string]any{"handle": handle}, lane.frozen})
+	if response.Code == http.StatusOK {
+		var body struct {
+			Result struct {
+				View    map[string]any `json:"view"`
+				Context map[string]any `json:"context"`
+			} `json:"result"`
+		}
+		answered := ""
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err == nil {
+			answered = syntheticString(syntheticMap(body.Result.Context)["projectId"])
+			if answered == "" {
+				answered = syntheticString(syntheticMap(syntheticMap(body.Result.View["handle"]))["projectId"])
+			}
+		}
+		t.Fatalf("%s: the read answered a handle it does not own - asked %s; the answer belongs to project %v; the caller is project %v: %s",
+			label, asked, answered, caller, response.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%s: asked %s, caller project %v: %v: %s", label, asked, caller, err, response.Body.String())
+	}
+	if body.Error.Code != "GENERATION_RUN_IDENTITY_MISMATCH" {
+		t.Fatalf("%s: asked %s, caller project %v, refused with %s, want GENERATION_RUN_IDENTITY_MISMATCH: %s",
+			label, asked, caller, body.Error.Code, response.Body.String())
 	}
 }
 

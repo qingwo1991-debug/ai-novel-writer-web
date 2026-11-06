@@ -66,6 +66,21 @@ import (
 // language and compares their digest with the frozen one instead of assuming they did
 // not move.
 //
+// The handle is fenced before the lane resolves it: exactly four identity keys, the
+// caller's project and the epoch the session holds, or the answer is
+// GENERATION_RUN_IDENTITY_MISMATCH (productionGraphGenerationIdentity, mirroring
+// electron/services/graph-generation.ts:25-30). This is not the isolation itself - the
+// ledger the lane opens is the caller's own database, so another project's rows are
+// unreachable by id in the first place - but a handle is the browser's, and without this
+// fence one naming another book still resolves by run id inside this one and comes back
+// projected - the renderer would refuse that answer client-side
+// (src/services/graph-generation.ts:47-51), but only after the server had already
+// projected a run for a handle it never issued. The fence
+// runs here, before the lane re-admits the session, so a caller whose lease is stale and
+// whose handle is its own still gets the session refusal: that is the only handle such a
+// client holds, and the original asserts the session before the handle
+// (electron/services/main-generation-owner.ts:1206-1210).
+//
 // The projection still omits two browser fields, and both stay omitted for the reason
 // its own documentation gives (synthetic_graph_linux.go:41-50): effects can only exist
 // once a confirmation is bound, and artifact/result can only be projected by qualifying
@@ -214,6 +229,12 @@ func (g *productionGraphGeneration) Bind(server *transport.Server) error {
 		if err != nil {
 			return productionGraphReadFailure(err)
 		}
+		// The handle's identity is fenced against the frozen session before the lane
+		// resolves it, which is the order the original uses
+		// (electron/services/graph-generation.ts:25-30).
+		if err := productionGraphGenerationIdentity(handle, expected); err != nil {
+			return productionGraphReadFailure(err)
+		}
 		if ctx == nil {
 			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
 		}
@@ -238,6 +259,40 @@ func productionGraphGenerationHandleRequest(value any) (any, error) {
 		return nil, errors.New("GENERATION_GRAPH_REQUEST_INVALID")
 	}
 	return handle, nil
+}
+
+// productionGraphGenerationIdentity is the handle fence, and it is the one the original
+// applies in GraphGeneration.require (electron/services/graph-generation.ts:25-30): the
+// handle is exactly four keys, its project is the browser's project, and its epoch is the
+// epoch that run was frozen under. A violation is GENERATION_RUN_IDENTITY_MISMATCH, the
+// same code the composition lane's read uses for the same check
+// (production_composition_linux.go:458).
+//
+// This is not redundant with the lane's own admission. That admission proves the stored
+// run against the live lease, which is what stops another project's rows from being
+// reached at all - the ledger is opened on the caller's own database. What it does not
+// do is compare the handle with that scope, and the handle is the browser's: without
+// this fence a handle whose projectId and epoch name another book still resolves by run
+// id inside this book and comes back projected, so the caller learns that a handle it
+// was never given is answerable. Refusing it here is also what makes the answer's own
+// handle trustworthy, since the projection echoes the handle it was asked about.
+func productionGraphGenerationIdentity(handle any, expected map[string]any) error {
+	object := syntheticMap(handle)
+	if object == nil {
+		return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+	}
+	for key := range object {
+		switch key {
+		case "projectId", "epoch", "rootActionId", "runId":
+		default:
+			return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+		}
+	}
+	if syntheticString(object["projectId"]) != syntheticString(expected["projectId"]) ||
+		syntheticString(object["epoch"]) != syntheticString(expected["leaseId"]) {
+		return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+	}
+	return nil
 }
 
 // productionGraphGenerationLine is one declaration a served or refused name depends on:
@@ -285,6 +340,10 @@ func productionGraphGenerationServed() []productionGraphGenerationLine {
 		{
 			Path:   "../../../src/shared/graph-generation.ts", Line: 42, Marker: "'graph-generation:read': { args: [{ handle: MainGenerationRunHandle }]; return: GraphGenerationRecovery }",
 			Note:   "the wire shape the browser sends and the type it decodes",
+		},
+		{
+			Path:   "../../../electron/services/graph-generation.ts", Line: 25, Marker: "require(handle: MainGenerationRunHandle): DurableGenerationRun {",
+			Note:   "the handle fence this binder applies: four keys, the browser's project, the run's epoch",
 		},
 		{
 			Path: "synthetic_graph_linux.go", Line: 45, Marker: "effects: graph effects are recorded by confirmation, which is unbound.",

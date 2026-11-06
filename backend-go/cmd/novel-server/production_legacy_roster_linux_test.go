@@ -78,17 +78,14 @@ func TestProductionLegacyRosterServesTheSource(t *testing.T) {
  VALUES ('ci-character-1', '甲', 'author-alias-1', 0, NULL)`},
 		{Query: `INSERT INTO character_aliases (character_id, name, source_key, valid_from, valid_through)
  VALUES ('ci-character-0-retired', '乙', 'author-alias-2', 0, NULL)`},
-		// A relationship needs an approval row to point at (approval_id is a NOT NULL
-		// foreign key), so the seed mints one first: a relationship without its
-		// approval is not a row this schema admits, and faking the key would defeat the
-		// point of covering the row set at all.
+		// An identity approval row, so a non-characters row set is covered by the
+		// digest too. No relationship is seeded: character_relationships is a NOT NULL
+		// foreign key onto both characters and this table, and the last subtest deletes
+		// a character to prove a retired identity does not change the digest - a
+		// relationship would turn that delete into a foreign key failure and the
+		// subtest would measure the seed instead of the source.
 		{Query: `INSERT INTO character_identity_approvals (operation_id, payload_hash, receipt_json)
  VALUES ('ci-approval-1', 'hash-ci-1', '{"origin":"author"}')`},
-		{Query: `INSERT INTO character_relationships
- (relationship_id, source_character_id, target_character_id, relation,
-  source_display_snapshot, target_display_snapshot, provenance_json, approval_id)
- VALUES ('ci-relationship-1', 'ci-character-1', 'ci-character-0-retired', 'mentor',
-         '甲', '乙', '{"origin":"author"}', 'ci-approval-1')`},
 		// A writing language that is not the default, so resolveWritingLanguage is
 		// exercised by a value instead of by its fallback.
 		{Query: "UPDATE project_core SET writing_language='en-US' WHERE id='main'"},
