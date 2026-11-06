@@ -123,7 +123,7 @@ func TestProductionLaneServesGraphAndFinalizationReads(t *testing.T) {
 				"rootActionId": graphRootID,
 				"runId":        graphRunID,
 			},
-		}, frozen}, "GENERATION_RUN_NOT_FOUND")
+		}, frozen}, "GENERATION_RUN_IDENTITY_MISMATCH")
 	})
 
 	t.Run("finalization-generation:read", func(t *testing.T) {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -14,6 +15,13 @@ import (
 // and fail when a cited declaration has moved. It is deliberately a plain read
 // rather than an AST walk: the markers are declaration prefixes and the point is
 // that the file still says what the record claims, in the place it claims it.
+//
+// The line number is a hint, not the assertion. The workflow formats the Go source
+// in place before it runs these tests (`gofmt -w ./cmd ./internal`,
+// .github/workflows/go-backend.yml:56 and :445), which rebreaks lines and shifts
+// every citation below it; a record that demanded the exact number would fail on a
+// file that still says exactly what it claims. Use productionResidualSourceClaims
+// to assert a declaration, and this function only to report where it now sits.
 func productionResidualSourceLine(path string, line int) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -24,6 +32,26 @@ func productionResidualSourceLine(path string, line int) (string, error) {
 		return "", &productionResidualLineError{Path: path, Line: line, Total: len(lines)}
 	}
 	return strings.TrimSpace(lines[line-1]), nil
+}
+
+// productionResidualSourceClaims reports whether a file still contains a cited
+// declaration anywhere, ignoring white space, and names the line the record cites
+// when it does not. Formatting must not be able to fail it; a moved or edited
+// declaration must.
+func productionResidualSourceClaims(path string, line int, marker string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if productionSeamContains(string(raw), marker) {
+		return nil
+	}
+	reported, lineErr := productionResidualSourceLine(path, line)
+	if lineErr != nil {
+		return lineErr
+	}
+	return errors.New(path + " no longer carries " + marker + "; line " +
+		strconv.Itoa(line) + " now reads " + reported)
 }
 
 // productionResidualLineError says which file ran out of lines, without quoting any
@@ -62,13 +90,8 @@ func productionResidualSeams(t *testing.T, family string, seams []productionInli
 				strings.TrimSpace(port.Because) == "" {
 				t.Fatalf("%s cites an incomplete port for %v", family, seam.Operation)
 			}
-			found, err := productionResidualSourceLine(port.Path, port.Line)
-			if err != nil {
-				t.Fatalf("%s cites %v: %v", family, port.Path, err)
-			}
-			if !strings.Contains(found, port.Marker) {
-				t.Fatalf("%s cites %v line %v for %v, but that line no longer carries it",
-					family, port.Path, port.Line, port.Marker)
+			if err := productionResidualSourceClaims(port.Path, port.Line, port.Marker); err != nil {
+				t.Fatalf("%s cites it: %v", family, err)
 			}
 		}
 	}
@@ -166,4 +189,22 @@ func TestProductionResidualBoundNames(t *testing.T) {
 			t.Fatalf("%v is bound, but this record says it cannot answer yet", seam.Operation)
 		}
 	}
+}
+
+// productionResidualSourceLineOf returns the first line of a file that carries a
+// marker, ignoring white space, so a citation survives the formatter without
+// losing the line-scoped assertions that make it precise: a record can still say
+// "this declaration takes a database and not a transaction" about the line the
+// declaration is on, wherever the formatter has moved it.
+func productionResidualSourceLineOf(path, marker string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if productionSeamContains(line, marker) {
+			return strings.TrimSpace(line), nil
+		}
+	}
+	return "", errors.New(path + " no longer carries " + marker)
 }

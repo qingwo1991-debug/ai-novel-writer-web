@@ -183,6 +183,12 @@ func TestProductionLegacyRosterServesTheSource(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read the seeded source: %v", err)
 		}
+		// The alias references the character (character_aliases.character_id is a
+		// foreign key), so it goes first: this subtest is about the source's view of a
+		// retired identity, not about what the schema allows to be orphaned.
+		if _, err := db.Exec("DELETE FROM character_aliases WHERE character_id='ci-character-0-retired'"); err != nil {
+			t.Fatalf("remove the retired identity's alias: %v", err)
+		}
 		if _, err := db.Exec("DELETE FROM characters WHERE character_id='ci-character-0-retired'"); err != nil {
 			t.Fatalf("remove the retired identity: %v", err)
 		}

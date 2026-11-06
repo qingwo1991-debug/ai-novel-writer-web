@@ -56,8 +56,16 @@ func TestProductionLaneServedOperationCount(t *testing.T) {
 		}
 	}
 	sort.Strings(unserved)
-	t.Logf("%d served, %d unserved; unserved=%s",
-		len(served), len(unserved), strings.Join(unserved, ","))
+	// Logged in chunks because the workflow truncates a long log line, and a
+	// truncated list is the same problem as no list.
+	t.Logf("%d served, %d unserved", len(served), len(unserved))
+	for start := 0; start < len(unserved); start += 6 {
+		end := start + 6
+		if end > len(unserved) {
+			end = len(unserved)
+		}
+		t.Logf("unserved %v-%v: %s", start+1, end, strings.Join(unserved[start:end], ","))
+	}
 	if len(served) != productionServedOperations {
 		t.Fatalf("%d of %d inventoried operations are served (productionServedOperations=%d); served=%s",
 			len(served), len(registry.Operations), productionServedOperations, strings.Join(served, ","))

@@ -61,13 +61,8 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 				seam.Operation, len(seam.Missing))
 		}
 		for _, port := range seam.Missing {
-			found, err := productionResidualSourceLine(port.Path, port.Line)
-			if err != nil {
-				t.Fatalf("%v cites %v: %v", seam.Operation, port.Path, err)
-			}
-			if !strings.Contains(found, port.Marker) {
-				t.Fatalf("%v cites %v line %v for %v, but that line no longer carries it",
-					seam.Operation, port.Path, port.Line, port.Marker)
+			if err := productionResidualSourceClaims(port.Path, port.Line, port.Marker); err != nil {
+				t.Fatalf("%v cites it: %v", seam.Operation, err)
 			}
 		}
 	}
@@ -75,13 +70,12 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 	// adapter cannot compose the receipt and the projection itself. Assert the
 	// receiver and the method name as the file spells them, so exporting it (or
 	// moving it) is a test failure rather than a silent change of facts.
-	immediate, err := productionResidualSourceLine("../../internal/store/reviewrevision.go", 41)
+	immediate, err := productionResidualSourceLineOf("../../internal/store/reviewrevision.go", "*ReviewRevisions) immediate(")
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	if !strings.Contains(immediate, "*ReviewRevisions) immediate(") ||
-		strings.Contains(immediate, "*ReviewRevisions) Immediate(") {
-		t.Fatalf("internal/store/reviewrevision.go:41 no longer declares the unexported immediate handle")
+	if strings.Contains(immediate, "*ReviewRevisions) Immediate(") {
+		t.Fatalf("internal/store/reviewrevision.go now exports the immediate handle, so this record's claim needs re-reading")
 	}
 	// The two halves of this family take a database, never a transaction: this is
 	// what "cannot compose in one transaction" means concretely.
@@ -93,27 +87,20 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 		{"production_character_proposals_linux.go", 1667, "db *sql.DB"},
 		{"production_character_proposals_linux.go", 1762, "db *sql.DB"},
 	} {
-		found, err := productionResidualSourceLine(arm.path, arm.line)
+		found, err := productionResidualSourceLineOf(arm.path, arm.marker)
 		if err != nil {
-			t.Fatalf("%v", err)
-		}
-		if !strings.Contains(found, arm.marker) {
-			t.Fatalf("%v line %v no longer takes a database, so the record's claim needs re-reading",
-				arm.path, arm.line)
+			t.Fatalf("%v no longer takes a database, so the record's claim needs re-reading: %v",
+				arm.path, err)
 		}
 		if strings.Contains(found, "*sql.Tx") {
-			t.Fatalf("%v line %v now takes a transaction: this name can be composed and served",
-				arm.path, arm.line)
+			t.Fatalf("%v now takes a transaction: this name can be composed and served",
+				arm.path)
 		}
 	}
 	// The pattern that would fix it already exists next door, which is what makes
 	// the gap a missing twin rather than an unknown design.
-	twin, err := productionResidualSourceLine("../../internal/store/finalized_character_context.go", 210)
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	if !strings.Contains(twin, "tx *sql.Tx") {
-		t.Fatalf("internal/store/finalized_character_context.go:210 is no longer the *sql.Tx twin the record points at")
+	if _, err := productionResidualSourceLineOf("../../internal/store/finalized_character_context.go", "tx *sql.Tx"); err != nil {
+		t.Fatalf("the *sql.Tx twin the record points at is gone: %v", err)
 	}
 	// The family's own table is untouched by this record and still refuses the same
 	// two names, so the sharpened text and the published seam cannot disagree.
