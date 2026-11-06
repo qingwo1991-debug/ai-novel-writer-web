@@ -892,7 +892,7 @@ func (c *productionCharacterProposals) approve(ctx context.Context, db *sql.DB, 
 				Fields:       productionCharacterProposalFieldList(item.Fields),
 			})
 		case productionCharacterProposalActionMap:
-			existing := productionCharacterProposalExistingID(characters, selection.CharacterID)
+			existing := productionCharacterProposalLookupExisting(characters, selection.CharacterID)
 			if existing == nil {
 				return nil, store.ErrCharacterIDUnknown
 			}
@@ -1481,9 +1481,11 @@ func productionCharacterProposalAdoptedFields(item characterproposal.Fields, exi
 	return adopted
 }
 
-// productionCharacterProposalExistingID is the map selection's lookup (:258): the
-// id must name a live character, and a missing id can never match one.
-func productionCharacterProposalExistingID(characters []productionCharacterProposalExisting, characterID *string) *productionCharacterProposalExisting {
+// productionCharacterProposalLookupExisting is the map selection's lookup (:258): the
+// id must name a live character, and a missing id can never match one. The entries are
+// the roster this approval read a moment earlier, and a retired row is never adoptable
+// however well its id matches.
+func productionCharacterProposalLookupExisting(characters []productionCharacterProposalExisting, characterID *string) *productionCharacterProposalExisting {
 	if characterID == nil {
 		return nil
 	}
@@ -2279,7 +2281,7 @@ func productionCharacterProposalOperations() []string {
 // not serve.
 func productionCharacterProposalPendingSeams() []productionCharacterProposalSeam {
 	proof := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 1798,
+		Path: "production_character_proposals_linux.go", Line: 1800,
 		Marker: "productionCharacterProposalSourceProofUnavailable",
 	}
 	stage := productionCharacterProposalSeamLine{
@@ -2295,7 +2297,7 @@ func productionCharacterProposalPendingSeams() []productionCharacterProposalSeam
 		Marker: "import_global_fact_operations",
 	}
 	read := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 1665,
+		Path: "production_character_proposals_linux.go", Line: 1667,
 		Marker: "func productionCharacterProposalReadEnvelope(",
 	}
 	return []productionCharacterProposalSeam{

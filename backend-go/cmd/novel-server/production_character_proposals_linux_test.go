@@ -73,11 +73,12 @@ const (
 	productionCharacterProposalNameTwo   = "白露"
 	productionCharacterProposalNameThree = "程守"
 
-	// productionCharacterProposalExistingID is the identity a `map` selection adopts.
-	// It is seeded with one alias and no field values, so every proposed field is
-	// adopted.
-	productionCharacterProposalExistingID        = "ci-character-existing"
-	productionCharacterProposalExistingSourceKey = "roster:seed"
+	// productionCharacterProposalExistingCharacterID is the identity a `map` selection
+	// adopts. It is seeded with one alias and no field values, so every proposed field
+	// is adopted. The lane's own lookup is productionCharacterProposalLookupExisting:
+	// an id and a reader are two different names.
+	productionCharacterProposalExistingCharacterID = "ci-character-existing"
+	productionCharacterProposalExistingSourceKey   = "roster:seed"
 
 	// productionCharacterProposalAppearance is the one field the tests read back: it
 	// is the manifest's free text for the protagonist, carried through the parser and
@@ -462,13 +463,13 @@ func testProductionCharacterProposalMap(t *testing.T) {
 	}
 	if batch.Items[0].Resolution.Status != "unresolved" ||
 		len(batch.Items[0].Resolution.CandidateIDs) != 1 ||
-		batch.Items[0].Resolution.CandidateIDs[0] != productionCharacterProposalExistingID {
+		batch.Items[0].Resolution.CandidateIDs[0] != productionCharacterProposalExistingCharacterID {
 		t.Fatalf("the protagonist resolved to %v, want the one unexpected candidate", batch.Items[0].Resolution)
 	}
 	approved := productionCharacterProposalApprove(t, lane, batch.ProposalBatchID, 0, productionCharacterProposalMapID,
 		[]any{
 			map[string]any{"selectionKey": productionCharacterProposalSlotOne, "action": productionCharacterProposalActionMap,
-				"characterId": productionCharacterProposalExistingID},
+				"characterId": productionCharacterProposalExistingCharacterID},
 			productionCharacterProposalCreate(productionCharacterProposalSlotTwo),
 			map[string]any{"selectionKey": productionCharacterProposalSlotThree, "action": productionCharacterProposalActionKeep},
 		})
@@ -480,7 +481,7 @@ func testProductionCharacterProposalMap(t *testing.T) {
 	var appearance, location, name string
 	productionStoryStateWriteScan(t, productionStoryStateWriteReadback(t, lane.projectPath),
 		"SELECT appearance,cs_location,name FROM characters WHERE character_id=?",
-		[]any{productionCharacterProposalExistingID}, &appearance, &location, &name)
+		[]any{productionCharacterProposalExistingCharacterID}, &appearance, &location, &name)
 	if name != productionCharacterProposalNameOne || appearance != productionCharacterProposalAppearance {
 		t.Fatalf("the mapped identity is %v/%v, want the adopted appearance on the seeded name", name, appearance)
 	}
@@ -1013,9 +1014,9 @@ func productionCharacterProposalSeed(t *testing.T, projectPath, manifest, detail
 		// in.
 		statements = append(statements,
 			`INSERT INTO characters (character_id, name, role, retired, static_provenance)
- VALUES ('`+productionCharacterProposalExistingID+`', '`+productionCharacterProposalNameOne+`', 'protagonist', 0, '{}')`,
+ VALUES ('`+productionCharacterProposalExistingCharacterID+`', '`+productionCharacterProposalNameOne+`', 'protagonist', 0, '{}')`,
 			`INSERT INTO character_aliases (character_id, name, source_key, valid_from)
- VALUES ('`+productionCharacterProposalExistingID+`', '`+productionCharacterProposalNameOne+`', '`+
+ VALUES ('`+productionCharacterProposalExistingCharacterID+`', '`+productionCharacterProposalNameOne+`', '`+
 				productionCharacterProposalExistingSourceKey+`', 0)`)
 	}
 	for _, statement := range statements {
