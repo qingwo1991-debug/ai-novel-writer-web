@@ -5,6 +5,7 @@ package main
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -41,6 +42,22 @@ func TestProductionLaneServedOperationCount(t *testing.T) {
 	// Count first so a truncated annotation still carries the number, names last
 	// and comma separated so one CI run reports the whole truth without a second
 	// compile and without any per-family list pinned in this file.
+	// The unserved list is logged on every run, not only on a mismatch: the next
+	// pass has to know which names are left without recounting by hand, and a
+	// hand-kept list is the thing this test exists to replace.
+	bound := make(map[string]bool, len(served))
+	for _, name := range served {
+		bound[name] = true
+	}
+	var unserved []string
+	for name := range registry.Operations {
+		if !bound[name] {
+			unserved = append(unserved, name)
+		}
+	}
+	sort.Strings(unserved)
+	t.Logf("%d served, %d unserved; unserved=%s",
+		len(served), len(unserved), strings.Join(unserved, ","))
 	if len(served) != productionServedOperations {
 		t.Fatalf("%d of %d inventoried operations are served (productionServedOperations=%d); served=%s",
 			len(served), len(registry.Operations), productionServedOperations, strings.Join(served, ","))
