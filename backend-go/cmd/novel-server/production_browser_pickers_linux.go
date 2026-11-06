@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/librarypath"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/promptskills"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -519,21 +520,32 @@ func (p *productionBrowserPickers) pickOperation(ctx context.Context, caller tra
 	if operation == productionPickerFolderName && query.Purpose == productionPickerPurposeOpen {
 		creates = false
 	}
-	if spec.directory {
-		if target.Exists && !target.IsDir {
-			// A name that is not a directory cannot answer a directory pick, and
-			// silently walking into its parent would answer a different question.
-			return nil, productionPickerRefusal(librarypath.ErrPathNotDirectory)
-		}
-		if !target.Exists && !creates {
-			return nil, productionPickerRefusal(fs.ErrNotExist)
-		}
+	// The two forms disagree on purpose. A directory name is refused when it is a
+	// file, because a directory pick cannot answer with a file and walking into
+	// its parent would answer a different question; a file-form name is allowed to
+	// resolve to a directory, because `dialog:select-project-archive` is one name
+	// for two steps - pick the archive, or browse to it (ipc-channels.ts:503).
+	// Existence is the one rule both forms share: a name that is not there is
+	// PICKER_NOT_FOUND for a file pick and for a browse alike, unless this name may
+	// create it (creates), in which case the answer says so instead of inventing a
+	// listing.
+	if spec.directory && target.Exists && !target.IsDir {
+		return nil, productionPickerRefusal(librarypath.ErrPathNotDirectory)
+	}
+	if !target.Exists && !creates {
+		return nil, productionPickerRefusal(fs.ErrNotExist)
 	}
 	// A write-capable pick is an OUTPUT pick. It is refused here, before the mint,
-	// when the named directory is a project tree, so a page never holds a grant
-	// that could write author data (librarypath/io.go requireOutput).
+	// so a page never holds a grant that could write author data
+	// (librarypath/io.go:198-209 requireOutput). The check runs on this path and
+	// not at spend time on purpose: the refusal has to reach the picker, which is
+	// the only place the author can be told why.
 	if spec.ops.Permits(librarypath.OpWrite) {
-		if err := productionPickerOutputTarget(roots, target); err != nil {
+		authors, authorErr := p.authorPaths(ctx)
+		if authorErr != nil {
+			return nil, productionPickerRefusal(authorErr)
+		}
+		if err := productionPickerOutputTarget(roots, target, authors); err != nil {
 			return nil, productionPickerRefusal(err)
 		}
 	}
@@ -571,7 +583,9 @@ func (p *productionBrowserPickers) pickOperation(ctx context.Context, caller tra
 		"rootId":       target.RootID,
 		"relativePath": target.Relative,
 		"identity":     productionPickerIdentity(target),
-		"kind":         productionPickerKind(target),
+		"kind":         productionPickerKind(target, spec),
+		"exists":       target.Exists,
+		"creatable":    !target.Exists && creates,
 		"entries":      entries,
 		"truncated":    truncated,
 		"maxEntries":   maxEntries,
@@ -613,20 +627,70 @@ func productionPickerIdentity(target librarypath.Target) string {
 	return target.RootID + "/" + target.Relative
 }
 
-// productionPickerKind names what the answer resolved to.
-func productionPickerKind(target librarypath.Target) string {
-	if target.IsDir {
+// productionPickerKind names what the answer resolved to. A name that does not
+// exist yet is classified by the request form and not by the failed stat: an
+// unborn export directory is a directory the caller may create, and answering
+// "file" would tell the renderer to draw it as one. `exists` and `creatable` carry
+// the rest of the truth, so the page never has to infer a directory from a zero
+// entry count.
+func productionPickerKind(target librarypath.Target, spec productionPickerSpec) string {
+	if target.Exists {
+		if target.IsDir {
+			return "directory"
+		}
+		return "file"
+	}
+	if spec.directory {
 		return "directory"
 	}
 	return "file"
 }
 
+// authorPaths is every project tree this lane admitted: the author data a
+// write-capable pick may never name, whether or not that project is open. It is the
+// same inventory /api/library serves, read from the startup admission this process
+// already holds, so a project tree that keeps its manifest under the hidden storage
+// directory is still recognised: no allowlist resolution can address that
+// component, and a probe of the visible names alone would miss every real project.
+func (p *productionBrowserPickers) authorPaths(ctx context.Context) ([]string, error) {
+	if p == nil || p.open == nil {
+		return nil, librarypath.ErrPathUnavailable
+	}
+	listed, err := p.open.ListCanonicalProjects(ctx, projectfs.MaxLibraryEntries)
+	if err != nil {
+		return nil, err
+	}
+	authors := make([]string, 0, len(listed))
+	for _, item := range listed {
+		if item.Path != "" {
+			authors = append(authors, item.Path)
+		}
+	}
+	return authors, nil
+}
+
+// productionPickerInside reports whether one canonical path is the other or sits
+// beneath it. Both are absolute and cleaned, so a string prefix with a separator
+// is the whole test.
+func productionPickerInside(path, parent string) bool {
+	if path == "" || parent == "" {
+		return false
+	}
+	return path == parent || strings.HasPrefix(path, parent+"/")
+}
+
 // productionPickerOutputTarget refuses a write-capable pick whose target is author
-// data: a project root, or any directory holding a project manifest. It reads one
-// name through the same allowlist and writes nothing.
-func productionPickerOutputTarget(roots librarypath.Roots, target librarypath.Target) error {
+// data: the project root itself, a directory inside an admitted project tree, or a
+// directory holding a project manifest. It reads one name through the same
+// allowlist, reads no author file and writes nothing.
+func productionPickerOutputTarget(roots librarypath.Roots, target librarypath.Target, authors []string) error {
 	if target.Kind == librarypath.KindProject {
 		return librarypath.ErrAuthorData
+	}
+	for _, author := range authors {
+		if productionPickerInside(target.Path, author) {
+			return librarypath.ErrAuthorData
+		}
 	}
 	probe := librarypath.ProjectManifestName
 	if target.Relative != "" {
@@ -635,7 +699,8 @@ func productionPickerOutputTarget(roots librarypath.Roots, target librarypath.Ta
 	marker, err := roots.Resolve(target.RootID, probe)
 	if err != nil {
 		// A name the allowlist will not even resolve cannot be a project marker.
-		// Not knowing is not a claim that it is one, so the pick stands.
+		// Not knowing is not a claim that it is one, so the pick stands: the
+		// admitted-project check above is what covers a real project tree.
 		return nil
 	}
 	if marker.Exists {

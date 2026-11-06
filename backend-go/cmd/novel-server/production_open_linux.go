@@ -681,6 +681,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindGenerationReads(newProductionGenerationReads(open.durable)) },
 		func() error { return newProductionBatchReads(open.durable).Bind(server) },
 		func() error { return bindProductionFinalizationGeneration(server) },
+		// The eight agent-generation names install nothing: each one needs a port this
+		// lane does not have (an agent-context prompt renderer, a tool-manifest dispatch,
+		// a receipt patch outside settle), and the seam table plus its test hold each one
+		// to a named refusal rather than a half-served run
+		// (production_agent_generation_linux.go, internal/agentgen).
+		func() error { return bindProductionAgentGeneration(server) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
 		// llm:test-connection and llm:discover-models: the two names the settings

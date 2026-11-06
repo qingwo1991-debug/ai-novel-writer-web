@@ -36,6 +36,7 @@ const (
 	productionPickerFixtureOutside   = "outside-secret.txt"
 	productionPickerFixtureOutside2  = "sealed outside bytes no picker may serve"
 	productionPickerFixtureMissing   = "尚未存在的书"
+	productionPickerFixtureManifest  = "旧项目"
 	productionPickerFixtureUploadA   = "upload-author-1"
 	productionPickerFixtureUploadB   = "upload-author-2"
 	productionPickerFixtureFolderA   = "folder-author-1"
@@ -67,6 +68,8 @@ type productionPickerAnswer struct {
 	RelativePath  string                  `json:"relativePath"`
 	Identity      string                  `json:"identity"`
 	Kind          string                  `json:"kind"`
+	Exists        bool                    `json:"exists"`
+	Creatable     bool                    `json:"creatable"`
 	Path          string                  `json:"path"`
 	Truncated     bool                    `json:"truncated"`
 	MaxEntries    int                     `json:"maxEntries"`
@@ -212,21 +215,25 @@ func newProductionPickerFixture(t *testing.T) *productionPickerFixture {
 		filepath.Join(fixture.library, productionPickerFixtureBook),
 		filepath.Join(fixture.library, productionPickerFixtureOutput),
 		filepath.Join(fixture.library, "素材"),
+		filepath.Join(fixture.library, productionPickerFixtureManifest),
 		fixture.outside,
 	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatalf("create %v: %v", directory, err)
 		}
 	}
-	for path, body := range map[string]string{
-		filepath.Join(fixture.library, productionPickerFixtureBook, productionPickerFixtureChapter): productionPickerFixtureChapter2,
-		filepath.Join(fixture.library, productionPickerFixtureBook, "第二章.md"):                        productionPickerFixtureChapter2,
-		filepath.Join(fixture.library, productionPickerFixtureArchive):                              productionPickerFixtureArchive2,
-		filepath.Join(fixture.library, "素材", "世界观.md"):                                            productionPickerFixtureNotes,
-		filepath.Join(fixture.outside, productionPickerFixtureOutside):                              productionPickerFixtureOutside2,
+	// One file per line, as pairs rather than a map: the seeding order then cannot
+	// matter and no alignment column has to be kept in step with a longer path.
+	for _, seed := range []struct{ path, body string }{
+		{filepath.Join(fixture.library, productionPickerFixtureBook, productionPickerFixtureChapter), productionPickerFixtureChapter2},
+		{filepath.Join(fixture.library, productionPickerFixtureBook, "第二章.md"), productionPickerFixtureChapter2},
+		{filepath.Join(fixture.library, productionPickerFixtureArchive), productionPickerFixtureArchive2},
+		{filepath.Join(fixture.library, "素材", "世界观.md"), productionPickerFixtureNotes},
+		{filepath.Join(fixture.library, productionPickerFixtureManifest, librarypath.ProjectManifestName), "{}"},
+		{filepath.Join(fixture.outside, productionPickerFixtureOutside), productionPickerFixtureOutside2},
 	} {
-		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-			t.Fatalf("seed %v: %v", path, err)
+		if err := os.WriteFile(seed.path, []byte(seed.body), 0o600); err != nil {
+			t.Fatalf("seed %v: %v", seed.path, err)
 		}
 	}
 	// A link inside the library that points out of it: the escape every picker has
@@ -488,6 +495,9 @@ func TestProductionBrowserPickersAnswerChooserQueries(t *testing.T) {
 		if answer.DisplayName != productionPickerFixtureBook {
 			t.Fatalf("the display name is %v; want %v", answer.DisplayName, productionPickerFixtureBook)
 		}
+		if !answer.Exists || answer.Creatable {
+			t.Fatalf("an existing book says exists=%v creatable=%v; want exists=true creatable=false", answer.Exists, answer.Creatable)
+		}
 	})
 
 	t.Run("select-folder-creates-a-new-book-name", func(t *testing.T) {
@@ -496,8 +506,16 @@ func TestProductionBrowserPickersAnswerChooserQueries(t *testing.T) {
 			"relativePath": productionPickerFixtureMissing,
 			"purpose":      productionPickerPurposeCreate,
 		}}).answer(t)
-		if len(answer.Entries) != 0 || answer.Kind != "directory" {
-			t.Fatalf("a new book name answered %v entries as %v; want an empty directory", len(answer.Entries), answer.Kind)
+		// An unborn name is classified by the request form, not by the failed stat:
+		// the answer says it may be created instead of claiming it is a file.
+		if answer.Kind != "directory" {
+			t.Fatalf("a new book name answered as %v; want the directory the caller may create", answer.Kind)
+		}
+		if answer.Exists || !answer.Creatable {
+			t.Fatalf("a new book name says exists=%v creatable=%v; want exists=false creatable=true", answer.Exists, answer.Creatable)
+		}
+		if len(answer.Entries) != 0 || answer.Truncated {
+			t.Fatalf("a new book name answered %v entries (truncated %v); want an empty listing", len(answer.Entries), answer.Truncated)
 		}
 	})
 
@@ -667,9 +685,32 @@ func TestProductionBrowserPickersRefuseWithoutWriting(t *testing.T) {
 		fixture.refused(t, fixture.author, productionPickerExportName, "the admitted project root", []any{map[string]any{
 			"rootId": librarypath.ProjectRootID,
 		}}, http.StatusForbidden, productionPickerAuthorDataCode)
-		fixture.refused(t, fixture.author, productionPickerExportName, "a library directory holding a project manifest", []any{map[string]any{
-			"rootId": librarypath.LibraryRootID, "relativePath": productionDurableProjectName,
+		// The real production project tree: its manifest sits under the hidden
+		// storage directory, so no allowlist resolution can address it. It is
+		// refused because this lane admitted it as a project, open or not.
+		fixture.refused(t, fixture.author, productionPickerExportName, "an admitted project tree", []any{map[string]any{
+			"rootId":       librarypath.LibraryRootID,
+			"relativePath": productionDurableProjectName,
 		}}, http.StatusForbidden, productionPickerAuthorDataCode)
+		// And a directory holding the marker at the name the detector probes,
+		// which this lane never admitted: the visible check has to stand alone.
+		fixture.refused(t, fixture.author, productionPickerExportName, "a directory holding a project manifest", []any{map[string]any{
+			"rootId":       librarypath.LibraryRootID,
+			"relativePath": productionPickerFixtureManifest,
+		}}, http.StatusForbidden, productionPickerAuthorDataCode)
+		fixture.refused(t, fixture.author, productionPickerArchiveExportName, "a directory holding a project manifest", []any{map[string]any{
+			"rootId":       librarypath.LibraryRootID,
+			"relativePath": productionPickerFixtureManifest,
+		}}, http.StatusForbidden, productionPickerAuthorDataCode)
+		// An output directory that is merely a sibling of a project is fine, so the
+		// refusal is about author data and not about the library.
+		answer := fixture.call(t, fixture.author, productionPickerExportName, []any{map[string]any{
+			"rootId":       librarypath.LibraryRootID,
+			"relativePath": productionPickerFixtureOutput,
+		}}).answer(t)
+		if !strings.HasPrefix(answer.Identity, librarypath.LibraryRootID) {
+			t.Fatalf("the sibling export destination answered %v", answer.Identity)
+		}
 		fixture.refused(t, fixture.author, productionPickerArchiveExportName, "the admitted project root", []any{map[string]any{
 			"rootId": librarypath.ProjectRootID,
 		}}, http.StatusForbidden, productionPickerAuthorDataCode)
