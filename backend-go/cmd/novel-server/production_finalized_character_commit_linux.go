@@ -185,29 +185,32 @@ import (
 // index and the reason beside a bare code, not prose. The handler maps it exactly
 // once, in the table below.
 //
-// # The receipts, and the two keys this lane omits
+// # The receipt, and the occurrences beside it
 //
-// The store's receipt is returned exactly as the store produced it:
-// {applied, unchanged, candidates} in the reference's key order
-// (finalized_character_commit.go:123-131). The reference's own IPC answer spreads
-// two further keys onto it (finalized-character-generation.ts:81): `unresolved`,
-// copied from the proof's parsed response, and `proposalBatchId`, minted by the
-// character-proposal service. This lane adds neither, and not only because the
-// store's receipt has no such member:
+// The receipt's three members are the store's own value, copied and never
+// recomputed: {applied, unchanged, candidates} in the reference's key order
+// (finalized_character_commit.go:123-131).
 //
-//   - `unresolved` is provably empty whenever a receipt exists. The store refuses
-//     the whole commit when the re-parsed answer holds one occurrence
-//     (finalized_character_commit.go:225-228, the reference's :436), so a receipt
-//     can only be the answer to a response whose every update resolved to a frozen
-//     character. A key that is always [] is not a fact this lane has to invent.
-//   - `proposalBatchId` names a proposal batch from a service with no Go port (no
-//     file in this module names CharacterProposalService), and the reference only
-//     sets it for an answer that still carried a nameless occurrence
-//     (finalized-character-generation.ts:79-80) - which the refusal above excludes.
+// The fourth member is one the reference composes and this lane has to publish
+// too. `commit` answers { ...receipt, unresolved: proof.response.unresolved }
+// (finalized-character-generation.ts:79-81), and the wire type declares that member
+// as required (src/shared/finalized-character-generation.ts:16-19). It is not
+// always empty, and this is the case that makes the distinction load-bearing: an
+// occurrence that names a character with no frozen identity - or no identity at all
+// but a name - is retained by the parse and never becomes an update
+// (finalized-continuity.ts:213-223). `updates` can therefore be empty while
+// `unresolved` holds the occurrence, and the store's re-parse only ever sees
+// `updates` (finalized_character_commit.go:795-808, the reference's :435), so the
+// commit writes nothing and answers {applied: 0, unchanged: 0, candidates: []} -
+// exactly as the reference does. Omitting the key would answer a body the declared
+// return type cannot describe, so this file spells it out: characterstate.Occurrence
+// is the parser's private decode and carries no wire tags, so the eight camelCase
+// keys are written here in the reference's order (:149-158).
 //
-// So the answer is the store value, and a caller reads {applied, unchanged,
-// candidates} from it. Reshaping it into the desktop envelope would be inventing
-// two facts this lane cannot prove.
+// `proposalBatchId` is the one key this lane leaves out: it names a batch from a
+// service with no Go port (no file in this module names CharacterProposalService),
+// and the reference sets it only when some occurrence still carried a display name
+// (finalized-character-generation.ts:79-80).
 //
 // originProjectId is the empty string: the reference passes
 // `this.transferOrigin()` (:77), which is the main-verified authority of a
@@ -304,8 +307,12 @@ var productionFinalizedCharacterCommitStoreRefusals = [...]struct {
 	// summary-repository.ts:433-434 the frozen identity is no longer what the
 	// caller holds, or :447 a frozen field snapshot does not hash to its value.
 	{store.ErrFinalizedCharacterContextChanged, "FINALIZED_CHARACTER_CONTEXT_CHANGED"},
-	// summary-repository.ts:436 an answer with an occurrence that resolved to no
-	// frozen character, and :227 the same code from the candidate normalizer.
+	// summary-repository.ts:436 the re-parse of `updates` (:435) came back with an
+	// occurrence it could not resolve. A parsed answer cannot reach it - every entry
+	// of `updates` already resolved against this same context, and an occurrence
+	// that did not resolve was never added to `updates` (:213-223) - so this entry
+	// names a store value the served path cannot trigger, mapped so no store refusal
+	// is ever published under the unmapped-failure code.
 	{store.ErrFinalizedCharacterIdentityRequired, "FINALIZED_CHARACTER_IDENTITY_REQUIRED"},
 	// summary-repository.ts:452 decideDerivedPatch answered source-conflict.
 	{store.ErrFinalizedCharacterSourceConflict, "FINALIZED_CHARACTER_SOURCE_CONFLICT"},
@@ -468,26 +475,26 @@ func productionFinalizedCharacterCommitRefusal() error {
 // place that turns them into wire codes, so a caller can still ask errors.Is which
 // refusal it was.
 func productionFinalizedCharacterCommitStates(ctx context.Context, db *sql.DB, draftID int64, content string,
-	scope store.FinalizedCharacterScope) (*store.FinalizedCharacterStateCommitReceipt, error) {
+	scope store.FinalizedCharacterScope) (productionFinalizedCharacterCommitReceipt, error) {
 	// One read-only transaction, opened and committed by the store itself
 	// (finalized_character_context.go:185-204). The result is the same value
 	// `finalized-character:read-context` serves, so the commit and the read can
 	// never prove two different sources.
 	frozen, err := store.NewFinalizedCharacters(db).ReadContext(ctx, draftID, scope)
 	if err != nil {
-		return nil, err
+		return productionFinalizedCharacterCommitReceipt{}, err
 	}
 	if frozen == nil {
 		// ReadContext refuses instead of answering nothing; a nil context here is
 		// the fail-closed half-borrow shape, not an empty edition.
-		return nil, errors.New(productionFinalizedCharacterRequestFailed)
+		return productionFinalizedCharacterCommitReceipt{}, errors.New(productionFinalizedCharacterRequestFailed)
 	}
 	// The parser is called with the frozen context this adapter just proved, never
 	// with one derived from the request (state_response.go:298-312).
 	response, err := characterstate.ParseResponse(content,
 		productionFinalizedCharacterCommitParseContext(*frozen))
 	if err != nil {
-		return nil, err
+		return productionFinalizedCharacterCommitReceipt{}, err
 	}
 	// One BEGIN IMMEDIATE, opened and committed by the store itself
 	// (finalized_character_commit.go:189-201). It re-reads this same context as its
@@ -495,14 +502,82 @@ func productionFinalizedCharacterCommitStates(ctx context.Context, db *sql.DB, d
 	// be split by another writer.
 	receipt, err := store.NewFinalizedCharacters(db).CommitFinalizedCharacterStates(ctx, *frozen, response, "")
 	if err != nil {
-		return nil, err
+		return productionFinalizedCharacterCommitReceipt{}, err
 	}
 	if receipt == nil {
 		// The store answers a receipt or a refusal; a nil receipt would be a write
 		// this lane cannot account for.
-		return nil, errors.New(productionFinalizedCharacterRequestFailed)
+		return productionFinalizedCharacterCommitReceipt{}, errors.New(productionFinalizedCharacterRequestFailed)
 	}
-	return receipt, nil
+	// :79-81 { ...receipt, unresolved: proof.response.unresolved }: the store's three
+	// counts, unchanged, beside the occurrences its own re-parse cannot see.
+	return productionFinalizedCharacterCommitReceipt{
+		Applied:    receipt.Applied,
+		Unchanged:  receipt.Unchanged,
+		Candidates: receipt.Candidates,
+		Unresolved: productionFinalizedCharacterCommitUnresolved(response.Unresolved),
+	}, nil
+}
+
+// productionFinalizedCharacterCommitReceipt is FinalizedCharacterGenerationReceipt
+// (src/shared/finalized-character-generation.ts:16-19): the store's receipt in the
+// reference's key order, followed by the occurrences the parse could not resolve.
+type productionFinalizedCharacterCommitReceipt struct {
+	Applied    int64                                          `json:"applied"`
+	Unchanged  int64                                          `json:"unchanged"`
+	Candidates []store.FinalizedCharacterStateCandidate       `json:"candidates"`
+	Unresolved []productionFinalizedCharacterCommitOccurrence `json:"unresolved"`
+}
+
+// productionFinalizedCharacterCommitOccurrence is FinalizedCharacterStateOccurrence
+// (src/shared/finalized-continuity.ts:149-158) on the wire. characterstate.Occurrence
+// is the parser's private decode of one model occurrence and carries no wire tags,
+// so the eight keys are spelled here, in the reference's order and with its names.
+// The nested evidence is re-tagged for the same reason: {start, end, text} is what
+// the reference publishes, and the parser's own struct has no tags at all.
+type productionFinalizedCharacterCommitOccurrence struct {
+	SelectionKey string                                     `json:"selectionKey"`
+	DisplayName  string                                     `json:"displayName"`
+	OriginalText string                                     `json:"originalText"`
+	CandidateIDs []string                                   `json:"candidateIds"`
+	CurrentState characterstate.Values                      `json:"currentState"`
+	Evidence     productionFinalizedCharacterCommitEvidence `json:"evidence"`
+	RawValue     any                                        `json:"rawValue"`
+	Reason       string                                     `json:"reason"`
+}
+
+// productionFinalizedCharacterCommitEvidence is FinalizedCharacterEvidence
+// (src/shared/finalized-continuity.ts:113-117).
+type productionFinalizedCharacterCommitEvidence struct {
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Text  string `json:"text"`
+}
+
+// productionFinalizedCharacterCommitUnresolved converts the parser's occurrences
+// into their wire shape. The result is always a list, never nil, because the
+// reference always spreads an array (:181 initialises both lists).
+func productionFinalizedCharacterCommitUnresolved(
+	occurrences []characterstate.Occurrence) []productionFinalizedCharacterCommitOccurrence {
+	unresolved := make([]productionFinalizedCharacterCommitOccurrence, 0, len(occurrences))
+	for _, occurrence := range occurrences {
+		candidates := occurrence.CandidateIDs
+		if candidates == nil {
+			candidates = []string{}
+		}
+		unresolved = append(unresolved, productionFinalizedCharacterCommitOccurrence{
+			SelectionKey: occurrence.SelectionKey,
+			DisplayName:  occurrence.DisplayName,
+			OriginalText: occurrence.OriginalText,
+			CandidateIDs: candidates,
+			CurrentState: occurrence.CurrentState,
+			Evidence: productionFinalizedCharacterCommitEvidence{Start: occurrence.Evidence.Start,
+				End: occurrence.Evidence.End, Text: occurrence.Evidence.Text},
+			RawValue: occurrence.RawValue,
+			Reason:   occurrence.Reason,
+		})
+	}
+	return unresolved
 }
 
 // productionFinalizedCharacterCommitParseContext is the adapter's conversion of the

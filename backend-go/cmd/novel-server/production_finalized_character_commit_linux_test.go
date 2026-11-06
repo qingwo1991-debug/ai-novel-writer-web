@@ -25,6 +25,8 @@ import (
 //	                         make true
 //	the parser's refusal     a refused answer names the parser's code and writes
 //	                         nothing at all
+//	the unresolved identity  an unknown id is kept unresolved, not refused, and
+//	                         writes nothing at all
 //	the superseded source    a store refusal on the served path, byte-stable
 //	the missing lease        a write that refuses symbolically instead of writing
 //	the unreadable body      the commit's own allowlist, and the read's draft guard
@@ -102,6 +104,7 @@ func TestProductionFinalizedCharacterCommitServesTheRosterWrite(t *testing.T) {
 	t.Run("stages an author-protected field", testProductionFinalizedCharacterCommitStaged)
 	t.Run("parses a fenced json answer", testProductionFinalizedCharacterCommitFenced)
 	t.Run("refuses an answer the parser refuses", testProductionFinalizedCharacterCommitParseRefusal)
+	t.Run("keeps an unknown id unresolved without writing", testProductionFinalizedCharacterCommitUnresolved)
 	t.Run("refuses a superseded frozen source", testProductionFinalizedCharacterCommitSourceRefusal)
 	t.Run("refuses without a live project lease", testProductionFinalizedCharacterCommitLease)
 	t.Run("refuses a body it cannot read", testProductionFinalizedCharacterCommitBodyRefusal)
@@ -133,6 +136,11 @@ func testProductionFinalizedCharacterCommitApplied(t *testing.T) {
 	}
 	if receipt.Candidates == nil || len(receipt.Candidates) != 0 {
 		t.Fatalf("receipt candidates = %v, want the empty list the store initialises", receipt.Candidates)
+	}
+	// The answer always carries the parse's occurrences; a resolved answer has none,
+	// as a list rather than a null (finalized-character-generation.ts:79-81).
+	if receipt.Unresolved == nil || len(receipt.Unresolved) != 0 {
+		t.Fatalf("receipt unresolved = %v, want the empty list", receipt.Unresolved)
 	}
 	power, provenance := productionFinalizedCharacterCommitProvenance(t, readback)
 	if power != productionFinalizedCharacterCommitAppliedValue {
@@ -301,18 +309,102 @@ func testProductionFinalizedCharacterCommitParseRefusal(t *testing.T) {
 					`":"`+productionFinalizedCharacterCommitAppliedValue+
 					`"},"evidence":{"text":"这段原稿里没有这句话"}}]}`), lane.frozen}),
 		"FINALIZED_CHARACTER_EVIDENCE_NOT_UNIQUE")
-	// An id the frozen context does not hold, with no name to fall back on
-	// (state_response.go:217).
-	productionFinalizedCharacterRefusal(t, "an answer naming an unfrozen character",
+	// An occurrence with neither an id nor a name. This is the only shape that
+	// throws at the parse layer: finalized-continuity.ts:216 refuses when
+	// (!originalText.trim() && !characterId). An id the context does not hold is
+	// NOT this arm - it is retained in `unresolved` and never becomes an update
+	// (:215-223), which the next subtest asserts.
+	productionFinalizedCharacterRefusal(t, "an occurrence with no id and no name",
 		lane.author.call(t, productionFinalizedCharacterCommitName,
 			[]any{productionFinalizedCharacterCommitBody(1,
-				`{"updates":[{"characterId":"not-a-frozen-character","currentState":{"`+
-					productionFinalizedCharacterCommitPowerField+`":"`+
-					productionFinalizedCharacterCommitAppliedValue+`"},"evidence":{"text":"`+
-					productionFinalizedCharacterCommitEvidenceText+`"}}]}`), lane.frozen}),
+				`{"updates":[{"currentState":{"`+productionFinalizedCharacterCommitPowerField+
+					`":"`+productionFinalizedCharacterCommitAppliedValue+
+					`"},"evidence":{"text":"`+productionFinalizedCharacterCommitEvidenceText+
+					`"}}]}`), lane.frozen}),
 		"FINALIZED_CHARACTER_IDENTITY_REQUIRED")
 	if after := lane.bytes(t); !bytes.Equal(before, after) {
 		t.Fatal("a refused answer changed the admitted database")
+	}
+}
+
+// testProductionFinalizedCharacterCommitUnresolved is the reference's actual
+// contract for an answer that names a character no frozen identity answers:
+//
+//	finalized-continuity.ts:215-223
+//	  if (!character || sharedLabel) {
+//	    if (!originalText.trim() && !characterId) throw new Error('FINALIZED_CHARACTER_IDENTITY_REQUIRED')
+//	    result.unresolved.push({ selectionKey: `update:${index}`, displayName: ..., originalText,
+//	      candidateIds: ..., currentState, evidence: exactEvidence, rawValue: structuredClone(input),
+//	      reason: ... characterId ? 'unknown-id' : 'name-only' })
+//	    continue
+//	  }
+//
+// So the parse does not throw, the occurrence never joins `updates`, and the store -
+// which re-parses exactly `updates` (summary-repository.ts:435,
+// finalized_character_commit.go:795-808) - sees an empty answer, writes nothing and
+// answers the empty receipt (:437). The occurrence comes back beside it
+// (finalized-character-generation.ts:79-81), which is what tells the author that the
+// model named a character the freeze does not hold. A 200 here is only honest if the
+// database is byte-identical: an unresolved occurrence was never a write.
+//
+// Do not "fix" this into a refusal: the refusals that do exist are the parse-layer
+// one for an occurrence with no id and no name (:216, asserted above) and the
+// store's own re-parse guard (:436), which a parsed answer can never trigger.
+func testProductionFinalizedCharacterCommitUnresolved(t *testing.T) {
+	lane := productionGenerationWriteOpen(t, nil, productionFinalizedCharacterCommitSeed)
+	before := lane.bytes(t)
+	answer := `{"updates":[{"characterId":"not-a-frozen-character","currentState":{"` +
+		productionFinalizedCharacterCommitPowerField + `":"` + productionFinalizedCharacterCommitAppliedValue +
+		`"},"evidence":{"text":"` + productionFinalizedCharacterCommitEvidenceText + `"}}]}`
+	receipt := productionFinalizedCharacterCommitServe(t, lane, productionFinalizedCharacterCommitBody(1, answer))
+	if receipt.Applied != 0 || receipt.Unchanged != 0 || len(receipt.Candidates) != 0 {
+		t.Fatalf("receipt = %+v, want an empty commit", receipt)
+	}
+	if len(receipt.Unresolved) != 1 {
+		t.Fatalf("receipt unresolved = %v, want the one occurrence the parse retained", receipt.Unresolved)
+	}
+	occurrence := receipt.Unresolved[0]
+	for label, want := range map[string]any{
+		"selectionKey": "update:0",
+		"reason":       "unknown-id",
+		"displayName":  "",
+		"originalText": "",
+	} {
+		if occurrence[label] != want {
+			t.Fatalf("the retained occurrence's %v = %v, want %v", label, occurrence[label], want)
+		}
+	}
+	// candidateIds is a list, empty because nothing in the frozen context matches
+	// the id, the empty name or an alias (:219-221).
+	candidates, ok := occurrence["candidateIds"].([]any)
+	if !ok || len(candidates) != 0 {
+		t.Fatalf("the retained occurrence's candidateIds = %v, want the empty list", occurrence["candidateIds"])
+	}
+	state := productionFinalizedCharacterObject(t, "occurrence.currentState", occurrence["currentState"])
+	if state[productionFinalizedCharacterCommitPowerField] != productionFinalizedCharacterCommitAppliedValue {
+		t.Fatalf("the retained occurrence's currentState = %v, want the model's own", state)
+	}
+	evidence := productionFinalizedCharacterObject(t, "occurrence.evidence", occurrence["evidence"])
+	if evidence["text"] != productionFinalizedCharacterCommitEvidenceText {
+		t.Fatalf("the retained occurrence's evidence = %v, want the model's own quote", evidence)
+	}
+	// rawValue is structuredClone(input) (:221): the update exactly as it was written.
+	raw := productionFinalizedCharacterObject(t, "occurrence.rawValue", occurrence["rawValue"])
+	if raw["characterId"] != "not-a-frozen-character" {
+		t.Fatalf("the retained occurrence's rawValue = %v, want the update as written", raw)
+	}
+	// Nothing was written, and nothing was staged for the author either.
+	if after := lane.bytes(t); !bytes.Equal(before, after) {
+		t.Fatal("an unresolved occurrence changed the admitted database")
+	}
+	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	power, _ := productionFinalizedCharacterCommitProvenance(t, readback)
+	if power != productionFinalizedCharacterPowerLevel {
+		t.Fatalf("cs_power_level = %v, want the untouched %v", power, productionFinalizedCharacterPowerLevel)
+	}
+	staged := productionCharacterStateCandidateStored(t, readback, 1)
+	if len(staged.Pending) != 0 || len(staged.Receipts) != 0 {
+		t.Fatalf("the store holds %v pending and %v receipts, want none", len(staged.Pending), len(staged.Receipts))
 	}
 }
 
@@ -418,14 +510,16 @@ func testProductionFinalizedCharacterCommitBodyRefusal(t *testing.T) {
 	}
 }
 
-// productionFinalizedCharacterCommitReceipt is the receipt on the wire: the store's
-// own three members in the reference's key order
-// (src/shared/finalized-continuity.ts:163-167). Candidates is decoded as a slice so
-// a null answer is visible as nil instead of an empty list.
-type productionFinalizedCharacterCommitReceipt struct {
+// productionFinalizedCharacterCommitServed is the answer on the wire: the store's
+// three counts in the reference's key order (src/shared/finalized-continuity.ts:
+// 163-167) and the parse's occurrences beside them
+// (src/shared/finalized-character-generation.ts:16-19, :79-81). Every list is
+// decoded as a slice so a null is visible as nil instead of an empty list.
+type productionFinalizedCharacterCommitServed struct {
 	Applied    int64            `json:"applied"`
 	Unchanged  int64            `json:"unchanged"`
 	Candidates []map[string]any `json:"candidates"`
+	Unresolved []map[string]any `json:"unresolved"`
 }
 
 // productionFinalizedCharacterCommitBody is the served body: exactly the two keys
@@ -458,9 +552,9 @@ func productionFinalizedCharacterCommitAnswer(t *testing.T, field, value string)
 // productionFinalizedCharacterCommitServe performs one commit under the lane's live
 // lease and decodes the receipt.
 func productionFinalizedCharacterCommitServe(t *testing.T, lane *productionGenerationWriteLane,
-	body map[string]any) productionFinalizedCharacterCommitReceipt {
+	body map[string]any) productionFinalizedCharacterCommitServed {
 	t.Helper()
-	var receipt productionFinalizedCharacterCommitReceipt
+	var receipt productionFinalizedCharacterCommitServed
 	lane.author.decode(t, productionFinalizedCharacterCommitName, []any{body, lane.frozen}, &receipt)
 	return receipt
 }
