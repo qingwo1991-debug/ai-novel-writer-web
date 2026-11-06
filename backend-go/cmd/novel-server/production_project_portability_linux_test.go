@@ -62,14 +62,17 @@ const (
 // six tables the overview reads, plus the two the transfer receipt is made of. It
 // is deliberately NOT the lane's production baseline - what matters is that the
 // export describes the schema it was handed and the restore proves the same schema
-// on the other side.
+// on the other side. project_core still carries the two timestamps every real
+// project has: project:open reads them into the Open DTO, so a fixture that
+// omits them is admitted at startup but can never be opened, and the handler
+// can only answer a redacted PROJECT_OPEN_FAILED.
 var productionPortabilitySchema = []string{
 	"CREATE TABLE blueprints (chapter_number INTEGER)",
 	"CREATE TABLE characters (id INTEGER PRIMARY KEY, retired INTEGER)",
 	"CREATE TABLE contents (id INTEGER PRIMARY KEY, body TEXT)",
 	"CREATE TABLE drafts (id INTEGER PRIMARY KEY, chapter_number INTEGER, version INTEGER, status TEXT, source TEXT, content_id INTEGER, word_count INTEGER, source_dependencies TEXT, created_at TEXT, updated_at TEXT)",
 	"CREATE TABLE finalization_outbox (finalization_id TEXT PRIMARY KEY, draft_id INTEGER, chapter_number INTEGER, content_hash TEXT, content_snapshot TEXT)",
-	"CREATE TABLE project_core (id TEXT PRIMARY KEY, project_name TEXT, genre TEXT, sub_genre TEXT, target_audience TEXT, total_chapters INTEGER, words_per_chapter INTEGER, writing_language TEXT, creative_strategy TEXT, narrative_thread_dormant_threshold INTEGER, plot_structure TEXT, narrative_pov TEXT, writing_style TEXT, reference_works TEXT, global_guidance TEXT, golden_finger TEXT, core_outline TEXT, world_setting TEXT, protagonist_profile TEXT, premise TEXT, worldbuilding TEXT, synopsis TEXT, character_states TEXT, characters_arch TEXT)",
+	"CREATE TABLE project_core (id TEXT PRIMARY KEY, project_name TEXT, genre TEXT, sub_genre TEXT, target_audience TEXT, total_chapters INTEGER, words_per_chapter INTEGER, writing_language TEXT, creative_strategy TEXT, narrative_thread_dormant_threshold INTEGER, plot_structure TEXT, narrative_pov TEXT, writing_style TEXT, reference_works TEXT, global_guidance TEXT, golden_finger TEXT, core_outline TEXT, world_setting TEXT, protagonist_profile TEXT, premise TEXT, worldbuilding TEXT, synopsis TEXT, character_states TEXT, characters_arch TEXT, created_at TEXT, updated_at TEXT)",
 	"CREATE TABLE reviews (id INTEGER PRIMARY KEY, base_draft_id INTEGER)",
 	"CREATE TABLE summary_snapshots (id INTEGER PRIMARY KEY, draft_id INTEGER, chapter_number INTEGER, source_finalization_id TEXT, source_content_hash TEXT, projection_generation INTEGER)",
 }
@@ -221,10 +224,11 @@ func seedProductionPortabilityRows(t *testing.T, projectPath string) {
  total_chapters, words_per_chapter, writing_language, creative_strategy,
  narrative_thread_dormant_threshold, plot_structure, narrative_pov, writing_style,
  reference_works, global_guidance, golden_finger, core_outline, world_setting,
- protagonist_profile, premise, worldbuilding, synopsis, character_states, characters_arch)
+ protagonist_profile, premise, worldbuilding, synopsis, character_states, characters_arch,
+ created_at, updated_at)
  VALUES ('main', '便携之书', '悬疑', '', '成人', 12, 3000, 'zh-CN', 'auto', 3,
  'three_act', 'third_limited', '', '', '', '', '大纲', '世界', '', '前提', '世界观',
- '梗概', '{}', '群像')`, nil},
+ '梗概', '{}', '群像', '2024-05-06 07:08:09', '2024-05-06 07:08:09')`, nil},
 		{`INSERT INTO blueprints (chapter_number) VALUES (1)`, nil},
 		{`INSERT INTO contents (id, body) VALUES (1, ?)`, []any{productionPortabilityFixtureBody}},
 		{`INSERT INTO drafts (id, chapter_number, version, status, source, content_id,
