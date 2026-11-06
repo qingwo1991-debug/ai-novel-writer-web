@@ -341,7 +341,7 @@ func TestProductionLegacyRosterRefusesASourceItCannotName(t *testing.T) {
 		// defence-in-depth over the rows the run reads. It is still the reference's
 		// own code (:54-55), and it still applies to retired rows, which is the part
 		// a filter on active cards would get wrong.
-		root, projectPath, _, _, _ := productionEditorReadsRoot(t)
+		_, projectPath, _, _, _ := productionEditorReadsRoot(t)
 		database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 		productionLegacyRosterSeed(t, database, []productionLegacyRosterStatement{
 			{Query: "INSERT OR REPLACE INTO character_identity_meta (id, revision, legacy_count) VALUES ('main', 0, 0)"},
@@ -364,7 +364,7 @@ func TestProductionLegacyRosterRefusesASourceItCannotName(t *testing.T) {
 	t.Run("both broken answers the earlier guard", func(t *testing.T) {
 		// Ordering is part of the contract: a project that is broken twice must not
 		// answer the deeper code when the reference would never have reached it.
-		root, projectPath, _, _, _ := productionEditorReadsRoot(t)
+		_, projectPath, _, _, _ := productionEditorReadsRoot(t)
 		database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 		productionLegacyRosterSeed(t, database, []productionLegacyRosterStatement{
 			{Query: "DELETE FROM character_roster_meta"},
