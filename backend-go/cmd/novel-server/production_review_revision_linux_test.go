@@ -201,8 +201,17 @@ func testProductionReviewRevisionPrepare(t *testing.T) {
 
 	prepared := productionReviewRevisionPrepareOnce(t, lane, request)
 	frozen := productionReviewRevisionCapture(t, lane.projectPath, projectID, request)
+	// Both sides go through one decoder before they are compared. json.Marshal
+	// echoes a json.RawMessage verbatim, so marshalling the raw frozen text would
+	// compare the producer's key ORDER against a map's sorted keys and fail for a
+	// reason that has nothing to do with the values. The frozen order is compared
+	// where it matters - the hash the run freezes below.
+	var frozenValue map[string]any
+	if err := json.Unmarshal([]byte(frozen.Text), &frozenValue); err != nil {
+		t.Fatalf("the producer's frozen text is not an object: %v", err)
+	}
 	if got, want := productionReviewRevisionCanonical(t, prepared.Context),
-		productionReviewRevisionCanonical(t, json.RawMessage(frozen.Text)); got != want {
+		productionReviewRevisionCanonical(t, frozenValue); got != want {
 		t.Fatalf("the answered context is not the producer's context:\n got %s\nwant %s", got, want)
 	}
 	// The fields the workflow reads back (review-revision-command.ts:104-118).
