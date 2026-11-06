@@ -212,7 +212,7 @@ func productionImportRunResidualSeedRows(t *testing.T, projectPath string, seeds
  resumable, execution_owner, execution_epoch, lease_expires_at, total_chapters, total_content_size)
  VALUES ('%s', '%s', '', 'import:%s:%s', '%s', '%s', '[{"displayName":"门.txt","mediaType":"text/plain","size":37}]',
  'zh-CN', '%s', '%s', %d, '%s', %d, %d, 0, 0)`,
-			seed.ID, seed.Purpose, seed.Purpose, seed.ID, productionImportRunDigest("source:"+seed.ID),
+			seed.ID, seed.Purpose, seed.Purpose, seed.ID, sha256Hex("source:"+seed.ID),
 			productionImportRunResidualZeroFingerprint, seed.Stage, seed.Status, seed.Resumable,
 			seed.ExecutionOwner, seed.ExecutionEpoch, seed.LeaseExpiresAt))
 		for index, source := range seed.Sources {
@@ -225,14 +225,14 @@ func productionImportRunResidualSeedRows(t *testing.T, projectPath string, seeds
  source_id, source_fingerprint, legacy_source_fingerprint, display_json, status, manifest_fingerprint,
  chapter_count, content_size, word_count, last_error)
  VALUES ('%s', %d, '%s', '%s', '', '{"displayName":"门.txt","mediaType":"text/plain","size":37}', '%s', '', %d, %d, %d, '')`,
-				seed.ID, int64(index), source.ID, productionImportRunDigest("source-file:"+source.ID),
+				seed.ID, int64(index), source.ID, sha256Hex("source-file:"+source.ID),
 				source.Status, int64(len(source.Chapters)), size, words))
 			for number, chapter := range source.Chapters {
 				statements = append(statements, fmt.Sprintf(`INSERT INTO import_run_source_chapters (run_id,
  source_id, source_chapter_number, title, content_fingerprint, content_size, word_count, content_snapshot)
  VALUES ('%s', '%s', %d, '%s', '%s', %d, %d, '%s')`,
 					seed.ID, source.ID, int64(number+1), chapter.Title,
-					productionImportRunDigest(chapter.Body), int64(len(chapter.Body)),
+					sha256Hex(chapter.Body), int64(len(chapter.Body)),
 					productionImportRunResidualWords(chapter.Body), chapter.Body))
 			}
 		}
@@ -354,32 +354,7 @@ type productionImportRunResidualFixture struct {
 func newProductionImportRunResidualFixture(t *testing.T, seeds ...productionImportRunResidualSeed) *productionImportRunResidualFixture {
 	t.Helper()
 	projectPath := productionImportRunResidualSeedProject(t, seeds...)
-	root := filepath.Dir(filepath.Dir(projectPath))
-	handler := productionImportRunResidualLane(t, root)
-	author := newProductionDurableClient(t, handler, productionImportRunResidualTab)
-	var opened productionDurableOpenWire
-	author.decode(t, "project:open", []any{projectPath, "import-run-residual-open-1", projectPath}, &opened)
-	if !opened.Success || !opened.DBReady || opened.Error != "" {
-		t.Fatalf("project:open refused the admitted residual project: %+v", opened)
-	}
-	if opened.Project["id"] != productionImportRunResidualProjectID || opened.Project["path"] != projectPath {
-		t.Fatalf("project:open returned the wrong project identity: %v", opened.Project)
-	}
-	lease, _ := opened.Project["sessionLease"].(string)
-	if lease == "" {
-		t.Fatalf("project:open returned no session lease: %v", opened.Project)
-	}
-	return &productionImportRunResidualFixture{
-		t:           t,
-		projectPath: projectPath,
-		database:    filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName),
-		author:      author,
-		frozen: map[string]any{
-			"projectId":   opened.Project["id"],
-			"projectPath": opened.Project["path"],
-			"leaseId":     lease,
-		},
-	}
+	return openProductionImportRunResidualFixture(t, projectPath, "import-run-residual-open-1")
 }
 
 // newProductionImportRunResidualReceiptFixture seeds one running style-stage run and
@@ -394,13 +369,23 @@ func newProductionImportRunResidualReceiptFixture(t *testing.T) *productionImpor
 	})
 	productionImportRunResidualSeedReceipt(t, projectPath, productionImportRunResidualStyleRunID,
 		productionImportRunResidualStyleEpoch)
-	root := filepath.Dir(filepath.Dir(projectPath))
-	handler := productionImportRunResidualLane(t, root)
+	return openProductionImportRunResidualFixture(t, projectPath, "import-run-residual-open-2")
+}
+
+// openProductionImportRunResidualFixture opens the production lane over the seeded
+// data root and opens the seeded project on it, so every call below carries one
+// real session lease instead of a hand-made one.
+func openProductionImportRunResidualFixture(t *testing.T, projectPath, openID string) *productionImportRunResidualFixture {
+	t.Helper()
+	handler := productionImportRunResidualLane(t, filepath.Dir(filepath.Dir(projectPath)))
 	author := newProductionDurableClient(t, handler, productionImportRunResidualTab)
 	var opened productionDurableOpenWire
-	author.decode(t, "project:open", []any{projectPath, "import-run-residual-open-2", projectPath}, &opened)
+	author.decode(t, "project:open", []any{projectPath, openID, projectPath}, &opened)
 	if !opened.Success || !opened.DBReady || opened.Error != "" {
 		t.Fatalf("project:open refused the admitted residual project: %+v", opened)
+	}
+	if opened.Project["id"] != productionImportRunResidualProjectID || opened.Project["path"] != projectPath {
+		t.Fatalf("project:open returned the wrong project identity: %v", opened.Project)
 	}
 	lease, _ := opened.Project["sessionLease"].(string)
 	if lease == "" {
@@ -921,6 +906,23 @@ func TestProductionImportRunResidualsRefuseWithoutALiveLease(t *testing.T) {
 		}
 		if wire.Error.Code == "GO_OPERATION_NOT_MIGRATED" {
 			t.Fatalf("%s is not bound at all: %s", request.operation, response.Body.String())
+		}
+		// The refusal must be the FENCE's own lease code, not a store guard that
+		// happened to reject the row: this test is about admission, and the row facts
+		// below prove nothing moved either.
+		fenced := false
+		for _, code := range []string{
+			"PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_STALE", "PROJECT_SESSION_REQUIRED",
+			"PROJECT_SESSION_CONTEXT_REQUIRED", "PROJECT_NOT_OPEN", "AUTHOR_WRITE_STALE",
+			"PROJECT_HANDLE_CLOSED", "PRODUCTION_CLOSED",
+		} {
+			if wire.Error.Code == code {
+				fenced = true
+			}
+		}
+		if !fenced {
+			t.Fatalf("%s refused a stale lease with %q; want the admission fence's own lease code: %s",
+				request.operation, wire.Error.Code, response.Body.String())
 		}
 		productionImportRunWriteAssertUnchanged(t, f.database, settled,
 			"the unleased "+request.operation)

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -458,7 +459,13 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 			t.Fatalf("the previously opened project reads %q", name)
 		}
 		var reopened productionDurableOpenWire
-		author.decode(t, "project:open", []any{openedPath, "create-open-token-2", openedPath}, &reopened)
+		reopenedResponse := author.call(t, "project:open", []any{openedPath, "create-open-token-2", openedPath})
+		if reopenedResponse.Code != http.StatusOK {
+			t.Fatalf("project:open: %d %s", reopenedResponse.Code, reopenedResponse.Body.String())
+		}
+		if err := json.Unmarshal(reopenedResponse.Body.Bytes(), &reopened); err != nil {
+			t.Fatalf("project:open: %v %s", err, reopenedResponse.Body.String())
+		}
 		if !reopened.Success || !reopened.DBReady {
 			t.Fatalf("project:open stopped working after a create: %+v", reopened)
 		}
@@ -469,8 +476,13 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 		// Comparing the id is the check a caller can actually make, because a
 		// create elsewhere must never change which project the id names.
 		if reopened.Project["id"] != openedProjectID || openedProjectID == "" {
-			t.Fatalf("project:open answered project id %v after a create, want %q: %v",
-				reopened.Project["id"], openedProjectID, reopened.Project)
+			keys := make([]string, 0, len(reopened.Project))
+			for key := range reopened.Project {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			t.Fatalf("project:open answered project id %v after a create, want %q; keys=%v raw=%s",
+				reopened.Project["id"], openedProjectID, keys, reopenedResponse.Body.String())
 		}
 		response := author.call(t, "project:recent-list", []any{})
 		var wire struct {
