@@ -132,7 +132,7 @@ func testProductionFinalizedCharacterCommitApplied(t *testing.T) {
 		t.Fatalf("receipt = %+v, want applied 1 and unchanged 0", receipt)
 	}
 	if receipt.Candidates == nil || len(receipt.Candidates) != 0 {
-		t.Fatalf("receipt candidates = %v, want the empty list :437 writes", receipt.Candidates)
+		t.Fatalf("receipt candidates = %v, want the empty list the store initialises", receipt.Candidates)
 	}
 	power, provenance := productionFinalizedCharacterCommitProvenance(t, readback)
 	if power != productionFinalizedCharacterCommitAppliedValue {
@@ -152,7 +152,8 @@ func testProductionFinalizedCharacterCommitApplied(t *testing.T) {
 		t.Fatalf("the applied field's provenance = %v, want a derived field at revision 3", derived)
 	}
 	frozen := productionFinalizedCharacterObject(t, "provenance.powerLevel.source", derived["source"])
-	for key, want := range productionFinalizedCharacterCommitJSON(t, productionCharacterStateCandidateSourceObject(source)) {
+	expectedSource := productionFinalizedCharacterCommitJSON(t, productionCharacterStateCandidateSourceObject(source))
+	for key, want := range expectedSource {
 		if frozen[key] != want {
 			t.Fatalf("the applied field's source.%v = %v, want %v", key, frozen[key], want)
 		}
@@ -215,7 +216,8 @@ func testProductionFinalizedCharacterCommitStaged(t *testing.T) {
 		}
 	}
 	candidateSource := productionFinalizedCharacterObject(t, "candidate.source", candidate["source"])
-	for label, want := range productionFinalizedCharacterCommitJSON(t, productionCharacterStateCandidateSourceObject(source)) {
+	expectedSource := productionFinalizedCharacterCommitJSON(t, productionCharacterStateCandidateSourceObject(source))
+	for label, want := range expectedSource {
 		if candidateSource[label] != want {
 			t.Fatalf("the staged candidate's source.%v = %v, want %v", label, candidateSource[label], want)
 		}

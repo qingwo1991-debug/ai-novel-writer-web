@@ -678,9 +678,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionFinalizedCharacterReads(open.durable).Bind(server) },
 		// The three character-state candidate names complete the finalization
 		// family's read side: an author sees what the just-finalized chapter wants
-		// to change in the roster, and accepts or declines each field. commit stays
-		// 501 - it needs the state-response parser, which does not exist yet.
+		// to change in the roster, and accepts or declines each field.
 		func() error { return newProductionCharacterStateCandidates(open.durable).Bind(server) },
+		// finalized-character:commit - the write that turns a model's state answer into
+		// roster changes. The parser (internal/characterstate) and the store commit both
+		// landed before this line, so the answer is a transaction, not a restatement.
+		func() error { return newProductionFinalizedCharacterCommit(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 		// The chapter family's four deletion names. The state machine lives in the

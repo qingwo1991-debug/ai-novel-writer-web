@@ -513,7 +513,8 @@ func productionFinalizedCharacterCommitStates(ctx context.Context, db *sql.DB, d
 // field snapshots, the epochs and the projection generation stay behind - the
 // parser reads none of them, and the scope a caller must not forge is exactly what
 // it must not see.
-func productionFinalizedCharacterCommitParseContext(frozen store.FinalizedCharacterContext) characterstate.Context {
+func productionFinalizedCharacterCommitParseContext(
+	frozen store.FinalizedCharacterContext) characterstate.Context {
 	parsed := characterstate.Context{
 		Source:         characterstate.ContextSource{ChapterNumber: frozen.Source.ChapterNumber},
 		Content:        frozen.Content,
