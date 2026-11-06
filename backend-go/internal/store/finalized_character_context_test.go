@@ -136,8 +136,12 @@ func fccDraft(t *testing.T, db *sql.DB, id, chapter, version int64, status, body
 	mustExec(t, db, "INSERT INTO contents(id,body) VALUES(?,?)", id, body)
 	mustExec(t, db, `INSERT INTO drafts(id,chapter_number,version,status,content_id,word_count)
  VALUES(?,?,?,?,?,?)`, id, chapter, version, status, id, len(body))
-	source := FinalizedCharacterSourceIdentity{DraftID: id, ChapterNumber: chapter,
-		FinalizationID: finalizationID, ContentHash: summaryHash(body)}
+	source := FinalizedCharacterSourceIdentity{
+		DraftID:        id,
+		ChapterNumber:  chapter,
+		FinalizationID: finalizationID,
+		ContentHash:    summaryHash(body),
+	}
 	if finalizationID == "" {
 		return source
 	}

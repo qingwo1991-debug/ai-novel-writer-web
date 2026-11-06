@@ -129,14 +129,14 @@ type FinalizedCharacterContextCharacter struct {
 // (:416-419). Characters is always a list; an absent freeze receipt is not an
 // error, it is IdentityStatus legacy with IdentityRevision 0.
 type FinalizedCharacterContext struct {
-	ProjectID            string                             `json:"projectId"`
-	Epoch                string                             `json:"epoch"`
-	Source               FinalizedCharacterSourceIdentity   `json:"source"`
-	Content              string                             `json:"content"`
-	ProjectionGeneration int64                              `json:"projectionGeneration"`
-	IdentityRevision     int64                              `json:"identityRevision"`
-	IdentityStatus       string                             `json:"identityStatus"`
-	SourceOrder          FinalizedCharacterSourceOrder      `json:"sourceOrder"`
+	ProjectID            string                               `json:"projectId"`
+	Epoch                string                               `json:"epoch"`
+	Source               FinalizedCharacterSourceIdentity     `json:"source"`
+	Content              string                               `json:"content"`
+	ProjectionGeneration int64                                `json:"projectionGeneration"`
+	IdentityRevision     int64                                `json:"identityRevision"`
+	IdentityStatus       string                               `json:"identityStatus"`
+	SourceOrder          FinalizedCharacterSourceOrder        `json:"sourceOrder"`
 	Characters           []FinalizedCharacterContextCharacter `json:"characters"`
 }
 
@@ -472,7 +472,7 @@ func finalizedCharacterReadFrozen(ctx context.Context, q rrQueryer, source Final
 			return nil, ErrSummaryCharacterSnapshotInvalid
 		}
 		seen[id] = true
-		name, nameOK := item["displayNameSnapshot"].(string) // typeof ... === 'string'
+		name, nameOK := item["displayNameSnapshot"].(string)  // typeof ... === 'string'
 		aliases, aliasesOK := item["aliases"].([]any)         // !Array.isArray(item.aliases)
 		if !nameOK || !aliasesOK {
 			return nil, ErrSummaryCharacterSnapshotInvalid
@@ -532,7 +532,8 @@ func finalizedCharacterActiveRow(ctx context.Context, q rrQueryer, characterID s
 // object the way the reference's literals are. A missing stored payload key stays
 // absent: the reference would carry an explicit undefined, which Go cannot hold,
 // and no writer in this repo stores a derived provenance without its source
-// (character_roster_author.go:650-652).
+// (character_roster_author.go:1028-1033 refuses one), nor an author provenance
+// without its chapter (character_roster_author.go:1022-1027).
 func finalizedCharacterFieldProvenance(stored map[string]any) map[string]any {
 	kind, _ := stored["kind"].(string)
 	switch kind {
