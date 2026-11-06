@@ -636,6 +636,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return bindProductionFinalizationGeneration(server) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
+		// llm:test-connection and llm:discover-models: the two names the settings
+		// screen needs before an author can trust a model. They dispatch through the
+		// same egress plan the generation executor uses, and the credential is
+		// registered as a secret before the first request, so neither the key nor a
+		// provider body can reach the browser.
+		func() error { return newProductionLLMProbe(open).Bind(server) },
 		func() error { return server.BindSummary(open.durable) },
 		func() error { return server.BindPostHistoryReads(open.durable) },
 		func() error { return server.BindPlotTreeReads(open.durable) },

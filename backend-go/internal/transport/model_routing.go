@@ -16,12 +16,17 @@ import (
 // a single-document write of config.json, so this family needs neither the
 // administrator egress policy nor a generation lease.
 //
-// The execution family deliberately stays unbound. llm:generate,
-// llm:generate-stream and llm:test-connection only take effect through a live
-// provider round trip, llm:discover-models only through an outbound /models
-// request, llm:cancel only against a stream this lane cannot start, and the two
+// Most of the execution family stays unbound here. llm:generate and
+// llm:generate-stream take effect through a live provider round trip,
+// llm:cancel only against a stream this lane cannot start, and the two
 // execution-lease names only through an in-flight lease registry no bound
-// operation here can populate. Binding them would mean inventing a provider.
+// operation here can populate.
+//
+// llm:test-connection and llm:discover-models are the exception and are bound
+// elsewhere (cmd/novel-server/production_llm_probe_linux.go): they need exactly
+// the pieces this lane already owns - the administrator egress policy, the
+// sealed credential store and one outbound request - so binding them invents no
+// provider. They are not bound here because this binder has no egress plan.
 func (s *Server) BindModelRouting(models *globalconfig.Service, startup *globalconfig.Startup) error {
 	handlers, err := modelRoutingHandlers(models, startup)
 	if err != nil {
