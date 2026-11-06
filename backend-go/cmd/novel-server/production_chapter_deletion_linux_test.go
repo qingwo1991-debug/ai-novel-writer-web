@@ -174,11 +174,15 @@ func productionChapterDeletionSeed(options productionChapterDeletionSeedOptions)
 			productionChapterDeletionChapter, productionChapterDeletionTitle,
 			productionGenerationWriteHash(productionChapterDeletionBody),
 			productionChapterDeletionBody, options.targetFileName, options.knowledgeDocumentID)
-		// The projection generation the deletion has to invalidate. INSERT first:
-		// the baseline creates this table empty, so a bare UPDATE would write
-		// nothing and the post-delete assertion would pass for the wrong reason.
+		// The projection generation the deletion has to invalidate. It is written
+		// as an upsert rather than as a bare UPDATE or OR IGNORE: the baseline
+		// creates this table empty, so an UPDATE alone would write nothing, and
+		// another fixture in this package may already have created the singleton
+		// row with generation 0, which OR IGNORE would silently keep. The readback
+		// below is what makes that a caught fact instead of an assumption.
 		productionFinalizedCharacterExec(t, db,
-			"INSERT OR IGNORE INTO continuity_projection_meta(id, generation) VALUES('main', ?)",
+			"INSERT INTO continuity_projection_meta(id, generation) VALUES('main', ?) "+
+				"ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",
 			productionChapterDeletionGeneration)
 		var generation int64
 		productionStoryStateWriteScan(t, db,
