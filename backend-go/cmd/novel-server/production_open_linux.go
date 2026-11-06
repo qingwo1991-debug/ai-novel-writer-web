@@ -727,6 +727,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// roster changes. The parser (internal/characterstate) and the store commit both
 		// landed before this line, so the answer is a transaction, not a restatement.
 		func() error { return newProductionFinalizedCharacterCommit(open.durable).Bind(server) },
+		// character-proposal:stage / :read / :approve / :cancel - the architecture
+		// path that turns a model's roster answer into characters. Stage writes one
+		// proposal row and no roster row; approve is the only writer
+		// (production_character_proposals_linux.go, internal/characterproposal).
+		func() error { return newProductionCharacterProposals(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 		// The chapter family's four deletion names. The state machine lives in the
