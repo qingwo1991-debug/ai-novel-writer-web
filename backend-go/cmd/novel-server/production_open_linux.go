@@ -489,6 +489,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
+	// One knowledge bridge for the ten served names of that family: the import
+	// binder owns the per-project gate the document and search binders reuse, so a
+	// single admission decision covers all of them.
+	knowledge := newProductionKnowledgeImports(open.durable)
 	// The draft surface, in three disjoint binders: the eight live draft reads,
 	// the single full-body CAS save, and the three self-contained author
 	// mutations (create, update-status, delete). Nothing here overlaps the
@@ -625,6 +629,15 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// editor-inline:read-recovery and editor-inline:cancel are the two halves of
+		// the CodeMirror inline assist this lane can honestly serve: a ledger read and
+		// a stop, neither of which dials a provider. begin and execute stay unbound
+		// because the builtin edit_selected_text prompt and the dispatch authority the
+		// contract assumes do not exist here (production_editor_inline_linux.go).
+		if bindErr := newProductionEditorInline(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
@@ -707,17 +720,24 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// store (internal/store/finalized_chapter_deletion.go); this binder owns the
 		// two halves the store deliberately left to the adapter: the manuscript
 		// verdict, and the portable-runtime freeze. A knowledge-base document can be
-		// written in this lane (production_knowledge_import_linux.go), but removing
-		// one is kb:remove-document, which is still unserved, so a deletion reports
-		// its knowledge projection as still pending rather than claiming a cleanup
-		// it never performed.
+		// written (production_knowledge_import_linux.go) and removed
+		// (production_knowledge_documents_linux.go), but this deletion binder does not
+		// reach for the index: it reports the knowledge projection as still pending
+		// rather than claiming a cleanup it did not perform in its own transaction.
 		func() error { return newProductionChapterDeletions(open.durable).Bind(server) },
 		// kb:import-text and kb:import-finalized-text are the two names 终稿 calls
 		// before it can succeed (finalize-chapter.command.ts:130-135). They commit a
 		// canonical FTS-only document into the knowledge copy the served readers
 		// already decode, and link the finalization, without ever claiming a vector
 		// index this lane cannot write (production_knowledge_import_linux.go).
-		func() error { return newProductionKnowledgeImports(open.durable).Bind(server) },
+		func() error { return knowledge.Bind(server) },
+		// The document half and the search half of the same family, sharing the
+		// import binder's per-project gate so one admission decision covers all ten
+		// names (production_knowledge_documents_linux.go,
+		// production_knowledge_search_linux.go). kb:search-writing-context and
+		// kb:search-with-scope are what the draft and import workflows actually call.
+		func() error { return newProductionKnowledgeDocumentsFrom(knowledge).Bind(server) },
+		func() error { return newProductionKnowledgeSearchesFrom(knowledge).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
