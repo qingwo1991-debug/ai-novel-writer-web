@@ -201,6 +201,16 @@ func fdiInt(t *testing.T, row map[string]any, column string) int64 {
 
 // fdiDigest is the whole file's bytes, so a refusal that wrote anything at all
 // fails even if it rolled the logical rows back.
+// fdiDerefInt64 renders an optional preview count without printing a pointer:
+// %v on a *int64 prints the address, which is how a failed assertion in this file
+// once reported "0xff42b9fb440" instead of the value it was comparing.
+func fdiDerefInt64(value *int64) any {
+	if value == nil {
+		return "omitted"
+	}
+	return *value
+}
+
 func fdiDigest(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)
@@ -353,11 +363,16 @@ func TestFinalizedImportPreviewEmptyProject(t *testing.T) {
 		preview.Chapters[1].WordCount != int64(draftalg.CountDraftUnits(fdiChapterTwoBody)) {
 		t.Fatalf("preview chapters are %v, want two new ones with the shared word counts", preview.Chapters)
 	}
-	if preview.NextChapterNumber == nil || *preview.NextChapterNumber != 1 {
-		t.Fatalf("nextChapterNumber is %v, want 1", preview.NextChapterNumber)
+	// :370-372 - lastChapterNumber (0 on an empty project) plus this manifest's
+	// fresh count plus one. Two fresh chapters therefore preview 3, not 1: the
+	// 1 at :171 belongs to the draft import, which numbers from an empty ledger.
+	if preview.NextChapterNumber == nil || *preview.NextChapterNumber != 3 {
+		t.Fatalf("nextChapterNumber is %v, want 3",
+			fdiDerefInt64(preview.NextChapterNumber))
 	}
 	if preview.FirstGapChapterNumber != nil {
-		t.Fatalf("firstGapChapterNumber is %v, want omitted", *preview.FirstGapChapterNumber)
+		t.Fatalf("firstGapChapterNumber is %v, want omitted",
+			fdiDerefInt64(preview.FirstGapChapterNumber))
 	}
 	if after := fdiDigest(t, path); after != before {
 		t.Fatal("the preview changed the database")
