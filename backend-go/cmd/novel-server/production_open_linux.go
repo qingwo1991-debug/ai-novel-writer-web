@@ -641,6 +641,19 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
+	// The five model-execution names are the browser's only way to reach a model, and
+	// they are deliberately outside the owner block: a lease is minted from the
+	// author's own configuration, resolved through the committed egress policy and
+	// held in memory only, so nothing here depends on the generation owner being
+	// available (production_llm_execution_linux.go, internal/llmlease).
+	if execution, executionErr := newProductionLLMExecution(open); executionErr == nil {
+		if bindErr := execution.Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
+	} else {
+		log.Printf("novel-server: model execution unavailable (%v); llm:generate and llm:generate-stream stay unbound", executionErr)
+	}
 	// The continuity, post-process ledger and plot-tree halves of the editor's
 	// read surface, borrowed from the same admitted author database under the same
 	// live lease as everything above (production_continuity_reads_linux.go). The
