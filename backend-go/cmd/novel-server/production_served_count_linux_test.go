@@ -4,7 +4,6 @@ package main
 
 import (
 	"net/http"
-	"sort"
 	"net/url"
 	"strings"
 	"testing"
@@ -71,31 +70,3 @@ func productionLaneBoundOperations(t *testing.T, handler http.Handler) []string 
 	return server.BoundOperations()
 }
 
-// TestProductionLaneRemainingInventory is a one-shot census, not a permanent
-// assertion: it fails on purpose and prints the operations the lane does NOT
-// serve, so the remaining work is measured by the build instead of being
-// recounted by hand. Delete this test once its list is written down.
-func TestProductionLaneRemainingInventory(t *testing.T) {
-	root, _, contract, _, _ := productionEditorReadsRoot(t)
-	registry := migrationRegistry(t)
-	handler, cleanup, err := productionHandlerWithContract(registry, productionDurableAddress, "", root,
-		productionConfig{Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-
-	served := make(map[string]bool)
-	for _, name := range productionLaneBoundOperations(t, handler) {
-		served[name] = true
-	}
-	var remaining []string
-	for name := range registry.Operations {
-		if !served[name] {
-			remaining = append(remaining, name)
-		}
-	}
-	sort.Strings(remaining)
-	t.Fatalf("%d of %d operations are NOT served; remaining=%s",
-		len(remaining), len(registry.Operations), strings.Join(remaining, ","))
-}

@@ -150,8 +150,8 @@ const (
 const (
 	productionImportRunResidualAuthorPreviewName     = "db:import-run-author-preview"
 	productionImportRunResidualPrepareInspectionName = "db:import-run-prepare-inspection"
-	productionImportRunResidualReceiptPrepareName     = "db:import-run-effect-receipt-prepare"
-	productionImportRunResidualReceiptCommitName      = "db:import-run-effect-receipt-commit"
+	productionImportRunResidualReceiptPrepareName    = "db:import-run-effect-receipt-prepare"
+	productionImportRunResidualReceiptCommitName     = "db:import-run-effect-receipt-commit"
 )
 
 // productionImportRunResidualOperation is one bound name: its exact wire arity and
