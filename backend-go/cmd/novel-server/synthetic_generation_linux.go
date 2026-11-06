@@ -703,9 +703,9 @@ func syntheticBudget(plan generationowner.Plan) (map[string]any, error) {
 // (electron/repositories/generation-run-repository.ts:944), so a run that froze
 // no author inputs answers an empty list there. Writing null here would make the
 // two builds disagree on a field a renderer may iterate.
-func syntheticAuthorInputs(inputs []any) []any {
+func syntheticAuthorInputs(inputs []map[string]any) []map[string]any {
 	if inputs == nil {
-		return []any{}
+		return []map[string]any{}
 	}
 	return inputs
 }
