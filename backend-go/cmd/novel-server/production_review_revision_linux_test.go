@@ -678,7 +678,7 @@ func TestProductionReviewRevisionCommitPrepared(t *testing.T) {
 	handle := "00000000-0000-4000-8000-000000000002"
 	caller := transport.Caller{Principal: "production-author", SessionID: "session-1", ClientID: "client_commit"}
 	epoch := "lease-commit"
-	operation := ReviewRevisionOperationReviewChapter
+	operation := store.ReviewRevisionOperationReviewChapter
 	frozen := "  灯影摇晃  "
 	key := make([]byte, productionReviewRevisionServerKeyBytes)
 	for index := range key {
@@ -724,7 +724,7 @@ func TestProductionReviewRevisionCommitPrepared(t *testing.T) {
 		presented, text := operation, frozen
 		switch arm.label {
 		case "another operation":
-			presented = ReviewRevisionOperationRefineDraft
+			presented = store.ReviewRevisionOperationRefineDraft
 		case "other bytes":
 			text = frozen + " "
 		}

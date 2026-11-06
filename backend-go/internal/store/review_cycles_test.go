@@ -506,6 +506,13 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 	// over buildFindings(report, ...)). The fixture's report carries four anchored
 	// preflight findings and one free warning, so five rows land and only the
 	// warning is unanchored - that row is the one this test follows.
+	rows, err := rrMaps(context.Background(), read, `SELECT finding_id,source_project_id,source_epoch,
+ source_id,source_revision,source_content_hash,span_start,span_end,span_unit,excerpt_hash,occurrence,
+ category,target_id,kind,problem_text,expected_text,status,evidence_hash,confirmation_item_index
+ FROM review_findings WHERE cycle_id=? ORDER BY finding_id`, cycleID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rows) != 5 {
 		t.Fatalf("finding rows = %d", len(rows))
 	}
