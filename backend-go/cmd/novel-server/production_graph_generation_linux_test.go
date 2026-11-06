@@ -192,11 +192,13 @@ func TestProductionLaneRefusesGraphGenerationExecuteAndConfirm(t *testing.T) {
 	artifact := map[string]any{"artifactId": "graph-generation-artifact-0", "revision": float64(1),
 		"textHash": strings.Repeat("a", 64)}
 
-	// The fixture seeds a settled run of its own, so the count is a before/after
-	// comparison: a refused name may add no row at all.
+	// The editor fixture seeds one settled run and one settled attempt before
+	// project:open, so both counts are a before/after comparison: a refused name may add
+	// no row at all, and "no new attempt" is a delta rather than a zero.
 	readback := productionStoryStateWriteReadback(t, lane.projectPath)
-	var runsBefore int
+	var runsBefore, attemptsBefore int
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsBefore)
+	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attemptsBefore)
 	before := productionMCPDatabaseDigest(t, lane.projectPath)
 	productionGraphGenerationUnbound(t, lane.author, productionGraphGenerationExecute,
 		[]any{map[string]any{"handle": handle}, lane.frozen})
@@ -209,7 +211,7 @@ func TestProductionLaneRefusesGraphGenerationExecuteAndConfirm(t *testing.T) {
 	var runs, attempts int
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runs)
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attempts)
-	if runs != runsBefore || attempts != 0 {
+	if runs != runsBefore || attempts != attemptsBefore {
 		t.Fatalf("a refused name added rows: runs %d, attempts %d", runs, attempts)
 	}
 	lane.assertNoDial(t)

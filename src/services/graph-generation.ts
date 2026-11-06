@@ -6,6 +6,27 @@ import type { MainGenerationRunHandle } from './generation/generation-runtime'
 import { throwIfLastAttemptTerminal } from './generation/generation-harness'
 
 const sameRun = (a: MainGenerationRunHandle, b: MainGenerationRunHandle) => a.projectId === b.projectId && a.rootActionId === b.rootActionId && a.runId === b.runId
+/**
+ * Two graph inputs are the same input when they carry the same fields, not when they
+ * serialise identically. The value comes back through JSON, and a JSON object has no
+ * key order: comparing text made every plan and event begin fail against a server that
+ * re-encodes the document with sorted keys, even though the input the browser sent was
+ * the input the run froze.
+ */
+function canonicalGraphInput(value: unknown): string {
+  const sort = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(sort)
+    if (input && typeof input === 'object') {
+      const record = input as Record<string, unknown>
+      const ordered: Record<string, unknown> = {}
+      for (const key of Object.keys(record).sort()) ordered[key] = sort(record[key])
+      return ordered
+    }
+    return input
+  }
+  return JSON.stringify(sort(value))
+}
+const sameGraphInput = (a: unknown, b: unknown) => canonicalGraphInput(a) === canonicalGraphInput(b)
 export function canExecuteGraph(recovery: GraphGenerationRecovery) {
   return recovery.sourceStatus === 'current' && recovery.view.status !== 'cancelled' && recovery.attemptCount === 0 && !recovery.result
     && !recovery.artifact && (recovery.view.candidates ?? recovery.view.artifacts).length === 0
@@ -51,7 +72,7 @@ export function createGraphGeneration(sessionInput: ProjectSessionContext) {
         recovery = validate('handle' in request
           ? await ipc.invokeWithProjectSession(session, 'graph-generation:read', request)
           : await ipc.invokeWithProjectSession(session, 'graph-generation:begin', request), 'handle' in request ? request.handle : undefined)
-        if ('input' in request && JSON.stringify(recovery.context.input) !== JSON.stringify(request.input)) throw new Error('GRAPH_GENERATION_CONTEXT_MISMATCH')
+        if ('input' in request && !sameGraphInput(recovery.context.input, request.input)) throw new Error('GRAPH_GENERATION_CONTEXT_MISMATCH')
         if (cancelled) { await cancelKnown(); throw new Error('GRAPH_GENERATION_CANCELLED') }
         if (detached) throw new Error('GRAPH_GENERATION_DETACHED')
         return recovery

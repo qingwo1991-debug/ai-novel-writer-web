@@ -489,12 +489,22 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
+	// Upload staging: the desktop could read a file the author picked, and a browser
+	// cannot, so every import in this product arrives through one route. A failure
+	// here is not fatal - staging is disposable, and the names that need it already
+	// answer a named refusal - so the lane keeps serving without it
+	// (production_upload_route_linux.go, internal/uploadstore).
+	uploads, uploadErr := newProductionUploadRoute(open, server, address)
+	if uploadErr != nil {
+		log.Printf("novel-server: browser upload staging unavailable (%v); upload-dependent names will refuse", uploadErr)
+		uploads = nil
+	}
 	// The ten picker names are the browser's replacement for the desktop's native
 	// dialogs: a chooser query over the library roots, an upload slot for the files
 	// that live on the author's own machine, and a skill package that installs from
 	// those bytes. None of them accepts a host path, and none of them writes
 	// (production_browser_pickers_linux.go, internal/librarypath).
-	if bindErr := newProductionBrowserPickers(open).Bind(server); bindErr != nil {
+	if bindErr := newProductionBrowserPickersFrom(open, uploads).Bind(server); bindErr != nil {
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
@@ -786,11 +796,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// through the same import writer as kb:import-text, which keeps the snapshot the
 		// served readers already decode. kb:backfill-vectors stays unbound: there is no
 		// vector store to backfill (production_knowledge_uploads_linux.go).
-		func() error { return newProductionKnowledgeUploads(knowledge, nil).Bind(server) },
+		func() error { return newProductionKnowledgeUploadsFrom(knowledge, uploads).Bind(server) },
 		// An avatar chosen in a browser arrives as an upload and is validated by magic
 		// bytes, never by its name or declared type
 		// (production_character_avatar_linux.go).
-		func() error { return newProductionCharacterAvatars(open.durable, nil).Bind(server) },
+		func() error { return newProductionCharacterAvatarsFrom(open.durable, uploads).Bind(server) },
 		// legacy-roster:read-source is served from the admitted project database; the six
 		// generation names in that family each wait on a port this lane does not have
 		// (production_legacy_roster_linux.go).
@@ -827,6 +837,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		return nil, nil, err
 	}
 	mux := http.NewServeMux()
+	if uploads != nil {
+		if mountErr := uploads.Mount(mux); mountErr != nil {
+			_ = open.Close()
+			return nil, nil, mountErr
+		}
+	}
 	mux.Handle("/api/library", route)
 	// A portable-export download is the one author artifact the browser fetches
 	// rather than receives inside an operation answer, and the URL is spent once.
@@ -839,6 +855,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		server.Close()
 		if static != nil {
 			_ = static.Close()
+		}
+		if uploads != nil {
+			_ = uploads.Close()
 		}
 		_ = open.Close()
 	}

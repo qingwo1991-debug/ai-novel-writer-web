@@ -28,6 +28,18 @@ const (
 func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
 	seam := &productionGenerationSeam{text: "雨停之前，她把书翻到最后一页。"}
 	lane := productionGenerationWriteOpen(t, seam.dispatch, nil)
+	// The admitted database is not empty: the editor fixture seeds one settled run with
+	// one settled attempt through the shipped ledger before project:open. The row counts
+	// below are therefore a baseline plus a delta, so the sanity check stays about the
+	// two runs this test begins instead of about a database that starts empty.
+	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	var runsBase, attemptsBase int
+	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsBase)
+	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attemptsBase)
+	if runsBase != 1 || attemptsBase != 1 {
+		t.Fatalf("the editor fixture no longer seeds one settled run with one attempt (runs %d, attempts %d); the delta below is still sound, but this premise is not",
+			runsBase, attemptsBase)
+	}
 	// The interrupted run: admitted, no attempt, which is the state a crash between
 	// admission and dispatch leaves behind.
 	interrupted := lane.begin(t, productionEditorBeginRequest(productionRecoveryInterruptedNonce))
@@ -44,8 +56,9 @@ func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
 	}
 
 	// The two states are proved through the test's own mode=ro connection, not from
-	// anything the lane returned, so the fixture cannot agree with a wrong answer.
-	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	// anything the lane returned, so the fixture cannot agree with a wrong answer. The
+	// per-run counts are selected by the ids the lane handed back; the totals are the
+	// baseline plus what the two begins mean to add.
 	var interruptedAttempts, completedAttempts, runs, attempts int
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts WHERE run_id=?",
 		[]any{syntheticString(interrupted["runId"])}, &interruptedAttempts)
@@ -53,9 +66,10 @@ func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
 		[]any{syntheticString(completed["runId"])}, &completedAttempts)
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runs)
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attempts)
-	if interruptedAttempts != 0 || completedAttempts != 1 || runs != 2 || attempts != 1 {
-		t.Fatalf("the fixture is not the two states under test: attempts %d/%d of %d, runs %d",
-			interruptedAttempts, completedAttempts, attempts, runs)
+	if interruptedAttempts != 0 || completedAttempts != 1 ||
+		runs != runsBase+2 || attempts != attemptsBase+1 {
+		t.Fatalf("the fixture is not the two states under test: attempts %d/%d, runs %d over baseline %d, attempts %d over baseline %d",
+			interruptedAttempts, completedAttempts, runs, runsBase, attempts, attemptsBase)
 	}
 	var settledStatus string
 	productionStoryStateWriteScan(t, readback,
