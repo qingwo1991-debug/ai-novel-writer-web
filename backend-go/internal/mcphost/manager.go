@@ -180,7 +180,7 @@ func (m *Manager) Statuses() []Status {
 			status.Status = snapshot.Status
 			status.ToolCount = snapshot.ToolCount
 			status.Code = snapshot.Code
-		case entry.Refused() != nil:
+		case entry.Refusal != nil:
 			status.Status = StatusError
 			status.Code = Code(entry.Refusal)
 		default:
@@ -271,7 +271,7 @@ func (m *Manager) Connect(ctx context.Context, serverID string) error {
 	if !configured {
 		return ErrServerNotConfigured
 	}
-	if entry.Refused() != nil {
+	if entry.Refusal != nil {
 		return entry.Refusal
 	}
 	if err := ctx.Err(); err != nil {
