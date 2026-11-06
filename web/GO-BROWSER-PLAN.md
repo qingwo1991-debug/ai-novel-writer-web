@@ -54,6 +54,26 @@
 - 相关未服务操作：`import-generation:read`、`import-generation:execute`（2 个）。
   若浏览器导入路径只需要已有的 `db:draft-import-finalized-batch`，这两个可以不进 P1。
 
+### P1 的实测：导入流程比预想重，走"成品导入"而不是"完整导入工作流"
+
+按通道逐个查证（不是估）：
+
+| 文件 | 用到的操作 | 未服务 |
+| --- | --- | --- |
+| `import-novel.command.ts` | 5 | `db:import-global-facts-commit`、`kb:search-writing-context` |
+| `import-workflow.ts` | 17 | `kb:import-reference-text` |
+
+其中 `db:import-global-facts-commit` 是**硬依赖**（`if (!commitResult.success) throw`），而它需要
+`CharacterProposalService` + `probeExistingProject` + `planImportFill` 三样都不存在的端口。
+
+**决定**：作者手里的 40 多章是纯文本正文章节，不需要"参考语料 + 全局事实推断"那套完整导入工作流。
+P1 走**成品导入**：浏览器选文件 → `POST /api/uploads` → 已有的
+`db:draft-import-finalized-batch`（已服务）落库。这条路已经具备全部后端能力，
+不需要等 `import-global-facts-commit`。
+
+完整导入工作流（含参考语料、全局事实）留在 P4，因为它是长尾：作者本人不会用，
+而它需要的三个端口一个都不存在。
+
 ### P2 · 切到浏览器验收
 
 - `docker/compose.go.yaml` 已就位（容器名/端口/挂载/权限与旧文件一致，切换=换文件）。
