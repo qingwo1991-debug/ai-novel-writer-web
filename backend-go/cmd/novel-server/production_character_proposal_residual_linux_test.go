@@ -25,9 +25,18 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 		t.Fatalf("the record covers %v and %v, not the two pending-finalized names",
 			seams[0].Operation, seams[1].Operation)
 	}
-	// Both names are inventoried by this family and both sit past the served four,
-	// which is what makes "refused" a statement about binding rather than about the
-	// inventory.
+	// Both names are inventoried by this family and neither is one of the four the
+	// binder installs, which is what makes "refused" a statement about binding
+	// rather than about the inventory. The served four are named rather than
+	// counted from the front: the inventory is not ordered served-first - stage,
+	// read, list-pending, read-pending, approve, cancel - so a positional rule
+	// would pass by accident today and fail the moment the family is reordered.
+	served := []string{
+		productionCharacterProposalStageName,
+		productionCharacterProposalReadName,
+		productionCharacterProposalApproveName,
+		productionCharacterProposalCancelName,
+	}
 	inventory := productionCharacterProposalOperations()
 	for _, seam := range seams {
 		index := -1
@@ -39,8 +48,10 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 		if index < 0 {
 			t.Fatalf("%v is not in the family inventory at all", seam.Operation)
 		}
-		if index < 4 {
-			t.Fatalf("%v sits at %v in the family inventory, which is the served half", seam.Operation, index)
+		for _, name := range served {
+			if name == seam.Operation {
+				t.Fatalf("%v is inventoried as served, so it cannot also be refused", seam.Operation)
+			}
 		}
 	}
 	// Every cited line still carries its marker.
