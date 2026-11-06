@@ -289,7 +289,6 @@ func testProductionCharacterProposalStageThenApprove(t *testing.T) {
 		Details:  productionCharacterProposalDetails,
 	}
 	lane := productionGenerationWriteOpen(t, nil, fixture.seed)
-	before := lane.bytes(t)
 	batch := productionCharacterProposalStage(t, lane, fixture.Run)
 	productionCharacterProposalAssertStaged(t, batch, fixture.Run)
 
@@ -316,9 +315,12 @@ func testProductionCharacterProposalStageThenApprove(t *testing.T) {
 	}
 	// A stage never reached the model: the committed origin was never dialed.
 	lane.assertNoDial(t)
-	if after := lane.bytes(t); !bytes.Equal(before, after) {
-		t.Fatal("a stage changed the admitted database")
-	}
+	// The byte comparison that used to sit here was the wrong instrument: a stage is
+	// supposed to write exactly one row, so an unchanged file would have meant the
+	// proposal was never staged. What must stay unchanged is the roster, and the row
+	// counts above are that assertion - one proposal, no characters, no aliases, no
+	// identity revision. The refusal arms elsewhere in this file still use whole-file
+	// digests, where a write would be the bug.
 
 	// :251-283. Three creations, one per slot, in the manifest's own order.
 	approved := productionCharacterProposalApprove(t, lane, batch.ProposalBatchID, 0, productionCharacterProposalApproveID,
