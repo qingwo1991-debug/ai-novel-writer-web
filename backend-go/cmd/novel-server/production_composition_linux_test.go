@@ -203,11 +203,15 @@ func TestProductionCompositionComposesAndReadsBack(t *testing.T) {
 	// as generation-run-repository.ts:691-693 does, and it was written as one added
 	// key rather than a replacement of the attempt's usage.
 	var storedHash, storedIDs, usageKeys string
+	// The row is the attempt that owns the last composed artifact, which is the one
+	// the reference patches (generation-run-repository.ts:691); the key is the same
+	// $.visibleComposition the read path and the batch projection read.
 	productionStoryStateWriteScan(t, readback,
 		`SELECT json_extract(usage_receipt_json,'$.visibleComposition.textHash'),
  json_extract(usage_receipt_json,'$.visibleComposition.artifactIds'),
- (SELECT group_concat(key) FROM json_each(usage_receipt_json))`,
-		nil, &storedHash, &storedIDs, &usageKeys)
+ (SELECT group_concat(key) FROM json_each(usage_receipt_json))
+ FROM generation_attempts WHERE run_id=? ORDER BY rowid DESC LIMIT 1`,
+		[]any{handle["runId"]}, &storedHash, &storedIDs, &usageKeys)
 	if storedHash != expectedHash {
 		t.Fatalf("the stored receipt hashes %q; want %s", storedHash, expectedHash)
 	}

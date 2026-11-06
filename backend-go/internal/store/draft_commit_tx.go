@@ -902,7 +902,7 @@ func dcCompositionSame(stored map[string]any, current *dcComposed) bool {
 // artifact payload has to agree with.
 type dcRows struct {
 	byArtifact  map[string]*dcArtifactRow
-	fingerprint string
+	fingerprint any
 }
 
 // dcArtifactRow is one generation_artifacts row joined with its attempt's receipt
@@ -923,10 +923,6 @@ type dcArtifactRow struct {
 }
 
 func dcReadRows(ctx context.Context, conn *sql.Conn, run *bpRun) (*dcRows, error) {
-	fingerprint, err := plotJSON(run.binding["fingerprint"])
-	if err != nil {
-		return nil, err
-	}
 	rows, err := rrMaps(ctx, conn, `SELECT t.attempt_id AS attemptId, t.run_id AS attemptRunId, t.rowid AS ordinal,
  t.attempt_json AS attemptJson, t.usage_receipt_json AS usage,
  json_extract(t.usage_receipt_json,'$.purpose') AS purpose,
@@ -939,7 +935,7 @@ func dcReadRows(ctx context.Context, conn *sql.Conn, run *bpRun) (*dcRows, error
 	if err != nil {
 		return nil, err
 	}
-	read := &dcRows{byArtifact: make(map[string]*dcArtifactRow, len(rows)), fingerprint: fingerprint}
+	read := &dcRows{byArtifact: make(map[string]*dcArtifactRow, len(rows)), fingerprint: run.binding["fingerprint"]}
 	for _, row := range rows {
 		artifactID, _ := row["artifactId"].(string)
 		if artifactID == "" {
@@ -1092,9 +1088,16 @@ func dcVisible(run *bpRun, read *dcRows, ids []any, idsWellFormed bool, algorith
 // dcHydrate is hydrateReceipt (generation-run-repository.ts:363-377) reduced to
 // the artifact half: the payload, the usage identity and the frozen binding have
 // to agree on the artifact, the epoch, the fingerprint and the project, and the
-// payload's hash has to still cover its own text.
+// payload's hash has to still cover its own text. artifact_json is the stored TEXT
+// of the payload, so it is parsed here; glMap narrows a decoded value and would
+// leave the text unread. The three fingerprint objects are compared the way the
+// original's isDeepStrictEqual does, which ignores key order (generation-ledger's
+// own port of this receipt uses the same glSame).
 func dcHydrate(run *bpRun, read *dcRows, row *dcArtifactRow) (map[string]any, error) {
-	artifact := glMap(row.artifactJSON)
+	artifact, err := glStored(row.artifactJSON)
+	if err != nil {
+		return nil, err
+	}
 	if artifact == nil {
 		return nil, glError("ARTIFACT_INTEGRITY_FAILED")
 	}
@@ -1104,23 +1107,16 @@ func dcHydrate(run *bpRun, read *dcRows, row *dcArtifactRow) (map[string]any, er
 	}
 	text, textOK := artifact["text"].(string)
 	textHash, hashOK := artifact["textHash"].(string)
-	revision, revisionOK := rrInteger(artifact["revision"], -9007199254740991)
-	fingerprint, err := plotJSON(artifact["fingerprint"])
-	if err != nil {
-		return nil, err
-	}
-	identityFingerprint, err := plotJSON(identity["fingerprint"])
-	if err != nil {
-		return nil, err
-	}
 	if glText(artifact["attemptId"]) != row.attemptID ||
 		glText(artifact["rootActionId"]) != run.rootID ||
 		glText(artifact["artifactId"]) != row.artifactID ||
 		glText(identity["artifactId"]) != row.artifactID ||
 		glText(artifact["epoch"]) != glText(identity["epoch"]) ||
-		fingerprint != identityFingerprint || fingerprint != read.fingerprint ||
+		!glSame(artifact["fingerprint"], identity["fingerprint"]) ||
+		!glSame(artifact["fingerprint"], read.fingerprint) ||
 		glText(artifact["projectId"]) != glText(run.binding["projectId"]) ||
-		!textOK || !hashOK || !revisionOK || revision != row.revision ||
+		!rrEqual(artifact["revision"], row.revision) ||
+		!textOK || !hashOK ||
 		draftalg.TextHash(text) != textHash {
 		return nil, glError("ARTIFACT_INTEGRITY_FAILED")
 	}

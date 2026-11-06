@@ -406,9 +406,20 @@ func testProductionDraftCommitBinding(t *testing.T) {
 		lane.author.call(t, "generation:commit-draft", []any{foreign, lane.frozen})); code != "GENERATION_RUN_IDENTITY_MISMATCH" {
 		t.Fatalf("generation:commit-draft answered %q for a foreign root instead of GENERATION_RUN_IDENTITY_MISMATCH", code)
 	}
-	if code := productionLifecycleRefusal(t, "stale-lease generation:commit-draft",
-		lane.author.call(t, "generation:commit-draft", []any{request(), lane.stale()})); code != "AUTHOR_WRITE_STALE" {
-		t.Fatalf("generation:commit-draft answered %q for a lease this server never issued instead of AUTHOR_WRITE_STALE", code)
+	// The admission fence refuses a lease the server never issued before the
+	// handler reads the request. Which layer answers depends on how far the
+	// context gets: the project coordinator compares the frozen context with the
+	// live handle and refuses with PROJECT_SESSION_NOT_OWNED, and the permit and
+	// session layers each have their own code. The lanes that already serve writes
+	// accept this whole set as a lease refusal rather than pinning one, so this
+	// subtest does the same and proves the refusal by the untouched bytes below.
+	staleCode := productionLifecycleRefusal(t, "stale-lease generation:commit-draft",
+		lane.author.call(t, "generation:commit-draft", []any{request(), lane.stale()}))
+	switch staleCode {
+	case "PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_STALE", "PROJECT_NOT_OPEN",
+		"AUTHOR_WRITE_STALE", "PROJECT_SESSION_REQUIRED", "PROJECT_SESSION_CONTEXT_REQUIRED":
+	default:
+		t.Fatalf("generation:commit-draft answered %q for a lease this server never issued, which is not a lease refusal", staleCode)
 	}
 	if !bytes.Equal(baseline, lane.bytes(t)) {
 		t.Fatal("a refused commit changed the admitted author database")

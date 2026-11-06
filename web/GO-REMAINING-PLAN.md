@@ -60,8 +60,23 @@
 ### 3.2 导入既有小说
 
 `import-generation:read` / `execute`（2），以及导入运行剩余的账本写：
-`db:import-run-prepare-inspection`、`-author-preview`、`-finalize-parsing`、`-restart`、`-fail`、`-effect-receipt-*`（3）。
-这些是"把你的旧稿导进来"这条路的最后一段。
+这 8 个一个都绑不了，原因**不是接线，是缺 store**（`internal/store/importrun.go` 只有 11 个方法，
+到 `Complete` 为止就没有了；表是有的，`baseline_v7_ddl.go:328`）。逐个对应：
+
+| 操作 | 缺的东西 |
+| --- | --- |
+| `-author-preview` | `importInspectionStore.peek`（`import-inspection-store.ts:161`） |
+| `-prepare-inspection` | 同一个 peek/consume + `ImportRunRepository.prepare`（`import-run-repository.ts:2005`）与 `beginParsing`（`:1570`） |
+| `-finalize-parsing` | `finalizeParsing`（`:1819`） |
+| `-restart` | `restart`（`:2575`，它会插入下一条 run） |
+| `-fail` | `fail`（`:2721`）加本地化失败原因（`import-run-failure.ts`） |
+| `-effect-receipt-get` | `getEffectReceipt`（`:2330`，是读，不能写） |
+| `-effect-receipt-prepare` | `prepareEffectReceipt`（`:2345`，插入 `import_run_receipts`） |
+| `-effect-receipt-commit` | `commitEffectReceipt`（`:2410`，牵动另外四个 store 族） |
+
+所以这条路的下一步不是写适配器，是**先把这 5~6 个 store 方法补出来**，再谈绑定。
+参考实现的拒绝码已经查到（`IMPORT_RUN_PARSING_CLOSED`、`IMPORT_RUN_NOT_RESTARTABLE`、
+`IMPORT_RUN_RECEIPT_CONFLICT` 等 11 个），补 store 时照着用。
 
 ### 3.3 角色与设定
 
