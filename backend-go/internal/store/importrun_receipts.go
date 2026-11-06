@@ -54,8 +54,8 @@ import (
 //     identity families to write.
 //   - chapter-blueprint-range   BlueprintRepository.commitRange. Go has
 //     Blueprints.CommitRange (internal/store/blueprints.go:277), but it opens its
-//     own immediate transaction (:300) and refuses a payload carrying
-//     generationRunHandle (:283), so it cannot be nested inside this one without
+//     own immediate transaction (:289) and refuses a payload carrying
+//     generationRunHandle (:282), so it cannot be nested inside this one without
 //     either a deadlock or a divergence.
 //   - author-finalized-batch    FinalizedDraftImportRepository.preview/commit.
 //     Not ported at all; internal/store/draft_authority.go:19 only names it.
@@ -68,6 +68,9 @@ import (
 // The other three kinds refuse with ErrImportRunReceiptKindUnbound, this port's
 // own code. The reference has no such code; it is named here so a binder cannot
 // mistake a missing family for a data problem.
+
+// importRunReceipt is one validated receipt: the row plus the payload it
+// re-derived, never the row alone.
 type importRunReceipt struct {
 	SchemaVersion   int64
 	RunID           string
@@ -188,7 +191,7 @@ func readImportRunReceiptRow(ctx context.Context, q importRunQueryer, runID, sta
 	return row, true, nil
 }
 
-// importRunReceiptSnapshot is the ImportRunEffectReceipt wire shape
+// snapshot is the ImportRunEffectReceipt wire shape
 // (src/shared/import-run.ts:100). effectReceipt is omitted while prepared, the
 // same way JSON.stringify drops an undefined property.
 func (receipt importRunReceipt) snapshot() map[string]any {
