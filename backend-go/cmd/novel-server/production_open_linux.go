@@ -542,6 +542,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// review-revision:prepare mints the frozen review-revision context a
+		// review/revise begin resolves by id (production_review_revision_linux.go).
+		// It is bound only beside generation:begin, because a handle is only useful
+		// to a begin that can resolve it; the family's other three names stay 501.
+		if bindErr := newProductionReviewRevisions(open.durable).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// graph-generation:begin freezes the plan context of one graph run and
 		// opens its ledger row through the same reduced admission
 		// (production_generation_begin_linux.go BeginGraph). It is the only graph

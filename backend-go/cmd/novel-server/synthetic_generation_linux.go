@@ -399,6 +399,7 @@ type syntheticSelection struct {
 	OutputOverrides           []any
 	MaterialDecision          map[string]any
 	ParentRootActionID        string
+	ReviewRevisionContextID   string
 }
 
 func syntheticParseSelection(value any) (syntheticSelection, error) {
@@ -411,6 +412,7 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 		"selectedDraftIds": true, "selectedFinalizedDraftIds": true, "selectedBlueprintChapterNumbers": true,
 		"promptKeys": true, "skillStages": true, "authorInputs": true, "output": true,
 		"outputOverrides": true, "parentRootActionId": true, "preparationId": true, "materialDecision": true,
+		"reviewRevisionContextId": true,
 	}
 	for key := range object {
 		if !allowed[key] {
@@ -485,6 +487,11 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 		selection.MaterialDecision = validated
 	}
 	selection.ParentRootActionID = syntheticString(object["parentRootActionId"])
+	// The opaque handle `review-revision:prepare` minted. It is never inspected
+	// here: the begin admission resolves it against the process registry and
+	// refuses the run before any row when it does not resolve
+	// (production_review_revision_linux.go: productionReviewRevisionFreeze).
+	selection.ReviewRevisionContextID = syntheticString(object["reviewRevisionContextId"])
 	return selection, nil
 }
 
@@ -835,6 +842,7 @@ func syntheticFingerprint(ctx context.Context, db *sql.DB, scope generationowner
 }
 
 // Begin opens a durable run for the reduced selection: it admits the fence,
+// freezes the review-revision context a `reviewRevisionContextId` names (if any),
 // begins a model lease, freezes the real project sources, derives the nine
 // hashes, computes the canonical budget, and opens the ledger run.
 func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
@@ -847,7 +855,16 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 		return nil, err
 	}
 	defer done()
-	runValue, err := s.openRun(ctx, ledger, db, scope, selection, nil)
+	// The review/revise half of admission runs after the lease and before the
+	// model lease: it resolves the prepared context, re-proves it against the
+	// database, rewrites the selection's one author input and returns the manifest
+	// fields the run must freeze. A begin with no handle freezes nothing and takes
+	// exactly the path it always took.
+	extra, err := productionReviewRevisionFreeze(ctx, caller, db, scope, &selection)
+	if err != nil {
+		return nil, err
+	}
+	runValue, err := s.openRun(ctx, ledger, db, scope, selection, extra)
 	if err != nil {
 		return nil, err
 	}
