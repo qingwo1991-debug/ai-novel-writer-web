@@ -2,7 +2,10 @@
 
 ## 当前事实（2026-11-06）
 
-- 已服务 **187 / 281**，绿提交 `7d309e1b`（workflow `Go backend migration`，四个 job 全绿）。
+- 已服务 **211 / 281**，未服务 **70**。计数已由 CI 在 `883a8fc9` 证实（此前手工少算了 6 个）。
+- 新增家族：dialog 8/9、cloud-backup 6/8、character-avatar 4/4、kb 导入 6 个 + 检索 2 个、legacy-roster 1/7。
+- 缺口（70）分两类：**能做的 21**（kb 面板 5、project 5、fs 1、dialog 1、generation 3、skills 2、graph 3、import-generation 2、finalization-generation 3…）
+  与**没有端口可做的 49**（agent-generation 8、legacy-roster 6、mcp 8、db 回执写 13…，每个都在文件头写明了缺哪个端口）。
 - 已服务的新家族：知识库 15/19、character-proposal 4/6、editor-inline 2/4、llm 5/5、fs grant 3/3。
 - `llm:generate` / `generate-stream` / `cancel` 已服务：浏览器现在能真的调模型了（租约在内存里、
   凭据只在租约内、egress 走提交的策略）。
