@@ -78,6 +78,20 @@
 参考实现的拒绝码已经查到（`IMPORT_RUN_PARSING_CLOSED`、`IMPORT_RUN_NOT_RESTARTABLE`、
 `IMPORT_RUN_RECEIPT_CONFLICT` 等 11 个），补 store 时照着用。
 
+### 3.2b 一个必须说清楚的结论：瓶颈已经从"接线"变成"缺 store"
+
+最近三个族（导入运行残余 8 个、角色提案 6 个、头像 4 个）派下去，绑成 **0 个**。
+原因不是接线没做完，是**底层方法根本不存在**：
+
+| 族 | 缺的东西 |
+| --- | --- |
+| 角色提案 6 | `newProductionGeneration` 没有提案面；`proveCharacterProposal`（`generation-character-proposal-proof.ts:43`）没有 Go 移植。**批准的那半写操作其实已经有了**（`internal/store/character_identity.go:161`）——正因如此，绑上去只会变成"能写不能证"，比拒绝更糟 |
+| 头像 4 | `CharacterAssetRepository` 六个方法 + `projectfs` 的**写入根**（`projectfs` 只发布 `OpenFileRead`，`browser_files.go:73-90` 还有意排除 `.ai-novel`） |
+| 导入运行 8 | 见 3.2 的表 |
+
+所以接下来的顺序要改：**先补 store / 移植证明逻辑，再谈绑定**。
+把适配器写在一个不存在的方法上，产物只能是"永远拒绝的绑定"，那等于零。
+
 ### 3.3 角色与设定
 
 `character-proposal`（6）、`finalized-character`（5）、`legacy-roster`（7）、`character-avatar`（4）。
