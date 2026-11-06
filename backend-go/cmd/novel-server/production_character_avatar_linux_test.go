@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -253,9 +254,16 @@ func productionAvatarTestAssets(t *testing.T, db *sql.DB, characterID string) []
 	return assets
 }
 
-// productionAvatarTestTree digests the project's own bytes. The database's
-// write-ahead sidecars are excluded because they are SQLite's transport, not the
-// project's data; the committed file, the manifest and every asset file are in.
+// productionAvatarTestTree digests every file the project holds, so "a refusal
+// wrote nothing" is one comparison instead of a list of files a test hoped were the
+// only ones. The avatar lane writes in exactly two places under the project - the
+// admitted database (.ai-novel/project.db) and the avatar store beside it
+// (.ai-novel/avatars/<bucket>/<file>) - and both are inside this digest.
+//
+// Directories carry no bytes, so they are skipped: a file's own relative path is
+// what the digest keys on, and a lane cannot add or remove a directory without a
+// file. Everything that is not a directory or a SQLite write-ahead sidecar must be
+// a regular file; anything else is a lane bug this digest refuses to read.
 func productionAvatarTestTree(t *testing.T, projectPath string) []byte {
 	t.Helper()
 	relative := make([]string, 0, 8)
@@ -263,7 +271,7 @@ func productionAvatarTestTree(t *testing.T, projectPath string) []byte {
 		if failure != nil {
 			return failure
 		}
-		if path == projectPath {
+		if path == projectPath || entry.IsDir() {
 			return nil
 		}
 		name := filepath.Base(path)
@@ -271,6 +279,9 @@ func productionAvatarTestTree(t *testing.T, projectPath string) []byte {
 			if strings.HasSuffix(name, suffix) {
 				return nil
 			}
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
 		}
 		rel, err := filepath.Rel(projectPath, path)
 		if err != nil {
@@ -280,14 +291,14 @@ func productionAvatarTestTree(t *testing.T, projectPath string) []byte {
 		return nil
 	})
 	if walkErr != nil {
-		t.Fatalf("walk the project tree: %v", walkErr)
+		t.Fatalf("the project tree digest cannot walk %s: %v", projectPath, walkErr)
 	}
 	sort.Strings(relative)
 	digest := sha256.New()
 	for _, rel := range relative {
 		body, err := os.ReadFile(filepath.Join(projectPath, rel))
 		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
+			t.Fatalf("the project tree digest cannot read %s: %v", rel, err)
 		}
 		digest.Write([]byte(rel))
 		digest.Write([]byte{0})
@@ -491,4 +502,33 @@ func TestProductionCharacterAvatarChooseNamesTheMissingUploadOwner(t *testing.T)
 	productionAvatarTestRefuses(t, lane.author, productionAvatarChooseName,
 		[]any{productionAvatarTestCharacter, lane.frozen},
 		productionAvatarCodeUploadRequired)
+}
+
+// TestProductionCharacterAvatarReadBatchOmitsAMissingFile is the case an author
+// meets after a restore: the row survived and the file did not. read-batch must then
+// answer the roster without that character, exactly as the reference's readMany
+// skips a missing asset (character-asset-service.ts:159-169), rather than answering
+// an empty base64 the renderer would turn into an empty image.
+func TestProductionCharacterAvatarReadBatchOmitsAMissingFile(t *testing.T) {
+	lane := newProductionAvatarTestLane(t, newProductionPickerFixtureUploads())
+	encoded := base64.StdEncoding.EncodeToString(productionAvatarTestPNG)
+	productionAvatarTestAccepts(t, lane.author, productionAvatarCommitName,
+		[]any{productionAvatarTestCharacter, encoded, lane.frozen})
+	expected := productionAvatarTestPath(productionAvatarTestCharacter, 1, productionAvatarTestPNG, "png")
+	stored := filepath.Join(lane.projectPath, projectfs.StorageDirectory, expected)
+	if err := os.Remove(stored); err != nil {
+		t.Fatalf("remove the asset to imitate a restore: %v", err)
+	}
+	roster := productionAvatarTestAccepts(t, lane.author, productionAvatarReadName,
+		[]any{[]any{productionAvatarTestCharacter}, lane.frozen})
+	if len(roster.Avatars) != 0 {
+		t.Fatalf("read-batch answered %+v for an asset whose file is gone", roster.Avatars)
+	}
+	if assets := productionAvatarTestAssets(t, lane.readback, productionAvatarTestCharacter); len(assets) != 1 {
+		t.Fatalf("the restored row is gone too: %d rows", len(assets))
+	}
+	if empty := productionAvatarTestAccepts(t, lane.author, productionAvatarReadName,
+		[]any{[]any{productionAvatarTestAbsent}, lane.frozen}); len(empty.Avatars) != 0 {
+		t.Fatalf("read-batch answered %+v for a character with no avatar", empty.Avatars)
+	}
 }

@@ -687,6 +687,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// to a named refusal rather than a half-served run
 		// (production_agent_generation_linux.go, internal/agentgen).
 		func() error { return bindProductionAgentGeneration(server) },
+		// All eight mcp:* names, spoken as MCP streamable HTTP against the committed
+		// origin policy. There is no stdio child in this container, so a command entry
+		// is refused by name while the rest of the config keeps working
+		// (production_mcp_linux.go, internal/mcphost).
+		func() error { return newProductionMCP(open).Bind(server) },
 		func() error { return server.BindModelReads(open.config, open.startup) },
 		func() error { return server.BindModelRoutingReads(open.config, open.startup) },
 		// llm:test-connection and llm:discover-models: the two names the settings

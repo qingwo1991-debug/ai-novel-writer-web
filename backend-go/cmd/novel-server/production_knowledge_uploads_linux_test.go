@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -128,10 +129,11 @@ func (l *productionKnowledgeUploadTestLane) stageFolder(id, name string, files [
 	l.uploads.stageFolder(l.author.cookie.Value, l.author.tab, id, name, files)
 }
 
-// productionKnowledgeUploadTestTree digests the project's own bytes, so "a refusal
-// wrote nothing" is one comparison instead of a list of files a test hoped were the
-// only ones. SQLite's write-ahead sidecars are excluded because they are the
-// driver's transport, not the project's data.
+// productionKnowledgeUploadTestTree digests every file the project holds, so "a
+// refusal wrote nothing" is one comparison instead of a list of files a test hoped
+// were the only ones. Directories carry no bytes and are skipped; SQLite's
+// write-ahead sidecars are excluded because they are the driver's transport, not
+// the project's data; every remaining entry must be a regular file.
 func productionKnowledgeUploadTestTree(t *testing.T, projectPath string) []byte {
 	t.Helper()
 	relative := make([]string, 0, 16)
@@ -139,7 +141,7 @@ func productionKnowledgeUploadTestTree(t *testing.T, projectPath string) []byte 
 		if failure != nil {
 			return failure
 		}
-		if path == projectPath {
+		if path == projectPath || entry.IsDir() {
 			return nil
 		}
 		name := filepath.Base(path)
@@ -147,6 +149,9 @@ func productionKnowledgeUploadTestTree(t *testing.T, projectPath string) []byte 
 			if strings.HasSuffix(name, suffix) {
 				return nil
 			}
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("%s is not a regular file", path)
 		}
 		rel, err := filepath.Rel(projectPath, path)
 		if err != nil {
@@ -156,14 +161,14 @@ func productionKnowledgeUploadTestTree(t *testing.T, projectPath string) []byte 
 		return nil
 	})
 	if walkErr != nil {
-		t.Fatalf("walk the project tree: %v", walkErr)
+		t.Fatalf("the project tree digest cannot walk %s: %v", projectPath, walkErr)
 	}
 	sort.Strings(relative)
 	digest := sha256.New()
 	for _, rel := range relative {
 		body, err := os.ReadFile(filepath.Join(projectPath, rel))
 		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
+			t.Fatalf("the project tree digest cannot read %s: %v", rel, err)
 		}
 		digest.Write([]byte(rel))
 		digest.Write([]byte{0})
