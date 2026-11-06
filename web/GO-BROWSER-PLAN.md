@@ -74,6 +74,24 @@ P1 走**成品导入**：浏览器选文件 → `POST /api/uploads` → 已有�
 完整导入工作流（含参考语料、全局事实）留在 P4，因为它是长尾：作者本人不会用，
 而它需要的三个端口一个都不存在。
 
+### P0.5 · 真正的生成缺口：车道里没有安装 provider
+
+`internal/generation/provider.go:25` 的 `NativeProvider` 注释写得很明确：
+**"This function is not installed into any public handler or the main binary."**
+也就是说 `generation:execute` 走到派发时没有真实模型通道，浏览器里点"生成本章"到不了模型。
+
+所以"写一章"的闭环缺的不是知识库（那个已完成），而是 **LLM 通道**：
+
+| 操作 | 用途 | 状态 |
+| --- | --- | --- |
+| `llm:generate` | 非流式补全，技能/架构/审稿都在用 | 未服务 |
+| `llm:generate-stream` | 章节正文的流式输出 | 未服务 |
+| `llm:cancel` | 停止生成 | 未服务 |
+| `llm:begin-execution-lease` / `llm:close-execution-lease` | 一次生成期间的凭据租约 | 未服务 |
+
+这五个必须先做，否则前面所有绑定都只是"能给数据库写字"，而不是"能写小说"。
+凭据只在租约内、只在 egress 允许的来源上、只出现在服务端。
+
 ### P2 · 切到浏览器验收
 
 - `docker/compose.go.yaml` 已就位（容器名/端口/挂载/权限与旧文件一致，切换=换文件）。
