@@ -103,6 +103,13 @@ func productionCloudBackupOpenSession(t *testing.T, author *productionDurableCli
 // business envelopes, so the body is what a credential leak would appear in.
 func productionCloudBackupInvoke(t *testing.T, author *productionDurableClient, operation string, args []any) (int, string, map[string]any) {
 	t.Helper()
+	// A nil argument list never reaches a handler: internal/transport
+	// server.go:114 refuses it as INVALID_ARGUMENTS at HTTP 400 before the
+	// binding lookup, so a call that means "no arguments" must send an empty
+	// array or it would be testing the request validator, not this lane.
+	if args == nil {
+		args = []any{}
+	}
 	response := author.call(t, operation, args)
 	body := response.Body.String()
 	result := map[string]any{}
@@ -147,15 +154,26 @@ func productionCloudBackupStoreDirectory(root string) string {
 	return filepath.Join(root, productionCloudBackupDirectory)
 }
 
-// productionCloudBackupGenerationDirectory names one published generation on disk.
-// The collection directory is internal/cloudbackup's own documented layout, and
-// asserting it here is what makes "the archive is really on disk" a real test.
-func productionCloudBackupGenerationDirectory(t *testing.T, root, generationID string) string {
+// productionCloudBackupStoreForReadback opens the published store a second time, as
+// any other process reading this data root would.
+func productionCloudBackupStoreForReadback(t *testing.T, root string) *cloudbackup.Store {
 	t.Helper()
-	directory := filepath.Join(productionCloudBackupStoreDirectory(root), "generations", generationID)
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("generation %v was not published under the store: %v %v", generationID, info, err)
+	store, err := cloudbackup.Open(productionCloudBackupStoreDirectory(root), cloudbackup.DefaultLimits())
+	if err != nil {
+		t.Fatalf("open the published store for readback: %v", err)
+	}
+	return store
+}
+
+// productionCloudBackupGenerationDirectory names one published generation on disk.
+// It asks the store where it wrote rather than re-deriving the layout: the book id
+// is part of the path, and a test that guesses it can disagree with the store about
+// a generation that was in fact published.
+func productionCloudBackupGenerationDirectory(t *testing.T, store *cloudbackup.Store, bookID, generationID string) string {
+	t.Helper()
+	directory, err := store.Directory(bookID, generationID)
+	if err != nil {
+		t.Fatalf("the store does not admit the generation %v it just answered with: %v", generationID, err)
 	}
 	return directory
 }
@@ -371,7 +389,8 @@ func TestProductionCloudBackupPublishesVerifiableGeneration(t *testing.T) {
 	}
 
 	// The bytes on disk: completion -> manifest -> archive, all three digests.
-	directory := productionCloudBackupGenerationDirectory(t, root, generation.GenerationID)
+	store := productionCloudBackupStoreForReadback(t, root)
+	directory := productionCloudBackupGenerationDirectory(t, store, productionDurableProjectID, generation.GenerationID)
 	archivePath := filepath.Join(directory, "archive.ainovel")
 	archiveDigest := productionCloudBackupFileDigest(t, archivePath)
 	if archiveDigest != generation.ArchiveSHA256 {
@@ -410,10 +429,6 @@ func TestProductionCloudBackupPublishesVerifiableGeneration(t *testing.T) {
 	}
 
 	// The store's own readback, over the published bytes.
-	store, storeErr := cloudbackup.Open(productionCloudBackupStoreDirectory(root), cloudbackup.DefaultLimits())
-	if storeErr != nil {
-		t.Fatalf("open the store for readback: %v", storeErr)
-	}
 	verified, verifyErr := store.Verify(context.Background(), productionDurableProjectID, generation.GenerationID)
 	if verifyErr != nil {
 		t.Fatalf("the published generation does not verify: %v", verifyErr)
@@ -493,11 +508,16 @@ func TestProductionCloudBackupListReportsVerifiedGenerations(t *testing.T) {
 		t.Fatalf("cloud-backup:list answered %v for an account with no credential; want %v", code, productionCloudBackupCredentialMissing)
 	}
 
-	// The two names this lane refuses stay unbound: a wrong answer about a
-	// credential would be worse than 501.
+	// The two names this lane refuses are not in the bound set: asking for one
+	// answers 501 GO_OPERATION_NOT_MIGRATED, which is the engine saying the name
+	// is inventoried and unbound. The empty argument list is what makes this the
+	// engine's answer: a null one is refused by the request validator at 400
+	// before the binding is ever consulted.
 	for _, operation := range []string{productionCloudBackupConnectName, productionCloudBackupClearName} {
-		if response := author.call(t, operation, nil); response.Code != http.StatusNotImplemented {
-			t.Fatalf("%v is bound, but this lane has no port for it: %d %s", operation, response.Code, response.Body.String())
+		response := author.call(t, operation, []any{})
+		body := response.Body.String()
+		if response.Code != http.StatusNotImplemented || !strings.Contains(body, "GO_OPERATION_NOT_MIGRATED") {
+			t.Fatalf("%v is served by this lane, but it has no credential port to serve it with: %d %s", operation, response.Code, body)
 		}
 	}
 }
@@ -623,7 +643,8 @@ func TestProductionCloudBackupRestoreCopyRefusesTamperedArchive(t *testing.T) {
 
 	// Flip one byte inside the archive, leaving the declared digests intact: this is
 	// exactly the damage a corrupt disk or a partial transfer produces.
-	directory := productionCloudBackupGenerationDirectory(t, root, backup.Generation.GenerationID)
+	store := productionCloudBackupStoreForReadback(t, root)
+	directory := productionCloudBackupGenerationDirectory(t, store, productionDurableProjectID, backup.Generation.GenerationID)
 	archivePath := filepath.Join(directory, "archive.ainovel")
 	damaged, readErr := os.ReadFile(archivePath)
 	if readErr != nil {
@@ -865,7 +886,7 @@ func TestProductionCloudBackupRefusalsLeaveAuthorDatabaseIdentical(t *testing.T)
 		{
 			name:      "cancel without an operation id",
 			operation: productionCloudBackupCancelName,
-			args:      nil,
+			args:      []any{},
 			code:      productionCloudBackupInputInvalid,
 		},
 		{

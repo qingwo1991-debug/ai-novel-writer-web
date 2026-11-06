@@ -771,6 +771,20 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// already decode, and link the finalization, without ever claiming a vector
 		// index this lane cannot write (production_knowledge_import_linux.go).
 		func() error { return knowledge.Bind(server) },
+		// The three upload-shaped knowledge names. The desktop read a directory; a
+		// browser can only hand over bytes, so these consume a staged upload and write
+		// through the same import writer as kb:import-text, which keeps the snapshot the
+		// served readers already decode. kb:backfill-vectors stays unbound: there is no
+		// vector store to backfill (production_knowledge_uploads_linux.go).
+		func() error { return newProductionKnowledgeUploads(knowledge, nil).Bind(server) },
+		// An avatar chosen in a browser arrives as an upload and is validated by magic
+		// bytes, never by its name or declared type
+		// (production_character_avatar_linux.go).
+		func() error { return newProductionCharacterAvatars(open.durable, nil).Bind(server) },
+		// legacy-roster:read-source is served from the admitted project database; the six
+		// generation names in that family each wait on a port this lane does not have
+		// (production_legacy_roster_linux.go).
+		func() error { return newProductionLegacyRoster(open.durable).Bind(server) },
 		// The document half and the search half of the same family, sharing the
 		// import binder's per-project gate so one admission decision covers all ten
 		// names (production_knowledge_documents_linux.go,

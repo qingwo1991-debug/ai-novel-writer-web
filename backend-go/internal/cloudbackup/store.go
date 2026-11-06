@@ -178,6 +178,21 @@ func (s *Store) Root() string {
 	return s.root
 }
 
+// Directory reports the admitted directory one published generation lives in, so
+// a caller inspecting the published files (a lane's durability proof, a diagnostic)
+// asks this store instead of re-deriving the layout from Root. It refuses an id
+// this store never published, and it is server-side only: like Root, the path must
+// never be placed on a wire.
+func (s *Store) Directory(bookID, generationID string) (string, error) {
+	if s == nil {
+		return "", ErrClosed
+	}
+	if generationID == "" {
+		return "", ErrInput
+	}
+	return s.generationDirectory(bookID, generationID)
+}
+
 // PublishInput is one generation to write. The archive stream must be a stable
 // snapshot: Publish hashes what it reads and refuses when the bytes do not match
 // the declared digest and size, so a caller cannot publish a changing file.
