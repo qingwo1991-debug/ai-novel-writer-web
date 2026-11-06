@@ -32,7 +32,12 @@ type Ref struct {
 type material struct { key SourceKey; ref Ref; text string; read SourceReader }
 type Binding struct { registry *Registry; scope Scope; modelRevision string; materials []material; digest string }
 var numericID=regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
-var promptID=regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}:(zh-CN|en-US)$`)
+// promptID is the prompt key a frozen source may name. The graph runs mint
+// graph-${kind} (main-generation-owner.ts:1201-1203) and the desktop admits the
+// hyphen (generation-source-binding.ts:306), so the alternation has to carry those
+// three keys: a narrow pattern here answered GENERATION_SOURCE_UNSUPPORTED to every
+// real graph begin before the lane's own reader was ever reached.
+var promptID=regexp.MustCompile(`^(?:[a-z][a-z0-9_]{0,63}|graph-(?:plot|plan|event)):(zh-CN|en-US)$`)
 func (s Sources) reader(key SourceKey)(SourceReader,string,error){
  switch key.Kind {
  case "project-core":if key.ID=="main"&&s.ProjectCore!=nil{return s.ProjectCore,"project-core:main",nil}

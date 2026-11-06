@@ -36,7 +36,13 @@ import (
 // production_draft_context_linux.go, production_batch_reads_linux.go and
 // production_generation_begin_linux.go), so "every other execution name stays
 // unbound" no longer describes this lane. That staleness is why this file exists
-// rather than a copy of that paragraph.
+// rather than a copy of that paragraph. Being bound is not the same as answering,
+// though: graph-generation:begin is bound and refuses every call, because the
+// frozen selection it mints carries the prompt key graph-plan and the source
+// binding's prompt grammar narrows it to GENERATION_SOURCE_UNSUPPORTED
+// (internal/generationowner/binding.go:35 against
+// electron/services/generation-source-binding.ts:306) - so a graph run cannot be
+// opened until that alternation is widened.
 //
 // The reason it gives for the two recovery reads is NOT stale, and it is not a
 // reason about the ledger at all. Both names are projections of the planner half of

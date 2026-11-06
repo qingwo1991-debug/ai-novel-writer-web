@@ -41,9 +41,25 @@ import (
 // (production_generation_reads_linux.go:8-17).
 //
 // The begin that freezes such a context is served
-// (production_generation_begin_linux.go:65), so this read has a real population in the
-// lane: a plan run begun through graph-generation:begin in the same session, under the
-// same live lease. The answer is GraphGenerationRecovery - the run view with its
+// (production_generation_begin_linux.go:65), and it is the population this read is owed:
+// a plan run begun through graph-generation:begin in the same session, under the same
+// live lease.
+//
+// That producer cannot open a run today, and it is not this file's defect. The frozen
+// selection begin mints carries the prompt key `graph-plan`, and the source binding's
+// prompt grammar (internal/generationowner/binding.go:35) admits only
+// `[a-z][a-z0-9_]{0,63}` before the language suffix, so the hyphen is refused as
+// GENERATION_SOURCE_UNSUPPORTED before any row is written. The original admits it -
+// electron/services/generation-source-binding.ts:306 allows `-` in a prompt key, and
+// :292 requires exactly `graph-${kind}` - and this lane's own prompt reader already
+// accepts the three graph keys (synthetic_generation_linux.go:84), so the narrowed
+// pattern is the deviation, and widening its alternation to admit
+// `graph-(plot|plan|event)` is the fix that unblocks this begin - it is the first
+// refusal, so treat it as the one to land before looking for a second. Until it lands
+// this read has no run to answer, and its test fails on that gate's code rather than
+// passing over a producer that does not exist.
+//
+// The answer is GraphGenerationRecovery - the run view with its
 // handle, status, budget and diagnostics; the model id; the validated context with its
 // input re-projected to the browser's fields; the attempt count; and the source status,
 // which for a plan re-derives the blueprint, the total chapter count and the writing

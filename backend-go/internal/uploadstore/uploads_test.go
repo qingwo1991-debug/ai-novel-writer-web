@@ -62,9 +62,9 @@ func storeTestNew(t *testing.T, limits Limits) (*Store, string) {
 	return store, directory
 }
 
-// storeTestBrowser mints one cookie session, the way /api/bootstrap does, and binds
+// storeTestMintBrowser mints one cookie session, the way /api/bootstrap does, and binds
 // a tab to it.
-func storeTestBrowser(t *testing.T, store *Store, cookie, client string) storeTestBrowser {
+func storeTestMintBrowser(t *testing.T, store *Store, cookie, client string) storeTestBrowser {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
 	request.Header.Set("X-Novel-User", "author")
@@ -158,7 +158,7 @@ func TestStagedUploadExpiresAndReclaimsItsBytes(t *testing.T) {
 	limits := storeTestLimits()
 	limits.Lifetime = 20 * time.Millisecond
 	store, directory := storeTestNew(t, limits)
-	owner := storeTestBrowser(t, store, "", storeTestClient)
+	owner := storeTestMintBrowser(t, store, "", storeTestClient)
 	id := storeTestID(t, storeTestSend(t, store, owner, RouteFile, "notes.txt", "hello", nil), "uploadId")
 	name, data, err := store.Read(owner.sessionID, owner.client, id)
 	if err != nil || name != "notes.txt" || string(data) != "hello" {
@@ -178,7 +178,7 @@ func TestOldestStagingIsEvictedBeforeTheDiskGuardRefuses(t *testing.T) {
 	limits.MaxFileBytes = 10
 	limits.MaxTotalBytes = 10
 	store, directory := storeTestNew(t, limits)
-	owner := storeTestBrowser(t, store, "", storeTestClient)
+	owner := storeTestMintBrowser(t, store, "", storeTestClient)
 	first := storeTestID(t, storeTestSend(t, store, owner, RouteFile, "a.txt", "aaaa", nil), "uploadId")
 	second := storeTestID(t, storeTestSend(t, store, owner, RouteFile, "b.txt", "bbbb", nil), "uploadId")
 	if _, _, err := store.Read(owner.sessionID, owner.client, first); err != nil {
@@ -202,7 +202,7 @@ func TestOversizeAndUnsafeMembersAreRefusedBeforeAnyWrite(t *testing.T) {
 	limits := storeTestLimits()
 	limits.MaxFileBytes = 8
 	store, directory := storeTestNew(t, limits)
-	owner := storeTestBrowser(t, store, "", storeTestClient)
+	owner := storeTestMintBrowser(t, store, "", storeTestClient)
 	storeTestRefused(t, storeTestSend(t, store, owner, RouteFile, "big.txt", strings.Repeat("x", 32), nil),
 		http.StatusRequestEntityTooLarge, codeBodyTooLarge)
 	if names := storeTestBlobs(t, directory); len(names) != 0 {
@@ -226,9 +226,9 @@ func TestOversizeAndUnsafeMembersAreRefusedBeforeAnyWrite(t *testing.T) {
 
 func TestAnotherTabCannotReadStagedBytes(t *testing.T) {
 	store, _ := storeTestNew(t, storeTestLimits())
-	owner := storeTestBrowser(t, store, "", storeTestClient)
+	owner := storeTestMintBrowser(t, store, "", storeTestClient)
 	// The same cookie session, a different tab: the tab is half the staging key.
-	other := storeTestBrowser(t, store, owner.cookie, storeTestElse)
+	other := storeTestMintBrowser(t, store, owner.cookie, storeTestElse)
 	if other.sessionID != owner.sessionID {
 		t.Fatal("the second tab did not share the cookie session")
 	}
@@ -237,7 +237,7 @@ func TestAnotherTabCannotReadStagedBytes(t *testing.T) {
 		t.Fatal("another tab read staged bytes")
 	}
 	// A different session cannot address it either, and a wrong Origin cannot stage.
-	stranger := storeTestBrowser(t, store, "", storeTestElse)
+	stranger := storeTestMintBrowser(t, store, "", storeTestElse)
 	if _, _, err := store.Read(stranger.sessionID, stranger.client, id); err == nil {
 		t.Fatal("another session read staged bytes")
 	}

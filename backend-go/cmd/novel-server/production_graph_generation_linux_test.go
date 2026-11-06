@@ -229,6 +229,17 @@ func productionGraphGenerationBegin(t *testing.T, lane *productionGenerationWrit
 	result := productionStoryStateWriteCall(t, lane.author, "graph-generation:begin", []any{request, lane.frozen})
 	view, ok := result["view"].(map[string]any)
 	if !ok {
+		// The one way this begin currently answers no view is the source binding's
+		// prompt grammar, and naming it here is the difference between a red test that
+		// reports a defect and a red test that reports a bad fixture: the selection the
+		// lane mints carries the prompt key graph-plan, and the grammar at
+		// internal/generationowner/binding.go:35 admits only [a-z][a-z0-9_]{0,63} before
+		// the language suffix, so the hyphen is refused before any row exists. The
+		// original admits it (electron/services/generation-source-binding.ts:306), so no
+		// input a fixture could send avoids it - the lane mints the key itself.
+		if encoded, err := json.Marshal(result); err == nil && strings.Contains(string(encoded), "GENERATION_SOURCE_UNSUPPORTED") {
+			t.Fatalf("graph-generation:begin cannot bind its own frozen prompt source: the prompt grammar at internal/generationowner/binding.go:35 rejects the graph-plan key the selection mints (electron/services/generation-source-binding.ts:306 admits it), so no fixture can open a graph run until that alternation is widened: %v", result)
+		}
 		t.Fatalf("graph-generation:begin returned no view: %v", result)
 	}
 	handle, ok := view["handle"].(map[string]any)
