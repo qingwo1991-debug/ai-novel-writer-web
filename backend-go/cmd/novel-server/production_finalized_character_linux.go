@@ -137,6 +137,11 @@ import (
 // unnoticed. Nothing else is mapped: a SQLite diagnostic, a path or a provider
 // message is replaced by the reference's own unmapped-failure code
 // (generationIpcErrorCode's last line, generation-controller.ts:101).
+//
+// The mapping runs exactly once, in the handler. productionFinalizedCharacterReadContext
+// hands its errors back untouched, because mapping twice would map the mapped
+// value - a plain error carrying only the code - and publish the
+// unmapped-failure code for a refusal that has a name.
 type productionFinalizedCharacterReads struct {
 	durable *productionDurableOpen
 }
@@ -167,7 +172,10 @@ var productionFinalizedCharacterReadRefusals = [...]struct {
 }{
 	// summary-repository.ts:402 !database || !projectId?.trim() || !epoch?.trim()
 	{store.ErrFinalizedCharacterScopeRequired, "FINALIZED_CHARACTER_SCOPE_REQUIRED"},
-	// summary-repository.ts:406 and :409
+	// summary-repository.ts:305 (the source read answers null for a status that is
+	// not finalized, or a hash/snapshot mismatch) thrown at :406, and :409 for a
+	// draft a newer finalized draft of the same chapter superseded. One value
+	// covers the whole clause, exactly as the reference's guards share one code.
 	{store.ErrFinalizedCharacterSourceChanged, "FINALIZED_CHARACTER_SOURCE_CHANGED"},
 	// summary-repository.ts:413
 	{store.ErrFinalizedCharacterIDRetired, "FINALIZED_CHARACTER_ID_RETIRED"},
@@ -213,7 +221,11 @@ func (r *productionFinalizedCharacterReads) Bind(server *transport.Server) error
 			}
 			draftID, err := productionFinalizedCharacterDraft(args[0])
 			if err != nil {
-				return nil, productionFinalizedCharacterReadFailure(err)
+				// The guard returns GENERATION_CHARACTER_DRAFT_INVALID as a 400
+				// (finalized-character-generation.ts:22). It is already the code the
+				// browser must see; mapping it again would replace it with this
+				// lane's unmapped-failure code.
+				return nil, err
 			}
 			if ctx == nil {
 				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
@@ -244,7 +256,7 @@ func (r *productionFinalizedCharacterReads) Bind(server *transport.Server) error
 func productionFinalizedCharacterDraft(value any) (int64, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
-		return 0, errors.New(productionFinalizedCharacterDraftInvalid)
+		return 0, productionFinalizedCharacterDraftRefusal()
 	}
 	var number float64
 	switch raw := object["draftId"].(type) {
@@ -253,35 +265,51 @@ func productionFinalizedCharacterDraft(value any) (int64, error) {
 	case json.Number:
 		parsed, err := raw.Float64()
 		if err != nil {
-			return 0, errors.New(productionFinalizedCharacterDraftInvalid)
+			return 0, productionFinalizedCharacterDraftRefusal()
 		}
 		number = parsed
 	default:
-		return 0, errors.New(productionFinalizedCharacterDraftInvalid)
+		return 0, productionFinalizedCharacterDraftRefusal()
 	}
 	// Number.isSafeInteger(draftId) && draftId >= 1
 	if math.IsNaN(number) || math.IsInf(number, 0) || math.Trunc(number) != number ||
 		number < 1 || number > productionFinalizedCharacterMaxSafeInteger {
-		return 0, errors.New(productionFinalizedCharacterDraftInvalid)
+		return 0, productionFinalizedCharacterDraftRefusal()
 	}
 	return int64(number), nil
+}
+
+// productionFinalizedCharacterDraftRefusal is the reference's request guard as a
+// client error: GENERATION_CHARACTER_DRAFT_INVALID (:22), refused with 400 the
+// way this lane's other request-shaped guards are. It is an HTTPError, so the
+// handler returns it unchanged rather than running it through the read-refusal
+// mapper, which knows nothing about it and would publish the unmapped-failure
+// code instead.
+func productionFinalizedCharacterDraftRefusal() error {
+	return security.NewHTTPError(http.StatusBadRequest, productionFinalizedCharacterDraftInvalid)
 }
 
 // productionFinalizedCharacterReadContext is the served read over an already
 // admitted database and the admitted scope. It is split out of the handler so
 // the answer and its refusals can be exercised over an admitted fixture without
 // an HTTP round trip, and so nothing in it can quietly take a project id or an
-// epoch from the request.
+// epoch from the request. Its errors are the store's own values, unmapped: the
+// handler is the one place that turns them into wire codes, so a caller can
+// still ask errors.Is which refusal it was.
 func productionFinalizedCharacterReadContext(ctx context.Context, db *sql.DB, draftID int64,
 	scope store.FinalizedCharacterScope) (map[string]any, error) {
 	contextID, err := productionFinalizedCharacterContextID()
 	if err != nil {
-		return nil, productionFinalizedCharacterReadFailure(err)
+		return nil, err
 	}
 	// One read-only transaction, opened and committed by the store itself.
 	served, err := store.NewFinalizedCharacters(db).ReadContext(ctx, draftID, scope)
 	if err != nil {
-		return nil, productionFinalizedCharacterReadFailure(err)
+		// Handed back exactly as the store raised it: errors.Is still names the
+		// refusal, and the handler maps it once below. Mapping here too would map
+		// the mapped value - a plain error carrying only the code - to the
+		// unmapped-failure fallback.
+		return nil, err
 	}
 	// The two keys of the reference's return value (:25). A JSON null for the
 	// context is not possible here: ReadContext refuses instead of answering

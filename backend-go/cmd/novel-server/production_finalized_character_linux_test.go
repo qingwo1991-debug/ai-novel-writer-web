@@ -14,7 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
+	"sort"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
@@ -105,6 +105,14 @@ func testProductionFinalizedCharacterServed(t *testing.T) {
 	if projectID == "" || leaseID == "" {
 		t.Fatalf("the admitted project handed back no project/lease: %v", lane.frozen)
 	}
+	// The seed writes the stored field-level provenance before the lane admits
+	// the project, so it can only name the id this fixture will be opened as
+	// (production_editor_reads_linux_test.go:30). A stored sourceOrder is copied
+	// verbatim by the store, so the coupling has to fail here, by name, instead of
+	// as a mystery mismatch three assertions later.
+	if projectID != productionEditorProjectID {
+		t.Fatalf("the admitted project is %v, but the seed wrote %v", projectID, productionEditorProjectID)
+	}
 	before := lane.bytes(t)
 	request := []any{map[string]any{"draftId": 1}, lane.frozen}
 	var served struct {
@@ -116,13 +124,13 @@ func testProductionFinalizedCharacterServed(t *testing.T) {
 	// The id is the reference's per-call opaque value (:23): a version 4 UUID, not
 	// a name, a draft id or a digest of the context.
 	if len(served.ContextID) != 36 || served.ContextID[8] != '-' || served.ContextID[14] != '4' {
-		t.Fatalf("contextId %q is not a version 4 UUID", served.ContextID)
+		t.Fatalf("contextId %v is not a version 4 UUID", served.ContextID)
 	}
 	// originProjectId is the transfer origin the main process owns
 	// (finalized-character-generation.ts:27). This lane proves no transfer, so the
 	// key is absent rather than filled with the browser's own project.
 	if served.Origin != nil {
-		t.Fatalf("originProjectId = %q, want the absent key: no transfer authority exists here", *served.Origin)
+		t.Fatalf("originProjectId = %v, want the absent key: no transfer authority exists here", *served.Origin)
 	}
 	productionFinalizedCharacterAssertContext(t, served.Context, projectID, leaseID)
 
@@ -137,13 +145,13 @@ func testProductionFinalizedCharacterServed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded map[string]any
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
+	var stored map[string]any
+	if err := json.Unmarshal(encoded, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(decoded, served.Context) {
-		t.Fatalf("the served context is not the store's context:\nserved=%v\nstored=%v", served.Context, decoded)
-	}
+	// Field by field, so a mismatch names the key and both values instead of
+	// leaving two nested trees to be compared by eye.
+	productionFinalizedCharacterCompare(t, "context", served.Context, stored)
 
 	// A second call mints a second id and reads the same journal, because the id
 	// is per call and the context is the database's, not a cache's.
@@ -153,11 +161,9 @@ func testProductionFinalizedCharacterServed(t *testing.T) {
 	}
 	lane.author.decode(t, productionFinalizedCharacterContextName, request, &again)
 	if again.ContextID == served.ContextID {
-		t.Fatalf("two calls answered the same contextId %q; the reference mints one per call", again.ContextID)
+		t.Fatalf("two calls answered the same contextId %v; the reference mints one per call", again.ContextID)
 	}
-	if !reflect.DeepEqual(again.Context, served.Context) {
-		t.Fatalf("a second read changed the context:\nfirst=%v\nsecond=%v", served.Context, again.Context)
-	}
+	productionFinalizedCharacterCompare(t, "context", again.Context, served.Context)
 
 	// The reference's request guard (finalized-character-generation.ts:22):
 	// !Number.isSafeInteger(draftId) || draftId < 1.
@@ -230,19 +236,25 @@ func productionFinalizedCharacterAssertContext(t *testing.T, context map[string]
 	}
 	characters := productionFinalizedCharacterList(t, "context.characters", context["characters"])
 	if len(characters) != 1 {
-		t.Fatalf("context.characters carries %d entries, want the one frozen character", len(characters))
+		t.Fatalf("context.characters carries %v entries, want the one frozen character", len(characters))
 	}
 	character := productionFinalizedCharacterObject(t, "context.characters[0]", characters[0])
 	if character["characterId"] != productionFinalizedCharacterCharacterID {
-		t.Fatalf("characterId = %v, want %q", character["characterId"], productionFinalizedCharacterCharacterID)
+		t.Fatalf("characterId = %v, want %v", character["characterId"], productionFinalizedCharacterCharacterID)
 	}
 	if character["displayNameSnapshot"] != productionFinalizedCharacterFrozenName {
-		t.Fatalf("displayNameSnapshot = %v, want the frozen %q",
+		t.Fatalf("displayNameSnapshot = %v, want the frozen %v",
 			character["displayNameSnapshot"], productionFinalizedCharacterFrozenName)
 	}
 	aliases := productionFinalizedCharacterList(t, "aliases", character["aliases"])
-	if !reflect.DeepEqual(aliases, []any{productionFinalizedCharacterAliasOne, productionFinalizedCharacterAliasTwo}) {
-		t.Fatalf("aliases = %v", aliases)
+	wantAliases := []any{productionFinalizedCharacterAliasOne, productionFinalizedCharacterAliasTwo}
+	if len(aliases) != len(wantAliases) {
+		t.Fatalf("aliases carries %v entries, want %v: %v", len(aliases), len(wantAliases), aliases)
+	}
+	for index, want := range wantAliases {
+		if aliases[index] != want {
+			t.Fatalf("aliases[%v] = %v, want %v", index, aliases[index], want)
+		}
 	}
 	// The six state fields in characterStateFields order
 	// (internal/store/characters.go:31): the same set and order the reference's
@@ -250,23 +262,23 @@ func productionFinalizedCharacterAssertContext(t *testing.T, context map[string]
 	fields := productionFinalizedCharacterList(t, "fields", character["fields"])
 	wantFields := []string{"location", "powerLevel", "physicalState", "mentalState", "keyItems", "recentEvents"}
 	if len(fields) != len(wantFields) {
-		t.Fatalf("fields carries %d entries, want %d", len(fields), len(wantFields))
+		t.Fatalf("fields carries %v entries, want %v", len(fields), len(wantFields))
 	}
 	for index, want := range wantFields {
-		field := productionFinalizedCharacterObject(t, fmt.Sprintf("fields[%d]", index), fields[index])
+		field := productionFinalizedCharacterObject(t, fmt.Sprintf("fields[%v]", index), fields[index])
 		if field["field"] != want {
-			t.Fatalf("fields[%d].field = %v, want %q", index, field["field"], want)
+			t.Fatalf("fields[%v].field = %v, want %v", index, field["field"], want)
 		}
 		// Every snapshot is scoped by the admitted project epoch, never by a value
 		// the browser sent.
 		if field["projectId"] != projectID || field["epoch"] != leaseID {
-			t.Fatalf("fields[%d] is scoped %v/%v, want %q/%q", index, field["projectId"], field["epoch"], projectID, leaseID)
+			t.Fatalf("fields[%v] is scoped %v/%v, want %v/%v", index, field["projectId"], field["epoch"], projectID, leaseID)
 		}
 		if field["characterId"] != productionFinalizedCharacterCharacterID {
-			t.Fatalf("fields[%d].characterId = %v", index, field["characterId"])
+			t.Fatalf("fields[%v].characterId = %v", index, field["characterId"])
 		}
 		if field["valueHash"] != sha256Hex(productionFinalizedCharacterText(field["value"])) {
-			t.Fatalf("fields[%d].valueHash does not hash its own value", index)
+			t.Fatalf("fields[%v].valueHash does not hash its own value", index)
 		}
 	}
 	location := productionFinalizedCharacterObject(t, "fields[0]", fields[0])
@@ -325,7 +337,7 @@ func testProductionFinalizedCharacterScopeRefusal(t *testing.T) {
 		{ProjectID: "   ", Epoch: productionFinalizedCharacterEpoch},
 		{ProjectID: productionFinalizedCharacterProjectID, Epoch: "\t"},
 	} {
-		fixture.refused(t, fmt.Sprintf("scope %q/%q", scope.ProjectID, scope.Epoch),
+		fixture.refused(t, fmt.Sprintf("scope %v/%v", scope.ProjectID, scope.Epoch),
 			store.ErrFinalizedCharacterScopeRequired, func() (map[string]any, error) {
 				return productionFinalizedCharacterReadContext(context.Background(), fixture.db, 1, scope)
 			})
@@ -339,22 +351,27 @@ func testProductionFinalizedCharacterScopeRefusal(t *testing.T) {
 		})
 }
 
-// testProductionFinalizedCharacterSourceRefusal is summary-repository.ts:406 and
-// :409: the draft is not finalized, and the draft is finalized but a newer
-// finalized draft owns the chapter.
+// testProductionFinalizedCharacterSourceRefusal names each arm after the guard it
+// hits, because one code covers the whole clause: a draft whose status is not
+// finalized is dropped inside the source read (summary-repository.ts:305, which
+// answers null and is thrown as FINALIZED_CHARACTER_SOURCE_CHANGED at :406), and
+// a finalized draft that a newer finalized draft of the same chapter superseded
+// fails the latest-draft comparison (:409). Both are the same value, so the label
+// is the only thing that says which guard answered.
 func testProductionFinalizedCharacterSourceRefusal(t *testing.T) {
 	open := productionFinalizedCharacterProvision(t)
 	productionFinalizedCharacterInsertDraft(t, open.db, 1, 1, 1, "draft", productionGenerationWriteFinalizationID)
-	open.refused(t, "the draft is not finalized", store.ErrFinalizedCharacterSourceChanged, open.read)
+	open.refused(t, "source changed: the draft is not finalized (:305 row.status)", store.ErrFinalizedCharacterSourceChanged, open.read)
 
 	superseded := productionFinalizedCharacterProvision(t)
 	source := productionFinalizedCharacterInsertDraft(t, superseded.db, 1, 1, 1, "finalized",
 		productionGenerationWriteFinalizationID)
 	productionFinalizedCharacterInsertCharacter(t, superseded.db, productionFinalizedCharacterLiveName, 0,
-		productionFinalizedCharacterProvenanceJSON(source, 0))
+		productionFinalizedCharacterProvenanceJSON(source, 0,
+			productionFinalizedCharacterContinuityEpoch(productionFinalizedCharacterProjectID)))
 	productionFinalizedCharacterInsertFreeze(t, superseded.db, source, 1)
 	productionFinalizedCharacterInsertDraft(t, superseded.db, 2, 1, 2, "finalized", "")
-	superseded.refused(t, "a newer finalized draft owns the chapter",
+	superseded.refused(t, "source changed: a newer finalized draft owns the chapter (:409)",
 		store.ErrFinalizedCharacterSourceChanged, superseded.read)
 }
 
@@ -365,7 +382,8 @@ func testProductionFinalizedCharacterRetiredRefusal(t *testing.T) {
 	source := productionFinalizedCharacterInsertDraft(t, fixture.db, 1, 1, 1, "finalized",
 		productionGenerationWriteFinalizationID)
 	productionFinalizedCharacterInsertCharacter(t, fixture.db, productionFinalizedCharacterLiveName, 1,
-		productionFinalizedCharacterProvenanceJSON(source, 0))
+		productionFinalizedCharacterProvenanceJSON(source, 0,
+			productionFinalizedCharacterContinuityEpoch(productionFinalizedCharacterProjectID)))
 	productionFinalizedCharacterInsertFreeze(t, fixture.db, source, 1)
 	fixture.refused(t, "the frozen character is retired", store.ErrFinalizedCharacterIDRetired, fixture.read)
 }
@@ -378,7 +396,8 @@ func testProductionFinalizedCharacterRevisionRefusal(t *testing.T) {
 	source := productionFinalizedCharacterInsertDraft(t, fixture.db, 1, 1, 1, "finalized",
 		productionGenerationWriteFinalizationID)
 	productionFinalizedCharacterInsertCharacter(t, fixture.db, productionFinalizedCharacterLiveName, 0,
-		productionFinalizedCharacterProvenanceJSON(source, -1))
+		productionFinalizedCharacterProvenanceJSON(source, -1,
+			productionFinalizedCharacterContinuityEpoch(productionFinalizedCharacterProjectID)))
 	productionFinalizedCharacterInsertFreeze(t, fixture.db, source, 1)
 	fixture.refused(t, "the stored field revision is negative",
 		store.ErrFinalizedCharacterFieldRevisionInvalid, fixture.read)
@@ -467,7 +486,8 @@ func (f *productionFinalizedCharacterFixture) bound(t *testing.T) store.Finalize
 	source := productionFinalizedCharacterInsertDraft(t, f.db, 1, 1, 1, "finalized",
 		productionGenerationWriteFinalizationID)
 	productionFinalizedCharacterInsertCharacter(t, f.db, productionFinalizedCharacterLiveName, 0,
-		productionFinalizedCharacterProvenanceJSON(source, 0))
+		productionFinalizedCharacterProvenanceJSON(source, 0,
+			productionFinalizedCharacterContinuityEpoch(productionFinalizedCharacterProjectID)))
 	productionFinalizedCharacterInsertFreeze(t, f.db, source, 1)
 	return source
 }
@@ -509,10 +529,10 @@ func (f *productionFinalizedCharacterFixture) refused(t *testing.T, label string
 	// the binder is the only place the mapping lives, and this is where a drifted
 	// constant is caught.
 	if code := productionFinalizedCharacterReadCode(err); code != want.Error() {
-		t.Fatalf("%s: mapped to %q, want %q", label, code, want.Error())
+		t.Fatalf("%s: mapped to %v, want %v", label, code, want.Error())
 	}
 	if published := productionFinalizedCharacterReadFailure(err); published == nil || published.Error() != want.Error() {
-		t.Fatalf("%s: published %v, want %q", label, published, want.Error())
+		t.Fatalf("%s: published %v, want %v", label, published, want.Error())
 	}
 	if after := f.bytes(t); !bytes.Equal(before, after) {
 		t.Fatalf("%s: the refused read changed the database", label)
@@ -534,7 +554,8 @@ func productionFinalizedCharacterSeed(t *testing.T, projectPath string) {
 	productionFinalizedCharacterExec(t, db, "UPDATE continuity_projection_meta SET generation=? WHERE id='main'",
 		productionFinalizedCharacterGeneration)
 	productionFinalizedCharacterInsertCharacter(t, db, productionFinalizedCharacterLiveName, 0,
-		productionFinalizedCharacterProvenanceJSON(source, 0))
+		productionFinalizedCharacterProvenanceJSON(source, 0,
+			productionFinalizedCharacterContinuityEpoch(productionEditorProjectID)))
 	productionFinalizedCharacterInsertFreeze(t, db, source, 1)
 	// The lane admits the file itself, so the seeded rows must be checkpointed into
 	// it: no sidecar may carry rows the admitted digest does not cover.
@@ -559,7 +580,7 @@ func productionFinalizedCharacterOpen(t *testing.T, database, mode string) *sql.
 func productionFinalizedCharacterExec(t *testing.T, db *sql.DB, query string, args ...any) {
 	t.Helper()
 	if _, err := db.Exec(query, args...); err != nil {
-		t.Fatalf("seed %q: %v", query, err)
+		t.Fatalf("seed %v: %v", query, err)
 	}
 }
 
@@ -628,7 +649,8 @@ func productionFinalizedCharacterSnapshotJSON(source store.FinalizedCharacterSou
 // character row carries: one author field and one derived field with the source
 // order the commit compares. A negative locationRevision writes the reference's
 // own invalid revision (:84) instead.
-func productionFinalizedCharacterProvenanceJSON(source store.FinalizedCharacterSourceIdentity, locationRevision int64) string {
+func productionFinalizedCharacterProvenanceJSON(source store.FinalizedCharacterSourceIdentity,
+	locationRevision int64, continuityEpoch string) string {
 	if locationRevision < 0 {
 		return fmt.Sprintf(`{"location":{"kind":"author","chapterNumber":%d,"revision":-1}}`, source.ChapterNumber)
 	}
@@ -637,7 +659,7 @@ func productionFinalizedCharacterProvenanceJSON(source store.FinalizedCharacterS
 		`"source":{"draftId":%d,"finalizationId":%q,"chapterNumber":%d,"contentHash":%q},`+
 		`"sourceOrder":{"continuityEpoch":%q,"chapterNumber":%d,"authoritativeFinalizationRevision":1}}}`,
 		source.ChapterNumber, source.DraftID, source.FinalizationID, source.ChapterNumber, source.ContentHash,
-		fmt.Sprintf("%s:%d", productionFinalizedCharacterProjectID, productionFinalizedCharacterGeneration),
+		continuityEpoch,
 		source.ChapterNumber)
 }
 
@@ -660,7 +682,7 @@ func productionFinalizedCharacterRefusal(t *testing.T, label string, response *h
 		t.Fatalf("%s is unbound in the production lane: %s", label, response.Body.String())
 	}
 	if want != "" && body.Error.Code != want {
-		t.Fatalf("%s refused with %q, want %q: %s", label, body.Error.Code, want, response.Body.String())
+		t.Fatalf("%s refused with %v, want %v: %s", label, body.Error.Code, want, response.Body.String())
 	}
 }
 
@@ -689,4 +711,72 @@ func productionFinalizedCharacterList(t *testing.T, label string, value any) []a
 func productionFinalizedCharacterText(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+// productionFinalizedCharacterContinuityEpoch is the sourceOrder epoch the read
+// derives from the admitted scope (finalized_character_context.go:290): the
+// project id joined to the projection generation.
+func productionFinalizedCharacterContinuityEpoch(projectID string) string {
+	return fmt.Sprintf("%v:%v", projectID, productionFinalizedCharacterGeneration)
+}
+
+// productionFinalizedCharacterSortedKeys keeps a comparison failure reproducible:
+// two runs over the same answer must report the same first difference.
+func productionFinalizedCharacterSortedKeys(object map[string]any) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// productionFinalizedCharacterCompare walks two JSON shapes and reports the first
+// place they differ, naming the path and both values. It exists because one
+// DeepEqual over a nested tree reports only that the tree differs: a map decoded
+// from the wire and a map decoded from the store look identical in that message
+// even when the differing leaf is what the test is about.
+func productionFinalizedCharacterCompare(t *testing.T, label string, got, want any) {
+	t.Helper()
+	if expected, ok := want.(map[string]any); ok {
+		actual, ok := got.(map[string]any)
+		if !ok {
+			t.Fatalf("%v is %T, want an object: %v", label, got, got)
+		}
+		for _, key := range productionFinalizedCharacterSortedKeys(expected) {
+			value, present := actual[key]
+			if !present {
+				t.Fatalf("%v.%v is missing, want %v", label, key, expected[key])
+			}
+			productionFinalizedCharacterCompare(t, label+"."+key, value, expected[key])
+		}
+		for _, key := range productionFinalizedCharacterSortedKeys(actual) {
+			if _, present := expected[key]; !present {
+				t.Fatalf("%v.%v is extra: %v", label, key, actual[key])
+			}
+		}
+		return
+	}
+	if expected, ok := want.([]any); ok {
+		actual, ok := got.([]any)
+		if !ok {
+			t.Fatalf("%v is %T, want a list of %v entries", label, got, len(expected))
+		}
+		if len(actual) != len(expected) {
+			t.Fatalf("%v carries %v entries, want %v", label, len(actual), len(expected))
+		}
+		for index := range expected {
+			productionFinalizedCharacterCompare(t, fmt.Sprintf("%v[%v]", label, index), actual[index], expected[index])
+		}
+		return
+	}
+	// A scalar compared against a container is a shape mismatch, not a value
+	// mismatch; comparing them with != would panic on the container.
+	switch got.(type) {
+	case map[string]any, []any:
+		t.Fatalf("%v is %T, want %v", label, got, want)
+	}
+	if got != want {
+		t.Fatalf("%v = %v, want %v", label, got, want)
+	}
 }
