@@ -159,6 +159,18 @@ Two concrete defects found on the way, in order:
   (`OPERATION_ALREADY_BOUND` is fatal and then nothing registers), and only one
   durable runtime may exist per process (the legacy lock is process-exclusive).
 - Do not touch `preflight.go`'s `func preflight`, and do not modify the M03 tests.
+- **Three fixture/assertion traps that each cost a CI round** (all seen since 156):
+  1. `continuity_projection_meta` is created *empty* by the pinned baseline. A
+     bare `UPDATE` writes nothing and a sibling fixture may already own the
+     singleton row with `generation = 0`, so `INSERT OR IGNORE` is silent too.
+     Always `INSERT ... ON CONFLICT(id) DO UPDATE` and then read the value back.
+  2. Never print a `*int64` with `%v`: it prints the address (`0xff42b9fb440`),
+     which reads like data corruption in a CI annotation. Deref or use a helper.
+  3. CI annotations truncate at the first `"`. Never `%q` an error or a value;
+     "the error code was empty" is almost always this truncation.
+- A refusal must be mapped **once**. Mapping a store error to `errors.New(code)`
+  and then mapping the result again publishes the fallback for every refusal and
+  destroys `errors.Is` identity while leaving the strings looking right.
 - Production stays untouched until full acceptance: image
   `ghcr.io/qingwo1991-debug/ai-novel-writer-web@sha256:84801a8a9016f115899c5be419cf2a29a1d112f82be3312fdc12609b0e95cf37`,
   author volume `/root/AI/ai-novel-writer-data`, compose
