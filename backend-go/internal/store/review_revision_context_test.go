@@ -355,6 +355,17 @@ func rrctxKeyIndex(object plotObject, key string) int {
 	return -1
 }
 
+// rrctxHas reports the value and whether the key is present at all, which is the
+// distinction this package's ordered objects preserve and a map would lose.
+func rrctxHas(object plotObject, key string) (any, bool) {
+	for _, field := range object {
+		if field.key == key {
+			return field.value, true
+		}
+	}
+	return nil, false
+}
+
 func rrctxField(t *testing.T, object plotObject, key string) any {
 	t.Helper()
 	for _, field := range object {
@@ -593,7 +604,7 @@ func TestReviewRevisionContextFreezesFinalizedHistory(t *testing.T) {
 	// projection, and preflightFindings (:152) never sees its facts. Asserting that
 	// absence is the point of this block: an earlier version of this test expected a
 	// legacy projection here and was wrong, not the capture.
-	if value, present := secondEntry["projection"]; present {
+	if value, present := rrctxHas(secondEntry, "projection"); present {
 		t.Fatalf("chapter two carries a projection the reference would not attach: %v",
 			rrctxJSON(t, value))
 	}
