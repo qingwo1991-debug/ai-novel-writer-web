@@ -43,9 +43,8 @@ const (
 
 var productionGraphReadsContentHash = strings.Repeat("d", 64)
 
-// TestProductionLaneServesGraphAndFinalizationReads pins the two reads
-// server.BindGraphGeneration installs. One subtest per operation, so a failure
-// names the channel that moved.
+// TestProductionLaneServesGraphAndFinalizationReads pins the two reads this lane
+// installs. One subtest per operation, so a failure names the channel that moved.
 //
 // The fixture is a disposable data root whose admitted project carries real
 // ledger rows: a complete frozen plot run (the manifest the synthetic graph
@@ -55,24 +54,25 @@ var productionGraphReadsContentHash = strings.Repeat("d", 64)
 // hashes the database with them already in place and every assertion runs
 // against rows the admitted file really holds rather than against constants.
 //
-// graph-generation:read cannot answer 200 in this lane, for two reasons, and
-// the subtest reports the first of them as refusals instead of inventing a view:
+// graph-generation:read used to be pinned at 501 here, and that pin is retired.
+// Both premises it rested on are gone: graph-generation:begin now freezes a real
+// graph context beside the run (production_generation_begin_linux.go:65), so a run
+// under the caller's own lease can exist, and the projection that reads it back is
+// bound in production_graph_generation_linux.go. The pin was written when no graph run
+// could exist at all, which made 501 the honest answer then and a permanent
+// accident once the producer landed.
 //
-//   - Recovery is served only for a run frozen under the lease the caller holds
-//     now, and that lease is a fresh random nonce minted inside project:open
-//     (authorruntime/durable_linux.go mints it, syntheticRequireRun compares
-//     it). Rows written before the open cannot carry it, and rows written after
-//     it would move the file the admission permit already hashed. So no
-//     admitted production database can hold a graph run this read serves: the
-//     seeded run is refused as one this session does not own, and a handle that
-//     names nothing is refused as a missing row.
-//   - The reduced begin writes no graph context, so a run this lease could own
-//     would still be refused for having nothing to project. That branch is not
-//     asserted here: reaching it needs a live-lease row, which is exactly what
-//     the fence above makes unseedable.
+// What is left for this fixture to prove is the half a pre-open seed can still
+// reach: the seeded run carries a frozen lease, so the bound read refuses it as a
+// run this session does not own rather than projecting it. That is the same
+// refusal the pin stood in for, now asserted through a bound name instead of
+// through the registry's fail-closed 501.
 //
-// Either way the answer is a documented refusal, never a 200 built from the
-// wrong state.
+// The positive answer - a begun run read back as its plan context, the input key
+// order the renderer compares, and the unknown-run and other-project arms - lives
+// with the binder in production_graph_generation_linux_test.go, because it needs a
+// row written under the live lease and such a row cannot be seeded into a database
+// the admission permit has already hashed.
 //
 // finalization-generation:read does answer 200 with real seeded state: the slot
 // no run owns comes back as JSON null out of a look-up over the seeded rows,
@@ -106,26 +106,24 @@ func TestProductionLaneServesGraphAndFinalizationReads(t *testing.T) {
 	unleased := map[string]any{"projectId": projectID, "projectPath": projectPath}
 
 	t.Run("graph-generation:read", func(t *testing.T) {
-		// The fixture really froze a graph run, and the name is still 501 on
-		// purpose: generation:begin here is the reduced begin, which freezes no
-		// graph context, so a bound handler could only ever refuse. This lane does
-		// not install handlers that can only refuse.
+		// The 501 this subtest used to pin was retired deliberately, not dropped:
+		// the begin that can freeze a graph context landed
+		// (production_generation_begin_linux.go:65) and the binder that serves this
+		// name was installed (production_graph_generation_linux.go). The seeded run
+		// is kept because it still proves a property the positive test cannot: a run
+		// frozen under a lease this session does not hold is refused as a run it
+		// does not own, rather than projected.
 		if graphRunID == "" || graphRootID == "" {
 			t.Fatal("the fixture wrote no graph run")
 		}
-		response := author.call(t, "graph-generation:read", []any{map[string]any{
+		productionGraphReadsRefused(t, author, "graph-generation:read", []any{map[string]any{
 			"handle": map[string]any{
 				"projectId":    productionGraphReadsProjectID,
 				"epoch":        productionGraphReadsFrozenEpoch,
 				"rootActionId": graphRootID,
 				"runId":        graphRunID,
 			},
-		}, frozen})
-		if response.Code != http.StatusNotImplemented ||
-			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("graph-generation:read must stay fail-closed with a real run present: %d %s",
-				response.Code, response.Body.String())
-		}
+		}, frozen}, "GENERATION_RUN_NOT_FOUND")
 	})
 
 	t.Run("finalization-generation:read", func(t *testing.T) {
@@ -386,7 +384,7 @@ func productionGraphReadsRefused(t *testing.T, client *productionDurableClient, 
 		t.Fatalf("%s: %v %s", operation, err, response.Body.String())
 	}
 	if body.Error.Code != code {
-		t.Fatalf("%s refused with %q, want %q: %s", operation, body.Error.Code, code, response.Body.String())
+		t.Fatalf("%s refused with %s, want %s: %s", operation, body.Error.Code, code, response.Body.String())
 	}
 }
 

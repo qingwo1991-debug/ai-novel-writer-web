@@ -687,6 +687,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// to a named refusal rather than a half-served run
 		// (production_agent_generation_linux.go, internal/agentgen).
 		func() error { return bindProductionAgentGeneration(server) },
+		// graph-generation:read only. To generate a continuity graph a lane has to
+		// derive and qualify the artifact and compose one effect transaction with the
+		// receipt stamp; neither port exists, so execute and confirm stay refused
+		// (production_graph_generation_linux.go).
+		func() error { return newProductionGraphGeneration(open.durable).Bind(server) },
 		// All eight mcp:* names, spoken as MCP streamable HTTP against the committed
 		// origin policy. There is no stdio child in this container, so a command entry
 		// is refused by name while the rest of the config keeps working

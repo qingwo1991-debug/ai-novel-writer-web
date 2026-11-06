@@ -1403,7 +1403,7 @@ func productionPortabilityFrozenRecords(freezeBytes []byte) bool {
 // receipted finalization of its chapter in this database, and every summary
 // source still names one of them. It is the same query the export used to build
 // the receipt, run against the copy that will become the project.
-func productionPortabilityDischarge(ctx context.Context, databasePath string, authority archiveformat.TransferAuthority) error {
+func productionPortabilityDischarge(ctx context.Context, databasePath string, authority *archiveformat.TransferAuthority) error {
 	handle, openErr := productionPortabilityOpenReadOnlyFile(databasePath)
 	if openErr != nil {
 		return openErr
@@ -1799,7 +1799,7 @@ func productionPortabilityCopyBinary(source librarypath.Target, destination stri
 	if createErr != nil {
 		return createErr
 	}
-	written, copyErr := io.Copy(output, file)
+	_, copyErr := io.Copy(output, file)
 	if copyErr == nil {
 		if syncErr := output.Sync(); syncErr != nil {
 			copyErr = syncErr
