@@ -665,6 +665,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// request. Its five siblings stay 501 - commit needs the state-response
 		// parser, and the three candidate operations need the candidate store.
 		func() error { return newProductionFinalizedCharacterReads(open.durable).Bind(server) },
+		// The three character-state candidate names complete the finalization
+		// family's read side: an author sees what the just-finalized chapter wants
+		// to change in the roster, and accepts or declines each field. commit stays
+		// 501 - it needs the state-response parser, which does not exist yet.
+		func() error { return newProductionCharacterStateCandidates(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 	} {

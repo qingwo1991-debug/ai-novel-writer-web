@@ -78,6 +78,10 @@ const (
 	productionCharacterStateCandidateAcceptID  = "state-candidate-accept-1"
 	productionCharacterStateCandidateDeclineID = "state-candidate-decline-1"
 	productionCharacterStateCandidateReplayID  = "state-candidate-replay-1"
+	// productionCharacterStateCandidateStaleRevision is the revision the stale
+	// candidate is staged at. The live field is at revision 0, so the candidate's
+	// expectation can never hold again - which is what a field conflict means (:549).
+	productionCharacterStateCandidateStaleRevision = 5
 )
 
 // TestProductionCharacterStateCandidatesServeTheFinalizedCandidateFamily is the
@@ -519,11 +523,6 @@ func testProductionCharacterStateCandidateReplay(t *testing.T) {
 	}
 }
 
-// productionCharacterStateCandidateStaleRevision is the revision the stale
-// candidate was staged at. The live field is at revision 0, so the candidate's
-// expectation can never hold again - which is what FIELD_CONFLICT means.
-const productionCharacterStateCandidateStaleRevision = 5
-
 // productionCharacterStateCandidateSource is the frozen source identity every
 // fixture writes: chapter 1's finalized draft, whose outbox receipt is the
 // neighbouring generation-write fixture's own row.
@@ -545,9 +544,9 @@ func productionCharacterStateCandidateProvenance(source store.FinalizedCharacter
 //
 //	"fcs-state:" + sha256(JSON.stringify([draftId, finalizationId, contentHash, characterId, field, sha256(value)]))
 //
-// Every element of this fixture's array is ASCII, so a quoted %v is byte for byte
-// what the store's own JSON encoder produces. That is a fixture convenience and
-// not a second derivation: the store recomputes the key and keeps only a candidate
+// Every element of this fixture's array is ASCII, so the %v inside literal quotes
+// is byte for byte what the store's own JSON encoder produces. That is a fixture
+// convenience and not a second derivation: the store recomputes the key and keeps only a candidate
 // whose key it can reproduce, so a drift here fails as an empty list or a refused
 // read.
 func productionCharacterStateCandidateKey(source store.FinalizedCharacterSourceIdentity, field, value string) string {

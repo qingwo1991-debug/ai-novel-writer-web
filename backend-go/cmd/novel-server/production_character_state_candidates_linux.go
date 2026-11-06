@@ -134,6 +134,13 @@ import (
 // store.ReadPendingStateCandidate (:310) and refuse with the same value, so the
 // guard exists once as a rule and the code is published once.
 //
+// A shape refusal here returns the store's own value rather than a
+// security.HTTPError with a 400, because the value questions are refused by the
+// store under the identical value: one code answered with two HTTP statuses
+// depending on which half of the same guard caught the body would be a wire
+// contract that contradicts itself. The status the transport derives is the
+// lane's usual one for a symbolic refusal; the code is what the renderer reads.
+//
 // decide takes the eight keys of FinalizedCharacterStateDecisionRequest
 // (src/shared/finalized-continuity.ts:91-100) and the reference validates all of
 // them (summary-repository.ts:518-523):
