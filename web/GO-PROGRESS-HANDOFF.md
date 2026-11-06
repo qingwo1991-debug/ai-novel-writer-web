@@ -2,7 +2,10 @@
 
 ## 当前事实（2026-11-06）
 
-- 已服务 **168 / 281**，绿提交 `525e3ddb`（workflow `Go backend migration`，四个 job 全绿）。
+- 已服务 **187 / 281**，绿提交 `7d309e1b`（workflow `Go backend migration`，四个 job 全绿）。
+- 已服务的新家族：知识库 15/19、character-proposal 4/6、editor-inline 2/4、llm 5/5、fs grant 3/3。
+- `llm:generate` / `generate-stream` / `cancel` 已服务：浏览器现在能真的调模型了（租约在内存里、
+  凭据只在租约内、egress 走提交的策略）。
 - 写一章的**后端**通道已齐：开项目 → 生成账本 → 采纳 → 定稿（`kb:import-finalized-text` 已服务）→ 导出。
 - 但 `generation:execute` 没有 provider：`production_open_linux.go:90-96` 记着 production
   `main.go` 把 `Dispatch` 留空，`internal/generation/provider.go:25` 也自述"没有装进任何
