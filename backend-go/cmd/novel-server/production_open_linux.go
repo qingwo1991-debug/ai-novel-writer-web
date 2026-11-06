@@ -797,6 +797,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// kb:search-with-scope are what the draft and import workflows actually call.
 		func() error { return newProductionKnowledgeDocumentsFrom(knowledge).Bind(server) },
 		func() error { return newProductionKnowledgeSearchesFrom(knowledge).Bind(server) },
+		// The knowledge panel reads. Without these an author could import material and
+		// never see it, read it or search it, because only the import half and the two
+		// scoped searches were bound (production_knowledge_reads_linux.go).
+		func() error { return newProductionKnowledgeReadsFrom(knowledge).Bind(server) },
 	} {
 		if bindErr := bind(); bindErr != nil {
 			_ = open.Close()
