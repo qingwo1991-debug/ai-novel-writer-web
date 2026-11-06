@@ -150,7 +150,8 @@ func productionReviewRevisionCanonical(t *testing.T, value any) string {
 // the browser really holds - the answered context re-serialized, whose key order is
 // not the frozen order - so the admission's comparison is proved to compare values
 // rather than bytes.
-func productionReviewRevisionSelection(handle string, answered productionReviewRevisionFrozen) map[string]any {
+func productionReviewRevisionSelection(t *testing.T, handle string, answered productionReviewRevisionFrozen) map[string]any {
+	t.Helper()
 	selection := map[string]any{}
 	selection["operation"] = store.ReviewRevisionOperationReviewChapter
 	selection["uiActionNonce"] = productionReviewRevisionBeginNonce
@@ -163,7 +164,7 @@ func productionReviewRevisionSelection(handle string, answered productionReviewR
 	selection["skillStages"] = []any{"review"}
 	selection["authorInputs"] = []any{map[string]any{
 		"id":   productionReviewRevisionAuthorInputID,
-		"text": productionReviewRevisionCanonical(nil, answered.Context),
+		"text": productionReviewRevisionCanonical(t, answered.Context),
 	}}
 	selection["output"] = "structured-data"
 	selection["reviewRevisionContextId"] = handle
@@ -254,7 +255,7 @@ func testProductionReviewRevisionBegin(t *testing.T) {
 	prepared := productionReviewRevisionPrepareOnce(t, lane, request)
 	frozen := productionReviewRevisionCapture(t, lane.projectPath, projectID, request)
 
-	handle := lane.begin(t, productionReviewRevisionSelection(prepared.ContextID, prepared))
+	handle := lane.begin(t, productionReviewRevisionSelection(t, prepared.ContextID, prepared))
 	runID, _ := handle["runId"].(string)
 	if runID == "" {
 		t.Fatalf("the admitted run carries no id: %v", handle)
@@ -374,14 +375,14 @@ func testProductionReviewRevisionRefusals(t *testing.T) {
 
 	// A handle this process never minted is "prepare again", the reference's own
 	// answer when its map has no entry (:120).
-	absent := productionReviewRevisionSelection(productionReviewRevisionAbsentHandle, prepared)
+	absent := productionReviewRevisionSelection(t, productionReviewRevisionAbsentHandle, prepared)
 	if code := productionLifecycleRefusal(t, "absent handle",
 		lane.author.call(t, "generation:begin", []any{absent, lane.frozen})); code != "GENERATION_REVIEW_CONTEXT_REQUIRED" {
 		t.Fatalf("a begin carrying an unminted handle refused with %v; want GENERATION_REVIEW_CONTEXT_REQUIRED", code)
 	}
 	// A handle that does not belong to the operation the begin asks for is a misuse
 	// of a handle the caller does hold: the registry's purpose does not match.
-	refine := productionReviewRevisionSelection(prepared.ContextID, prepared)
+	refine := productionReviewRevisionSelection(t, prepared.ContextID, prepared)
 	refine["operation"] = store.ReviewRevisionOperationRefineDraft
 	refine["promptKeys"] = []any{"refine_chapter"}
 	refine["skillStages"] = []any{"refinement"}
@@ -392,14 +393,14 @@ func testProductionReviewRevisionRefusals(t *testing.T) {
 	}
 	// A selection that does not match the context it carries - here a prompt key the
 	// frozen operation never uses - is refused rather than frozen.
-	wrongPrompt := productionReviewRevisionSelection(prepared.ContextID, prepared)
+	wrongPrompt := productionReviewRevisionSelection(t, prepared.ContextID, prepared)
 	wrongPrompt["promptKeys"] = []any{"opening"}
 	if code := productionLifecycleRefusal(t, "mismatched selection",
 		lane.author.call(t, "generation:begin", []any{wrongPrompt, lane.frozen})); code != "GENERATION_REVIEW_CONTEXT_MISMATCH" {
 		t.Fatalf("a mismatched selection refused with %v; want GENERATION_REVIEW_CONTEXT_MISMATCH", code)
 	}
 	// An author input that is not the frozen context is a different context.
-	wrongInput := productionReviewRevisionSelection(prepared.ContextID, prepared)
+	wrongInput := productionReviewRevisionSelection(t, prepared.ContextID, prepared)
 	wrongInput["authorInputs"] = []any{map[string]any{"id": productionReviewRevisionAuthorInputID, "text": `{"version":1}`}}
 	if code := productionLifecycleRefusal(t, "other author input",
 		lane.author.call(t, "generation:begin", []any{wrongInput, lane.frozen})); code != "GENERATION_REVIEW_CONTEXT_MISMATCH" {
@@ -414,7 +415,7 @@ func testProductionReviewRevisionRefusals(t *testing.T) {
 		t.Fatalf("a handle on a non-review begin refused with %v; want GENERATION_REVIEW_CONTEXT_INVALID", code)
 	}
 	// A stale lease is the reused admission's own refusal, taken before any handle.
-	stale := productionReviewRevisionSelection(prepared.ContextID, prepared)
+	stale := productionReviewRevisionSelection(t, prepared.ContextID, prepared)
 	if code := productionLifecycleRefusal(t, "stale lease",
 		lane.author.call(t, "generation:begin", []any{stale, lane.stale()})); code == "" {
 		t.Fatal("a stale-lease begin was refused without a symbolic code")
