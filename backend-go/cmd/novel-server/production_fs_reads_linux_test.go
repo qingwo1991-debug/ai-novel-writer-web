@@ -264,15 +264,14 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 			[]any{marker, projectPath, stale}, "PROJECT_SESSION_STALE", "PROJECT_SESSION_NOT_OWNED")
 	})
 
-	// The five names this file must not publish, one subtest each: fs:write-json,
-	// the three browser-impossible fs:grant-* names and the absolute-path listing.
-	// fs:write-file and fs:mkdir are bound by the write batch, which proves their
-	// confinement against the same adapter this file exercises.
+	// The two names this file must not publish, one subtest each: fs:write-json and
+	// the absolute-path listing. fs:write-file and fs:mkdir are bound by the write
+	// batch, which proves their confinement against the same adapter this file
+	// exercises, and the three fs:grant-* names are bound by the browser grant
+	// batch (production_fs_grants_linux.go), whose own file proves the allowlist
+	// that replaces the desktop's native picker.
 	for _, operation := range []string{
 		"fs:write-json",
-		"fs:grant-read-file",
-		"fs:grant-write-file",
-		"fs:grant-mkdir",
 		"fs:list-dir",
 	} {
 		operation := operation

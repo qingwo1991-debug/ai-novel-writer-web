@@ -107,21 +107,22 @@ import (
 //
 // Grant operations:
 //
-//	fs:grant-read-file   web/operations.json:211 ("flexible")
-//	fs:grant-write-file  web/operations.json:212 ("flexible")
-//	fs:grant-mkdir       web/operations.json:213 ("flexible")
+//	fs:grant-read-file   production_fs_grants_linux.go, internal/librarypath
+//	fs:grant-write-file  the same binder
+//	fs:grant-mkdir       the same binder
 //
-//	There is no server-issued external grant in a browser: the desktop mints one
-//	after a native picker (src/shared/ipc-channels.ts:488 "用户选择后签发的授权")
-//	and the renderer then carries only that grantId, so the target is a host path
-//	the server never chose - export-service.ts:328,352,372,416 writes an export
-//	through fs:grant-write-file/fs:grant-mkdir to a user-selected output directory,
-//	and knowledge-service.ts:143 reads an externally picked file through
-//	fs:grant-read-file. Minting that authority on a server would let any page name
-//	a path outside every project root. internal/transport/project_files.go:69-74
-//	states the same refusal, and no binder in internal/transport publishes any
-//	fs:grant-* name at all (the only Go occurrences are 501 assertions in
-//	synthetic_project_files_http_linux_test.go:360-362).
+//	These are served, and the reason the older note here was wrong is worth
+//	keeping: it argued that a server cannot mint the desktop's grant without
+//	letting a page name a path outside every project root. That is true of a
+//	grant over an arbitrary host path, and it is why this binder never accepts
+//	one. The browser gets the same capability over a path the SERVER resolved:
+//	the request names a symbolic root and a relative path, every component is
+//	Lstat'd against a physical root, any symlink is an escape even when it points
+//	back inside, and the token is bound to the caller, the lease epoch and an
+//	expiry, with a MAC over its own fields. Write and mkdir moreover refuse author
+//	data outright, so an export grant cannot be turned into an edit of the
+//	project's database. The chooser that would call these is front-end work; the
+//	backend capability is here.
 //
 // Absolute-path listing:
 //

@@ -665,6 +665,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// tab that navigates away mid-batch cannot roll back chapters already written.
 		func() error { return newProductionFinalizedDraftImports(open.durable).Bind(server) },
 		func() error { return newProductionFSReads(open).Bind(server) },
+		// fs:grant-read-file / write-file / mkdir are the browser's answer to the
+		// desktop's native picker: a server-issued token over a path resolved inside
+		// the library or project root the caller's own lease names, never a body path
+		// (production_fs_grants_linux.go, internal/librarypath).
+		func() error { return newProductionFSGrants(open).Bind(server) },
 		func() error { return newProductionGlobalWrites(open).Bind(server) },
 		func() error { return newProductionFileWrites(open).Bind(server) },
 		func() error { return newProductionSingletonReads(open).Bind(server) },
