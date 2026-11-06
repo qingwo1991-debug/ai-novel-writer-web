@@ -8,7 +8,7 @@
 | 项 | 值 |
 | --- | --- |
 | 清单里的操作总数 | 281 |
-| 生产车道已服务 | **161**（待验证：`f3f681cb` 起，含 158 全绿基线） |
+| 生产车道已服务 | **161**（`c98ac3fa` 全绿） |
 | 仍未服务 | 120 |
 | 承载方式 | 单个 Go 进程 + 单个容器，无 Node 运行时 |
 | 生产容器 | **未动**，仍跑旧镜像，回滚摘要已记录 |
@@ -89,6 +89,25 @@
 
 1. **CI annotation 在第一个引号处截断**。用 `%q` 格式化错误信息时，日志里的"空错误码"多半是截断，不是真的空。测试里禁用 `%q`。
 2. **在空表上 `UPDATE` 是无声空操作**。基线建的 `continuity_projection_meta` 是空表，夹具用 `UPDATE ... WHERE id='main'` 一行没写，而源读取是 `INNER JOIN`，于是每条读都在第一个守卫处返回 `SOURCE_CHANGED`。一个原因伪装成三个不同的失败。
+
+### 2.6 六个 db 维护操作：全部 C 类（能力缺口），一个都没绑
+
+派了 agent 逐条查证，结论是**零绑定**，而且这个结论是对的：这六条的参考实现都要么依赖进程内持有者，
+要么依赖文件系统，要么依赖未移植的提案服务。
+
+| 操作 | 缺什么 |
+| --- | --- |
+| `db:review-cycle-list-pending-rechecks` | M03 收据证明 + recheck 投影（`store/reviewcycle_read_tx.go:9-12`） |
+| `db:blueprint-character-sync-complete` | 提案/名册收据证明未移植（`transport/blueprints.go:15-16`） |
+| `db:blueprint-clear-all` | 冻结文档读取 + 恢复退役（`blueprint-repository.ts:202-203`） |
+| `db:project-core-commit-generated` | 进程内 generation owner 的 effect 断言（`main-generation-owner.ts:1548`） |
+| `db:project-clear-generated-data` | 回收站文件系统 + 身份退役（`project-clear-repository.ts:34-83,119-134`） |
+| `db:import-global-facts-commit` | 提案服务 + 已有项目探测（`import-global-facts-repository.ts:193-204`） |
+
+**破坏性顺序记在这里，免得下次重新推**：
+
+- `blueprint-clear-all`：`blueprint_character_sync_operations` → `blueprint_commit_operations` → `blueprints`（`:205-207`），且在冻结读取与恢复退役之后。
+- `project-clear-generated-data`：先 `finalized_draft_import_operations, post_process_steps, post_process_runs, reviews, revisions, drafts, contents, summary_snapshots`（`:102-109`），再 blueprint 三表（`:114`），最后身份退役 + `UPDATE project_core SET writing_style, reference_works, global_guidance, golden_finger, premise, worldbuilding, synopsis, character_states`（`:135-147`）。注意它**不清** `core_outline` / `world_setting` / `protagonist_profile`，和 `resetCreativeFields` 不是一回事。
 
 ## 三、未完成
 
