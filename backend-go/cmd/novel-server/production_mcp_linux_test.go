@@ -512,7 +512,10 @@ func TestProductionMCPStatusSeparatesUnconfiguredFromUnreachable(t *testing.T) {
 func TestProductionMCPRefusesNonAdmittedOriginWithoutDialing(t *testing.T) {
 	fixture := newProductionMCPFixture(t)
 	client := fixture.client(t, productionTestTab)
+	// Both stubs are listening and configured; the only difference between them is
+	// that one origin is in the committed policy and the other is not.
 	fixture.writeConfig(t, map[string]any{
+		"echo":    map[string]any{"url": fixture.admittedURL},
 		"outside": map[string]any{"url": fixture.outsideURL},
 	})
 	if answer, _ := fixture.loadConfig(t, client); !answer.Success {
@@ -522,20 +525,31 @@ func TestProductionMCPRefusesNonAdmittedOriginWithoutDialing(t *testing.T) {
 	if outside := productionMCPStatusFor(t, statuses, "outside"); outside.Status != "error" || outside.Error != "MCP_ORIGIN_NOT_ADMITTED" {
 		t.Fatalf("a non-admitted origin answered status=%s error=%s", outside.Status, outside.Error)
 	}
+	// The control, in this same test: the admitted stub is dialed and connects.
+	// Without it a zero on the other stub could mean a polite refusal or a counter
+	// nothing ever reaches, and those are opposite conclusions. Its answer is
+	// carried into both refusals below so a broken control reports itself instead
+	// of the symptom it would produce here.
+	control, controlBody := fixture.connect(t, client, "echo")
+	if !control.Success {
+		t.Fatalf("mcp:connect refused the ADMITTED server (success=%v error=%s): %s", control.Success, control.Error, controlBody)
+	}
 	refused, body := fixture.connect(t, client, "outside")
 	if refused.Success || refused.Error != "MCP_ORIGIN_NOT_ADMITTED" {
-		t.Fatalf("mcp:connect answered success=%v error=%s: %s", refused.Success, refused.Error, body)
+		t.Fatalf("mcp:connect answered success=%v error=%s for the non-admitted origin (the admitted control answered success=%v error=%s): %s",
+			refused.Success, refused.Error, control.Success, control.Error, body)
+	}
+	// Same measurement on both stubs, read after both connects: one handshake on
+	// the admitted side, none at all on the refused side.
+	if reached := fixture.admitted.count("initialize"); reached == 0 {
+		t.Fatalf("the admitted stub answered mcp:connect (success=%v error=%s) but recorded %d handshakes, so these counters measure nothing: %s",
+			control.Success, control.Error, reached, controlBody)
 	}
 	if reached := fixture.outside.count("initialize"); reached != 0 {
 		t.Fatalf("a non-admitted origin was dialed %d times", reached)
 	}
 	if reached := fixture.outside.total(); reached != 0 {
-		t.Fatalf("a non-admitted origin received %d requests", reached)
-	}
-	// ... and the admitted one did receive them, so the counter above is not
-	// measuring a stub nothing ever reaches.
-	if reached := fixture.admitted.total(); reached == 0 {
-		t.Fatal("the admitted stub received no request at all")
+		t.Fatalf("a non-admitted origin received %d requests of any method", reached)
 	}
 	statuses, _ = fixture.statuses(t, client)
 	if outside := productionMCPStatusFor(t, statuses, "outside"); outside.Status != "error" || outside.Error != "MCP_ORIGIN_NOT_ADMITTED" {
