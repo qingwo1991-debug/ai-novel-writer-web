@@ -582,27 +582,23 @@ func TestReviewRevisionContextFreezesFinalizedHistory(t *testing.T) {
 		t.Fatalf("projection drifted\n got: %s\nwant: %s", got, want)
 	}
 	// Chapter two keeps a receipt but no identity freeze receipt, so its
-	// projection is "legacy": preserved, never claimed as current. Its
-	// source-bound candidate keeps the STORED key order of the values the
-	// reference spreads unchanged (summary-repository.ts:153-168).
-	projectionTwo, _ := rrctxField(t, secondEntry, "projection").(plotObject)
-	if projectionTwo == nil {
-		t.Fatal("chapter two projection is missing")
+	// projection is legacy. The reference attaches a projection to a history entry
+	// only when it is current AND its frozen source equals the source being
+	// revised (review-revision-context.ts:104):
+	//
+	//   const projection = projections.find(item => item.draftId === row.id
+	//     && item.sourceStatus === 'current' && isDeepStrictEqual(item.source, sourceIdentity))
+	//
+	// So a legacy row contributes its identity and its material identity but no
+	// projection, and preflightFindings (:152) never sees its facts. Asserting that
+	// absence is the point of this block: an earlier version of this test expected a
+	// legacy projection here and was wrong, not the capture.
+	if value, present := secondEntry["projection"]; present {
+		t.Fatalf("chapter two carries a projection the reference would not attach: %v",
+			rrctxJSON(t, value))
 	}
-	if rrctxField(t, projectionTwo, "sourceStatus") != "legacy" {
-		t.Fatalf("chapter two status: %v", rrctxField(t, projectionTwo, "sourceStatus"))
-	}
-	candidates, _ := rrctxField(t, projectionTwo, "characterStateCandidates").([]any)
-	if len(candidates) != 1 {
-		t.Fatalf("candidates: %v", rrctxJSON(t, projectionTwo))
-	}
-	candidate, _ := candidates[0].(plotObject)
-	if got, want := rrctxJSON(t, candidate), `{"characterName":"阿青","field":"location","value":"塔下",`+
-		`"rawValue":{"b":1,"a":2},"candidateKey":"k-2",`+
-		`"source":{"contentHash":"`+rrctxSHA(rrctxChapterTwo)+`","chapterNumber":2,`+
-		`"finalizationId":"`+rrctxFinalTwo+`","draftId":2},`+
-		`"expectedFieldRevision":2,"expectedFieldValueHash":"`+rrctxSHA("塔下")+`"}`; got != want {
-		t.Fatalf("candidate order drifted\n got: %s\nwant: %s", got, want)
+	if rrctxField(t, secondEntry, "identity") == nil {
+		t.Fatal("chapter two lost its identity")
 	}
 	// A second connection sees the same source rows, so the capture read
 	// committed state rather than its own view.
