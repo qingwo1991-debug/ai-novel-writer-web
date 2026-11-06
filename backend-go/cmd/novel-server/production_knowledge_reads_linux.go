@@ -142,7 +142,12 @@ import (
 //     (kb-controller.ts:143-152, :219-221), a body the View-shaped binder has no
 //     way to return; the honest substitute is the same registered code as an HTTP
 //     409 refusal, which is a named refusal rather than a lie about an empty
-//     store. Every other kb: name in this lane keeps the reference's 200 body:
+//     store. A View-shaped binder has no way to answer that body, so the code is
+//     carried by the one shape the binder does map: an *security.HTTPError. All
+//     four document reads refuse through productionKnowledgeReadRefusal for that
+//     reason - a sentinel alone is invisible to knowledgeReadError's allowlist and
+//     would surface as an unmapped 500 - and none of them is exempt. kb:search
+//     takes the same seam. Every other kb: name in this lane keeps the 200 body:
 //     kb:search-with-scope and kb:search-writing-context are hand-written map
 //     handlers (production_knowledge_search_linux.go:243-247), so they keep the
 //     reference's 200 for the same store where kb:search, served by the frozen
@@ -155,7 +160,11 @@ import (
 //     kb:search-with-scope must degrade identically. The four document reads
 //     refuse instead: the reference lets the equivalent throw escape
 //     (kb-controller.ts:213-228), and zeros for a store that exists but cannot be
-//     read would be the same lie as zeros for a store nobody looked at.
+//     read would be the same lie as zeros for a store nobody looked at. On the
+//     wire that refusal is the transport's own KNOWLEDGE_READ_FAILED - the generic
+//     read failure every page already renders, and the only code this file has for
+//     a store that exists and cannot be decoded. It is a refusal with a code, not
+//     an unmapped error, and the tests assert it by name.
 //  3. The finalized annotation is read on all four document reads, not only
 //     kb:list-documents, because the frozen binder hands back one View and one
 //     chapter map for the whole group. The cost is one indexed SELECT; the
@@ -166,10 +175,12 @@ import (
 //
 // A refusal this adapter returns reaches the browser through
 // transport.knowledgeReadError (internal/transport/knowledge.go:147-168), which
-// keeps only the context, ownership, provider and knowledgequery symbols; any
-// other storage or database refusal answers KNOWLEDGE_READ_FAILED rather than
-// prose. That is the point of that function - a repository error can carry
-// private content - so no refusal below tries to smuggle a message past it.
+// keeps only an *security.HTTPError plus the context, ownership, provider and
+// knowledgequery symbols; any other error answers KNOWLEDGE_READ_FAILED rather
+// than prose. That is the point of that function - a repository error can carry
+// private content - so no refusal below tries to smuggle a message past it, and
+// every refusal that has a registered code is built by productionKnowledgeReadRefusal
+// instead of being returned as a bare sentinel.
 //
 // Read-only: nothing here writes a byte. Every open is a confined os.Root read,
 // the only database access is one SELECT, and a refused call leaves both stores
@@ -326,7 +337,7 @@ func (k *productionKnowledgeReads) BeginKnowledge(ctx context.Context, caller tr
 	expected any) (*knowledgequery.View, map[string]int64, func(), error) {
 	scope, err := k.open(ctx, caller, expected)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, productionKnowledgeReadRefusal(err)
 	}
 	view, err := knowledgequery.New(ctx, productionKnowledgeSnapshotOf(scope.index),
 		scope.storage.storage, productionKnowledgeCopyBudget())
@@ -335,7 +346,9 @@ func (k *productionKnowledgeReads) BeginKnowledge(ctx context.Context, caller tr
 		if contextError := ctx.Err(); contextError != nil {
 			return nil, nil, nil, contextError
 		}
-		return nil, nil, nil, err
+		// Even this arm leaves through the seam: a refusal with a registered code
+		// added here later must not be able to fall out as a bare sentinel.
+		return nil, nil, nil, productionKnowledgeReadRefusal(err)
 	}
 	return view, scope.chapters, scope.Close, nil
 }
@@ -350,7 +363,7 @@ func (k *productionKnowledgeReads) BeginKnowledgeSearch(ctx context.Context, cal
 	if err != nil {
 		if errors.Is(err, errProductionKnowledgeLegacyBlocked) {
 			// The one envelope the frozen binder cannot reproduce: see deviation 1.
-			return nil, nil, security.NewHTTPError(http.StatusConflict, productionKnowledgeCodeLegacyBlocked)
+			return nil, nil, productionKnowledgeReadRefusal(err)
 		}
 		if errors.Is(err, errProductionKnowledgeStorageUnsafe) ||
 			errors.Is(err, errProductionKnowledgeIndexInvalid) {
@@ -359,7 +372,7 @@ func (k *productionKnowledgeReads) BeginKnowledgeSearch(ctx context.Context, cal
 			// same through production_knowledge_search_linux.go:227-234, :243-257.
 			return productionKnowledgeReadEmptyCapture()
 		}
-		return nil, nil, err
+		return nil, nil, productionKnowledgeReadRefusal(err)
 	}
 	capture, err := knowledgequery.NewSearchCapture(ctx, productionKnowledgeSnapshotOf(scope.index),
 		scope.storage.storage, productionKnowledgeCopyBudget())
@@ -371,6 +384,27 @@ func (k *productionKnowledgeReads) BeginKnowledgeSearch(ctx context.Context, cal
 		return productionKnowledgeReadEmptyCapture()
 	}
 	return capture, scope.Close, nil
+}
+
+// productionKnowledgeReadRefusal moves a refusal onto the one seam the frozen
+// binders actually map. transport.knowledgeReadError (internal/transport/
+// knowledge.go:147-168) keeps an *security.HTTPError with its own status and code
+// and replaces anything else with KNOWLEDGE_READ_FAILED, so a bare sentinel such
+// as errProductionKnowledgeLegacyBlocked - whose string is not in that function's
+// finite allowlist - would reach the page as an unmapped 500 instead of the
+// registered migration code. Every View-shaped read therefore refuses through
+// this function; kb:list-documents has no exemption, and neither have the other
+// three. Only the sentinels with a code the pages really render are translated:
+// LEGACY_VECTOR_MIGRATION_BLOCKED is registered in src/i18n/app-errors.ts:11,
+// while KNOWLEDGE_BASE_INDEX_INVALID and KNOWLEDGE_BASE_STORAGE_UNSAFE are not -
+// so a store that exists but cannot be decoded keeps the transport's generic
+// KNOWLEDGE_READ_FAILED. Both would land on the same fallback text, and this way
+// the refusal does not invent a second vocabulary for the same sentence.
+func productionKnowledgeReadRefusal(err error) error {
+	if errors.Is(err, errProductionKnowledgeLegacyBlocked) {
+		return security.NewHTTPError(http.StatusConflict, productionKnowledgeCodeLegacyBlocked)
+	}
+	return err
 }
 
 // productionKnowledgeReadEmptyCapture is the empty FTS projection: no chunks, no

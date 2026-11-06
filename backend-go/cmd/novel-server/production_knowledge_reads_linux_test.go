@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -529,6 +530,11 @@ func TestProductionKnowledgeReadsAnswerAnUndecodableStore(t *testing.T) {
 // kb:search-with-scope - a hand-written map handler, not a frozen View binder -
 // keeps the reference's 200 {success:false,errorCode} for the same store. If that
 // asymmetry ever closes, this test is where it shows.
+//
+// No name here is exempt, and no name may answer 500: the code has to arrive as an
+// *security.HTTPError, because transport.knowledgeReadError rewrites every other
+// error to KNOWLEDGE_READ_FAILED. Each refusal is collected rather than fatal on
+// the first, so one run reports every operation that got this wrong.
 func TestProductionKnowledgeReadsRefuseALegacyStore(t *testing.T) {
 	client, projectPath, frozen, _ := productionKnowledgeLane(t)
 	legacy := filepath.Join(projectPath, projectfs.StorageDirectory, productionKnowledgeLegacyVectorName)
@@ -536,6 +542,7 @@ func TestProductionKnowledgeReadsRefuseALegacyStore(t *testing.T) {
 		t.Fatalf("writing a legacy vector store: %v", err)
 	}
 	before := productionKnowledgeReadFingerprint(t, projectPath)
+	var wrong []string
 	for _, read := range []struct {
 		operation string
 		args      []any
@@ -550,12 +557,17 @@ func TestProductionKnowledgeReadsRefuseALegacyStore(t *testing.T) {
 		if response.Code != http.StatusConflict ||
 			!strings.Contains(response.Body.String(),
 				"\"code\":\""+productionKnowledgeCodeLegacyBlocked+"\"") {
-			t.Fatalf("%s answered HTTP %d %s for a legacy vector store", read.operation,
-				response.Code, response.Body.String())
+			wrong = append(wrong, read.operation+" answered HTTP "+
+				strconv.Itoa(response.Code)+" "+response.Body.String())
+			continue
 		}
 		if strings.Contains(response.Body.String(), projectPath) {
-			t.Fatalf("%s leaked the host path in its refusal body", read.operation)
+			wrong = append(wrong, read.operation+" leaked the host path in its refusal body")
 		}
+	}
+	if len(wrong) != 0 {
+		t.Fatalf("%d of 5 names do not refuse a legacy vector store with %s: %s",
+			len(wrong), productionKnowledgeCodeLegacyBlocked, strings.Join(wrong, "; "))
 	}
 	scoped := client.call(t, productionKnowledgeSearchWithScopeName,
 		[]any{"灯", int64(0), int64(9), nil, projectPath, frozen})
