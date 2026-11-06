@@ -1,3 +1,15 @@
+# 交接状态（每次中断后先读这一段）
+
+## 当前事实（2026-11-06）
+
+- 已服务 **168 / 281**，绿提交 `525e3ddb`（workflow `Go backend migration`，四个 job 全绿）。
+- 写一章的**后端**通道已齐：开项目 → 生成账本 → 采纳 → 定稿（`kb:import-finalized-text` 已服务）→ 导出。
+- 但 `generation:execute` 没有 provider：`production_open_linux.go:90-96` 记着 production
+  `main.go` 把 `Dispatch` 留空，`internal/generation/provider.go:25` 也自述"没有装进任何
+  handler 或主二进制"。所以浏览器点"生成"到不了模型。**`llm:*` 五个是当前第一优先。**
+- 渲染进程在 web 模式照样发 `dialog:select-*` / `fs:grant-*` / `skills:*`
+  （`src/services/ipc-client.ts:38-45`），所以那 13 个必须浏览器化，不是不做。grant 3 个已服务。
+
 # Go migration — progress checkpoint and handoff
 
 Written at a deliberate stopping point (the user asked to wrap up this phase, push
