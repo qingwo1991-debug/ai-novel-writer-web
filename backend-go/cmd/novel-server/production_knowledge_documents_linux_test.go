@@ -468,42 +468,27 @@ func TestProductionKnowledgeClearAllRemovesStoreAndCopies(t *testing.T) {
 	}
 }
 
-// TestProductionKnowledgeUnservedNamesStayRefused pins the three refusals this
-// batch documents, each at GO_OPERATION_NOT_MIGRATED with nothing written: the two
-// picker-grant imports and the reference import whose receipt tables this lane
-// cannot write.
+// TestProductionKnowledgeUnservedNamesStayRefused pins the one knowledge name this
+// lane still refuses. The three picker-grant imports it used to pin are served by
+// production_knowledge_uploads_linux.go now, so their absence here is the change,
+// not a regression: what remains refused is the vector backfill, because this store
+// holds no vectors to backfill and a success would be a lie.
 func TestProductionKnowledgeUnservedNamesStayRefused(t *testing.T) {
 	client, projectPath, frozen, baseline := productionKnowledgeLane(t)
-	cases := []struct {
-		label string
-		name  string
-		args  []any
-	}{
-		{"file picker grant", "kb:import-document", []any{"grant-missing", projectPath, frozen}},
-		{"folder picker grant", "kb:import-folder", []any{"grant-missing", projectPath, frozen}},
-		{"reference import", "kb:import-reference-text", []any{int64(1), "run-missing", map[string]any{},
-			frozen}},
+	response := client.call(t, "kb:backfill-vectors", []any{projectPath, frozen})
+	if response.Code != http.StatusNotImplemented ||
+		!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("kb:backfill-vectors answered HTTP %d %s instead of a refusal naming the missing port",
+			response.Code, response.Body.String())
 	}
-	for _, denied := range cases {
-		response := client.call(t, denied.name, denied.args)
-		if response.Code != http.StatusNotImplemented ||
-			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("%s: %s answered HTTP %d %s instead of a refusal naming the missing port",
-				denied.label, denied.name, response.Code, response.Body.String())
-		}
-		if _, err := os.Lstat(productionKnowledgeQueryIndexPath(projectPath)); !os.IsNotExist(err) {
-			t.Fatalf("%s: a refused operation wrote the knowledge store: %v", denied.label, err)
-		}
-		if _, err := os.Lstat(filepath.Join(projectPath, projectfs.StorageDirectory,
-			productionKnowledgeCopyDirectory)); !os.IsNotExist(err) {
-			t.Fatalf("%s: a refused operation wrote a knowledge copy: %v", denied.label, err)
-		}
-		after, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(after, baseline) {
-			t.Fatalf("%s: a refused operation wrote the author database", denied.label)
-		}
+	if _, err := os.Lstat(productionKnowledgeQueryIndexPath(projectPath)); !os.IsNotExist(err) {
+		t.Fatalf("kb:backfill-vectors wrote the knowledge store: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, baseline) {
+		t.Fatal("kb:backfill-vectors wrote the author database")
 	}
 }

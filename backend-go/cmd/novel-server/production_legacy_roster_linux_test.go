@@ -79,8 +79,10 @@ func TestProductionLegacyRosterServesTheSource(t *testing.T) {
 		{Query: `INSERT INTO character_aliases (character_id, name, source_key, valid_from, valid_through)
  VALUES ('ci-character-0-retired', '乙', 'author-alias-2', 0, NULL)`},
 		{Query: `INSERT INTO character_relationships
- (relationship_id, source_character_id, target_character_id, relation)
- VALUES ('ci-relationship-1', 'ci-character-1', 'ci-character-0-retired', 'mentor')`},
+ (relationship_id, source_character_id, target_character_id, relation,
+  source_display_snapshot, target_display_snapshot)
+ VALUES ('ci-relationship-1', 'ci-character-1', 'ci-character-0-retired', 'mentor',
+         '甲', '乙')`},
 		// A writing language that is not the default, so resolveWritingLanguage is
 		// exercised by a value instead of by its fallback.
 		{Query: "UPDATE project_core SET writing_language='en-US' WHERE id='main'"},
