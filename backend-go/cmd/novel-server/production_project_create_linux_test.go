@@ -152,7 +152,7 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 
 	// The lease the first project:open produces. The last subtest proves a later
 	// create neither rotates nor breaks it.
-	var openedLease, openedPath string
+	var openedLease, openedPath, openedProjectID string
 
 	t.Run("create answers the reference payload", func(t *testing.T) {
 		result, body := productionCreateCall(t, author, []any{
@@ -337,6 +337,7 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 			t.Fatalf("project:open returned no session lease: %v", opened.Project)
 		}
 		openedLease, openedPath = lease, projectPath
+		openedProjectID, _ = opened.Project["id"].(string)
 		// The projectId the browser stores must be the manifest's, not a second
 		// identifier minted by the database: project:open reads it from the
 		// manifest through projectfs (internal/authorruntime/project_open.go:106-124).
@@ -461,13 +462,15 @@ func TestProductionProjectCreateServesTheCreateContract(t *testing.T) {
 		if !reopened.Success || !reopened.DBReady {
 			t.Fatalf("project:open stopped working after a create: %+v", reopened)
 		}
-		// The answer's `project` is the project's own core, not a location record:
-		// it names the project by its name and id, and the path the caller passed
-		// is echoed nowhere. So identity is checked the way a caller can check it -
-		// the reopened project must be the one that was opened, by name.
-		if name, _ := reopened.Project["name"].(string); name != productionCreateCleanName {
-			t.Fatalf("project:open answered the project named %q after a create, want %q: %v",
-				name, productionCreateCleanName, reopened.Project)
+		// The claim is that the same project still opens, so it is checked by the
+		// project's own identity. The answer's `project` is that project's core:
+		// `id`, `name`, `path`, `sessionLease`, `characterStates`, the two
+		// timestamps and `novelConfig` (internal/authorruntime/project_open.go:165-176).
+		// Comparing the id is the check a caller can actually make, because a
+		// create elsewhere must never change which project the id names.
+		if reopened.Project["id"] != openedProjectID || openedProjectID == "" {
+			t.Fatalf("project:open answered project id %v after a create, want %q: %v",
+				reopened.Project["id"], openedProjectID, reopened.Project)
 		}
 		response := author.call(t, "project:recent-list", []any{})
 		var wire struct {
