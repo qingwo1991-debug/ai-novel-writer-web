@@ -159,10 +159,14 @@ import (
 // The reference throws; this lane answers the same symbolic code. The store's own
 // values already carry those strings and productionFinalizedDraftImportRefusals is
 // the one place that says so, so the wire code and the store value cannot drift
-// apart unnoticed. Nothing else is mapped: a SQLite diagnostic, a path, a chapter
-// body or a provider message is replaced by REQUEST_FAILED, the transport's own
-// unmapped-failure code (internal/transport/public.go:20), which is exactly what an
-// error no binder names is published as anyway (production_batch_reads_linux.go:303).
+// apart unnoticed. The admission fence's own symbolic refusals (PRODUCTION_CLOSED,
+// PROJECT_NOT_OPEN, PROJECT_SESSION_STALE, AUTHOR_WRITE_STALE,
+// PROJECT_HANDLE_CLOSED) survive verbatim through the family's one arm
+// (production_importrun_write_linux.go:475-495). Nothing else is mapped: a SQLite
+// diagnostic, a path, a chapter body or a provider message is replaced by
+// REQUEST_FAILED, the transport's own unmapped-failure code
+// (internal/transport/public.go:20), which is exactly what an error no binder names
+// is published as anyway (production_batch_reads_linux.go:303).
 //
 // The mapping runs exactly once, in productionFinalizedDraftImportFailure, and
 // every helper below hands its errors back untouched: mapping twice would map the
@@ -283,6 +287,13 @@ func (r *productionFinalizedDraftImports) Bind(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
+	// Both names are installed, and the preview is the one bound name in this lane
+	// that answers by refusing: the reference call site hands it an inspection id
+	// minted by db:import-run-prepare-inspection (db-controller.ts:367-384), which
+	// peeks an in-process store this backend does not own, so the id form reaches
+	// IMPORT_INSPECTION_OWNER_UNAVAILABLE. It is bound rather than left at
+	// GO_OPERATION_NOT_MIGRATED so that the gap is named on the wire; a caller that
+	// passes the chapters directly gets a real preview.
 	handlers := [...]struct {
 		name    string
 		handler transport.Operation
@@ -582,6 +593,15 @@ func productionFinalizedDraftImportFailure(err error) error {
 	}
 	if code := productionFinalizedDraftImportCode(err); code != "" {
 		return errors.New(code)
+	}
+	// The admission fence refuses with symbolic codes of its own
+	// (PRODUCTION_CLOSED, PROJECT_NOT_OPEN, PROJECT_SESSION_STALE,
+	// AUTHOR_WRITE_STALE, PROJECT_HANDLE_CLOSED), and those are the codes the
+	// reference's caller must see. This is the family's own arm
+	// (production_importrun_write_linux.go:475-495), reused rather than
+	// re-derived, so the two binders cannot disagree about what survives.
+	if productionImportRunWriteSymbolicCode.MatchString(err.Error()) {
+		return errors.New(err.Error())
 	}
 	return errors.New(productionFinalizedDraftImportFailedCode)
 }

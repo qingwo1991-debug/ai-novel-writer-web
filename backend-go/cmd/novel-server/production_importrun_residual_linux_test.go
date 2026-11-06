@@ -859,14 +859,10 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 		f := newProductionImportRunResidualFixture(t)
 		settled := productionImportRunResidualImage(t, f.database)
 		execution := productionImportRunResidualLeaseWire(3)
-		// db:import-run-author-preview and db:import-run-prepare-inspection: no
-		// server-side inspection handoff (importsource.Store.Peek returns metadata only
-		// and Consume needs the preview CAS this lane never puts on the wire,
-		// internal/importsource/inspection.go:158-169 and
-		// internal/transport/import_selection.go:110-116), and no author-purpose
-		// prepare() (internal/store/importrun_lifecycle.go:26-34).
-		productionImportRunResidualStaysUnbound(t, f.author,
-			productionImportRunResidualAuthorPreviewName, []any{"inspection-1", f.projectPath, f.frozen})
+		// db:import-run-prepare-inspection: no author-purpose prepare()
+		// (internal/store/importrun_lifecycle.go:26-34), which is also why its
+		// dependent db:import-run-author-preview is now bound but refuses the
+		// inspection-id form with IMPORT_INSPECTION_OWNER_UNAVAILABLE.
 		productionImportRunResidualStaysUnbound(t, f.author,
 			productionImportRunResidualPrepareInspectionName, []any{
 				map[string]any{"inspectionId": "inspection-1", "runId": productionImportRunResidualParseRunID,

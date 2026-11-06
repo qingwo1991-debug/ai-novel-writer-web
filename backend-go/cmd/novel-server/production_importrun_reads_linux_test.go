@@ -418,13 +418,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:import-run-prepare-inspection")
 	})
 
-	// db:import-run-author-preview: refused. Same inspection owner.
-	t.Run("db:import-run-author-preview", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-author-preview",
-			[]any{"production-inspection-1", projectPath, frozen})
-		unchanged(t, "db:import-run-author-preview")
-	})
-
 	// db:import-run-effect-receipt-prepare: refused. That readback plus a receipt
 	// INSERT into import_run_receipts.
 	t.Run("db:import-run-effect-receipt-prepare", func(t *testing.T) {

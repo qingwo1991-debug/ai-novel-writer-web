@@ -645,6 +645,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
 		func() error { return newProductionImportRunReads(open.durable).Bind(server) },
 		func() error { return newProductionImportRunWrites(open.durable).Bind(server) },
+		// db:draft-import-finalized-batch - the one write that brings an author's
+		// existing manuscript in as finalized chapters. It runs the store's single
+		// BEGIN IMMEDIATE over its own reserved connection on a detached context, so a
+		// tab that navigates away mid-batch cannot roll back chapters already written.
+		func() error { return newProductionFinalizedDraftImports(open.durable).Bind(server) },
 		func() error { return newProductionFSReads(open).Bind(server) },
 		func() error { return newProductionGlobalWrites(open).Bind(server) },
 		func() error { return newProductionFileWrites(open).Bind(server) },
