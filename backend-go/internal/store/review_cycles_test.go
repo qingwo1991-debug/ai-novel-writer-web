@@ -501,18 +501,34 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 		t.Fatalf("cycle source hash: %v", got)
 	}
 
-	// One finding: the free warning, which has no target id and therefore no anchor.
-	rows, err := rrMaps(context.Background(), read, `SELECT finding_id,source_project_id,source_epoch,
- source_id,source_revision,source_content_hash,span_start,span_end,span_unit,excerpt_hash,occurrence,
- category,target_id,kind,problem_text,expected_text,status,evidence_hash,confirmation_item_index
- FROM review_findings WHERE cycle_id=? ORDER BY finding_id`, cycleID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 {
+	// Every non-pass item of the report becomes a row, exactly as the reference
+	// inserts them (electron/repositories/review-cycle-repository.ts:615-624 loops
+	// over buildFindings(report, ...)). The fixture's report carries four anchored
+	// preflight findings and one free warning, so five rows land and only the
+	// warning is unanchored - that row is the one this test follows.
+	if len(rows) != 5 {
 		t.Fatalf("finding rows = %d", len(rows))
 	}
-	row := rows[0]
+	var row map[string]any
+	anchored := 0
+	for _, candidate := range rows {
+		if candidate["target_id"] == nil {
+			if row != nil {
+				t.Fatalf("more than one unanchored finding: %v and %v", row, candidate)
+			}
+			row = candidate
+			continue
+		}
+		anchored++
+		for _, column := range []string{"span_start", "span_end", "span_unit", "excerpt_hash"} {
+			if candidate[column] == nil {
+				t.Fatalf("anchored finding %v carries no %s", candidate["finding_id"], column)
+			}
+		}
+	}
+	if row == nil || anchored != 4 {
+		t.Fatalf("the free warning is missing: %d anchored", anchored)
+	}
 	if glText(row["source_project_id"]) != rrctxTestProjectID || glText(row["source_epoch"]) != rccTestEpoch ||
 		glText(row["source_id"]) != "draft:1" || glText(row["category"]) != "风格" ||
 		glText(row["kind"]) != "literary" || glText(row["status"]) != "unverified" ||
@@ -531,6 +547,27 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 	}
 	// The stored set hash covers exactly the stored rows, recomputed here without the
 	// writer's own reader.
+	identities := make([]admission.M03FindingIdentity, 0, len(rows))
+	for _, stored := range rows {
+		revision, ok := rrInteger(stored["source_revision"], 0)
+		if !ok {
+			t.Fatalf("stored finding revision: %v", stored["source_revision"])
+		}
+		identities = append(identities, admission.M03FindingIdentity{
+			FindingID:         glText(stored["finding_id"]),
+			SourceProjectID:   glText(stored["source_project_id"]),
+			SourceEpoch:       glText(stored["source_epoch"]),
+			SourceID:          glText(stored["source_id"]),
+			SourceRevision:    revision,
+			SourceContentHash: glText(stored["source_content_hash"]),
+			Category:          glText(stored["category"]),
+			Kind:              glText(stored["kind"]),
+			ProblemText:       glText(stored["problem_text"]),
+		})
+	}
+	if findingSetHash != admission.CanonicalM03FindingSetHash(identities) {
+		t.Fatalf("stored set hash does not cover the stored rows")
+	}
 	identity := admission.M03FindingIdentity{
 		FindingID:         glText(row["finding_id"]),
 		SourceProjectID:   glText(row["source_project_id"]),
@@ -542,16 +579,16 @@ func TestReviewCommitReviewWritesTheCycle(t *testing.T) {
 		Kind:              glText(row["kind"]),
 		ProblemText:       glText(row["problem_text"]),
 	}
-	if findingSetHash != admission.CanonicalM03FindingSetHash([]admission.M03FindingIdentity{identity}) {
-		t.Fatalf("stored set hash does not cover the stored rows")
-	}
 	// The receipt summarises the same row the reader maps.
 	written := reviewCycleSource{rrctxTestProjectID, rccTestEpoch, "draft:1", 1, rrctxSHA(rrctxChapterOne)}
 	indices, err := rcItemIndex(receipt.Content, rrctxChapterOne, written)
 	if err != nil {
 		t.Fatalf("reader projection of the written body: %v", err)
 	}
-	if _, ok := indices[identity.FindingID]; !ok || len(indices) != 1 {
+	// The reader must address the warning the writer stored. How many other items
+	// it maps is the reader's own contract, covered by the projection test above,
+	// so this does not pin a total that a five-finding report would change.
+	if _, ok := indices[identity.FindingID]; !ok {
 		t.Fatalf("reader does not address the written finding: %v", indices)
 	}
 
