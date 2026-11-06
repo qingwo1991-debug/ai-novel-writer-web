@@ -85,6 +85,10 @@ const (
 	// the commit unchanged.
 	productionCharacterProposalAppearance = "瘦高，左眉有一道旧疤"
 	productionCharacterProposalLocation = "门内"
+	// Each slot carries its own location: the detail document is per-character, so a
+	// single shared string would only ever describe the first one.
+	productionCharacterProposalLocationTwo   = "钥匙铺"
+	productionCharacterProposalLocationThree = "门外"
 )
 
 // productionCharacterProposalManifest is one complete architecture answer: three
@@ -888,13 +892,17 @@ func productionCharacterProposalAssertStaged(t *testing.T, batch productionChara
 		t.Fatalf("the staged batch carries %v items, want three", len(batch.Items))
 	}
 	for index, want := range []struct {
-		slot string
-		name string
-		role string
+		slot     string
+		name     string
+		role     string
+		location string
 	}{
-		{productionCharacterProposalSlotOne, productionCharacterProposalNameOne, "protagonist"},
-		{productionCharacterProposalSlotTwo, productionCharacterProposalNameTwo, "supporting"},
-		{productionCharacterProposalSlotThree, productionCharacterProposalNameThree, "antagonist"},
+		{productionCharacterProposalSlotOne, productionCharacterProposalNameOne, "protagonist",
+			productionCharacterProposalLocation},
+		{productionCharacterProposalSlotTwo, productionCharacterProposalNameTwo, "supporting",
+			productionCharacterProposalLocationTwo},
+		{productionCharacterProposalSlotThree, productionCharacterProposalNameThree, "antagonist",
+			productionCharacterProposalLocationThree},
 	} {
 		item := batch.Items[index]
 		if item.SelectionKey != want.slot || item.Fields.Name != want.name || item.Fields.Role != want.role {
@@ -911,7 +919,7 @@ func productionCharacterProposalAssertStaged(t *testing.T, batch productionChara
 		}
 		// rawValue.detail is the entry the parser read, state included: the eleven
 		// static fields are what a commit writes, and this is the evidence behind them.
-		if !strings.Contains(string(item.RawValue.Detail), productionCharacterProposalLocation) {
+		if !strings.Contains(string(item.RawValue.Detail), want.location) {
 			t.Fatalf("items[%v].rawValue.detail does not carry the state the answer wrote: %s",
 				index, item.RawValue.Detail)
 		}
