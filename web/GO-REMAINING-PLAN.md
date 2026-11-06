@@ -8,10 +8,19 @@
 | 项 | 值 |
 | --- | --- |
 | 清单里的操作总数 | 281 |
-| 生产车道已服务 | **142**（`54d58ba6` 起） |
-| 仍未服务 | 139 |
+| 生产车道已服务 | **149**（`9a5dfce7` 起，含 148 全绿的 `321c0012`） |
+| 仍未服务 | 132 |
 | 承载方式 | 单个 Go 进程 + 单个容器，无 Node 运行时 |
 | 生产容器 | **未动**，仍跑旧镜像，回滚摘要已记录 |
+
+## 一之二、验收门槛（两段，别混）
+
+| 门槛 | 内容 | 现在还差 |
+| --- | --- | --- |
+| **一：能真写一章** | 浏览器打开项目 → 生成 → 采纳 → 终稿 → 备份导出 | 一次全绿构建；导入链路；镜像发布 + compose 切换 + 作者数据备份演练（`Dockerfile.go` 已写好并在 CI 构建，但**从未真的启动过**） |
+| **二：281 个全齐** | 知识库 19、云备份 8、MCP 8、Skills 6 等 | 绝大多数是长尾，不属于写作闭环 |
+
+**决定**：门槛一作为验收范围。门槛二继续推进，但不阻塞交付。
 
 ## 二、已完成（不是"能编译"，是有证据）
 
@@ -36,6 +45,11 @@
 | 配置、模型路由、提示词、技能（除本地安装类） | 已服务 |
 | 文件系统（读写 JSON、读写文件、mkdir、exists） | 已服务 |
 | 终稿槽位读、终稿取消、`finalization:commit` / `retry` | 已服务 |
+| 草稿单事务提交（`generation:commit-draft`，一次 `BEGIN IMMEDIATE`） | 已服务 |
+| 批次写入（`generation:begin-batch`） | 已服务 |
+| 图谱 begin（`graph-generation:begin`，plan 类） | 已服务 |
+| 导入运行生命周期（`finalize-parsing` / `restart` / `fail` / `effect-receipt-get`） | 已服务 |
+| 终稿角色上下文读（`finalized-character:read-context`） | 已服务 |
 
 ### 2.3 支撑性资产（这些让后面的活变可能）
 
@@ -43,6 +57,24 @@
 - **三个纯算法移植**：`draft-units`、`draft-visible-text`、`visible-continuation`，含 UTF-16 码元窗口、JS `\s` 集合、sha256 规范形式。
 - **两份移植互证**：`internal/composition/parity_test.go` 断言组合侧与提交侧算出同一个哈希——任何一边漂了构建就红。
 - **服务数断言**：把"进展"从手算变成一个构建会检查的数。
+
+### 2.5 最近三轮：瓶颈已从"接线"变成"缺端口"，而端口正在补上
+
+这三轮的价值不在数字（142→149），在于**证明了正确的做法**：
+
+| 操作 | 之前为什么绑不上 | 补了什么 |
+| --- | --- | --- |
+| `generation:commit-draft` | 没有单事务提交端口 | `internal/store/draft_commit_tx.go` |
+| `graph-generation:begin` | 没有冻结 plan 上下文的端口 | `syntheticFreezeGraphContext` + 读路径的重推导 |
+| 4 个导入生命周期操作 | `BeginParsing`/`FinalizeParsing`/`Restart`/`Fail` 不存在 | `internal/store/importrun_lifecycle.go`（1664 行） |
+| `finalized-character:read-context` | `readFinalizedCharacterContext` 全仓无实现 | `internal/store/finalized_character_context.go`（603 行） |
+
+**推论**：剩下的 132 个操作里，凡是没有端口的一律先补端口。零绑定批次已经作废两次（只有"永远拒绝"的绑定），不再做。
+
+**两个反复出现的假象，都已付出 CI 轮次**：
+
+1. **CI annotation 在第一个引号处截断**。用 `%q` 格式化错误信息时，日志里的"空错误码"多半是截断，不是真的空。测试里禁用 `%q`。
+2. **在空表上 `UPDATE` 是无声空操作**。基线建的 `continuity_projection_meta` 是空表，夹具用 `UPDATE ... WHERE id='main'` 一行没写，而源读取是 `INNER JOIN`，于是每条读都在第一个守卫处返回 `SOURCE_CHANGED`。一个原因伪装成三个不同的失败。
 
 ## 三、未完成
 
