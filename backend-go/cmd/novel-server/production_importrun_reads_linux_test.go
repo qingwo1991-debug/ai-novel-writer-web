@@ -410,22 +410,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:import-run-list-chapters")
 	})
 
-	// db:import-run-restart: refused. Run creation is not in this repository at
-	// all, so a binding here could only fabricate a run row.
-	t.Run("db:import-run-restart", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-restart",
-			[]any{productionImportRunResumableID, productionImportRunCompletedID, projectPath, frozen})
-		unchanged(t, "db:import-run-restart")
-	})
-
-	// db:import-run-fail: refused. It persists a localized human message through
-	// the renderer's i18n catalog, which has no Go counterpart.
-	t.Run("db:import-run-fail", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-fail",
-			[]any{productionImportRunResumableID, "knowledge", "import failed", productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-fail")
-	})
-
 	// db:import-run-prepare-inspection: refused. Run creation; it needs the
 	// tab-bound in-memory inspection owner this lane does not own.
 	t.Run("db:import-run-prepare-inspection", func(t *testing.T) {
@@ -439,22 +423,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		productionImportRunStaysUnbound(t, author, "db:import-run-author-preview",
 			[]any{"production-inspection-1", projectPath, frozen})
 		unchanged(t, "db:import-run-author-preview")
-	})
-
-	// db:import-run-finalize-parsing: refused. Same inspection owner.
-	t.Run("db:import-run-finalize-parsing", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-finalize-parsing",
-			[]any{productionImportRunResumableID, projectPath, frozen})
-		unchanged(t, "db:import-run-finalize-parsing")
-	})
-
-	// db:import-run-effect-receipt-get: refused. It needs authoritative effect
-	// readback from the global-facts, blueprint-range and finalized-draft
-	// repositories, which are not part of this lane's read surface.
-	t.Run("db:import-run-effect-receipt-get", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-effect-receipt-get",
-			[]any{productionImportRunResumableID, "knowledge", "1-2-aaaaaaaa", projectPath, frozen})
-		unchanged(t, "db:import-run-effect-receipt-get")
 	})
 
 	// db:import-run-effect-receipt-prepare: refused. That readback plus a receipt

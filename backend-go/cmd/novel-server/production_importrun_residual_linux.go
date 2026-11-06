@@ -45,6 +45,14 @@ import (
 //	                                       so a request carrying only inspectionId/runId
 //	                                       (src/shared/import-run.ts:296-310) cannot reach the
 //	                                       chapters BeginParsing/CommitParsedSource require.
+//	                                       The reference's whole handler is consume ->
+//	                                       resolveEncodedSources -> beginParsing ->
+//	                                       commitParsedSource per source -> finalizeParsing
+//	                                       (electron/controllers/db-controller.ts:284-355), and
+//	                                       its first two steps have no counterpart bound in this
+//	                                       lane at all: consume needs the tab-scoped CAS, and
+//	                                       ImportSourceIdentityRepository.resolveEncodedSources
+//	                                       needs the application import-source secret.
 //	                                       The author purpose would additionally need the
 //	                                       unported prepare() (:26-34), because BeginParsing
 //	                                       refuses every purpose but 'reference' (:801-802).
@@ -59,7 +67,7 @@ import (
 // (electron/controllers/generation-controller.ts:72-75 ->
 // electron/services/main-generation-owner.ts:1453-1472). This repository has no
 // such proof: the only reduced substitute is the unexported dcAssertSources
-// (internal/store/draft_commit_tx.go:272-291), which proves a draft-commit epoch
+// (internal/store/draft_commit_tx.go:272-288), which proves a draft-commit epoch
 // and root, not an import-effect handle, and is bound to the draft lane's own run
 // row.
 //
@@ -113,16 +121,18 @@ import (
 // (importrun_receipts.go:1100-1105, "A missing receipt row is null, never a
 // refusal - that is the reference's own answer, and the run is not even read in
 // that case"), so this binder answers JSON null and writes nothing. The other
-// three answer the business envelope their channels declare, because the renderer
-// reads `result.run` / `result.preparation` out of it
-// (src/services/workflows/import-workflow.ts:425-449).
+// three answer the business envelope their channels declare: the renderer reads
+// `result.run` out of db:import-run-fail (src/services/workflows/import-workflow.ts:432-438),
+// and db:import-run-finalize-parsing declares `preparation?: ImportRunPreparationResult`
+// (src/shared/ipc-channels.ts:934-937) - the shape src/shared/import-run.ts:358-367 names
+// and electron/controllers/db-controller.ts:364 returns.
 //
 // # One reference step this adapter cannot perform: the failure's wording
 //
 // db:import-run-fail's argument is the caller's own message, and the reference
 // rewrites a symbolic code into a sentence in the run's own locale before storing
 // it (electron/controllers/db-controller.ts:524-526 -> persistedImportRunFailure,
-// electron/controllers/import-run-failure.ts:40-52, over the src/i18n/app-errors
+// electron/controllers/import-run-failure.ts:40-42, over the src/i18n/app-errors
 // catalog). That catalog has no counterpart in this repository, so the message is
 // handed to store.ImportRuns.Fail exactly as the renderer sent it and stored
 // verbatim (internal/store/importrun_lifecycle.go:1615-1618: "the original stores

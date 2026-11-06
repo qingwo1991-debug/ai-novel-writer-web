@@ -1857,8 +1857,7 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 		"db:project-core-commit-generated", "db:project-clear-generated-data",
 		"db:import-global-facts-commit",
 		"db:import-run-prepare-inspection", "db:import-run-author-preview",
-		"db:import-run-finalize-parsing", "db:import-run-effect-receipt-get",
-		"db:import-run-effect-receipt-prepare", "db:import-run-effect-receipt-commit", "db:import-run-restart", "db:import-run-fail", "db:draft-import-finalized-batch",
+		"db:import-run-effect-receipt-prepare", "db:import-run-effect-receipt-commit", "db:draft-import-finalized-batch",
 		"db:blueprint-character-sync-complete", "db:blueprint-update-notes",
 		"db:blueprint-clear-all", "db:plot-tree-save", "db:review-cycle-list-pending-rechecks",
 	} {

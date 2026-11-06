@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -519,6 +522,42 @@ func productionImportRunResidualStaysUnbound(t *testing.T, client *productionDur
 	}
 }
 
+// productionImportRunResidualImage is the byte image of everything a refused call
+// could have touched: the admitted database file, its write-ahead log and its
+// rollback journal. The main file alone is not enough here - a transaction that
+// wrote a page and then rolled back leaves the main file byte-identical and the
+// frame in the -wal, so a main-file-only comparison would pass while a refusal had
+// really tried to write. The -shm index is deliberately excluded: it is transient
+// lock state SQLite may touch merely by opening a reader, not admitted data.
+func productionImportRunResidualImage(t *testing.T, database string) []byte {
+	t.Helper()
+	var image []byte
+	for _, name := range []string{database, database + "-wal", database + "-journal"} {
+		image = append(image, name...)
+		raw, err := os.ReadFile(name)
+		switch {
+		case err == nil:
+			image = append(image, raw...)
+		case errors.Is(err, os.ErrNotExist):
+			image = append(image, "absent"...)
+		default:
+			t.Fatalf("read %s: %v", name, err)
+		}
+		image = append(image, 0)
+	}
+	return image
+}
+
+// productionImportRunResidualAssertUnchanged proves a refused call left both the
+// admitted file and its sidecars exactly as they were.
+func productionImportRunResidualAssertUnchanged(t *testing.T, database string, before []byte, why string) {
+	t.Helper()
+	after := productionImportRunResidualImage(t, database)
+	if !bytes.Equal(before, after) {
+		t.Fatalf("%s changed the admitted database image (%d -> %d bytes)", why, len(before), len(after))
+	}
+}
+
 // TestProductionImportRunResidualsServeAdmittedAuthorDatabase pins the four bound
 // names and the four refusals: each commit is read back off disk over a separate
 // mode=ro connection, each transition's own precondition is asserted on a refused
@@ -607,12 +646,12 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 			productionImportRunWriteText(mappings[1], "source_id") != "residual-source-a" {
 			t.Fatalf("finalize-parsing mapped %v chapters", mappings)
 		}
-		settled := productionImportRunWriteSnapshot(t, f.database)
+		settled := productionImportRunResidualImage(t, f.database)
 		// Not idempotent, by design: the run has left 'parsing'.
 		f.refused(productionImportRunResidualFinalizeParsingName, []any{
 			productionImportRunResidualParseRunID, f.projectPath, f.frozen,
 		}, "IMPORT_RUN_PARSING_CLOSED")
-		productionImportRunWriteAssertUnchanged(t, f.database, settled, "the refused second finalize-parsing")
+		productionImportRunResidualAssertUnchanged(t, f.database, settled, "the refused second finalize-parsing")
 	})
 
 	// db:import-run-restart: the run the user gave up on is fenced and the next run
@@ -685,11 +724,11 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 			productionImportRunWriteNumber(copied[0], "total") != 0 {
 			t.Fatalf("restart copied chapters into a parsing run: %v", copied)
 		}
-		settled := productionImportRunWriteSnapshot(t, f.database)
+		settled := productionImportRunResidualImage(t, f.database)
 		f.refused(productionImportRunResidualRestartName, []any{
 			productionImportRunResidualOldRunID, "residual-third-run", f.projectPath, f.frozen,
 		}, "IMPORT_RUN_NOT_RESTARTABLE")
-		productionImportRunWriteAssertUnchanged(t, f.database, settled, "the refused second restart")
+		productionImportRunResidualAssertUnchanged(t, f.database, settled, "the refused second restart")
 	})
 
 	// db:import-run-fail: the run records its own failure at the stage it was in and
@@ -734,20 +773,20 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 			t.Fatalf("fail stored %q; want the caller's own sentence %q",
 				productionImportRunWriteText(row, "last_error"), reason)
 		}
-		settled := productionImportRunWriteSnapshot(t, f.database)
+		settled := productionImportRunResidualImage(t, f.database)
 		// The run is no longer running, so the lease is stale before the reason is read.
 		f.refused(productionImportRunResidualFailName, []any{
 			productionImportRunResidualLiveRunID, "knowledge", reason,
 			productionImportRunResidualLeaseWire(7), f.projectPath, f.frozen,
 		}, "IMPORT_RUN_EXECUTION_STALE")
-		productionImportRunWriteAssertUnchanged(t, f.database, settled, "the refused fail replay")
+		productionImportRunResidualAssertUnchanged(t, f.database, settled, "the refused fail replay")
 		// The store compares the stage AFTER the lease, so a live execution naming a
 		// stage the run never reached is its own refusal.
 		f.refused(productionImportRunResidualFailName, []any{
 			productionImportRunResidualOtherRunID, "global", reason,
 			productionImportRunResidualLeaseWire(7), f.projectPath, f.frozen,
 		}, "IMPORT_RUN_STAGE_MISMATCH")
-		productionImportRunWriteAssertUnchanged(t, f.database, settled, "the refused fail of a stage the run never reached")
+		productionImportRunResidualAssertUnchanged(t, f.database, settled, "the refused fail of a stage the run never reached")
 		untouched := productionImportRunWriteRow(t, f.database, `SELECT status, stage, execution_epoch
  FROM import_runs WHERE id = ?`, productionImportRunResidualOtherRunID)
 		if productionImportRunWriteText(untouched, "status") != "running" ||
@@ -764,7 +803,7 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 	t.Run("db:import-run-effect-receipt-get", func(t *testing.T) {
 		f := newProductionImportRunResidualReceiptFixture(t)
 		// Snapshot BEFORE the reads: a read that writes anything at all would show up.
-		settled := productionImportRunWriteSnapshot(t, f.database)
+		settled := productionImportRunResidualImage(t, f.database)
 		value, _ := f.value(productionImportRunResidualReceiptGetName, []any{
 			productionImportRunResidualStyleRunID, "style", "done", f.projectPath, f.frozen,
 		})
@@ -809,7 +848,7 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 		if absent != nil || raw != "null" {
 			t.Fatalf("effect-receipt-get answered %q for a missing receipt; want null", raw)
 		}
-		productionImportRunWriteAssertUnchanged(t, f.database, settled,
+		productionImportRunResidualAssertUnchanged(t, f.database, settled,
 			"the two effect-receipt-get reads")
 	})
 
@@ -818,7 +857,7 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 	// two receipt writes, that could accept unproven generation state.
 	t.Run("refused", func(t *testing.T) {
 		f := newProductionImportRunResidualFixture(t)
-		settled := productionImportRunWriteSnapshot(t, f.database)
+		settled := productionImportRunResidualImage(t, f.database)
 		execution := productionImportRunResidualLeaseWire(3)
 		// db:import-run-author-preview and db:import-run-prepare-inspection: no
 		// server-side inspection handoff (importsource.Store.Peek returns metadata only
@@ -851,7 +890,7 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 			productionImportRunResidualReceiptCommitName, []any{
 				productionImportRunResidualStyleRunID, "style", "done", execution, f.projectPath, f.frozen,
 			})
-		productionImportRunWriteAssertUnchanged(t, f.database, settled, "the four refused names")
+		productionImportRunResidualAssertUnchanged(t, f.database, settled, "the four refused names")
 	})
 }
 
@@ -874,7 +913,7 @@ func TestProductionImportRunResidualsRefuseWithoutALiveLease(t *testing.T) {
 			ExecutionEpoch: 5, LeaseExpiresAt: productionImportRunResidualLiveLease(),
 		},
 	)
-	settled := productionImportRunWriteSnapshot(t, f.database)
+	settled := productionImportRunResidualImage(t, f.database)
 	stale := f.staleContext()
 	requests := []struct {
 		operation string
@@ -924,7 +963,7 @@ func TestProductionImportRunResidualsRefuseWithoutALiveLease(t *testing.T) {
 			t.Fatalf("%s refused a stale lease with %q; want the admission fence's own lease code: %s",
 				request.operation, wire.Error.Code, response.Body.String())
 		}
-		productionImportRunWriteAssertUnchanged(t, f.database, settled,
+		productionImportRunResidualAssertUnchanged(t, f.database, settled,
 			"the unleased "+request.operation)
 	}
 	row := productionImportRunWriteRow(t, f.database, `SELECT stage, status, resumable, execution_epoch,

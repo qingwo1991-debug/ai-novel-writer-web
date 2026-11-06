@@ -554,6 +554,17 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// db:import-run-finalize-parsing, -restart, -fail and -effect-receipt-get
+		// were unbound because the store had no lifecycle behind them. It does now
+		// (internal/store/importrun_lifecycle.go), so those four are served here.
+		// The other four import-run names stay 501: prepare-inspection and
+		// author-preview need an inspection owner this lane does not have, and
+		// receipt prepare/commit need a generation-source proof that does not
+		// exist yet (importrun_receipts.go:112-118).
+		if bindErr := newProductionImportRunResiduals(open.durable).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		if bindErr := server.BindGenerationExecute(&transport.GenerationProvider{Execute: owner.Execute}); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
