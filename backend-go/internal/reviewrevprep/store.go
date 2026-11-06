@@ -19,9 +19,9 @@
 // internal/importsource/inspection.go is the existing Go port of that pattern
 // and fixes the conventions used here: a constructor taking a server key plus
 // StoreOptions, Inspect/Peek/Consume/RevokeCaller/ActiveCount, keyed digests,
-// an injected clock, identical refusal codes for identical refusals, and a
-// revision counter that invalidates a caller's outstanding handles when it is
-// revoked (:104-105, :137, :170).
+// an injected clock, IMPORT_*-shaped refusal codes, and a revision counter that
+// invalidates a caller's outstanding handles when it is revoked (:104-105, :137,
+// :170).
 //
 // # Bearer-like handles
 //
