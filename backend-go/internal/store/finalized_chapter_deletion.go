@@ -662,8 +662,13 @@ func chapterDeletionForeignKeyViolation(err error) bool {
 	if !errors.As(err, &sqliteError) {
 		return false
 	}
-	return sqliteError.ErrCode == sqlite3.ErrConstraintForeignKey ||
-		sqliteError.ErrCode == sqlite3.ErrConstraint
+	// mattn/go-sqlite3 has no ErrCode field: Code is the primary result code
+	// (ErrNo) and ExtendedCode the extended one (ErrNoExtended), and the two
+	// constant families are different types, so each is compared with its own.
+	// Every constraint violation, including a foreign-key one, carries
+	// Code == ErrConstraint; the foreign-key case additionally extends it.
+	return sqliteError.Code == sqlite3.ErrConstraint ||
+		sqliteError.ExtendedCode == sqlite3.ErrConstraintForeignKey
 }
 
 // chapterDeletionDeleteDraftFacts is deleteDraftFacts (:175-202): the receipt's
