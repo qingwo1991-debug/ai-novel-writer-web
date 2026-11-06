@@ -575,8 +575,12 @@ func TestProductionKnowledgeReadsRefuseALegacyStore(t *testing.T) {
 	if err := json.Unmarshal(scoped.Body.Bytes(), &body); err != nil {
 		t.Fatalf("kb:search-with-scope did not answer a body: %v", err)
 	}
-	if scoped.Code != http.StatusOK || body["success"] != false ||
-		body["errorCode"] != productionKnowledgeCodeLegacyBlocked {
+	// The operation channel wraps a handler's answer in result, so the reference's
+	// 200 refusal arrives one level down. Asserting it at the top would have failed
+	// against a correct lane.
+	inner, _ := body["result"].(map[string]any)
+	if scoped.Code != http.StatusOK || inner == nil || inner["success"] != false ||
+		inner["errorCode"] != productionKnowledgeCodeLegacyBlocked {
 		t.Fatalf("kb:search-with-scope answered HTTP %d %v instead of the reference's 200 refusal",
 			scoped.Code, body)
 	}

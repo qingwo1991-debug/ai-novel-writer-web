@@ -807,15 +807,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			return nil, nil, bindErr
 		}
 	}
-	// project:recent-list is bound on its own: the editor navigation family would
-	// also publish fs:list-dir (which has no confined production provider yet)
-	// and would rebind project:recent-list (OPERATION_ALREADY_BOUND).
-	if bindErr := server.Bind("project:recent-list", func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
-		if len(args) != 0 {
-			return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
-		}
-		return open.RecentProjects(ctx, caller)
-	}); bindErr != nil {
+	// The portability lane now publishes project:recent-list and fs:list-dir together
+	// through the editor navigation family, along with the archive round trip, so the
+	// standalone recent-list binding below is gone: binding both would be a duplicate
+	// (production_project_portability_linux.go).
+	portability := newProductionPortability(open, config)
+	if bindErr := portability.Bind(server); bindErr != nil {
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
@@ -826,6 +823,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/library", route)
+	// A portable-export download is the one author artifact the browser fetches
+	// rather than receives inside an operation answer, and the URL is spent once.
+	mux.Handle("/api/downloads/", portability.DownloadHandler())
 	mux.Handle("/api/", server)
 	mux.Handle("/api", server)
 	mux.Handle("/healthz", server)
