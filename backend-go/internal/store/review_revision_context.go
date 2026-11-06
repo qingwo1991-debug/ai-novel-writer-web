@@ -427,14 +427,23 @@ func rrctxAuthorInputs(operation string, value any) ([]any, error) {
 		if !idOK || !textOK {
 			return nil, ErrReviewRevisionContextInvalid
 		}
-		admitted := false
-		for _, candidate := range allowed {
-			if id == candidate {
-				admitted = true
+		// An operation with no allowlist is one this lane cannot capture at all:
+		// refine-from-review is refused at :511-513 because the confirmation codec
+		// is not ported. The reference validates that confirmation (:77-91) long
+		// before it builds author inputs (:146-153), so refusing the inputs here as
+		// well would publish CONTEXT_INVALID for a request the reference refuses as
+		// unavailable - two codes for one request, decided by which guard happens to
+		// run first. The capture's own refusal decides it instead.
+		if allowed != nil {
+			admitted := false
+			for _, candidate := range allowed {
+				if id == candidate {
+					admitted = true
+				}
 			}
-		}
-		if !admitted {
-			return nil, ErrReviewRevisionContextInvalid
+			if !admitted {
+				return nil, ErrReviewRevisionContextInvalid
+			}
 		}
 		for _, seen := range ids {
 			if rrEqual(seen, id) {
