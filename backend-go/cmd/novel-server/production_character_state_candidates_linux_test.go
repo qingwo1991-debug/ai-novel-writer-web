@@ -691,15 +691,16 @@ func productionCharacterStateCandidateSeedWith(t *testing.T, projectPath string,
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 	db := productionFinalizedCharacterOpen(t, database, "mode=rw")
 	source := productionCharacterStateCandidateSource()
-	// The pinned baseline creates this table empty, so the row has to be an INSERT:
-	// a bare UPDATE is a silent no-op, and every source guard below would then
-	// answer FINALIZED_CHARACTER_STATE_SOURCE_CHANGED for a fixture that is in fact
-	// perfect. OR IGNORE keeps a baseline that already carries the singleton row
-	// from failing the whole fixture on a UNIQUE constraint, and the readback makes
-	// the generation this fixture depends on a checked fact rather than an
-	// assumption.
+	// The pinned baseline creates this table empty, so the row has to be written
+	// here rather than updated: a bare UPDATE is a silent no-op, and every source
+	// guard below would then answer FINALIZED_CHARACTER_STATE_SOURCE_CHANGED for a
+	// fixture that is in fact perfect. It is an upsert and not OR IGNORE because
+	// another fixture in this package may already have created the singleton row
+	// with generation 0 - OR IGNORE would then keep that 0 and the readback below
+	// is what catches it.
 	productionFinalizedCharacterExec(t, db,
-		"INSERT OR IGNORE INTO continuity_projection_meta(id,generation) VALUES('main',?)",
+		"INSERT INTO continuity_projection_meta(id,generation) VALUES('main',?) "+
+			"ON CONFLICT(id) DO UPDATE SET generation=excluded.generation",
 		productionFinalizedCharacterGeneration)
 	var generation int64
 	productionStoryStateWriteScan(t, db,
