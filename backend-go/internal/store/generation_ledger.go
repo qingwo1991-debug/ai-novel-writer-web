@@ -475,6 +475,12 @@ func glEffectKeyAllowed(key, operation string) bool {
 		// allowing it elsewhere would let an ordinary attempt present an effect
 		// with no domain write behind it.
 		return operation == "finalized-character-state" || operation == "finalized-chapter-notes"
+	case "reviewRevisionEffect":
+		// The reference stamps this on the attempt that produced the review or the
+		// revision (electron/services/review-revision-generation.ts:93-97). It is
+		// keyed by the operation the run froze, so an ordinary generation attempt
+		// cannot present an effect whose domain write never happened.
+		return operation == "review-chapter" || operation == "refine-draft" || operation == "refine-from-review"
 	case "visibleComposition":
 		// The visible composition receipt belongs to the attempt that composed it
 		// from that run's own artifacts, so any non-empty operation may carry it.
@@ -553,7 +559,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		if err := glOrdinaryBinding(binding); err != nil {
 			return err
 		}
-		for _, key := range []string{"graphEffects", "finalizationEffect"} {
+		for _, key := range []string{"graphEffects", "finalizationEffect", "reviewRevisionEffect"} {
 			if glEffectKeyAllowed(key, glText(glMap(binding["sourceManifest"])["operation"])) {
 				effectKeys[key] = true
 			}
@@ -580,7 +586,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 			// so admitting the keys here does not let an attempt claim an effect
 			// the store did not perform.
 			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition":
-			case "graphEffects", "finalizationEffect":
+			case "graphEffects", "finalizationEffect", "reviewRevisionEffect":
 				if !effectKeys[key] {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")
 				}
