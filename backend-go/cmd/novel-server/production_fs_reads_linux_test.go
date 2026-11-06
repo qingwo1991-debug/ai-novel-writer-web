@@ -270,9 +270,12 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 	// exercises, and the three fs:grant-* names are bound by the browser grant
 	// batch (production_fs_grants_linux.go), whose own file proves the allowlist
 	// that replaces the desktop's native picker.
+	// fs:list-dir left this list when the portability lane bound it through the
+	// editor navigation family with a confined provider; fs:write-json stays,
+	// because its only caller writes the .ai-novel marker and no other caller
+	// exists to justify a general write.
 	for _, operation := range []string{
 		"fs:write-json",
-		"fs:list-dir",
 	} {
 		operation := operation
 		t.Run("unbound/"+operation, func(t *testing.T) {

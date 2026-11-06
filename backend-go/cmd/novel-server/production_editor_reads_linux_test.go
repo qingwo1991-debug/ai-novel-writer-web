@@ -417,7 +417,11 @@ func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 
 	// The two character-sync blueprint reads stay fail-closed: their store
 	// implementation backfills with INSERT OR IGNORE, which is a write.
-	for _, operation := range []string{"db:blueprint-character-sync-get", "db:blueprint-character-sync-list-pending", "fs:list-dir"} {
+	// fs:list-dir is no longer in this list: the portability lane binds it through
+	// the editor navigation family with a confined provider
+	// (production_project_portability_linux.go), which is the provider this file
+	// said it was waiting for.
+	for _, operation := range []string{"db:blueprint-character-sync-get", "db:blueprint-character-sync-list-pending"} {
 		if response := author.call(t, operation, []any{int64(1), projectPath, frozen}); response.Code != http.StatusNotImplemented {
 			t.Fatalf("%s is bound in the production lane but must stay fail-closed: %d %s", operation, response.Code, response.Body.String())
 		}
