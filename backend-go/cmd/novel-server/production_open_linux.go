@@ -658,6 +658,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return newProductionWrites(open).Bind(server) },
 		func() error { return newProductionEditorWrites(open.durable).Bind(server) },
 		func() error { return newProductionFinalizationWrites(open.durable).Bind(server) },
+		// finalized-character:read-context is the finalization family's first
+		// served name: it freezes the context a later commit re-proves. The store
+		// port behind it landed just before this binder, so the answer is a real
+		// read of the admitted author database rather than a restatement of the
+		// request. Its five siblings stay 501 - commit needs the state-response
+		// parser, and the three candidate operations need the candidate store.
+		func() error { return newProductionFinalizedCharacterReads(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 	} {
