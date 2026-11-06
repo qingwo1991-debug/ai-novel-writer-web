@@ -151,10 +151,29 @@ func productionKnowledgeLane(t *testing.T) (*productionDurableClient, string, ma
 	return client, projectPath, frozen, baseline
 }
 
+// productionKnowledgeWireArity is the declared wire shape of each name, before
+// the frozen context (src/shared/ipc-channels.ts:1206-1212):
+//
+//	kb:import-text            [text, fileName, expectedProjectPath]
+//	kb:import-finalized-text  [text, fileName, source, expectedProjectPath]
+//
+// The context is one more argument, so a call carries arity+1. Keeping the
+// numbers here means an argument list that forgets the trailing path fails as a
+// shape mismatch naming the contract, instead of arriving as INVALID_ARGUMENTS
+// from the handler's own arity check.
+var productionKnowledgeWireArity = map[string]int{
+	productionKnowledgeImportTextName:      3,
+	productionKnowledgeImportFinalizedName: 4,
+}
+
 // productionKnowledgeCall performs one operation and returns its result object. A
 // 501 fails immediately: every name this test claims is bound.
 func productionKnowledgeCall(t *testing.T, client *productionDurableClient, operation string, args []any) map[string]any {
 	t.Helper()
+	if arity, declared := productionKnowledgeWireArity[operation]; declared && len(args) != arity+1 {
+		t.Fatalf("%s: %d arguments sent, the wire shape is %d plus the frozen context",
+			operation, len(args), arity)
+	}
 	response := client.call(t, operation, args)
 	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 		t.Fatalf("%s is still GO_OPERATION_NOT_MIGRATED in the production lane: %s", operation, response.Body.String())
@@ -445,7 +464,9 @@ func TestProductionKnowledgeImportFinalizedTextLinksAndIsIdempotent(t *testing.T
 		"chapterNumber":  int64(1),
 		"contentHash":    productionKnowledgeHash(productionKnowledgeProse),
 	}
-	args := []any{productionKnowledgeProse, productionKnowledgeChapterFile, source, frozen}
+	// The wire shape is [text, fileName, source, expectedProjectPath]
+	// (ipc-channels.ts:1209-1212); the frozen context follows it.
+	args := []any{productionKnowledgeProse, productionKnowledgeChapterFile, source, projectPath, frozen}
 	answer := productionKnowledgeCall(t, client, productionKnowledgeImportFinalizedName, args)
 	if answer["success"] != true {
 		t.Fatalf("kb:import-finalized-text refused a finalized chapter: %v", answer)
@@ -530,7 +551,7 @@ func TestProductionKnowledgeImportFinalizedTextRefusesChangedSource(t *testing.T
 				"finalizationId": productionKnowledgeFinalizationID,
 				"chapterNumber":  int64(1),
 				"contentHash":    strings.Repeat("b", 64),
-			}, frozen},
+			}, projectPath, frozen},
 		},
 		{
 			// The right hash with different prose: the frozen snapshot no longer
@@ -541,7 +562,7 @@ func TestProductionKnowledgeImportFinalizedTextRefusesChangedSource(t *testing.T
 				"finalizationId": productionKnowledgeFinalizationID,
 				"chapterNumber":  int64(1),
 				"contentHash":    productionKnowledgeHash(productionKnowledgeProse),
-			}, frozen},
+			}, projectPath, frozen},
 		},
 		{
 			// A finalization identity that is not the frozen one.
@@ -551,7 +572,7 @@ func TestProductionKnowledgeImportFinalizedTextRefusesChangedSource(t *testing.T
 				"finalizationId": "ci-knowledge-finalization-other",
 				"chapterNumber":  int64(1),
 				"contentHash":    productionKnowledgeHash(productionKnowledgeProse),
-			}, frozen},
+			}, projectPath, frozen},
 		},
 	}
 	for _, refusal := range refusals {
