@@ -78,7 +78,12 @@ func fccFixture(t *testing.T) (*sql.DB, *FinalizedCharacters, string) {
 	// A character-managed project always has its identity singleton
 	// (baseline_v7_ddl.go:123-125); the freeze receipt below records revision 3.
 	mustExec(t, db, "INSERT INTO character_identity_meta(id,revision,legacy_count) VALUES('main',3,0)")
-	mustExec(t, db, "UPDATE continuity_projection_meta SET generation=2 WHERE id='main'")
+	// The baseline creates continuity_projection_meta empty
+	// (baseline_v7_ddl.go:200-204) while the source read INNER JOINs it
+	// (summary-repository.ts:288), so this row must be inserted: an UPDATE matches
+	// nothing on a fresh database, the join then yields no row, and every read
+	// reports FINALIZED_CHARACTER_SOURCE_CHANGED from the :304 !row arm.
+	mustExec(t, db, "INSERT INTO continuity_projection_meta(id,generation) VALUES('main',2)")
 	return db, NewFinalizedCharacters(db), path
 }
 
@@ -119,10 +124,10 @@ func fccRefusal(t *testing.T, path string, want error, read func() (*FinalizedCh
 	before := fccDigest(t, path)
 	result, err := read()
 	if err == nil {
-		t.Fatalf("%v: expected a refusal, got %#v", want, result)
+		t.Fatalf("expected refusal %v, got %+v", want, result)
 	}
 	if !errors.Is(err, want) || err.Error() != want.Error() {
-		t.Fatalf("%v: got %q", want, err.Error())
+		t.Fatalf("expected refusal %v, got %v", want, err)
 	}
 	if after := fccDigest(t, path); after != before {
 		t.Fatalf("%v changed the database", want)
@@ -145,10 +150,17 @@ func fccDraft(t *testing.T, db *sql.DB, id, chapter, version int64, status, body
 	if finalizationID == "" {
 		return source
 	}
+	fccReceipt(t, db, id, chapter, finalizationID, source.ContentHash, body)
+	return source
+}
+
+// fccReceipt writes the finalization_outbox row beside a draft with every column
+// a source guard reads left to the caller, so a case can break exactly one.
+func fccReceipt(t *testing.T, db *sql.DB, draftID, chapter int64, finalizationID, contentHash, contentSnapshot string) {
+	t.Helper()
 	mustExec(t, db, `INSERT INTO finalization_outbox(finalization_id,draft_id,chapter_number,chapter_title,
  content_hash,content_revision,content_snapshot,target_file_name) VALUES(?,?,?,?,?,1,?,'fcc.txt')`,
-		finalizationID, id, chapter, fccFrozenName, source.ContentHash, body)
-	return source
+		finalizationID, draftID, chapter, fccFrozenName, contentHash, contentSnapshot)
 }
 
 // fccFreeze writes the freeze receipt in the exact key order and shape the sole
@@ -210,7 +222,7 @@ func fccNumber(t *testing.T, value any, label string) float64 {
 	case float64:
 		return number
 	}
-	t.Fatalf("%s is %T, want a number", label, value)
+	t.Fatalf("%s is %T (%+v), want a number", label, value, value)
 	return 0
 }
 
@@ -224,7 +236,7 @@ func fccField(t *testing.T, snapshot FinalizedCharacterContext, field string) Fi
 			return candidate
 		}
 	}
-	t.Fatalf("field %q missing", field)
+	t.Fatalf("field %v missing", field)
 	return FinalizedCharacterFieldSnapshot{}
 }
 
@@ -242,34 +254,34 @@ func TestFinalizedCharacterContextHappyPath(t *testing.T) {
 		t.Fatalf("read context: %v", err)
 	}
 	if snapshot.ProjectID != fccProjectID || snapshot.Epoch != fccEpoch {
-		t.Fatalf("scope %q/%q", snapshot.ProjectID, snapshot.Epoch)
+		t.Fatalf("scope %v/%v", snapshot.ProjectID, snapshot.Epoch)
 	}
 	if !reflect.DeepEqual(snapshot.Source, source) {
-		t.Fatalf("source %#v, want %#v", snapshot.Source, source)
+		t.Fatalf("source %+v, want %+v", snapshot.Source, source)
 	}
 	if snapshot.Content != fccBody {
-		t.Fatalf("content %q, want the frozen snapshot body", snapshot.Content)
+		t.Fatalf("content %v, want the frozen snapshot body", snapshot.Content)
 	}
 	if snapshot.ProjectionGeneration != 2 {
 		t.Fatalf("projectionGeneration %d, want 2", snapshot.ProjectionGeneration)
 	}
 	if snapshot.IdentityRevision != 3 || snapshot.IdentityStatus != FinalizedCharacterIdentityBound {
-		t.Fatalf("identity %d/%q, want 3/bound", snapshot.IdentityRevision, snapshot.IdentityStatus)
+		t.Fatalf("identity %d/%v, want 3/bound", snapshot.IdentityRevision, snapshot.IdentityStatus)
 	}
 	wantOrder := FinalizedCharacterSourceOrder{ContinuityEpoch: fccProjectID + ":2",
 		ChapterNumber: 1, AuthoritativeFinalizationRevision: 1}
 	if !reflect.DeepEqual(snapshot.SourceOrder, wantOrder) {
-		t.Fatalf("sourceOrder %#v, want %#v", snapshot.SourceOrder, wantOrder)
+		t.Fatalf("sourceOrder %+v, want %+v", snapshot.SourceOrder, wantOrder)
 	}
 	if len(snapshot.Characters) != 1 {
 		t.Fatalf("%d characters, want 1", len(snapshot.Characters))
 	}
 	character := snapshot.Characters[0]
 	if character.CharacterID != fccCharacterID || character.DisplayNameSnapshot != fccFrozenName {
-		t.Fatalf("character %#v, want the frozen reference", character)
+		t.Fatalf("character %+v, want the frozen reference", character)
 	}
 	if !reflect.DeepEqual(character.Aliases, []string{"青妹", "阿青"}) {
-		t.Fatalf("aliases %#v", character.Aliases)
+		t.Fatalf("aliases %+v", character.Aliases)
 	}
 	if got := len(character.Fields); got != len(characterStateFields) {
 		t.Fatalf("%d fields, want %d", got, len(characterStateFields))
@@ -277,38 +289,38 @@ func TestFinalizedCharacterContextHappyPath(t *testing.T) {
 	for index, field := range character.Fields {
 		if field.Field != characterStateFields[index] || field.CharacterID != fccCharacterID ||
 			field.ProjectID != fccProjectID || field.Epoch != fccEpoch {
-			t.Fatalf("field %d is %#v", index, field)
+			t.Fatalf("field %d is %+v", index, field)
 		}
 	}
 
 	location := fccField(t, *snapshot, "location")
 	if location.Value != fccLocation || location.ValueHash != summaryHash(fccLocation) {
-		t.Fatalf("location %q/%q", location.Value, location.ValueHash)
+		t.Fatalf("location %v/%v", location.Value, location.ValueHash)
 	}
 	if location.Revision != 0 || location.Provenance["kind"] != "author" {
-		t.Fatalf("location revision/provenance %d/%#v", location.Revision, location.Provenance)
+		t.Fatalf("location revision/provenance %d/%+v", location.Revision, location.Provenance)
 	}
 	if got := fccNumber(t, location.Provenance["chapterNumber"], "author chapterNumber"); got != 1 {
 		t.Fatalf("author chapterNumber %v, want 1", got)
 	}
 	if location.SourceOrder != nil {
-		t.Fatalf("author location carries sourceOrder %#v", location.SourceOrder)
+		t.Fatalf("author location carries sourceOrder %+v", location.SourceOrder)
 	}
 
 	power := fccField(t, *snapshot, "powerLevel")
 	if power.Value != fccPowerLevel || power.ValueHash != summaryHash(fccPowerLevel) || power.Revision != 2 {
-		t.Fatalf("powerLevel %#v", power)
+		t.Fatalf("powerLevel %+v", power)
 	}
 	if power.Provenance["kind"] != "derived" {
-		t.Fatalf("powerLevel provenance %#v", power.Provenance)
+		t.Fatalf("powerLevel provenance %+v", power.Provenance)
 	}
 	storedSource, ok := power.Provenance["source"].(map[string]any)
 	if !ok || storedSource["finalizationId"] != fccFinalizationID || storedSource["contentHash"] != source.ContentHash {
-		t.Fatalf("derived source %#v", power.Provenance["source"])
+		t.Fatalf("derived source %+v", power.Provenance["source"])
 	}
 	storedOrder, ok := power.SourceOrder.(map[string]any)
 	if !ok || storedOrder["continuityEpoch"] != fccProjectID+":2" {
-		t.Fatalf("derived sourceOrder %#v", power.SourceOrder)
+		t.Fatalf("derived sourceOrder %+v", power.SourceOrder)
 	}
 	if got := fccNumber(t, storedOrder["authoritativeFinalizationRevision"], "order revision"); got != 1 {
 		t.Fatalf("order revision %v, want 1", got)
@@ -317,7 +329,7 @@ func TestFinalizedCharacterContextHappyPath(t *testing.T) {
 	// The three unmarked fields keep the legacy arm and no derived order.
 	untouched := fccField(t, *snapshot, "mentalState")
 	if untouched.Value != "" || untouched.Revision != 0 || untouched.Provenance["kind"] != "legacy" || untouched.SourceOrder != nil {
-		t.Fatalf("unmarked field %#v", untouched)
+		t.Fatalf("unmarked field %+v", untouched)
 	}
 
 	if after := fccDigest(t, path); after != before {
@@ -329,7 +341,7 @@ func TestFinalizedCharacterContextHappyPath(t *testing.T) {
 		t.Fatalf("read-only context: %v", err)
 	}
 	if !reflect.DeepEqual(readBack, snapshot) {
-		t.Fatalf("read-only context %#v, want %#v", readBack, snapshot)
+		t.Fatalf("read-only context %+v, want %+v", readBack, snapshot)
 	}
 }
 
@@ -345,14 +357,74 @@ func TestFinalizedCharacterContextRefusesRetiredCharacter(t *testing.T) {
 	})
 }
 
-// TestFinalizedCharacterContextRefusesNotFinalizedDraft is
-// FINALIZED_CHARACTER_SOURCE_CHANGED from the null source (summary-repository.ts:406).
-func TestFinalizedCharacterContextRefusesNotFinalizedDraft(t *testing.T) {
-	db, characters, path := fccFixture(t)
-	fccDraft(t, db, 1, 1, 1, "draft", fccBody, fccFinalizationID)
-	fccRefusal(t, path, ErrFinalizedCharacterSourceChanged, func() (*FinalizedCharacterContext, error) {
-		return characters.ReadContext(context.Background(), 1, fccScope())
-	})
+// TestFinalizedCharacterContextRefusesBrokenSource walks the :303-310 null clause
+// one arm per subtest, so a red run names the single guard its fixture broke.
+// Every arm reaches the caller as FINALIZED_CHARACTER_SOURCE_CHANGED (:406).
+func TestFinalizedCharacterContextRefusesBrokenSource(t *testing.T) {
+	cases := []struct {
+		name string
+		seed func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity
+	}{
+		{
+			// :304 !row
+			name: "no finalization receipt",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				return fccDraft(t, db, 1, 1, 1, "finalized", fccBody, "")
+			},
+		},
+		{
+			// :305 row.status !== 'finalized'
+			name: "status is not finalized",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				return fccDraft(t, db, 1, 1, 1, "draft", fccBody, fccFinalizationID)
+			},
+		},
+		{
+			// :306 !row.finalizationId.trim()
+			name: "finalization id is blank",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				source := fccDraft(t, db, 1, 1, 1, "finalized", fccBody, "")
+				fccReceipt(t, db, 1, 1, " ", source.ContentHash, fccBody)
+				return source
+			},
+		},
+		{
+			// :307 !/^[a-f0-9]{64}$/u.test(row.contentHash)
+			name: "content hash is not a sha256",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				source := fccDraft(t, db, 1, 1, 1, "finalized", fccBody, "")
+				fccReceipt(t, db, 1, 1, fccFinalizationID, "not-a-sha256", fccBody)
+				return source
+			},
+		},
+		{
+			// :308 row.content !== row.contentSnapshot
+			name: "draft body differs from the frozen snapshot",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				source := fccDraft(t, db, 1, 1, 1, "finalized", fccBody, "")
+				fccReceipt(t, db, 1, 1, fccFinalizationID, summaryHash(fccBody), "另一版正文")
+				return source
+			},
+		},
+		{
+			// :309 sha256(row.contentSnapshot) !== row.contentHash
+			name: "frozen snapshot does not hash to the receipt",
+			seed: func(t *testing.T, db *sql.DB) FinalizedCharacterSourceIdentity {
+				source := fccDraft(t, db, 1, 1, 1, "finalized", fccBody, "")
+				fccReceipt(t, db, 1, 1, fccFinalizationID, summaryHash("别的正文"), fccBody)
+				return source
+			},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			db, characters, path := fccFixture(t)
+			source := testCase.seed(t, db)
+			fccRefusal(t, path, ErrFinalizedCharacterSourceChanged, func() (*FinalizedCharacterContext, error) {
+				return characters.ReadContext(context.Background(), source.DraftID, fccScope())
+			})
+		})
+	}
 }
 
 // TestFinalizedCharacterContextRefusesSupersededDraft is the
@@ -371,24 +443,32 @@ func TestFinalizedCharacterContextRefusesSupersededDraft(t *testing.T) {
 
 // TestFinalizedCharacterContextRefusesMissingScope is
 // FINALIZED_CHARACTER_SCOPE_REQUIRED (summary-repository.ts:402), answered before
-// any read: this database holds no draft at all.
+// any read: this database holds no draft at all. Each blank-scope spelling is its
+// own subtest so a red run names the character it could not trim.
 func TestFinalizedCharacterContextRefusesMissingScope(t *testing.T) {
 	db, characters, path := fccFixture(t)
-	for _, scope := range []FinalizedCharacterScope{
-		{ProjectID: "", Epoch: fccEpoch},
-		{ProjectID: " \t\ufeff ", Epoch: fccEpoch},
-		{ProjectID: fccProjectID, Epoch: ""},
-		{ProjectID: fccProjectID, Epoch: "\u00a0"},
-		{ProjectID: fccProjectID, Epoch: "  "},
-	} {
-		refused := scope
-		fccRefusal(t, path, ErrFinalizedCharacterScopeRequired, func() (*FinalizedCharacterContext, error) {
-			return characters.ReadContext(context.Background(), 1, refused)
+	scopes := []struct {
+		name  string
+		scope FinalizedCharacterScope
+	}{
+		{name: "blank project id", scope: FinalizedCharacterScope{Epoch: fccEpoch}},
+		{name: "project id is only whitespace", scope: FinalizedCharacterScope{ProjectID: " \t\ufeff ", Epoch: fccEpoch}},
+		{name: "blank epoch", scope: FinalizedCharacterScope{ProjectID: fccProjectID}},
+		{name: "epoch is only a no-break space", scope: FinalizedCharacterScope{ProjectID: fccProjectID, Epoch: "\u00a0"}},
+		{name: "epoch is only spaces", scope: FinalizedCharacterScope{ProjectID: fccProjectID, Epoch: "  "}},
+	}
+	for _, testCase := range scopes {
+		t.Run(testCase.name, func(t *testing.T) {
+			fccRefusal(t, path, ErrFinalizedCharacterScopeRequired, func() (*FinalizedCharacterContext, error) {
+				return characters.ReadContext(context.Background(), 1, testCase.scope)
+			})
 		})
 	}
-	// The reference's first arm is `!database`.
-	fccRefusal(t, path, ErrFinalizedCharacterScopeRequired, func() (*FinalizedCharacterContext, error) {
-		return NewFinalizedCharacters(nil).ReadContext(context.Background(), 1, fccScope())
+	t.Run("no database", func(t *testing.T) {
+		// The reference's first arm is `!database`.
+		fccRefusal(t, path, ErrFinalizedCharacterScopeRequired, func() (*FinalizedCharacterContext, error) {
+			return NewFinalizedCharacters(nil).ReadContext(context.Background(), 1, fccScope())
+		})
 	})
 	if got := narrativeCount(t, db, "drafts"); got != 0 {
 		t.Fatalf("%d drafts, want none", got)
@@ -408,16 +488,16 @@ func TestFinalizedCharacterContextLegacyWithoutFrozenSnapshot(t *testing.T) {
 		t.Fatalf("read context: %v", err)
 	}
 	if snapshot.IdentityStatus != FinalizedCharacterIdentityLegacy || snapshot.IdentityRevision != 0 {
-		t.Fatalf("identity %d/%q, want 0/legacy", snapshot.IdentityRevision, snapshot.IdentityStatus)
+		t.Fatalf("identity %d/%v, want 0/legacy", snapshot.IdentityRevision, snapshot.IdentityStatus)
 	}
 	if snapshot.Characters == nil || len(snapshot.Characters) != 0 {
-		t.Fatalf("characters %#v, want an empty list", snapshot.Characters)
+		t.Fatalf("characters %+v, want an empty list", snapshot.Characters)
 	}
 	if !reflect.DeepEqual(snapshot.Source, source) || snapshot.Content != fccBody {
-		t.Fatalf("legacy source %#v", snapshot.Source)
+		t.Fatalf("legacy source %+v", snapshot.Source)
 	}
 	if snapshot.SourceOrder.ContinuityEpoch != fccProjectID+":2" {
-		t.Fatalf("continuityEpoch %q", snapshot.SourceOrder.ContinuityEpoch)
+		t.Fatalf("continuityEpoch %v", snapshot.SourceOrder.ContinuityEpoch)
 	}
 	if after := fccDigest(t, path); after != before {
 		t.Fatal("the read changed the database")
