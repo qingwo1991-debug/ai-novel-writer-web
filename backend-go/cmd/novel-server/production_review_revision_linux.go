@@ -431,7 +431,17 @@ func productionReviewRevisionFreeze(ctx context.Context, caller transport.Caller
 	if err != nil {
 		return nil, err
 	}
-	return productionReviewRevisionFreezeWith(registry, ctx, caller, db, scope, selection, handle)
+	extra, err := productionReviewRevisionFreezeWith(registry, ctx, caller, db, scope, selection, handle)
+	if err != nil {
+		// The begin path has no second mapping layer: this function is where a
+		// registry or producer refusal becomes a browser code. Collapsing an
+		// unknown, expired or revoked handle to GENERATION_REVIEW_CONTEXT_REQUIRED is
+		// the reference's own rule (:120 `if (!prepared) throw
+		// GENERATION_REVIEW_CONTEXT_REQUIRED`): an unguessable id that is gone tells
+		// a renderer nothing except to prepare again.
+		return nil, productionReviewRevisionFailure(err)
+	}
+	return extra, nil
 }
 
 // productionReviewRevisionFreezeWith is productionReviewRevisionFreeze over an
