@@ -119,6 +119,13 @@ type productionLLMExecution struct {
 	// call, so llm:cancel can find and stop it.
 	mu      sync.Mutex
 	streams map[string]*productionLLMStream
+	// closedLeases is the closed-lease tombstone: lease id -> the Unix millisecond
+	// after which it is forgotten. It exists only so a second close of a lease this
+	// tab already closed answers success instead of the failure the renderer reports
+	// (electron/controllers/llm-controller.ts:213-225). It holds no authority: a
+	// tombstoned id is refused by llm:generate and llm:generate-stream like any other
+	// released lease, and it is pruned on every close.
+	closedLeases map[string]int64
 }
 
 // productionLLMStream is one in-flight streaming call. cancel is the only thing
@@ -129,6 +136,11 @@ type productionLLMStream struct {
 	leaseID string
 	settled bool
 }
+
+// productionLLMClosedLeaseTTL is CLOSED_EXECUTION_LEASE_TOMBSTONE_TTL_MS
+// (electron/controllers/llm-controller.ts:59): how long a lease this process closed
+// keeps answering success to a second close.
+const productionLLMClosedLeaseTTL = 5 * time.Minute
 
 // newProductionLLMExecution builds the family over an admitted lane. A lane that
 // is closed or carries no config yields a refusal, so all five names keep failing
@@ -155,10 +167,11 @@ func newProductionLLMExecutionOver(config *globalconfig.Service, policy func() (
 		return nil, errProductionLLMUnavailable
 	}
 	execution := &productionLLMExecution{
-		config:      config,
-		policy:      policy,
-		credentials: generationowner.PlaintextCredential{},
-		streams:     make(map[string]*productionLLMStream),
+		config:       config,
+		policy:       policy,
+		credentials:  generationowner.PlaintextCredential{},
+		streams:      make(map[string]*productionLLMStream),
+		closedLeases: make(map[string]int64),
 	}
 	registry, err := llmlease.New(llmlease.Options{
 		LoadModel: execution.loadModel,
@@ -258,10 +271,15 @@ func (x *productionLLMExecution) begin(ctx context.Context, caller transport.Cal
 	return map[string]any{"success": true, "lease": receipt}, nil
 }
 
-// close answers llm:close-execution-lease. An unknown, expired or foreign lease
-// is the renderer's already-closed case (electron/controllers/llm-controller.ts:
-// 213-225), which it treats as success; anything this tab still holds is released
-// and any call still running under it loses authority.
+// close answers llm:close-execution-lease. Anything this tab still holds is released
+// and any call still running under it loses authority; a lease this process already
+// closed inside the tombstone window is the renderer's already-closed case, which it
+// answers as success (electron/controllers/llm-controller.ts:213-225: close releases
+// and tombstones, a tombstoned id answers {success:true}, and only an id that was
+// never closed refuses). An unknown, expired or foreign lease is that same refusal,
+// because it was never closed here: the tombstone intercepts the false close of the
+// lease registry and nothing else, so it can never turn "any unknown id is fine" into
+// an answer.
 func (x *productionLLMExecution) close(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 	leaseID, err := productionLLMSingleString(args)
 	if err != nil {
@@ -270,11 +288,50 @@ func (x *productionLLMExecution) close(ctx context.Context, caller transport.Cal
 	if ctx.Err() != nil {
 		return map[string]any{"success": false, "error": "MODEL_EXECUTION_LEASE_INVALID"}, nil
 	}
-	if !x.leases.Close(productionLLMOwner(caller), leaseID) {
+	owner := productionLLMOwner(caller)
+	if !x.leases.Close(owner, leaseID) {
+		if x.closedRecently(leaseID) {
+			return map[string]any{"success": true}, nil
+		}
 		return map[string]any{"success": false, "error": "MODEL_EXECUTION_LEASE_INVALID"}, nil
 	}
-	x.stopLease(productionLLMOwner(caller), leaseID)
+	x.stopLease(owner, leaseID)
+	x.rememberClosed(leaseID)
 	return map[string]any{"success": true}, nil
+}
+
+// rememberClosed tombstones one lease this process just released, and prunes the
+// expired entries on the way, so the map is bounded by one window of closes rather
+// than by the process lifetime.
+func (x *productionLLMExecution) rememberClosed(leaseID string) {
+	if x == nil || leaseID == "" {
+		return
+	}
+	now := time.Now()
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for id, expiry := range x.closedLeases {
+		if expiry <= now.UnixMilli() {
+			delete(x.closedLeases, id)
+		}
+	}
+	if x.closedLeases == nil {
+		x.closedLeases = make(map[string]int64)
+	}
+	x.closedLeases[leaseID] = now.Add(productionLLMClosedLeaseTTL).UnixMilli()
+}
+
+// closedRecently reports whether this process closed this lease inside the tombstone
+// window. It reads the tombstone only: the lease registry is not touched, because the
+// record is already gone.
+func (x *productionLLMExecution) closedRecently(leaseID string) bool {
+	if x == nil || leaseID == "" {
+		return false
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	expiry, found := x.closedLeases[leaseID]
+	return found && expiry > time.Now().UnixMilli()
 }
 
 // cancel answers llm:cancel. It stops the provider call the tab is running; the

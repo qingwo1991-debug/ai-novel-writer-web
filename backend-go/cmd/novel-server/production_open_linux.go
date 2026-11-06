@@ -824,6 +824,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			}
 			return selection.Bind(server)
 		},
+		// The db family is inventoried in full here: the nine names bound above cover
+		// ninety of its hundred and three, and this table records the thirteen that have
+		// no port in this lane, with the reference gate and the missing symbol for each
+		// (production_db_residual_linux.go). It installs nothing.
+		func() error { return bindProductionDBResidual(server) },
 		func() error { return newProductionLegacyRoster(open.durable).Bind(server) },
 		// The document half and the search half of the same family, sharing the
 		// import binder's per-project gate so one admission decision covers all ten

@@ -748,8 +748,47 @@ func TestProductionMCPRefusalsLeaveTheDatabaseByteIdentical(t *testing.T) {
 	}
 	fixture.connect(t, client, "echo")
 	fixture.callTool(t, client, "echo", "not-advertised", map[string]any{})
-	client.call(t, "mcp:disconnect", []any{"echo"})
-	client.call(t, "mcp:disconnect-all", []any{})
+
+	// The two disconnect verbs are answered here, and each answer is checked against
+	// the state it claims to have produced: a server that was connected is gone from
+	// the status answer, out of the catalog, and refused on a tool call instead of
+	// being served from the session that was just dropped.
+	for _, step := range []struct {
+		operation string
+		args      []any
+	}{
+		{"mcp:disconnect", []any{"echo"}},
+		{"mcp:disconnect-all", []any{}},
+	} {
+		if connected, _ := fixture.connect(t, client, "echo"); !connected.Success {
+			t.Fatalf("mcp:connect refused to reconnect the live server before %s: %s", step.operation, connected.Error)
+		}
+		if statuses, _ := fixture.statuses(t, client); productionMCPStatusFor(t, statuses, "echo").Status != "connected" {
+			t.Fatalf("the reconnected server is not reported connected before %s", step.operation)
+		}
+		var answer productionMCPRefusedWire
+		client.decode(t, step.operation, step.args, &answer)
+		if !answer.Success || answer.Error != "" {
+			t.Fatalf("%s answered success=%v error=%s", step.operation, answer.Success, answer.Error)
+		}
+		after, _ := fixture.statuses(t, client)
+		if gone := productionMCPStatusFor(t, after, "echo"); gone.Status != "disconnected" || gone.ToolCount != 0 || gone.Error != "" {
+			t.Fatalf("after %s the server is still reported status=%s tools=%d error=%s", step.operation, gone.Status, gone.ToolCount, gone.Error)
+		}
+		var tools []productionMCPToolWire
+		client.decode(t, "mcp:list-tools", []any{}, &tools)
+		if len(tools) != 0 {
+			t.Fatalf("after %s mcp:list-tools still advertises %d tools", step.operation, len(tools))
+		}
+		dispatched := fixture.admitted.count("tools/call")
+		call, body := fixture.callTool(t, client, "echo", "echo", map[string]any{"text": "after-disconnect"})
+		if call.Success || call.Error != "MCP_SERVER_NOT_CONNECTED" || call.Content != "" {
+			t.Fatalf("after %s a tool call was answered from a stale session: success=%v error=%s %s", step.operation, call.Success, call.Error, body)
+		}
+		if reached := fixture.admitted.count("tools/call"); reached != dispatched {
+			t.Fatalf("after %s the refused tool call still reached the server %d times", step.operation, reached-dispatched)
+		}
+	}
 	client.call(t, "mcp:get-servers-status", []any{})
 	client.call(t, "mcp:list-resources", []any{})
 
