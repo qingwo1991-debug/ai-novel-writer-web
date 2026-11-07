@@ -310,7 +310,7 @@ func (b *productionCloudBackup) view(ctx context.Context, caller transport.Calle
 		"success": true,
 		"state":   "configured",
 		"binding": productionCloudBackupBindingView(current.ProjectID, current.ProjectID, []string{}, productionCloudBackupModeWritable),
-		"account": productionCloudBackupAccountView(caller.Principal),
+		"account": productionCloudBackupCredentialAccountView(ctx, b, caller.Principal),
 	}, nil
 }
 

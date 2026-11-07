@@ -477,9 +477,9 @@ func TestProductionCloudBackupConnectRefusesMalformedCredential(t *testing.T) {
 		{"empty endpoint", productionCloudBackupCredentialConnectArgs("", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
 		{"relative endpoint", productionCloudBackupCredentialConnectArgs("backup.example.invalid/dav/", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
 		{"plain http endpoint", productionCloudBackupCredentialConnectArgs("http://backup.example.invalid/dav/", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
-		{"endpoint userinfo", productionCloudBackupCredentialConnectArgs("https://user:pass@backup.example.invalid/dav/", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
+		{"endpoint userinfo", productionCloudBackupCredentialConnectArgs("https://user@backup.example.invalid/dav/", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
 		{"endpoint query", productionCloudBackupCredentialConnectArgs("https://backup.example.invalid/dav/?a=1", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
-		{"endpoint control", productionCloudBackupCredentialConnectArgs("https://backup.example.invalid/dav/\n", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
+		{"endpoint control", productionCloudBackupCredentialConnectArgs("https://backup.example.invalid/da\nv/", productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
 		{"oversized endpoint", productionCloudBackupCredentialConnectArgs(longPath, productionCloudBackupCredentialUsername, productionCloudBackupCredentialSecret), productionCloudBackupInputInvalid},
 		{"non-string secret", []any{map[string]any{
 			"endpoint": productionCloudBackupCredentialEndpoint,

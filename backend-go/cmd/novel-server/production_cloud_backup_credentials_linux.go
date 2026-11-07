@@ -102,8 +102,11 @@ const (
 )
 
 // productionCloudBackupCredentials is the binder for the two credential names. It
-// owns no authority: it reads the lane's admitted layout, the store's own
-// admission, and the caller's principal.
+// owns no authority of its own: the transport's authenticated session is the only
+// caller gate this lane has, the lane's open state gates the store, and the store
+// itself admits or refuses every field. The record is one per deployment - the
+// reserved local account - so this is a single destination account, not a second
+// account namespace a role model would have to arbitrate.
 type productionCloudBackupCredentials struct {
 	open   *productionOpen
 	config productionConfig
@@ -259,7 +262,7 @@ func (c *productionCloudBackupCredentials) storeFor() (*cloudbackup.Store, error
 // answers with once the credential store is read: the stored account when one is
 // stored, and the frozen session-only account when none is. It reports presence
 // only - the account id, endpoint, username and persistence - so the secret
-// cannot reach a wire through it, and it opens nothing: a lane that never stored
+// cannot reach a wire through it, and it creates nothing: a lane that never stored
 // a credential answers the session-only view with the data root untouched.
 func productionCloudBackupCredentialAccountView(ctx context.Context, b *productionCloudBackup, principal string) map[string]any {
 	if b == nil || b.open == nil {
@@ -315,6 +318,8 @@ func productionCloudBackupCredentialCode(err error) string {
 		errors.Is(err, cloudbackup.ErrCredentialTooLarge),
 		errors.Is(err, cloudbackup.ErrInput):
 		return productionCloudBackupInputInvalid
+	case errors.Is(err, cloudbackup.ErrCancelled), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return productionCloudBackupCancelled
 	}
 	return productionCloudBackupStateNotSaved
 }

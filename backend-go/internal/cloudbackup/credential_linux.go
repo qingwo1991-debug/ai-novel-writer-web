@@ -353,7 +353,10 @@ func (s *Store) Credential(ctx context.Context, accountID string) (CredentialMet
 	}
 	document, err := s.readCredentialDocument()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		// ErrNotFound is the read helper's own answer for a record that vanished
+		// between its admission and its read, so a concurrent clear is "nothing
+		// stored" rather than a store failure.
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrNotFound) {
 			return empty, false, nil
 		}
 		return empty, false, err
@@ -384,7 +387,10 @@ func (s *Store) ResolveCredential(ctx context.Context, accountID string) (Creden
 	}
 	document, err := s.readCredentialDocument()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		// ErrNotFound is the read helper's own answer for a record that vanished
+		// between its admission and its read, so a concurrent clear is "nothing
+		// stored" rather than a store failure.
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrNotFound) {
 			return empty, false, nil
 		}
 		return empty, false, err
@@ -443,7 +449,7 @@ func (s *Store) ClearCredential(ctx context.Context, accountID string) (bool, er
 	}
 	document, err := s.readCredentialDocument()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrNotFound) {
 			return false, nil
 		}
 		return false, err

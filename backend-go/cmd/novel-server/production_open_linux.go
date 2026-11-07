@@ -867,6 +867,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// refuses both, so a browser should get that refusal, not a 501 that looks like
 		// "not migrated" (production_reference_refusals_linux.go).
 		func() error { return bindProductionReferenceRefusals(open.durable)(server) },
+		// cloud-backup:connect and :clear-credential store the credential sealed at rest
+		// under the store's own directory (production_cloud_backup_credentials_linux.go).
+		func() error { return newProductionCloudBackupCredentials(open, config).Bind(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any
