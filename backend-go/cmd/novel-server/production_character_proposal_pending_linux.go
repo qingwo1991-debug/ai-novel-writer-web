@@ -2,235 +2,229 @@
 
 package main
 
-// The two `character-proposal` names this family still cannot serve, re-tested
-// against the code instead of against the note that used to refuse them.
+// This file serves the last two `character-proposal` names, the ones that page
+// batches produced by a finalized-character generation or by an import:
 //
-//	character-proposal:list-pending-finalized  web/operations.json:58  refused here
-//	character-proposal:read-pending-finalized  web/operations.json:59  refused here
+//	character-proposal:list-pending-finalized  web/operations.json:58  served here
+//	character-proposal:read-pending-finalized  web/operations.json:59  served here
 //
 // # The reference
 //
 //	electron/controllers/generation-controller.ts:213-214
 //	  register('character-proposal:list-pending-finalized', 0, owner => owner.characterProposals.listPendingFinalized())
 //	  register('character-proposal:read-pending-finalized', 1, (owner, request) => owner.characterProposals.readPendingFinalized(request.proposalBatchId))
-//	electron/services/character-proposal-service.ts:131-154
-//	  :131 listPendingFinalized, :149 readPendingFinalized, :60 readEnvelope, :103 resolveItems
-//	  :136-138 the list keeps a row only when it is pending AND its provenance carries a source
-//	  :146 a row whose envelope does not re-prove is skipped, not listed
-//	  :151-153 the read is read() plus the pending-finalized guard
-//	src/shared/character-proposal.ts:77-78
-//	  the list answers PendingFinalizedCharacterProposalSummary[], the read answers CharacterProposalBatch
-//	src/components/characters/use-pending-character-proposals.ts:30, :47
-//	  the only consumer: page the summaries, then read one by its proposalBatchId
+//	electron/services/character-proposal-service.ts
+//	  :131-147 listPendingFinalized  :149-154 readPendingFinalized
+//	  :60-102  readEnvelope         :103-112 resolveItems
+//	electron/services/finalized-character-generation-proof.ts:13-64
+//	  proveFinalizedCharacterGeneration, the `finalized-generation` proof
+//	electron/services/generation-character-proposal-proof.ts:66-105
+//	  the `import` proof
 //
-// The list pages character_identity_proposals by source_key
-// (`character-proposal-v1:<projectId>`) in proposal_id order (:132-133) and re-reads
-// every row through readEnvelope; the read is the ordinary `read` (:114) plus the
-// two-field guard (:151-153). Neither body can carry a scope: the list takes no
-// request at all (wire :77), the read takes exactly `{ proposalBatchId }` (:78).
-// In this lane that would mean the frozen context as the list's only argument and
-// as the read's second one, borrowed through the same
-// productionDurableOpen.borrowAuthorDatabase (production_durable_linux.go:313) the
-// four served names already use (production_character_proposals_linux.go:572).
+// The wire declarations are src/shared/character-proposal.ts:77-78: the list
+// takes no request at all and answers PendingFinalizedCharacterProposalSummary[];
+// the read takes `{ proposalBatchId }` and answers CharacterProposalBatch. The
+// only consumer is src/components/characters/use-pending-character-proposals.ts:30
+// and :47, which pages the summaries and then reads one by its batch id.
 //
-// # What the earlier record got wrong
+// # The store half
 //
-// production_character_proposal_residual_linux.go used to say that the receipt and
-// the projection "cannot be composed in one transaction", because the module's only
-// BEGIN IMMEDIATE handle is unexported (internal/store/reviewrevision.go:41) and the
-// family's reader and writer take a *sql.DB. The first half is true and irrelevant;
-// the second is false. Package store composes exactly that composition three times
-// today:
+// The proof and the projection are one read of the same two facts, so they run
+// in one BEGIN IMMEDIATE on one reserved connection inside package store
+// (internal/store/character_proposal_pending.go). That is the composition the
+// family's earlier record said was impossible; it is not - package store has
+// opened that handle over these very rows since summary.go:681 and
+// finalized_draft_import.go:900. A package-main prover could not be used here in
+// any case: the borrowed author database holds one connection
+// (internal/projectfs/author_linux.go:121), so a second transaction on it while
+// the immediate one runs deadlocks.
 //
-//	internal/store/summary.go:681
-//	  err := NewReviewRevisions(s.db).immediate(ctx, func(conn *sql.Conn) error {
-//	internal/store/summary.go:519
-//	  rows, err := rrMaps(ctx, conn, "SELECT source_key,source_hash,raw_value FROM character_identity_proposals WHERE proposal_id=?", ...)
-//	internal/store/finalized_draft_import.go:900
-//	  err = NewReviewRevisions(r.db).immediate(ctx, func(conn *sql.Conn) error {
-//	internal/store/finalized_draft_import.go:903
-//	  existing, present, err := finalizedImportReadOperation(ctx, conn, operationID)
-//	internal/store/character_identity.go:421
-//	  proposals, err := rrMaps(ctx, conn, "SELECT resolved_character_id,... FROM character_identity_proposals WHERE proposal_id=?", ...)
+// The proof's own comparison is reproducible without a TypeScript encoder. The
+// reference compares the stored proof with a re-proved one by value
+// (isDeepStrictEqual), and stores one SHA-256 over JSON.stringify. The store
+// parses the row's own JSON with its order-preserving decoder and re-encodes it
+// with the package's JSON.stringify-compatible serializer, so the hash is taken
+// over the stored document's own key order - the desktop's bytes - rather than
+// over a typed Go struct's. `byte-exactness` was never the obstacle it was
+// recorded as.
 //
-// An unexported method is not a wall around package store: a new exported method
-// inside the package calls it exactly the way FinalizedImportCommit does, and the
-// unexported rrQueryer (reviewrevision.go:95) is satisfied by the *sql.Conn that
-// handle hands over - which is why summary.go:519 can read a whole proposal
-// envelope on the very connection its BEGIN IMMEDIATE reserved. So a store method
-// that returns the receipt row (source_key, source_hash) together with the
-// projection re-resolved inside the same transaction is a few lines, not a
-// redesign. The transaction is not the obstacle.
+// # What stays refused inside the served answer
 //
-// # What is
+// The generated arm of the import proof decodes the settled import-inference
+// artifact (decodeImportInferenceJson, import-inference-contract.ts:257) and
+// compares the decoded cards with the receipt entries
+// (generation-character-proposal-proof.ts:83-88). No Go package ports that
+// decoder, so an import proposal whose import_effect receipt carries a
+// generationRunHandle is refused with CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE
+// instead of being served with a guessed provenance. The lane's own import
+// writer (internal/store/dbmaintenance.go:671) records no such effect, so the
+// proposals it stages are proven by the `provenance: null` arm and both names
+// serve them.
 //
-// readEnvelope re-proves the source before it serves anything (:69-79), and this
-// lane has no port for either kind these two names page. That matters twice over,
-// because the proof is the one thing that would have to run *inside* the transaction:
-// the family's prover (productionCharacterProposalSourceProof,
-// production_character_proposals_linux.go:1794) takes a *sql.DB and drives the
-// generation ledger on the pool, so handing it to a store method's immediate
-// transaction would make it a second, unlocked read after the receipt - the exact
-// shape this family must not serve. A store method alone therefore does not produce a
-// servable pair; the proof has to be able to run on the transaction connection first.
+// # The wiring
 //
-// And there is nothing to run, for either kind:
+// The binder line belongs beside the family's own binder in
+// production_open_linux.go, which this batch may not edit:
 //
-//   - finalized-generation needs proveFinalizedCharacterGeneration
-//     (electron/services/finalized-character-generation-proof.ts:13) and
-//     normalizeFinalizedCharacterProposalSource (:66). The two ends of that chain
-//     do exist in Go - internal/characterstate.ParseResponse
-//     (internal/characterstate/state_response.go:307) and
-//     store.ReadFinalizedCharacterContextTx
-//     (internal/store/finalized_character_context.go:210) - but nothing joins them:
-//     the author input named 'finalized-character-context', its hash against
-//     sourceManifest.finalizedCharacterContextHash, selectedFinalizedDraftIds,
-//     modelReceipt.modelRevision and sourceRefs are keys no begin in this lane
-//     writes, which is what production_finalized_character_commit_linux.go:97-102
-//     already records for the sibling commit.
-//   - import needs importCharacterEntriesFromArtifacts
-//     (electron/services/generation-character-proposal-proof.ts:16), which decodes
-//     the settled import-inference artifact through decodeImportInferenceJson
-//     (src/services/workflows/commands/import-inference-contract.ts:257). No Go
-//     package ports that decoder - internal/store reads the receipt
-//     (import_global_fact_operations) but never the artifact chain - so the
-//     `generated` provenance arm of the import proof cannot be produced here.
+//	func() error { return newProductionCharacterProposalPending(open.durable).Bind(server) },
 //
-// That gap is not repairable by approximation. readEnvelope re-encodes the stored
-// proof and the fresh one and refuses unless they are equal
-// (production_character_proposals_linux.go:1708-1716), so a port that differs by one
-// byte - a dropped unknown key, another number formatting - would answer
-// CHARACTER_PROPOSAL_SOURCE_CHANGED for every valid row a desktop wrote, and the
-// only fixture that can tell a right port from a wrong one is an envelope produced
-// by the desktop's own encoder.
-//
-// A served list would also be empty on every database this lane writes. The list
-// keeps a row only when its provenance carries a source (:136-138), and of the four
-// writers of character_identity_proposals
-//
-//	internal/store/dbmaintenance.go:671            import, with "provenance": nil (:657)
-//	internal/store/finalization_outbox.go:342      the fcs: freeze receipt, not a proposal
-//	production_character_proposals_linux.go:691    generation/architecture
-//	internal/admission/upgrade_v2.go:463           the M02 schema upgrade, which copies
-//	                                               rows an older database already had
-//
-// the two that stage a proposal write architecture-generation and import, never the
-// finalized-generation kind, and the import writer always writes the null provenance
-// the list skips. The upgrade can copy a finalized-generation row an older desktop
-// wrote, which is exactly the row this lane cannot re-prove. So the emptiness is
-// structural rather than a missing fixture: this lane's import request
-// (internal/store/dbmaintenance.go:393-398) carries no generationRunHandle, which is
-// exactly the reference arm that answers provenance null
-// (generation-character-proposal-proof.ts:90).
-//
-// # The decision
-//
-// Both names stay unbound. The reason is the proof, not the transaction: a binder
-// installed today could only page the architecture batches this lane stages - which
-// both names are defined to refuse - and would have to drop the proof gate to page
-// anything else. productionCharacterProposalPendingProofSeams names the ports, and
-// productionCharacterProposalPendingEnvelopeWriters holds the writer fact, so a
-// future pass can re-test this record instead of trusting it.
-//
-// What would lift it: one Go port of each proof chain above, plus a writer able to
-// stage a finalized-generation or provenance-bearing import proposal. The store half
-// is the small part, and
-// productionCharacterProposalResidualRetraction
-// (production_character_proposal_residual_linux.go) cites the existing lines that
-// already do it.
+// It installs exactly these two names and nothing else.
 
-// productionCharacterProposalPendingProofSeams is this record's half of the
-// family's refusal table: for each name, the unported proof entry point that has to
-// land first, the architecture-only gate that refuses both kinds today, and - for
-// the list - the writer whose null provenance leaves nothing to page. Each entry is
-// a line some other file has to change, and the record's test re-reads every one,
-// so this table cannot outlive the code it describes.
-func productionCharacterProposalPendingProofSeams() []productionCharacterProposalSeam {
-	finalizedProof := productionCharacterProposalSeamLine{
-		Path: "../../../electron/services/finalized-character-generation-proof.ts", Line: 13,
-		Marker: "export function proveFinalizedCharacterGeneration(",
-	}
-	finalizedNormalize := productionCharacterProposalSeamLine{
-		Path: "../../../electron/services/finalized-character-generation-proof.ts", Line: 66,
-		Marker: "export function normalizeFinalizedCharacterProposalSource(",
-	}
-	importItems := productionCharacterProposalSeamLine{
-		Path: "../../../electron/services/generation-character-proposal-proof.ts", Line: 16,
-		Marker: "function importCharacterEntriesFromArtifacts(",
-	}
-	importDecode := productionCharacterProposalSeamLine{
-		Path: "../../../src/services/workflows/commands/import-inference-contract.ts", Line: 257,
-		Marker: "export function decodeImportInferenceJson(",
-	}
-	gate := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 1800,
-		Marker: "productionCharacterProposalSourceProofUnavailable",
-	}
-	writer := productionCharacterProposalSeamLine{
-		Path: "../../internal/store/dbmaintenance.go", Line: 657,
-		Marker: `"provenance": nil`,
-	}
-	return []productionCharacterProposalSeam{
-		{
-			Operation: productionCharacterProposalListPendingName,
-			Missing: []productionCharacterProposalSeamLine{
-				finalizedProof, finalizedNormalize, importItems, importDecode, gate, writer,
-			},
-		},
-		{
-			Operation: productionCharacterProposalReadPendingName,
-			Missing: []productionCharacterProposalSeamLine{
-				finalizedProof, finalizedNormalize, importItems, importDecode, gate,
-			},
-		},
-	}
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
+)
+
+// productionCharacterProposalPending is the borrowed lane for the two
+// pending-finalized names. It holds no database: every handler borrows the
+// project the frozen context names, so it can never read a database the
+// admission did not prove.
+type productionCharacterProposalPending struct {
+	durable *productionDurableOpen
 }
 
-// productionCharacterProposalPendingEnvelopeWriter is one writer of the
-// character_identity_proposals table. Kind is the source kind (or row family) it
-// stores, and Provenance is the proof provenance it stores beside it: `nil` for a
-// row the pending list cannot keep, `generated` for the architecture arm, `none`
-// for a row that is not a proposal at all, and `stored` for a migration that copies
-// what it found. ProvenanceLine is where that provenance is spelled, so the test can
-// prove it belongs to this writer's own function instead of trusting a field name.
-// Together they are the writer fact: no writer in this lane stages a
-// finalized-generation proposal, and no import writer produces the provenance the
-// list requires.
-type productionCharacterProposalPendingEnvelopeWriter struct {
-	Path           string
-	Line           int
-	Marker         string
-	Kind           string
-	Provenance     string
-	ProvenanceLine int
+// newProductionCharacterProposalPending is the constructor the binder line
+// above installs.
+func newProductionCharacterProposalPending(durable *productionDurableOpen) *productionCharacterProposalPending {
+	return &productionCharacterProposalPending{durable: durable}
 }
 
-// productionCharacterProposalPendingEnvelopeWriters is every INSERT into
-// character_identity_proposals in this module, checked against
-// internal/admission/baseline_v7_ddl.go:130. The record's test fails when a fifth
-// appears, which is the only way a new writer could quietly change the list's
-// answer.
-func productionCharacterProposalPendingEnvelopeWriters() []productionCharacterProposalPendingEnvelopeWriter {
-	return []productionCharacterProposalPendingEnvelopeWriter{
-		{
-			Path: "../../internal/store/dbmaintenance.go", Line: 671,
-			Marker: "INSERT INTO character_identity_proposals",
-			Kind:   "import", Provenance: "nil", ProvenanceLine: 657,
-		},
-		{
-			Path: "../../internal/store/finalization_outbox.go", Line: 342,
-			Marker: "INSERT INTO character_identity_proposals",
-			Kind:   "finalized-character-snapshot", Provenance: "none",
-		},
-		{
-			Path: "production_character_proposals_linux.go", Line: 691,
-			Marker: "INSERT INTO character_identity_proposals",
-			Kind:   "generation", Provenance: "generated",
-		},
-		{
-			Path: "../../internal/admission/upgrade_v2.go", Line: 463,
-			Marker: "INSERT INTO character_identity_proposals",
-			Kind:   "migration", Provenance: "stored",
-		},
+// Bind installs `character-proposal:list-pending-finalized` and
+// `character-proposal:read-pending-finalized` and nothing else. A nil or closed
+// bridge installs nothing, so both names keep failing closed at
+// GO_OPERATION_NOT_MIGRATED instead of being published as handlers that can only
+// refuse.
+func (p *productionCharacterProposalPending) Bind(server *transport.Server) error {
+	if p == nil || p.durable == nil {
+		return nil
 	}
+	if server == nil {
+		return errors.New("TRANSPORT_SERVER_REQUIRED")
+	}
+	bindings := []struct {
+		Name  string
+		Arity int
+		Serve func(context.Context, *sql.DB, productionCharacterProposalScope, any) (any, error)
+	}{
+		{Name: productionCharacterProposalListPendingName, Arity: 1,
+			Serve: func(ctx context.Context, db *sql.DB, scope productionCharacterProposalScope, _ any) (any, error) {
+				return productionCharacterProposalPendingList(ctx, db, scope)
+			}},
+		{Name: productionCharacterProposalReadPendingName, Arity: 2,
+			Serve: func(ctx context.Context, db *sql.DB, scope productionCharacterProposalScope, body any) (any, error) {
+				return productionCharacterProposalPendingRead(ctx, db, scope, body)
+			}},
+	}
+	for _, binding := range bindings {
+		serve := binding.Serve
+		arity := binding.Arity
+		if err := server.Bind(binding.Name, func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
+			// Wire arity is the request arity - zero for the list, one for the
+			// read - plus the frozen context.
+			if len(args) != arity {
+				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+			}
+			admitted, err := projectsession.ParseContext(args[arity-1])
+			if err != nil {
+				return nil, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
+			}
+			if ctx == nil {
+				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+			}
+			db, release, err := p.durable.borrowAuthorDatabase(ctx, caller, args[arity-1])
+			if err != nil {
+				// Already symbolic: a lease, ownership or closed-lane refusal.
+				return nil, err
+			}
+			if db == nil || release == nil {
+				return nil, errors.New(productionCharacterProposalRequestFailed)
+			}
+			defer release()
+			var body any
+			if arity > 1 {
+				body = args[0]
+			}
+			result, err := serve(ctx, db, productionCharacterProposalScope{ProjectID: admitted.ProjectID, Epoch: admitted.LeaseID}, body)
+			if err != nil {
+				return nil, productionCharacterProposalFailure(err)
+			}
+			return result, nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// productionCharacterProposalPendingList is listPendingFinalized (:131-147): the
+// summaries of the pending proposals whose source still proves and whose
+// provenance carries a source. An import summary carries the operation, the item
+// count and, when the run row still exists, its purpose (:125-130); a
+// finalized-generation summary carries the finalization the provenance names.
+func productionCharacterProposalPendingList(ctx context.Context, db *sql.DB, scope productionCharacterProposalScope) (any, error) {
+	proposals, err := store.NewPendingFinalized(db).List(ctx, scope.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]any, 0, len(proposals))
+	for _, proposal := range proposals {
+		summary := map[string]any{
+			"proposalBatchId": proposal.ProposalBatchID,
+			"revision":        proposal.Revision,
+		}
+		if proposal.Kind == productionCharacterProposalFinalizedKind {
+			summary["finalizationId"] = proposal.FinalizationID
+		} else {
+			summary["importOperationId"] = proposal.OperationID
+			summary["itemCount"] = proposal.ItemCount
+			if proposal.ImportPurpose != "" {
+				summary["importPurpose"] = proposal.ImportPurpose
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+// productionCharacterProposalPendingRead is readPendingFinalized (:149-154). The
+// store has already re-proved the source, asserted the finalization is still
+// current, and refreshed the resolution against the live roster in one
+// transaction; the answer is the batch that transaction left in the row.
+func productionCharacterProposalPendingRead(ctx context.Context, db *sql.DB, scope productionCharacterProposalScope, body any) (any, error) {
+	request, ok := body.(map[string]any)
+	if !ok {
+		return nil, productionCharacterProposalReceiptInvalid
+	}
+	batchID, ok := request[productionCharacterProposalBatchKey].(string)
+	if !ok || strings.TrimSpace(batchID) == "" {
+		// The reference binds the id into its own SELECT, so an absent id is a
+		// row that cannot be found, which is the receipt refusal.
+		return nil, productionCharacterProposalReceiptInvalid
+	}
+	proposal, err := store.NewPendingFinalized(db).Read(ctx, scope.ProjectID, batchID)
+	if err != nil {
+		return nil, err
+	}
+	var envelope map[string]any
+	decoder := json.NewDecoder(strings.NewReader(proposal.Envelope))
+	// The batch is re-encoded on the wire; UseNumber keeps a revision or an
+	// evidence offset the integer the reference wrote.
+	decoder.UseNumber()
+	if err := decoder.Decode(&envelope); err != nil {
+		return nil, productionCharacterProposalReceiptInvalid
+	}
+	batch, ok := envelope["batch"]
+	if !ok || batch == nil {
+		return nil, productionCharacterProposalReceiptInvalid
+	}
+	return batch, nil
 }

@@ -2279,37 +2279,11 @@ func productionCharacterProposalOperations() []string {
 // Installing nothing keeps both failing closed at GO_OPERATION_NOT_MIGRATED, which
 // is what the desktop controller's own inventory check reports for a name it does
 // not serve.
+// productionCharacterProposalPendingSeams is empty now: the two pending-finalized names
+// are served by production_character_proposal_pending_linux.go. The function stays so
+// any caller that still expects a refusal fails loudly rather than reading a stale note.
 func productionCharacterProposalPendingSeams() []productionCharacterProposalSeam {
-	proof := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 1800,
-		Marker: "productionCharacterProposalSourceProofUnavailable",
-	}
-	stage := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 691,
-		Marker: "INSERT INTO character_identity_proposals",
-	}
-	context := productionCharacterProposalSeamLine{
-		Path: "../../internal/store/finalized_character_context.go", Line: 185,
-		Marker: "func (f *FinalizedCharacters) ReadContext(",
-	}
-	receipt := productionCharacterProposalSeamLine{
-		Path: "../../internal/admission/baseline_v7_ddl.go", Line: 277,
-		Marker: "import_global_fact_operations",
-	}
-	read := productionCharacterProposalSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 1667,
-		Marker: "func productionCharacterProposalReadEnvelope(",
-	}
-	return []productionCharacterProposalSeam{
-		{
-			Operation: productionCharacterProposalListPendingName,
-			Missing:   []productionCharacterProposalSeamLine{proof, stage, context, receipt},
-		},
-		{
-			Operation: productionCharacterProposalReadPendingName,
-			Missing:   []productionCharacterProposalSeamLine{proof, read, stage, context, receipt},
-		},
-	}
+	return nil
 }
 
 // productionCharacterProposalPendingSeam returns the documented seam for one name,

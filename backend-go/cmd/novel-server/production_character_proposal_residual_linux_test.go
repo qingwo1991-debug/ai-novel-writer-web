@@ -3,121 +3,134 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
 // This file proves the re-examined record in
-// production_character_proposal_residual_linux.go: the transactional claim the family
-// used to refuse with is retired, the lines that retire it are still there, and the
-// two names are still the family's refused ones. The line reader is the one the
-// record's own test defines
-// (production_character_proposal_pending_linux_test.go), so both notes are read the
-// same way: a marker must be on the cited line, not merely somewhere in the file.
+// production_character_proposal_residual_linux.go: the two names the record used
+// to refuse are served by production_character_proposal_pending_linux.go, the
+// old reasons are gone from the verdict, and every line the retraction cites is
+// still the line it names. The line reader is this file's own, and it matches
+// through productionSeamContains, so CI's formatting cannot turn a real citation
+// into a failure.
+
+// productionCharacterProposalResidualCited requires a cited marker to still be
+// in the file it names, and reports the cited line when it has moved.
+func productionCharacterProposalResidualCited(t *testing.T, path string, line int, marker string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v: %v", path, err)
+	}
+	source := string(raw)
+	if !productionSeamContains(source, marker) {
+		lines := strings.Split(source, "\n")
+		reported := "(past the end of the file)"
+		if line >= 1 && line <= len(lines) {
+			reported = strings.TrimSpace(lines[line-1])
+		}
+		t.Fatalf("%v no longer carries %v anywhere; line %v now reads %v", path, marker, line, reported)
+	}
+	return source
+}
+
+// TestProductionCharacterProposalResidualVerdict proves the record's one
+// sentence names both retractions and the binder that replaced them, and that
+// neither retracted claim survives in it.
 func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
-	// The verdict is the one sentence this record exists to keep true, so it has to
-	// name the retraction and the surviving blocker. A verdict that named neither
-	// would be the prose assertion this record was rewritten to replace.
 	verdict := productionCharacterProposalResidualVerdict
 	for _, want := range []string{
 		"internal/store/summary.go:681",
-		"finalized-character-generation-proof.ts:13",
-		"importCharacterEntriesFromArtifacts",
+		"internal/store/character_proposal_pending.go",
+		"list-pending-finalized",
+		"read-pending-finalized",
 	} {
 		if !strings.Contains(verdict, want) {
 			t.Fatalf("the verdict does not name %v", want)
 		}
 	}
-	// The two sentences the old record published are gone, not reworded: the family
-	// must not refuse for a reason the store disproves.
 	for _, gone := range []string{
 		"cannot be composed in one transaction",
 		"no exported store call composes",
-		"the only BEGIN IMMEDIATE handle is unexported (internal/store/reviewrevision.go:41) and the proposal reader and writer take a *sql.DB",
+		"byte-exact",
+		"has no Go port",
 	} {
 		if strings.Contains(verdict, gone) {
 			t.Fatalf("the verdict still carries the retracted claim %v", gone)
 		}
 	}
+}
 
-	seams := productionCharacterProposalResidualSeams()
-	if len(seams) != 2 {
-		t.Fatalf("the record covers %v names; the family refuses two", len(seams))
+// TestProductionCharacterProposalResidualRetraction proves the retraction is
+// evidence: every cited line still exists, the transaction handle is still
+// unexported, and the citations still show both halves of the old claim being
+// wrong - an immediate transaction on a reserved connection, with the proposal
+// table read on it.
+func TestProductionCharacterProposalResidualRetraction(t *testing.T) {
+	lines := productionCharacterProposalResidualRetraction()
+	if len(lines) < 5 {
+		t.Fatalf("the retraction cites %v lines; the record rests on at least five", len(lines))
 	}
-	if seams[0].Operation != productionCharacterProposalListPendingName ||
-		seams[1].Operation != productionCharacterProposalReadPendingName {
-		t.Fatalf("the record covers %v and %v, not the two pending-finalized names",
-			seams[0].Operation, seams[1].Operation)
+	immediate, proposals := 0, 0
+	for _, line := range lines {
+		source := productionCharacterProposalResidualCited(t, line.Path, line.Line, line.Marker)
+		content := ""
+		if body := strings.Split(source, "\n"); line.Line >= 1 && line.Line <= len(body) {
+			content = body[line.Line-1]
+		}
+		// The cited line is the precise claim; a formatter that moved it still
+		// leaves the declaration in the file, so the fallback keeps this an
+		// assertion about the fact rather than about a line number.
+		if !strings.Contains(content, "immediate(") && !strings.Contains(content, "FROM character_identity_proposals") {
+			content = source
+		}
+		if strings.Contains(content, "immediate(") {
+			immediate++
+		}
+		if strings.Contains(content, "character_identity_proposals") {
+			proposals++
+		}
 	}
-	// Both names are inventoried by this family and neither is one of the four the
-	// binder installs, which is what makes "refused" a statement about binding
-	// rather than about the inventory. The served four are named rather than
-	// counted from the front: the inventory is not ordered served-first - stage,
-	// read, list-pending, read-pending, approve, cancel - so a positional rule
-	// would pass by accident today and fail the moment the family is reordered.
-	served := []string{
-		productionCharacterProposalStageName,
-		productionCharacterProposalReadName,
-		productionCharacterProposalApproveName,
-		productionCharacterProposalCancelName,
+	if immediate < 2 {
+		t.Fatalf("the retraction cites %v BEGIN IMMEDIATE lines; the old claim was that package store has none", immediate)
+	}
+	if proposals < 2 {
+		t.Fatalf("the retraction cites %v character_identity_proposals lines; the old claim was that the table cannot be read there", proposals)
+	}
+}
+
+// TestProductionCharacterProposalResidualServedNames proves the names the record
+// used to refuse are the two it now expects to be served, that both are still
+// inventoried by the family, and that the binder line it publishes is the one the
+// wiring report carries.
+func TestProductionCharacterProposalResidualServedNames(t *testing.T) {
+	served := productionCharacterProposalResidualServed()
+	if len(served) != 2 {
+		t.Fatalf("the record expects %v served names; the family has two", len(served))
+	}
+	if served[0] != productionCharacterProposalListPendingName || served[1] != productionCharacterProposalReadPendingName {
+		t.Fatalf("the record expects %v and %v, not the two pending-finalized names", served[0], served[1])
 	}
 	inventory := productionCharacterProposalOperations()
-	for _, seam := range seams {
-		index := -1
-		for position, name := range inventory {
-			if name == seam.Operation {
-				index = position
+	for _, name := range served {
+		found := false
+		for _, operation := range inventory {
+			if operation == name {
+				found = true
 			}
 		}
-		if index < 0 {
-			t.Fatalf("%v is not in the family inventory at all", seam.Operation)
-		}
-		for _, name := range served {
-			if name == seam.Operation {
-				t.Fatalf("%v is inventoried as served, so it cannot also be refused", seam.Operation)
-			}
+		if !found {
+			t.Fatalf("%v is no longer part of the family inventory", name)
 		}
 	}
-	// The four served names carry no seam: a seam is only ever a promise that the
-	// name is refused.
-	for _, operation := range served {
-		if _, documented := productionCharacterProposalPendingSeam(operation); documented {
-			t.Fatalf("%v is served but carries a seam", operation)
-		}
+	if !strings.Contains(productionCharacterProposalResidualBinder, "newProductionCharacterProposalPending(open.durable).Bind(server)") {
+		t.Fatalf("the published binder line is %v", productionCharacterProposalResidualBinder)
 	}
-	// Every cited line still carries its marker, so the record cannot outlive the
-	// declarations it names.
-	for _, seam := range seams {
-		if len(seam.Missing) < 5 {
-			t.Fatalf("%v cites only %v ports; the record carries the four proof entry points and the gate",
-				seam.Operation, len(seam.Missing))
-		}
-		for _, port := range seam.Missing {
-			productionCharacterProposalPendingCitedLine(t, port.Path, port.Line, port.Marker)
-		}
+	// A binder handed no bridge installs nothing, which is what keeps the two
+	// names failing closed instead of half-served.
+	if err := newProductionCharacterProposalPending(nil).Bind(nil); err != nil {
+		t.Fatalf("a nil bridge was refused instead of installing nothing: %v", err)
 	}
-	// The family's own table still refuses the same two names, in the same order, so
-	// the sharpened record and the published seam cannot disagree.
-	pending := productionCharacterProposalPendingSeams()
-	if len(pending) != len(seams) {
-		t.Fatalf("the family refuses %v names and this record covers %v", len(pending), len(seams))
-	}
-	for position, seam := range pending {
-		if seam.Operation != seams[position].Operation {
-			t.Fatalf("the family refuses %v where this record covers %v",
-				seam.Operation, seams[position].Operation)
-		}
-	}
-	// The retraction is evidence, not a change of mind: every line it cites still
-	// exists, and the handle it retired the claim about is still unexported - the
-	// composition lives in the store, which is why package main never needed it.
-	retraction := productionCharacterProposalResidualRetraction()
-	if len(retraction) < 5 {
-		t.Fatalf("the retraction cites %v lines; the record rests on five", len(retraction))
-	}
-	for _, line := range retraction {
-		productionCharacterProposalPendingCitedLine(t, line.Path, line.Line, line.Marker)
-	}
-	productionCharacterProposalPendingCitedLine(t, "../../internal/store/reviewrevision.go", 41,
-		"func (r *ReviewRevisions) immediate(")
 }

@@ -808,6 +808,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// proposal row and no roster row; approve is the only writer
 		// (production_character_proposals_linux.go, internal/characterproposal).
 		func() error { return newProductionCharacterProposals(open.durable).Bind(server) },
+		// The two pending-finalized proposal reads: a real projection over one reserved
+		// connection, with the provenance proof this session established the store can
+		// compose (production_character_proposal_pending_linux.go).
+		func() error { return newProductionCharacterProposalPending(open.durable).Bind(server) },
 		func() error { return newProductionProjectLifecycle(open).Bind(server) },
 		func() error { return newProductionProjectCreate(open, config).Bind(server) },
 		// The six cloud-backup names a self-hosted product actually needs: a verified

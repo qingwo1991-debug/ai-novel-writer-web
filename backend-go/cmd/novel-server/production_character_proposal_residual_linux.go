@@ -2,69 +2,78 @@
 
 package main
 
-// The residual record of `character-proposal`, rewritten after the re-test of the
-// claim that used to keep its last two names unbound.
+// The residual record of `character-proposal`, rewritten after the proof was
+// re-tested and both remaining names were served.
 //
 // production_character_proposals_linux.go binds stage, read, approve and cancel
-// (:131-148) and leaves list-pending-finalized and read-pending-finalized unbound
-// (web/operations.json:58-59). This file used to say they were refused because the
-// receipt and the projection "cannot be composed in one transaction": package main
-// can only begin a DEFERRED transaction, the family's reader and writer take a
-// *sql.DB, and the per-row read went through the module's unexported rrQueryer.
+// (:131-148). The two names it leaves unbound (web/operations.json:58-59) are
+// now served by production_character_proposal_pending_linux.go:
 //
-// That claim is wrong, and the re-test retires it. Package store composes a receipt
-// with a projection of character_identity_proposals inside one BEGIN IMMEDIATE
-// three times, on the connection that transaction reserved:
+//	character-proposal:list-pending-finalized  productionCharacterProposalPendingList
+//	character-proposal:read-pending-finalized  productionCharacterProposalPendingRead
 //
-//	internal/store/summary.go:681
-//	  err := NewReviewRevisions(s.db).immediate(ctx, func(conn *sql.Conn) error {
-//	internal/store/summary.go:519
-//	  rows, err := rrMaps(ctx, conn, "SELECT source_key,source_hash,raw_value FROM character_identity_proposals WHERE proposal_id=?", ...)
-//	internal/store/finalized_draft_import.go:900
-//	  err = NewReviewRevisions(r.db).immediate(ctx, func(conn *sql.Conn) error {
-//	internal/store/finalized_draft_import.go:903
-//	  existing, present, err := finalizedImportReadOperation(ctx, conn, operationID)
-//	internal/store/character_identity.go:421
-//	  proposals, err := rrMaps(ctx, conn, "SELECT resolved_character_id,... FROM character_identity_proposals WHERE proposal_id=?", ...)
+// The old record refused them for two reasons. Both are retracted here, because
+// both were about the code rather than about the requirement, and the code moved:
 //
-// The unexported immediate handle (internal/store/reviewrevision.go:41) is not a
-// wall around package store: a new exported method inside the package calls it the
-// way FinalizedImportCommit does. The unexported rrQueryer
-// (internal/store/reviewrevision.go:95) is not a wall either: the *sql.Conn that
-// handle hands over satisfies it, which is how summary.go:519 reads a whole proposal
-// envelope on the transaction connection. Neither the transaction nor a missing
-// *sql.Tx twin keeps these two names unbound.
+//  1. "the receipt and the projection cannot be composed in one transaction".
+//     Package store has composed exactly that for as long as the review-revision
+//     and finalized-import batches have existed: one BEGIN IMMEDIATE on a
+//     reserved *sql.Conn (internal/store/reviewrevision.go:41), with the
+//     character_identity_proposals read on that same connection
+//     (internal/store/summary.go:519) and the receipt written and read back
+//     inside it (internal/store/finalized_draft_import.go:900-903). The new
+//     store file opens that same handle. What made a package-main prover
+//     unusable was never the missing transaction but the pool: the borrowed
+//     author database has one connection
+//     (internal/projectfs/author_linux.go:121), so a second transaction opened
+//     while this one runs would deadlock.
 //
-// What does is the one thing the re-test did not move: the proof. readEnvelope
-// re-proves the source before it serves a row (production_character_proposals_linux.go
-// :1704-1716) and openly refuses every kind this family cannot prove with
-// CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE (:1800). For the two kinds these names
-// page, the proof entry points have no Go port - proveFinalizedCharacterGeneration /
-// normalizeFinalizedCharacterProposalSource for finalized-generation, and
-// importCharacterEntriesFromArtifacts / decodeImportInferenceJson for import - and
-// the comparison is byte-exact, so an approximate port would turn every valid row
-// into a false CHARACTER_PROPOSAL_SOURCE_CHANGED.
+//  2. "the provenance proof is byte-exact and has no Go port". The comparison the
+//     reference performs is not byte-exact: readEnvelope compares the stored
+//     proof with a re-proved one by value (isDeepStrictEqual,
+//     character-proposal-service.ts:69-79), and the only exact string is the
+//     sourceHash, one SHA-256 over JSON.stringify of the source and its items.
+//     internal/store/character_proposal_pending.go hashes the *stored*
+//     document's own re-encoding - parsed with the package's order-preserving
+//     decoder (internal/store/character_roster.go:140-199) and emitted by its
+//     JSON.stringify-compatible serializer (internal/store/plottree.go:30-49) -
+//     so the desktop's key order, and therefore the desktop's hash, is what is
+//     reproduced. Both proof chains (proveFinalizedCharacterGeneration and the
+//     import arm) are ported there.
 //
-// production_character_proposal_pending_linux.go carries the sharpened half: the two
-// missing entry points, the gate that refuses them today, and the writers that leave
-// a served list with nothing to page. This file keeps the verdict, the retraction
-// evidence and the seam list, so the family has one answer rather than two
-// disagreeing notes.
+// What remains refused is narrow and is not one of these two names: the raised
+// `generated` arm of the import proof needs decodeImportInferenceJson, which no
+// Go package ports, so an import proposal whose effect receipt carries a
+// generationRunHandle answers CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE
+// instead of a guessed provenance.
+//
+// production_character_proposal_pending_linux.go states the reference chain and
+// the wiring line. This file keeps only the retraction evidence, so the family
+// has one answer rather than two disagreeing notes.
 
-// productionCharacterProposalResidualVerdict is the one sentence this record exists
-// to keep true. It names the retraction and the surviving blocker, so the sentence
-// cannot be read as the old transactional claim and cannot outlive either fact: the
-// test asserts the cited lines are still the ones below.
-const productionCharacterProposalResidualVerdict = "the transactional refusal is retracted - internal/store/summary.go:681 already composes a BEGIN IMMEDIATE with the character_identity_proposals read on the same connection at :519 - and the two names stay unbound for the proof instead: proveFinalizedCharacterGeneration (finalized-character-generation-proof.ts:13) and importCharacterEntriesFromArtifacts (generation-character-proposal-proof.ts:16) have no Go port, so readEnvelope cannot re-prove either source kind these names are defined to page"
+// productionCharacterProposalResidualVerdict is the one sentence this record
+// exists to keep true. It names both retractions and the file that serves the
+// names, so it can neither be read as the old transactional claim nor outlive
+// the proof port it points at.
+const productionCharacterProposalResidualVerdict = "both refusals are retracted - internal/store/summary.go:681 already composes a BEGIN IMMEDIATE with the character_identity_proposals read on the same connection at :519, and internal/store/character_proposal_pending.go re-proves finalized-generation and import sources with the package's own ordered JSON encoder - so production_character_proposal_pending_linux.go serves list-pending-finalized and read-pending-finalized instead of refusing them"
 
-// productionCharacterProposalResidualRetraction is the evidence that retires the old
-// claim: three store call sites that already open the module's one immediate handle
-// and read or write character_identity_proposals on the connection it reserved, and
-// the two links that show the receipt being written and read back inside one such
-// transaction. Every line is re-read by the test, so exporting or moving the handle
-// is a test failure rather than a silent change of facts.
-func productionCharacterProposalResidualRetraction() []productionCharacterProposalSeamLine {
-	return []productionCharacterProposalSeamLine{
+// productionCharacterProposalResidualLine is one line of the retraction
+// evidence. The test re-reads every marker in the file it names, so the record
+// cannot outlive the declarations it cites.
+type productionCharacterProposalResidualLine struct {
+	Path   string
+	Line   int
+	Marker string
+}
+
+// productionCharacterProposalResidualRetraction is the evidence that retires the
+// old claims: three store call sites that open the module's one immediate handle
+// and read or write character_identity_proposals on the connection it reserved,
+// the two links that show a receipt written and read back inside one such
+// transaction, and the still-unexported handle the new store file keeps using
+// rather than exporting.
+func productionCharacterProposalResidualRetraction() []productionCharacterProposalResidualLine {
+	return []productionCharacterProposalResidualLine{
 		{
 			Path: "../../internal/store/summary.go", Line: 681,
 			Marker: "immediate(ctx, func(conn *sql.Conn) error",
@@ -85,13 +94,25 @@ func productionCharacterProposalResidualRetraction() []productionCharacterPropos
 			Path: "../../internal/store/character_identity.go", Line: 421,
 			Marker: "FROM character_identity_proposals",
 		},
+		{
+			Path: "../../internal/store/reviewrevision.go", Line: 41,
+			Marker: "func (r *ReviewRevisions) immediate(",
+		},
 	}
 }
 
-// productionCharacterProposalResidualSeams answers the two names this record still
-// refuses. It is a view of productionCharacterProposalPendingProofSeams rather than
-// a second table: the family's refusal has one list, and a retraction that kept its
-// own copy could drift into disagreeing with the record it points at.
-func productionCharacterProposalResidualSeams() []productionCharacterProposalSeam {
-	return productionCharacterProposalPendingProofSeams()
+// productionCharacterProposalResidualServed is every name this record used to
+// keep unbound and now expects to be served. The test checks each one against
+// the family inventory, so a name that left the inventory fails here instead of
+// silently shrinking the claim.
+func productionCharacterProposalResidualServed() []string {
+	return []string{
+		productionCharacterProposalListPendingName,
+		productionCharacterProposalReadPendingName,
+	}
 }
+
+// productionCharacterProposalResidualBinder is the binder line the integrator
+// adds to production_open_linux.go beside the family's own binder. The test
+// reads this string, so the record and the wiring report are one fact.
+const productionCharacterProposalResidualBinder = "func() error { return newProductionCharacterProposalPending(open.durable).Bind(server) },"
