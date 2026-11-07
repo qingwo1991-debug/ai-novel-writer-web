@@ -693,6 +693,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// finalization-generation:begin/execute/commit: the step's builtin templates
+		// now ship (internal/prompttemplate), so a finalization run can be frozen,
+		// dispatched and settled through the same owner as the inline editor
+		// (production_finalization_generation_serve_linux.go).
+		if bindErr := newProductionFinalizationServe(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
