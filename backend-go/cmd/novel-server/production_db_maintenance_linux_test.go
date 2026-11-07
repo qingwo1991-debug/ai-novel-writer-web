@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -50,86 +49,41 @@ const (
 	productionDBMaintenanceCharacter2 = "乙作者角色"
 )
 
-// productionDBMaintenanceSchema is the author schema the three operations really
-// touch. Every statement is one line and is written exactly as it must appear in
-// sqlite_master, because the admission contract hashes that text;
-// productionDBMaintenanceContract builds the fingerprint from these same strings
-// instead of trusting a hand-written digest.
-//
-// The foreign keys are the real ones (electron/migrations/baseline-schema.ts):
-// drafts hold contents with ON DELETE RESTRICT, reviews/revisions/summary_snapshots
-// cascade from drafts and restrict contents, post_process_steps cascade from
-// post_process_runs, and blueprint_character_sync_operations cascades from
-// blueprint_commit_operations. The clear therefore only succeeds if its statement
-// order is the reference's, and the fixture proves that instead of asserting it.
-var productionDBMaintenanceSchema = []string{
-	"CREATE TABLE project_core (id TEXT PRIMARY KEY DEFAULT 'main', project_name TEXT NOT NULL DEFAULT '', genre TEXT DEFAULT '', sub_genre TEXT DEFAULT '', target_audience TEXT DEFAULT '', total_chapters INTEGER DEFAULT 100, words_per_chapter INTEGER DEFAULT 3000, writing_language TEXT NOT NULL DEFAULT 'zh-CN', creative_strategy TEXT NOT NULL DEFAULT 'auto', narrative_thread_dormant_threshold INTEGER NOT NULL DEFAULT 3, plot_structure TEXT DEFAULT 'three_act', narrative_pov TEXT DEFAULT 'third_limited', writing_style TEXT DEFAULT '', reference_works TEXT DEFAULT '', global_guidance TEXT DEFAULT '', golden_finger TEXT DEFAULT '', core_outline TEXT DEFAULT '', world_setting TEXT DEFAULT '', protagonist_profile TEXT DEFAULT '', premise TEXT DEFAULT '', worldbuilding TEXT DEFAULT '', characters_arch TEXT DEFAULT '', synopsis TEXT DEFAULT '', character_states TEXT DEFAULT '', plot_tree_snapshot TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE contents (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, chapter_number INTEGER NOT NULL, version INTEGER NOT NULL, status TEXT DEFAULT 'draft', source TEXT DEFAULT 'write', content_id INTEGER NOT NULL, word_count INTEGER DEFAULT 0, source_dependencies TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (content_id) REFERENCES contents(id) ON DELETE RESTRICT)",
-	"CREATE TABLE reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, base_draft_id INTEGER NOT NULL, review_index INTEGER NOT NULL, source_draft_chapter_number INTEGER, source_draft_version INTEGER, source_draft_status TEXT, source_content TEXT, content_id INTEGER NOT NULL, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (base_draft_id) REFERENCES drafts(id) ON DELETE CASCADE, FOREIGN KEY (content_id) REFERENCES contents(id) ON DELETE RESTRICT)",
-	"CREATE TABLE revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, base_draft_id INTEGER NOT NULL, revision_index INTEGER NOT NULL, revision_type TEXT NOT NULL, status TEXT DEFAULT 'pending', merged_to_draft_id INTEGER, user_prompt TEXT DEFAULT '', review_source_id INTEGER, content_id INTEGER NOT NULL, word_count INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (base_draft_id) REFERENCES drafts(id) ON DELETE CASCADE, FOREIGN KEY (content_id) REFERENCES contents(id) ON DELETE RESTRICT)",
-	"CREATE TABLE summary_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id INTEGER DEFAULT NULL, chapter_number INTEGER NOT NULL, character_states TEXT DEFAULT '', chapter_notes TEXT NOT NULL DEFAULT '', continuity_facts TEXT NOT NULL DEFAULT '[]', character_state_candidates TEXT NOT NULL DEFAULT '[]', source_finalization_id TEXT NOT NULL DEFAULT '', source_content_hash TEXT NOT NULL DEFAULT '', projection_generation INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (draft_id) REFERENCES drafts(id) ON DELETE CASCADE)",
-	"CREATE TABLE post_process_runs (id TEXT PRIMARY KEY, trigger_source_type TEXT NOT NULL, trigger_source_id TEXT NOT NULL, source_label TEXT DEFAULT '', all_critical_passed INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE post_process_steps (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, step_key TEXT NOT NULL, label TEXT DEFAULT '', critical INTEGER DEFAULT 0, ok INTEGER DEFAULT 0, error_msg TEXT DEFAULT '', attempt_count INTEGER DEFAULT 0, completed_at TEXT DEFAULT '', last_attempt_at TEXT DEFAULT '', FOREIGN KEY (run_id) REFERENCES post_process_runs(id) ON DELETE CASCADE)",
-	"CREATE TABLE finalized_draft_import_operations (operation_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE blueprints (chapter_number INTEGER PRIMARY KEY, title TEXT NOT NULL DEFAULT '', role TEXT DEFAULT '', purpose TEXT DEFAULT '', key_events TEXT DEFAULT '', characters TEXT DEFAULT '[]', suspense_hook TEXT DEFAULT '', user_guidance TEXT DEFAULT '', notes TEXT DEFAULT '', notes_updated_at TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE blueprint_commit_operations (operation_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, mode TEXT NOT NULL, start_chapter INTEGER NOT NULL, end_chapter INTEGER NOT NULL, character_sync_input TEXT NOT NULL, committed_at TEXT NOT NULL DEFAULT (datetime('now')))",
-	"CREATE TABLE blueprint_character_sync_operations (operation_id TEXT PRIMARY KEY, blueprint_commit_operation_id TEXT NOT NULL UNIQUE, blueprint_commit_payload_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', start_chapter INTEGER NOT NULL, end_chapter INTEGER NOT NULL, character_sync_input TEXT NOT NULL, completion_receipt TEXT DEFAULT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), completed_at TEXT DEFAULT NULL, FOREIGN KEY (blueprint_commit_operation_id) REFERENCES blueprint_commit_operations(operation_id) ON DELETE CASCADE)",
-	"CREATE TABLE characters (character_id TEXT PRIMARY KEY, legacy_key TEXT, static_provenance TEXT NOT NULL DEFAULT '{}', identity_revision INTEGER NOT NULL DEFAULT 0, retired INTEGER NOT NULL DEFAULT 0, name TEXT, role TEXT DEFAULT 'supporting', gender TEXT DEFAULT '', age TEXT DEFAULT '', appearance TEXT DEFAULT '', personality TEXT DEFAULT '', background TEXT DEFAULT '', abilities TEXT DEFAULT '', motivation TEXT DEFAULT '', relationships TEXT DEFAULT '', arc TEXT DEFAULT '', notes TEXT DEFAULT '', cs_location TEXT DEFAULT '', cs_power_level TEXT DEFAULT '', cs_physical_state TEXT DEFAULT '', cs_mental_state TEXT DEFAULT '', cs_key_items TEXT DEFAULT '', cs_recent_events TEXT DEFAULT '', cs_updated_at_chapter INTEGER DEFAULT NULL, cs_provenance TEXT NOT NULL DEFAULT '{}', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE character_aliases (character_id TEXT NOT NULL REFERENCES characters(character_id), name TEXT NOT NULL, source_key TEXT NOT NULL, valid_from INTEGER NOT NULL, valid_through INTEGER, PRIMARY KEY(character_id,name,source_key,valid_from))",
-	"CREATE TABLE character_identity_meta (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, legacy_count INTEGER NOT NULL)",
-	"CREATE TABLE character_identity_approvals (operation_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL)",
-	"CREATE TABLE character_identity_proposals (proposal_id TEXT PRIMARY KEY, owner_character_id TEXT REFERENCES characters(character_id), source_key TEXT NOT NULL, source_hash TEXT NOT NULL, raw_value TEXT NOT NULL, candidate_ids_json TEXT NOT NULL, resolved_character_id TEXT REFERENCES characters(character_id), approval_id TEXT REFERENCES character_identity_approvals(operation_id))",
-	"CREATE TABLE character_roster_meta (id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, revision INTEGER NOT NULL, migration_state TEXT NOT NULL, legacy_markdown TEXT NOT NULL DEFAULT '', projection_hash TEXT NOT NULL DEFAULT '', fact_hash TEXT NOT NULL DEFAULT '', updated_at TEXT DEFAULT (datetime('now')))",
-	"CREATE TABLE import_global_fact_operations (operation_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, receipt_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
-	"CREATE TABLE chapter_deletion_operations (operation_id TEXT PRIMARY KEY, draft_id INTEGER NOT NULL UNIQUE, chapter_number INTEGER NOT NULL, chapter_title TEXT NOT NULL DEFAULT '', finalization_id TEXT NOT NULL, target_file_name TEXT NOT NULL DEFAULT '', knowledge_document_id TEXT NOT NULL DEFAULT '', post_process_run_ids TEXT NOT NULL DEFAULT '[]', manuscript_status TEXT NOT NULL DEFAULT 'pending', manuscript_error TEXT NOT NULL DEFAULT '', knowledge_status TEXT NOT NULL DEFAULT 'pending', knowledge_error TEXT NOT NULL DEFAULT '', legacy_knowledge_authorization TEXT NOT NULL DEFAULT 'not_required', legacy_knowledge_authorized_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')), completed_at TEXT NOT NULL DEFAULT '')",
-}
-
-// productionDBMaintenanceContract is the trusted contract for the fixture schema.
-// The verifier hashes sqlite_master in (type, name) order; every statement here is
-// a table, so sorting by name is that same order.
-func productionDBMaintenanceContract(t *testing.T, statements []string) admission.SchemaContract {
-	t.Helper()
-	const prefix = "CREATE TABLE "
-	entries := make([]productionSchemaEntry, 0, len(statements))
-	for _, statement := range statements {
-		name, _, found := strings.Cut(strings.TrimPrefix(statement, prefix), " ")
-		if !found || name == "" || !strings.HasPrefix(statement, prefix) {
-			t.Fatalf("unparseable schema statement: %s", statement)
-		}
-		entries = append(entries, productionSchemaEntry{Kind: "table", Name: name, Table: name, SQL: statement})
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	encoded, err := json.Marshal(entries)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return admission.SchemaContract{{Version: admission.CurrentSchemaVersion, Fingerprints: []string{sha256Hex(string(encoded))}}}
-}
-
 // productionDBMaintenanceRoot builds the disposable data root with one admitted
-// project. The database is created with the fixture schema and then seeded; the
-// lane opens it afterwards, because the admission permit hashes the file at open.
+// project. The schema is the pinned v7 baseline itself
+// (internal/admission/baseline_v7_ddl.go), not a hand-written reduction: admission
+// hashes sqlite_master and then proves the character-identity domain, which reads
+// character_identity_origins and character_identity_proposals unconditionally, so
+// a reduced schema fails at admission with SCHEMA_DOMAIN_INVARIANT_FAILED before
+// any handler runs. The baseline also carries the generation ledger the in-flight
+// guard reads.
+//
+// The database is created with that schema and then seeded; the lane opens it
+// afterwards, because the admission permit hashes the file at open.
 func productionDBMaintenanceRoot(t *testing.T) (root, projectPath, database string, contract admission.SchemaContract) {
 	t.Helper()
 	root = syntheticProductionDataDir(t)
 	library := filepath.Join(root, productionLibraryDirectory)
-	schema := productionDBMaintenanceSchema
 	seedProductionProject(t, library, productionDBMaintenanceProjectName, productionDBMaintenanceProjectID,
-		admission.CurrentSchemaVersion, schema)
+		admission.CurrentSchemaVersion, admission.BaselineV7Statements())
 	projectPath = filepath.Join(library, productionDBMaintenanceProjectName)
 	database = filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 	productionDBMaintenanceSeed(t, database)
-	contract = productionDBMaintenanceContract(t, schema)
-	return root, projectPath, database, contract
+	pinned, err := admission.PinnedSchemaContract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, projectPath, database, pinned
 }
 
 // productionDBMaintenanceSeed writes two rows into every table the three
 // operations touch: two drafts on two bodies, two reviews, two revisions, two
 // summaries, two post-process runs and steps, two import operations, two
 // blueprint chapters with their two commit and two sync operations, two characters
-// with two aliases, two chapter-deletion receipts, and one project core row whose
-// every column carries the author's own text.
+// with two aliases, two chapter-deletion receipts, one project core row whose every
+// column carries the author's own text, and one finished chapter-blueprint-directory
+// generation run, so the in-flight guard is proved to be about a run's status and
+// not about a run existing at all.
 func productionDBMaintenanceSeed(t *testing.T, database string) {
 	t.Helper()
 	statements := []struct {
@@ -194,6 +148,13 @@ func productionDBMaintenanceSeed(t *testing.T, database string) {
  VALUES ('main', 1, 0, 'ready', '', '', '')`, nil},
 		{`INSERT INTO chapter_deletion_operations (operation_id, draft_id, chapter_number, chapter_title, finalization_id)
  VALUES ('delete-1', 91, 91, '已删第一章', 'final-91'), ('delete-2', 92, 92, '已删第二章', 'final-92')`, nil},
+		// One finished directory run, so the success arm proves the in-flight guard is
+		// about a run's status and not about a run existing at all.
+		{`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json, revision)
+ VALUES ('root-finished-1', 'idem-finished-1', '{}', '{}', 0)`, nil},
+		{`INSERT INTO generation_runs (run_id, root_action_id, binding_json, status, created_at_ms, open_key)
+ VALUES ('run-finished-1', 'root-finished-1', '{"sourceManifest":{"operation":"chapter-blueprint-directory"}}',
+ 'completed', 1700000000000, 'open-finished-1')`, nil},
 	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
 	uri.RawQuery = "mode=rw"
@@ -525,6 +486,34 @@ func TestProductionDBMaintenanceBlueprintClearAllKeepsEveryDraft(t *testing.T) {
 		t.Fatal("fixture does not carry two rows in each blueprint table")
 	}
 
+	// A run that is still open is refused by name: this lane cannot retire it inside
+	// the transaction the reference retires it in (blueprint-repository.ts:613-619),
+	// so clearing under a live directory run would let that run put the rows back.
+	productionDBMaintenanceExec(t, productionDBMaintenanceOpen(t, database, "mode=rw"), []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json, revision)
+ VALUES ('root-running-1', 'idem-running-1', '{}', '{}', 0)`, nil},
+		{`INSERT INTO generation_runs (run_id, root_action_id, binding_json, status, created_at_ms, open_key)
+ VALUES ('run-running-1', 'root-running-1', '{"sourceManifest":{"operation":"chapter-blueprint-directory"}}',
+ 'running', 1700000000001, 'open-running-1')`, nil},
+	})
+	inFlight := productionDBMaintenanceDigest(t, database)
+	if code := productionDBMaintenanceRefusal(t, author, productionDBMaintenanceBlueprintClearName,
+		[]any{projectPath, frozen}); code != "BLUEPRINT_CLEAR_RUN_IN_FLIGHT" {
+		t.Fatalf("the in-flight-run clear refused with %v, want BLUEPRINT_CLEAR_RUN_IN_FLIGHT", code)
+	}
+	productionDBMaintenanceUnchanged(t, database, inFlight, "the in-flight-run blueprint clear")
+	if count := productionDBMaintenanceCount(t, database, "blueprints"); count != 2 {
+		t.Fatalf("the refused in-flight-run clear removed blueprints: %d left, want 2", count)
+	}
+	// Finish the run, so the success arm below runs with no live writer.
+	productionDBMaintenanceExec(t, productionDBMaintenanceOpen(t, database, "mode=rw"), []struct {
+		query string
+		args  []any
+	}{{`UPDATE generation_runs SET status='completed' WHERE run_id='run-running-1'`, nil}})
+
 	before := productionDBMaintenanceDigest(t, database)
 	response := author.call(t, productionDBMaintenanceBlueprintClearName, []any{projectPath, frozen})
 	if response.Code != http.StatusOK {
@@ -595,12 +584,12 @@ func TestProductionDBMaintenanceBlueprintClearAllKeepsEveryDraft(t *testing.T) {
 	}
 
 	// Wrong arity is refused by the argument fence, and the file is untouched.
-	snapshot := productionDBMaintenanceDigest(t, database)
+	aritySnapshot := productionDBMaintenanceDigest(t, database)
 	response = author.call(t, productionDBMaintenanceBlueprintClearName, []any{projectPath})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("arity refusal answered %d, want 400: %s", response.Code, response.Body.String())
 	}
-	productionDBMaintenanceUnchanged(t, database, snapshot, "the arity-refused blueprint clear")
+	productionDBMaintenanceUnchanged(t, database, aritySnapshot, "the arity-refused blueprint clear")
 }
 
 // TestProductionDBMaintenanceProjectClearKeepsAuthorContent proves

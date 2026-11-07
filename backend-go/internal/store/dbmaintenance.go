@@ -59,10 +59,12 @@ package store
 //   - It does not port GenerationRunRepository.retireBlueprintRecoveryWithinTransaction
 //     (generation-run-repository.ts:613-619). That retirement needs the recovery
 //     classifier (readBlueprintRecovery, :546-589) and the portable-freeze proof
-//     (:790-796), neither of which this package owns. The consequence is named in
-//     the handler's comment: a stale directory run can still offer a recovery after
-//     a clear, which can re-create blueprints the author asked to delete but can
-//     never delete author content.
+//     (:790-796), neither of which this package owns. Instead ClearBlueprints refuses
+//     the whole clear with ErrGenerationRunInFlight while any generation_runs row is
+//     still 'running', because a live directory run can put the rows straight back.
+//     A run that is no longer running can still offer a recovery after a clear, which
+//     can re-create blueprints the author asked to delete but can never delete author
+//     content.
 //   - It does not move the finalized chapter `.txt` files project-clear-repository.ts:41-53
 //     sends to the project trash. The store owns SQL only; the wire answer reports
 //     physicalFilesDeleted 0 so no caller can believe files were removed.

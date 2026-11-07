@@ -58,9 +58,11 @@ package main
 // the project trash (project-clear-repository.ts:41-53); this file does not move
 // them either, and reports physicalFilesDeleted as 0 rather than claiming a file
 // deletion that never happened. The store also cannot retire blueprint recovery
-// runs (generation-run-repository.ts:613-619, see internal/store/dbmaintenance.go);
-// a stale directory run may therefore still offer a recovery that re-creates
-// blueprints after a clear. That can resurrect blueprint rows the author cleared,
+// runs (generation-run-repository.ts:613-619, see internal/store/dbmaintenance.go),
+// so it refuses the clear outright while a generation run is still running
+// (BLUEPRINT_CLEAR_RUN_IN_FLIGHT) rather than let a live writer put the rows back.
+// A run that is no longer running may still offer a recovery that re-creates
+// blueprints after a clear: that can resurrect blueprint rows the author cleared,
 // and it can never delete author content.
 
 import (
