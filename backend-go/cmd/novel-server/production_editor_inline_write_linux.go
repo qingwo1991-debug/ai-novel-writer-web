@@ -307,26 +307,19 @@ func (e *productionEditorInline) reproduce(ctx context.Context, scope generation
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "lease-missing")
 		return nil, "", errors.New(productionEditorInlineLeaseMissing)
 	}
-	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, runScope, syntheticGenerationPurpose); err != nil {
-		// The decisive fact: did the rebuild change the scope at all? If callerScope
-		// equals runScope, the minting scope and the rebuilt scope are identical and
-		// the failure must be purpose or record mismatch; if they differ, the binding
-		// carries a different project/epoch than the scope begin minted under.
-		// The scope is identical, so name the actual refusal code - resolve returns a
-		// symbolic code (MODEL_EXECUTION_LEASE_*, GENERATION_EPOCH_STALE,
-		// MODEL_PROFILE_UNAVAILABLE, GENERATION_MODEL_CHANGED), safe to print.
-		log.Printf("novel-server: editor-inline sourceStatus=conflict step=resolve callerScope==runScope=%v code=%v",
-			scope == runScope, err)
-		return nil, "", err
-	}
+	// The reproduction reads the record WITHOUT the live-session currency check
+	// (generationowner.ReproduceBinding): the begin that froze this run rotated the
+	// session lease by writing its ledger row, so Resolve's Current check would answer
+	// GENERATION_EPOCH_STALE for a run the lane just froze. The fingerprint comparison
+	// against the stored goOwnerSourceFingerprint is the reproduction, not the check.
 	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
 	if err != nil {
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "rebuild")
 		return nil, "", err
 	}
-	binding, err := e.owner.inner.registry.BindSources(ctx, runScope, leaseID, set.Sources, set.Selection)
+	binding, err := e.owner.inner.registry.ReproduceBinding(ctx, runScope, leaseID, set.Sources, set.Selection)
 	if err != nil {
-		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "bind")
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s code=%v", "reproduce", err)
 		return nil, "", err
 	}
 	return binding, binding.Fingerprint(), nil

@@ -156,6 +156,16 @@ func (r *Registry) resolve(ctx context.Context,id string,scope Scope,purpose str
  return record,nil
 }
 // Resolve returns only a detached, secret-free receipt, never a model or key.
+// resolveReproduce is resolve minus the live-session currency check. It is the record
+// read ReproduceBinding uses, for the reason documented there: the run's own epoch is
+// what a recovery reproduction asks about, and the live lease was proved at admission.
+func (r *Registry) resolveReproduce(ctx context.Context,id string,scope Scope,purpose string)(leaseRecord,error){
+ if r==nil||!scope.valid(){return leaseRecord{},failure("MODEL_EXECUTION_LEASE_INVALID")};r.mu.Lock();record,ok:=r.records[id];if ok&&r.options.Now().UnixMilli()>=record.receipt.ExpiresAt{delete(r.records,id);r.mu.Unlock();return leaseRecord{},failure("MODEL_EXECUTION_LEASE_EXPIRED")};r.mu.Unlock()
+ if !ok||scope!=record.scope||purpose!=record.purpose{return leaseRecord{},failure("MODEL_EXECUTION_LEASE_INVALID")};if ctx.Err()!=nil{return leaseRecord{},ctx.Err()}
+ current,found,err:=r.options.LoadModel(ctx,record.profile.ID);if err!=nil{return leaseRecord{},failure("MODEL_PROFILE_UNAVAILABLE")};revision,revisionErr:=modelRevision(current)
+ if !found||revisionErr!=nil||revision!=record.receipt.ModelRevision||current.BaseURL!=record.profile.BaseURL||hashBytes(current.EncryptedCredential)!=record.credentialHash{r.mu.Lock();delete(r.records,id);r.mu.Unlock();return leaseRecord{},failure("GENERATION_MODEL_CHANGED")}
+ return record,nil
+}
 func (r *Registry) Resolve(ctx context.Context,id string,scope Scope,purpose string)(Receipt,error){record,err:=r.resolve(ctx,id,scope,purpose);return clone(record.receipt),err}
 func (r *Registry) Close(ctx context.Context,id string,scope Scope,purpose string) bool {if _,err:=r.resolve(ctx,id,scope,purpose);err!=nil{return false};r.mu.Lock();defer r.mu.Unlock();delete(r.records,id);return true}
 // RevokeScope is called by server session/project close, never browser lease text.

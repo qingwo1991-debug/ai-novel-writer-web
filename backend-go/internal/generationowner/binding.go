@@ -52,6 +52,21 @@ func (s Sources) reader(key SourceKey)(SourceReader,string,error){
 // knowledge/finalized/portable/skills/MCP/author-action/graph/planning refs and
 // material decisions remain unsupported. It cannot substitute for owner task
 // construction or assert that arbitrary renderer messages use these materials.
+// ReproduceBinding rebuilds a binding's fingerprint from the CURRENT sources for the
+// run's OWN scope, without the live-session currency check. It exists for one caller:
+// the recovery read that answers "does this run's binding still reproduce". The live
+// lease was already proved at request admission, and the begin that froze the run
+// rotated the session lease by writing its ledger row, so re-checking the live lease
+// here would refuse a run the lane just froze (GENERATION_EPOCH_STALE) - which is not
+// the question sourceStatus asks. The fingerprint comparison against the stored
+// goOwnerSourceFingerprint is the reproduction, not the currency check.
+func (r *Registry) ReproduceBinding(ctx context.Context,scope Scope,leaseID string,sources Sources,selection []SourceKey)(*Binding,error){
+ record,err:=r.resolveReproduce(ctx,leaseID,scope,"generation");if err!=nil{return nil,err};if len(selection)==0||len(selection)>256{return nil,failure("GENERATION_BINDING_INVALID")};keys:=append([]SourceKey(nil),selection...);sort.Slice(keys,func(i,j int)bool{if keys[i].Kind!=keys[j].Kind{return keys[i].Kind<keys[j].Kind};return keys[i].ID<keys[j].ID})
+ binding:=&Binding{registry:r,scope:scope,modelRevision:record.receipt.ModelRevision};total:=0
+ for i,key:=range keys{if i>0&&key==keys[i-1]{return nil,failure("GENERATION_BINDING_INVALID")};read,id,err:=sources.reader(key);if err!=nil{return nil,err};value,err:=read(ctx,scope,key);if err!=nil{return nil,failure("GENERATION_SOURCE_UNAVAILABLE")};if value.Revision<0||value.Revision>safeInteger||!utf8.ValidString(value.Text){return nil,failure("GENERATION_BINDING_INVALID")};total+=len(value.Text);if total>8*1024*1024{return nil,failure("GENERATION_SOURCE_TOO_LARGE")};binding.materials=append(binding.materials,material{key,Ref{scope.Project,scope.Epoch,id,value.Revision,hashBytes([]byte(value.Text))},strings.Clone(value.Text),read})}
+ binding.digest=hashJSON(struct{Project string `json:"projectId"`;Epoch string `json:"epoch"`;Model string `json:"modelRevision"`;Sources []Ref `json:"sources"`}{scope.Project,scope.Epoch,binding.modelRevision,binding.Refs()});return binding,nil
+}
+
 func (r *Registry) BindSources(ctx context.Context,scope Scope,leaseID string,sources Sources,selection []SourceKey)(*Binding,error){
  record,err:=r.resolve(ctx,leaseID,scope,"generation");if err!=nil{return nil,err};if len(selection)==0||len(selection)>256{return nil,failure("GENERATION_BINDING_INVALID")};keys:=append([]SourceKey(nil),selection...);sort.Slice(keys,func(i,j int)bool{if keys[i].Kind!=keys[j].Kind{return keys[i].Kind<keys[j].Kind};return keys[i].ID<keys[j].ID})
  binding:=&Binding{registry:r,scope:scope,modelRevision:record.receipt.ModelRevision};total:=0
