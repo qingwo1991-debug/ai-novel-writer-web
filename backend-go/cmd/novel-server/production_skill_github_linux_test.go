@@ -98,54 +98,9 @@ func productionSkillGitHubRefused(t *testing.T, client *productionDurableClient,
 	}
 }
 
-// TestProductionSkillGitHubRefusesInTheFrozenLane opens the whole production
-// lane over a real fixture - the upload route's siblings are irrelevant here,
-// because what is asserted is what the finished lane binds - and then walks the
-// exact browser journey: bootstrap, cookie, CSRF token, POST the operation.
-func TestProductionSkillGitHubRefusesInTheFrozenLane(t *testing.T) {
-	root, _ := productionSingletonDataRoot(t)
-	generation := productionWriteGeneration(root)
-	productionSingletonSeedSkill(t, root)
-	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "",
-		root, productionConfig{Schema: productionSingletonContract(t), MaxDatabaseBytes: productionMaxDatabaseBytes})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-
-	// The count the lane's own assertion measures has to stay at its constant:
-	// neither name may be counted as served because this file exists.
-	bound := productionLaneBoundOperations(t, handler)
-	if len(bound) != productionServedOperations {
-		t.Fatalf("the frozen lane serves %d operations; productionServedOperations is %d",
-			len(bound), productionServedOperations)
-	}
-	served := make(map[string]bool, len(bound))
-	for _, name := range bound {
-		served[name] = true
-	}
-	for _, name := range []string{productionSkillGitHubInspectName, productionSkillGitHubInstallName} {
-		if served[name] {
-			t.Fatalf("%s is bound even though this lane cannot fetch for it", name)
-		}
-	}
-
-	skillRoot := filepath.Join(generation, "skills")
-	before := productionFSSnapshot(t, skillRoot)
-	author := newProductionDurableClient(t, handler, productionDurableTab)
-	for _, name := range []string{productionSkillGitHubInspectName, productionSkillGitHubInstallName} {
-		productionSkillGitHubRefused(t, author, name, "admitted GitHub source", productionSkillGitHubSource,
-			"GO_OPERATION_NOT_MIGRATED")
-		// A URL this server would never admit is refused by the same name, so the
-		// unbound answer cannot be mistaken for an admission of the host.
-		productionSkillGitHubRefused(t, author, name, "foreign source", productionSkillGitHubForeignSource,
-			"GO_OPERATION_NOT_MIGRATED")
-	}
-	if after := productionFSSnapshot(t, skillRoot); !reflect.DeepEqual(before, after) {
-		t.Fatalf("the refused install changed the skill root: before=%d entries after=%d entries",
-			len(before), len(after))
-	}
-}
+// The two names are served now (production_skill_github_install_linux.go), so the
+// frozen-lane arm that pinned their 501 was retired; the seam file it lived in
+// (production_skill_github_linux.go) still refuses only when the egress is absent.
 
 // TestProductionSkillGitHubBinderNamesTheMissingPort is the seam, asked three
 // questions, so the refusal is a measurement instead of an opinion: with the

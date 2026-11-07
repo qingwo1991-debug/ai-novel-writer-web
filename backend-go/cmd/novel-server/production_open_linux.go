@@ -528,6 +528,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		_ = open.Close()
 		return nil, nil, bindErr
 	}
+	// skills:inspect-github and skills:install-github: a second, narrow egress that
+	// admits exactly api.github.com and raw.githubusercontent.com, refuses every
+	// redirect, and runs the fetched bytes through the same inspect gate the local
+	// install uses (production_skill_github_install_linux.go, internal/skillegress).
+	if bindErr := bindProductionSkillGitHubInstall(server, newProductionSkillGitHubInstall(open)); bindErr != nil {
+		_ = open.Close()
+		return nil, nil, bindErr
+	}
 	// One knowledge bridge for the ten served names of that family: the import
 	// binder owns the per-project gate the document and search binders reuse, so a
 	// single admission decision covers all of them.
