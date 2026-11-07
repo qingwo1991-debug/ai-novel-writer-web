@@ -62,14 +62,34 @@ import (
 // PrepareEffectReceipt and CommitEffectReceipt take an
 // store.ImportRunGenerationSourceAssert (internal/store/importrun_receipts.go:118,
 // documented at :112-118). The controller always supplies one
-// (electron/controllers/db-controller.ts:425 for prepare, :437 for commit), and it
-// proves the handle against the live in-process generation runs
+// (electron/controllers/db-controller.ts:425 for prepare, :437 for commit), and the
+// proof it supplies reads the generation run's own row, compares the run's frozen
+// import slot and rebuilds the run's binding from the CURRENT sources and the
+// CURRENT model profile
 // (electron/controllers/generation-controller.ts:72-75 ->
-// electron/services/main-generation-owner.ts:1453-1472). This repository has no
-// such proof: the only reduced substitute is the unexported dcAssertSources
-// (internal/store/draft_commit_tx.go:272-288), which proves a draft-commit epoch
-// and root, not an import-effect handle, and is bound to the draft lane's own run
-// row.
+// electron/services/main-generation-owner.ts:1453-1472). It does not compare the
+// run's epoch with the live one: requireRun is called with execution=false, and
+// that comparison is gated on it (main-generation-owner.ts:164).
+//
+// Reproducing that rebuild is not the gap any more. The store can already read the
+// handle row and its importSlot (internal/store/character_proposal_pending.go:545-575,
+// which then stops at ErrCharacterProposalPendingProofUnavailable), and
+// generationowner.ReproduceBinding (internal/generationowner/binding.go:63) rebuilds
+// a binding from the current sources without the live-session currency check. What
+// this lane does not have is the OWNER those two belong to: the registry that holds
+// the model lease record ReproduceBinding still resolves
+// (internal/generationowner/lease.go:162-163), the private-model loader and the
+// frozen-source readers. All of them live on the one owner
+// production_open_linux.go:591 creates as a local variable, and this adapter is
+// built with open.durable alone (:627). The assert is also invoked inside the
+// receipt's own BEGIN IMMEDIATE on the single pooled connection
+// (importrun_receipts.go:987, :1005 -> importrun.go:948), so a prover here that
+// read the database through the borrowed pool would deadlock instead of proving
+// anything - the store names that shape itself
+// (internal/store/character_proposal_pending.go:34-37). The unexported
+// dcAssertSources (internal/store/draft_commit_tx.go:272-288) is not a substitute
+// either: it proves a draft-commit epoch and root, not an import-effect handle, and
+// is bound to the draft lane's own run row.
 //
 // Passing nil is not the way out. The reference's real style receipt ALWAYS
 // carries a generationRunHandle (electron/services/__tests__/import-generation.test.ts:197,
@@ -77,9 +97,9 @@ import (
 // the generation run produced), and the two store guards then disagree:
 //
 //   - prepare with nil accepts a handle WITHOUT any proof
-//     (importrun_receipts.go:984-989: a nil proof only makes the handle optional);
+//     (importrun_receipts.go:983-985: a nil proof only makes the handle optional);
 //   - commit with nil REFUSES a handle outright, with the store's own
-//     GENERATION_GUARD_REQUIRED (importrun_receipts.go:1002-1003).
+//     GENERATION_GUARD_REQUIRED (importrun_receipts.go:1000-1004).
 //
 // So a nil proof lets this lane write a receipt that it could never commit, and
 // accepts a generation binding the reference refuses. A non-nil proof that fails
@@ -88,6 +108,8 @@ import (
 // than being published as handlers that can only refuse or, worse, that can write
 // unproven state. db:import-run-effect-receipt-get needs no proof at all (the
 // reference has none there either), which is why it is bound below.
+// production_importrun_receipts_serve_linux.go records that verdict per name and
+// production_importrun_receipts_linux.go carries the declarations behind it.
 //
 // # Why one server.Bind per name
 //

@@ -12,58 +12,114 @@ import (
 // still refuses after the ten its binder serves, and the exact declaration that
 // keeps each one refused. It publishes no handler. Its binder installs nothing on
 // the wire and returns an error only when the seam table itself has become
-// incomplete, so the real lane runs the check at startup instead of leaving a
-// note that points at nothing.
+// incomplete or disagrees with the serve decision
+// (production_importrun_receipts_serve_linux.go), so the real lane runs the check
+// at startup instead of leaving a note that points at nothing.
 //
-//	db:import-run-effect-receipt-prepare   refused, no live generation-source proof
+//	db:import-run-effect-receipt-prepare   refused, the source proof has no owner here
 //	db:import-run-effect-receipt-commit    refused, the same proof
-//	db:import-run-prepare-inspection       refused, the inspection CAS never reaches the wire
+//	db:import-run-prepare-inspection       refused, the inspection store is unreachable
 //
-// # What the receipt assert actually proves
+// # What the receipt assert actually checks
 //
 // store.ImportRuns.PrepareEffectReceipt and CommitEffectReceipt accept a
 // store.ImportRunGenerationSourceAssert (internal/store/importrun_receipts.go:118,
 // documented at :112-118). The reference always supplies one
-// (electron/controllers/db-controller.ts:425 for prepare, :437 for commit). It is
-// not an epoch comparison and it is not a re-read of import_runs. In the
-// reference it is:
+// (electron/controllers/db-controller.ts:425 for prepare, :437 for commit). The
+// proof it performs there is five checks, and it is worth stating them precisely,
+// because the previous version of this comment got two of them wrong:
 //
-//  1. the live generation owner for this project database must exist, the project
-//     database must be in a transaction, and the owner must still be installed
-//     (electron/controllers/generation-controller.ts:72-75, GENERATION_OWNER_REQUIRED);
-//  2. the handle must resolve to a generation_runs row whose projectId matches the
-//     owner's project and whose handle is exactly the row's own
-//     {projectId, epoch, rootActionId, runId}
-//     (electron/services/main-generation-owner.ts:156-159, requireRun);
+//  1. the project database must be in a transaction and the live owner for it
+//     must still be installed (electron/controllers/generation-controller.ts:72-75,
+//     GENERATION_OWNER_REQUIRED). In the reference that owner is a DISPATCHER: it
+//     routes to the closure that holds the source dependencies.
+//  2. the handle must name a generation_runs row whose projectId matches and
+//     whose own {projectId, epoch, rootActionId, runId} equals the handle
+//     (electron/services/main-generation-owner.ts:156-167, requireRun called with
+//     execution=false). Note what that means: the epoch comparison in requireRun
+//     is gated on `execution` (:164) and the assert never passes it, so the
+//     assert does NOT compare the run's epoch with the live one. "The assert
+//     needs a live lease check" was never true.
 //  3. the run's frozen import context must name exactly the requested
-//     {runId, stage, batchId} slot
-//     (electron/services/main-generation-owner.ts:1462,
-//     GENERATION_IMPORT_EFFECT_SLOT_CHANGED);
+//     {runId, stage, batchId} slot (electron/services/main-generation-owner.ts:1462,
+//     GENERATION_IMPORT_EFFECT_SLOT_CHANGED).
 //  4. the run's stored binding must still equal a binding rebuilt from the
 //     CURRENT author sources and the CURRENT model receipt
 //     (electron/services/main-generation-owner.ts:1463-1465,
 //     generation-source-binding.ts:614-625,
-//     GENERATION_IMPORT_EFFECT_SOURCE_CHANGED);
+//     GENERATION_IMPORT_EFFECT_SOURCE_CHANGED). That receipt is derived from the
+//     current model PROFILE (main-generation-owner.ts:303-307), not from a lease.
 //  5. the root must not be cancelled, at least one attempt must exist, every
 //     attempt must have finished with stop, the artifact must carry non-blank text
 //     whose hash equals the recorded textHash, and the artifact must not be
 //     discarded (electron/services/main-generation-owner.ts:1465-1471).
 //
-// Steps 2, 3 and 5 are database reads this repository can reproduce. Step 1 is
-// the in-process owner, and step 4 is the part that cannot be reproduced from a
-// row: it re-reads every source material of the run and compares the rebuilt
-// binding, and it needs the model profile the owner currently holds. A binder
-// that reads generation_runs can answer "there is a row with this handle and this
-// import slot"; it cannot answer "the sources this run froze are still the
-// author's current sources". That is the whole reason the assert exists, and the
-// difference is not a formality - it is the difference between committing an
-// effect for the latest generation and committing one for material the author has
-// since replaced.
+// # What this pass re-tested, and what it found
 //
-// # The store's own live-run read does not supply it
+// The batch asked whether steps 2 to 5 can now be built from the store's own read
+// plus generationowner.ReproduceBinding, so that prepare and commit could be
+// served. They cannot. Two of the previous refusal's claims are nevertheless false
+// and are corrected here:
 //
-// The previous refusal was checked rather than repeated. The store does own
-// import_runs, and the receipt transaction already reads the live run:
+//   - Step 4's reproduction is NO LONGER missing as an implementation.
+//     internal/generationowner/binding.go:63 ReproduceBinding rebuilds a binding
+//     from the CURRENT sources under the run's own scope and epoch, and
+//     internal/generationowner/lease.go:159 ("resolveReproduce is resolve minus
+//     the live-session currency check") is the record read it uses. The
+//     source-currency half now has a Go implementation, and the live-epoch
+//     objection to it is gone.
+//   - Step 2 is NO LONGER missing as a capability either.
+//     internal/store/character_proposal_pending.go:545 already reads
+//     "FROM generation_runs WHERE run_id=?" for a generationRunHandle taken out of
+//     an import_run_receipts payload, and :546-575 compares projectId,
+//     rootActionId, the operation and the whole {runId,stage,batchId} importSlot
+//     against that row. That is steps 2 and 3, in this package, today. The old
+//     wording - "none reads generation_runs, binding_json or an importSlot" - was
+//     only ever true of internal/store/importrun.go and
+//     internal/store/importrun_lifecycle.go.
+//
+// What is still missing is OWNERSHIP of step 4, and it is missing four times over:
+//
+//	a. ReproduceBinding is a method on *generationowner.Registry and still
+//	   RESOLVES A LEASE RECORD from that registry's memory
+//	   (internal/generationowner/lease.go:162-163: the `r.records[id]` look-up,
+//	   MODEL_EXECUTION_LEASE_INVALID when it is absent). The
+//	   reference's rebuild needs no lease at all: it derives the receipt from the
+//	   current model profile. So ReproduceBinding is close to, but not the same
+//	   as, the reference's step 4: it can only reproduce a run whose lease this
+//	   process minted, and no lane here mints an import run's lease.
+//	b. The registry, the model-profile loader and the frozen-source readers all
+//	   belong to the one owner production_open_linux.go:591 creates as a local
+//	   variable, and that loader closes over the private model list
+//	   (production_generation_begin_linux.go:134). The receipt lane is built at
+//	   production_open_linux.go:627 with `open.durable` alone, so it reaches none
+//	   of them, and there is no second constructor to call.
+//	c. The assert is invoked from INSIDE the receipt's own BEGIN IMMEDIATE on the
+//	   single reserved connection (internal/store/importrun_receipts.go:987 and
+//	   :1005, called from importRunImmediate, internal/store/importrun.go:948).
+//	   A package-main prover holding the borrowed *sql.DB would need a second
+//	   connection while that transaction holds the only one - the shape
+//	   internal/store/character_proposal_pending.go:34-37 already calls "a
+//	   deadlock rather than a proof". So the proof would have to be store-native,
+//	   and the store cannot obtain a generation registry.
+//	d. No import run can exist in this lane in the first place. The generation
+//	   ledger refuses the `importSlot` manifest key for EVERY operation
+//	   (internal/store/generation_ledger.go:505, with glFamilyManifestAllowed
+//	   :426 admitting graph and finalization keys only), and glPlanning (:492)
+//	   refuses an "import-blueprints" operation outright. The probe in
+//	   production_import_finalization_generation_linux_test.go:326-364 pins that
+//	   refusal for all three import operations, so the ledger's widening does NOT
+//	   cover import keys.
+//
+// Step 3's other half is missing for the same reason as step 4:
+// electron/services/import-generation-source.ts:20 captureImportGenerationContext,
+// the only builder of the frozen import context the manifest comparison covers,
+// has no Go counterpart in this module.
+//
+// # What the store's own live-run read does supply
+//
+// The import run's own read is written down here so the boundary is explicit. The
+// store owns import_runs, and the receipt transaction reads the live run:
 //
 //	internal/store/importrun.go:121   readImportRunRow selects import_runs only;
 //	                                  the table has no generation handle column
@@ -74,11 +130,9 @@ import (
 //	                                  IMPORT_RUN_EXECUTION_STALE gate, not the
 //	                                  generation-source gate.
 //	internal/store/importrun_lifecycle.go:796, :1048, :1164, :1230, :1489, :1619
-//	                                  the parsing and lifecycle writes. Every one
-//	                                  reads import_runs, import_run_sources,
-//	                                  import_run_chapters or import_effect_ledger;
-//	                                  none reads generation_runs, binding_json or
-//	                                  an importSlot.
+//	                                  the parsing and lifecycle writes, over
+//	                                  import_runs, import_run_sources,
+//	                                  import_run_chapters and import_effect_ledger.
 //
 // The only reduced source proof already in the store is dcAssertSources
 // (internal/store/draft_commit_tx.go:272-288). It compares a generation binding's
@@ -88,31 +142,6 @@ import (
 // and this lane has no owner from which to obtain a live epoch. Copying it here
 // would prove less than the reference while pretending to prove the same thing.
 //
-// The lane cannot even mint the row the handle would name:
-//
-//	synthetic_generation_linux.go:386-419  syntheticSelection has no importSlot,
-//	                                       importExecution or importContext field,
-//	                                       and the key allowlist refuses every
-//	                                       unknown key with GENERATION_BEGIN_INVALID.
-//	internal/store/generation_ledger.go:505-516  glOrdinaryBinding refuses an
-//	                                       importSlot manifest key with
-//	                                       GENERATION_OPERATION_UNSUPPORTED because
-//	                                       glFamilyManifestAllowed (:426) does not
-//	                                       admit it.
-//	electron/services/import-generation-source.ts:20  captureImportGenerationContext,
-//	                                       the only builder of the frozen
-//	                                       ImportGenerationContext, has no Go
-//	                                       counterpart in this module.
-//	production_import_finalization_generation_linux.go:51, :86  the two names that
-//	                                       would read and execute an import
-//	                                       generation run are themselves refused.
-//
-// A handle-carrying receipt can therefore only name a row the desktop wrote, and
-// no proof for that row can be built here. This is why "serve the receipt with a
-// database-only assert" is not a narrower capability: the row the assert would
-// inspect is outside every run this server can create, and the source-binding
-// half of the proof has no Go port.
-//
 // # Why nil, fail-closed and a database-only proof are all wrong answers
 //
 // The two store guards disagree about a nil proof:
@@ -120,7 +149,7 @@ import (
 //	prepare  importrun_receipts.go:983-985  a nil proof only makes the handle
 //	                                        optional, so an unproven handle is
 //	                                        accepted and written;
-//	commit   importrun_receipts.go:1000-1003 a handle without a proof is refused
+//	commit   importrun_receipts.go:1000-1004 a handle without a proof is refused
 //	                                        outright with GENERATION_GUARD_REQUIRED.
 //
 // A nil proof would therefore write receipts this lane could never commit. A
@@ -130,7 +159,7 @@ import (
 //
 // The narrowed kinds do not rescue the pair either. commitEffectReceipt implements
 // only project-writing-style; the other three kinds return
-// ErrImportRunReceiptKindUnbound (internal/store/importrun_receipts.go:1085-1098).
+// ErrImportRunReceiptKindUnbound (internal/store/importrun_receipts.go:1086-1096).
 // A real import's first receipt is project-global-facts (stage global), so even a
 // perfect writing-style proof could not carry a run through the family. And the
 // reference's real writing-style receipt always carries a generationRunHandle
@@ -155,50 +184,55 @@ import (
 // has the parsing half (BeginParsing, CommitParsedSource, FailParsedSource,
 // FinalizeParsing), but the request cannot reach it:
 //
-//   - importsource.Store.Peek returns only Summary metadata, never chapter bodies
-//     or canonical identities (internal/importsource/inspection.go:158-160);
-//   - importsource.Store.Consume requires expectedPreviewCAS and refuses on a
-//     missing or different value with IMPORT_INSPECTION_PREVIEW_CHANGED
-//     (internal/importsource/inspection.go:165-168);
-//   - the only wire response that carries an inspection id is
+//   - importsource.Summary does carry the keyed CAS
+//     (internal/importsource/inspection.go:49, `previewCAS`), but
+//     Store.Peek returns only that Summary (:158) - never chapter bodies or
+//     canonical identities - and Store.Consume demands the exact
+//     expectedPreviewCAS (:165) and answers IMPORT_INSPECTION_PREVIEW_CHANGED
+//     when it differs (:167);
+//   - the only served response that carries an inspection id is
 //     dialog:select-novel-files, and it returns inspectionId, purpose, counts,
 //     display names, total words, total bytes and the eight-chapter preview, but
-//     never previewCAS (internal/transport/import_selection.go:111-116);
+//     never previewCAS (internal/transport/import_selection.go:112). The value
+//     the CAS exists to prove is therefore not something the handler can obtain
+//     from the renderer, and peeking it server-side would hand back a digest the
+//     renderer never saw;
+//   - the inspection store is not reachable from this adapter: the picker owns
+//     the only importsource.Store (production_import_selection_linux.go:173-180)
+//     and the residual adapter is constructed with open.durable alone
+//     (production_open_linux.go:627);
 //   - a reference-purpose inspection cannot be minted at all:
 //     dialog:select-novel-files refuses reference with
-//     IMPORT_DURABLE_PARSING_REQUIRED (internal/transport/import_selection.go:79-82),
+//     IMPORT_DURABLE_PARSING_REQUIRED (internal/transport/import_selection.go:81),
 //     while BeginParsing refuses every purpose except reference
 //     (internal/store/importrun_lifecycle.go:801-802). The only inspection this
 //     lane can mint is therefore the author-purpose one, which BeginParsing
-//     refuses; the author branch would additionally need the unported prepare() and
-//     FinalizedDraftImportRepository.preview (internal/store/importrun_lifecycle.go:26-34).
-//
-// The wire value that is missing is the preview CAS. The handler cannot invent it
-// from the inspection id without calling Peek, and calling Peek would only hand
-// the handler a value the renderer never saw, which is exactly the binding the CAS
-// exists to prove. The store itself is also not reachable from this adapter: the
-// picker owns the only importsource.Store (production_import_selection_linux.go:173-180)
-// and the residual adapter is constructed with open.durable alone
-// (production_open_linux.go:619). Even if a later pass supplied the store, the
-// chapters are behind Consume and Consume is behind the CAS, so the exact refusal
-// would move to the missing previewCAS rather than disappear.
+//     refuses; the author branch would additionally need the unported prepare()
+//     and FinalizedDraftImportRepository.preview
+//     (internal/store/importrun_lifecycle.go:26-34) plus
+//     ImportSourceIdentityRepository.resolveEncodedSources, which needs the
+//     application import-source secret.
 //
 // # The binder
 //
 // Bind installs nothing. It validates the seam table and refuses to start when a
 // row loses its gate, its port, its arity, its path index, a declaration it names
-// or a duplicate/foreign name. production_importrun_residual_linux.go:212-224
-// installs the four served names and then calls this binder, so the check runs
-// inside the real lane. The served count is unchanged at 246 because no name here
-// is bound; the db family's residual table
-// (production_db_residual_linux.go:153-215) still names the same three, and the
-// count pin (production_served_count_linux_test.go:24) is deliberately untouched.
+// or a duplicate/foreign name, and when the table disagrees with the serve
+// decision table (a refused name with no decision, or a name still listed here
+// while the decision says it is served).
+// production_importrun_residual_linux.go:212-224 installs the four served names
+// and then calls this binder, so the check runs inside the real lane. The served
+// count is unchanged at 255 because no name here is bound; the db family's
+// residual table (production_db_residual_linux.go:153-215) still names the same
+// three, and the count pin (production_served_count_linux_test.go:24) is
+// deliberately untouched.
 
 const (
 	// The three operations are aliases of the residual file's own constants, so
-	// the seam, the 501 pins and the residual prose can never spell a name two
-	// different ways. A future pass that serves one of them has to move the
-	// residual constant and this seam together, which is the point.
+	// the seam, the 501 pins, the serve decision and the residual prose can never
+	// spell a name two different ways. A future pass that serves one of them has
+	// to move the residual constant, the decision row and this seam together,
+	// which is the point.
 	productionImportRunReceiptsPrepareOperation    = productionImportRunResidualReceiptPrepareName
 	productionImportRunReceiptsCommitOperation     = productionImportRunResidualReceiptCommitName
 	productionImportRunReceiptsInspectionOperation = productionImportRunResidualPrepareInspectionName
@@ -249,23 +283,32 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     4,
 			PathIndex: 2,
 			Gate:      "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED",
-			Port:      "no live generation-source proof: the store's live-run read proves the import run lease, not the generation handle's slot and current sources",
+			Port:      "the source proof has no owner: the fingerprint rebuild needs a generation registry this lane is not given, and a package-main prover over the borrowed pool would deadlock inside the receipt transaction",
 			Missing: []productionImportRunReceiptLine{
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 118, "type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot) error"),
-				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 983, "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED"),
+				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 984, "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 987, "return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID})"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun.go", 121, "func readImportRunRow(ctx context.Context, q importRunQueryer, runID string) (importRunRow, bool, error)"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun.go", 641, "func importRunAssertExecutionAuthority(ctx context.Context, q importRunQueryer, runID string, execution ImportRunExecution, now int64) (importRunRow, error)"),
-				productionImportRunReceiptLineOf("synthetic_generation_linux.go", 386, "type syntheticSelection struct {"),
+				productionImportRunReceiptLineOf("../../internal/store/importrun.go", 948, "func (r *ImportRuns) importRunImmediate(ctx context.Context, fn func(*sql.Conn) error) (retErr error)"),
+				productionImportRunReceiptLineOf("../../internal/store/character_proposal_pending.go", 37, "which is a deadlock rather than a proof"),
+				productionImportRunReceiptLineOf("../../internal/store/character_proposal_pending.go", 545, "FROM generation_runs WHERE run_id=?"),
+				productionImportRunReceiptLineOf("../../internal/store/character_proposal_pending.go", 573, "ErrCharacterProposalPendingProofUnavailable"),
+				productionImportRunReceiptLineOf("../../internal/generationowner/binding.go", 63, "func (r *Registry) ReproduceBinding("),
+				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 159, "// resolveReproduce is resolve minus the live-session currency check."),
+				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 163, "MODEL_EXECUTION_LEASE_INVALID"),
 				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 505, `"importSlot"`),
+				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 514, `if !glFamilyManifestAllowed(key, glText(manifest["operation"]))`),
+				productionImportRunReceiptLineOf("production_open_linux.go", 627, "newProductionImportRunResiduals(open.durable).Bind(server)"),
+				productionImportRunReceiptLineOf("production_open_linux.go", 591, "if owner, ownerErr := newProductionGeneration(open, server, config.Dispatch); ownerErr == nil {"),
+				productionImportRunReceiptLineOf("production_generation_begin_linux.go", 134, "records, err := config.ListPrivateModels()"),
 				productionImportRunReceiptLineOf("../../../electron/services/import-generation-source.ts", 20, "captureImportGenerationContext"),
-				productionImportRunReceiptLineOf("production_import_finalization_generation_linux.go", 51, "// # import-generation:read - refused"),
-				productionImportRunReceiptLineOf("production_import_finalization_generation_linux.go", 86, "// # import-generation:execute - refused"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 425, "prepareEffectReceipt(request, execution, Date.now(), assertImportGenerationSourcesCurrent)"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/generation-controller.ts", 72, "assertImportGenerationSourcesCurrent(handle: MainGenerationRunHandle"),
+				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1453, "assertImportGenerationSources: (handle: MainGenerationRunHandle"),
 				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1462, "imports.context(run).slot"),
-				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1465, "compareGenerationSourceBindings(run.binding, current)"),
-				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 303, "function currentModelReceipt(binding: RunBinding): SafeGenerationModelReceipt"),
+				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1463, "const current = deps.rebuildBinding(run.binding, currentModelReceipt(run.binding))"),
+				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1471, "GENERATION_IMPORT_EFFECT_SOURCE_CHANGED"),
 			},
 		},
 		{
@@ -273,12 +316,17 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     6,
 			PathIndex: 4,
 			Gate:      "GENERATION_GUARD_REQUIRED",
-			Port:      "the same missing proof: a handle-carrying prepared receipt is refused without it, and only an already committed row replays before it",
+			Port:      "the same unowned proof: a handle-carrying prepared receipt is refused without it, and only an already committed row replays before it",
 			Missing: []productionImportRunReceiptLine{
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1260, "execution ImportRunExecution, assertSources ImportRunGenerationSourceAssert"),
-				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1003, "GENERATION_GUARD_REQUIRED"),
+				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1004, "GENERATION_GUARD_REQUIRED"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1306, "importRunReceiptAssertCommitGeneration(assertSources, runID, stage, batchID, receipt.Payload)"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1086, "The three unbound kinds name a family this lane does not have"),
+				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1095, "return nil, ErrImportRunReceiptKindUnbound"),
+				productionImportRunReceiptLineOf("../../internal/generationowner/binding.go", 63, "func (r *Registry) ReproduceBinding("),
+				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 163, "MODEL_EXECUTION_LEASE_INVALID"),
+				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 505, `"importSlot"`),
+				productionImportRunReceiptLineOf("production_open_linux.go", 627, "newProductionImportRunResiduals(open.durable).Bind(server)"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 437, "(handle, slot) => assertImportGenerationSourcesCurrent(handle, slot, true)"),
 				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1471, "GENERATION_IMPORT_EFFECT_SOURCE_CHANGED"),
 			},
@@ -288,8 +336,9 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     3,
 			PathIndex: 1,
 			Gate:      "IMPORT_DURABLE_PARSING_REQUIRED",
-			Port:      "the inspection CAS never reaches the wire: Peek has metadata only and Consume demands expectedPreviewCAS, while the only response carrying inspectionId omits previewCAS",
+			Port:      "the inspection store never reaches this adapter and the only served mint drops the preview CAS, so Consume's expectedPreviewCAS has no honest source",
 			Missing: []productionImportRunReceiptLine{
+				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 49, "PreviewCAS string `json:\"previewCAS\"`"),
 				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 158, "func (s *Store) Peek(receipt string,binding Binding) (Summary,error)"),
 				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 165, "func (s *Store) Consume(receipt,expectedPreviewCAS string,binding Binding)"),
 				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 167, "IMPORT_INSPECTION_PREVIEW_CHANGED"),
@@ -297,8 +346,11 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 				productionImportRunReceiptLineOf("../../internal/transport/import_selection.go", 112, `"inspectionId": summary.InspectionID`),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_lifecycle.go", 801, `if candidate.Purpose != "reference"`),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_lifecycle.go", 1048, "func (r *ImportRuns) CommitParsedSource(ctx context.Context, runID, sourceID string, chapters []ImportRunChapterInput)"),
+				productionImportRunReceiptLineOf("production_import_selection_linux.go", 173, "importsource.Store"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 262, "operations.handle('db:import-run-prepare-inspection', async ("),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 269, "importInspectionStore.peek(request.inspectionId, webContentsId, request.purpose)"),
+				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 282, "importInspectionStore.consume(request.inspectionId, webContentsId)"),
+				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 283, "ImportSourceIdentityRepository.resolveEncodedSources("),
 			},
 		},
 	}
@@ -354,7 +406,7 @@ func newProductionImportRunReceipts(durable *productionDurableOpen) *productionI
 // symbolic, an arity/path index that cannot describe a real request, and a seam
 // whose declarations are blank. It also refuses to proceed when one of the three
 // names is already bound, because that would make this table a stale note rather
-// than the family's refusal.
+// than the family's refusal, and when the serve decision and the seam disagree.
 //
 // It deliberately does not read the source files: the production binary's working
 // directory is not the test's, and a startup that reads the source tree would
@@ -401,6 +453,13 @@ func (r *productionImportRunReceipts) Bind(server *transport.Server) error {
 				return errors.New("IMPORT_RUN_RECEIPTS_LINE_INVALID")
 			}
 		}
+	}
+	// The serve decision and this seam are two halves of one answer. A name listed
+	// here that the decision says is served would make the seam a stale note; a
+	// refused name with no decision row would be a refusal whose reason nobody
+	// recorded.
+	if err := productionImportRunReceiptServeAgrees(productionImportRunReceiptServeDecisions(), seams); err != nil {
+		return err
 	}
 	return nil
 }
