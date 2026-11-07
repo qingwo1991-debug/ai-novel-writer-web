@@ -11,7 +11,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -20,83 +19,59 @@ import (
 )
 
 // This file is the production lane's editor-inline family: the CodeMirror inline
-// assist an author drives from inside the manuscript editor. It serves TWO of the
-// four inventoried names and refuses the other two with their missing port named.
+// assist an author drives from inside the manuscript editor. All four inventoried
+// names are served; the read half lives here and the write half in
+// production_editor_inline_write_linux.go.
 //
-//	editor-inline:begin          refused   (this file's header, "begin")
+//	editor-inline:begin          served    (production_editor_inline_write_linux.go: productionEditorInline.begin)
 //	editor-inline:read-recovery  served    (productionEditorInline.read)
-//	editor-inline:execute        refused   (this file's header, "execute")
+//	editor-inline:execute        served    (production_editor_inline_write_linux.go: productionEditorInline.execute)
 //	editor-inline:cancel         served    (productionEditorInline.cancel)
 //
 // The four names are inventoried at web/operations.json:188-191 and registered by
 // electron/controllers/generation-controller.ts:248-251. Every one is arity 1 at
 // the renderer (src/shared/editor-inline-generation.ts:27-32): one request object,
-// the run handle carried as request.handle for the last three. The frozen project
-// context is therefore a trailing second wire argument, so both names this file
-// installs take `operation(2, ...)` and refuse any other length before they look
-// at the request (see productionEditorInlineChannel).
+// the run handle carried as request.handle for begin's three read/execute/cancel
+// siblings. The frozen project context is therefore a trailing second wire argument,
+// so every name this lane installs takes `operation(2, ...)` and refuses any other
+// length before it looks at the request (see productionEditorInlineChannel and
+// productionEditorInlineSession).
 //
-// # Why the reply envelope is the read half, not the mutating DTO
+// # Why the reply envelope is one envelope for all four names
 //
 // The web client returns `result` verbatim (src/services/browser-transport.ts:
-// 156-161) and only turns a non-2xx body into a typed error. Neither name answers
-// a business DTO in the renderer: read-recovery must yield an EditorInlineRecovery
-// object (src/shared/editor-inline-generation.ts:21-26) and cancel must yield the
-// MainGenerationRunView itself (src/services/editor-inline-generation.ts:30-38
-// compares the returned handle field by field). A `{success:false,error}` body
-// would be handed to those readers as a view and fail their identity check, so
-// both names use the family read failure envelope already in this package
-// (productionGraphReadFailure/productionGraphReadCode: a *security.HTTPError
-// surfaces as itself, anything else becomes a symbolic 500). The request is read
-// the way the reference reads it: `request.handle` with every other key ignored
-// (generation-controller.ts:249-251), so no stricter envelope is invented here.
+// 156-161) and only turns a non-2xx body into a typed error. None of the four
+// names answers a business DTO the renderer could interrogate: begin and
+// read-recovery must yield an EditorInlineRecovery object
+// (src/shared/editor-inline-generation.ts:21-26), execute a
+// MainGenerationExecuteReceipt, and cancel the MainGenerationRunView itself
+// (src/services/editor-inline-generation.ts:30-38 compares the returned handle
+// field by field). A `{success:false,error}` body would be handed to those readers
+// as a value and fail their own checks, so every name uses the family read failure
+// envelope already in this package (productionGraphReadFailure/
+// productionGraphReadCode: a *security.HTTPError surfaces as itself, anything else
+// becomes a symbolic 500). The request is read the way the reference reads it:
+// `request.handle` with every other key ignored (generation-controller.ts:249-251),
+// so no stricter envelope is invented here.
 //
-// # begin: refused
+// # begin and execute: served, with the shipped template
 //
-// begin answers with the frozen EditorInlineContext, which is the request input
-// plus `kind: 'author-draft'`, `documentHash`, `writingLanguage` and the resolved
-// PromptTemplate (src/shared/editor-inline-generation.ts:15-20, built by
-// electron/services/editor-inline-generation.ts:29-33). This lane cannot produce
-// that value, and a begin that froze a different one would hand the author a run
-// whose own recovery read then refuses it:
+// Both were refused in a previous pass, on two premises that do not hold: that no
+// Go file could name the builtin `edit_selected_text` template, and that an
+// editor-inline execute would need a model call only llm:generate admits. The
+// template ships (src/services/builtin-prompt-templates.ts:212 with its en-US
+// overlay at src/services/prompt-language.ts:141) and now reaches this binary as a
+// committed asset (internal/prompttemplate), and the model call is this lane's own:
+// generation:execute and graph-generation:execute already dispatch through the
+// lease and the one OrdinaryService. production_editor_inline_write_linux.go:17-113
+// records the whole composition - the frozen context, the rendered task, the one
+// dispatch, and the two narrowings it still keeps.
 //
-//   - The template is the builtin prompt `edit_selected_text`
-//     (generation-source-binding.ts:560 passes `importPrompts.edit_selected_text`,
-//     resolved from the builtin corpus with an on-disk override at :480-505). No
-//     Go file in this module names that key, and internal/promptskills only reads
-//     the author's installed `prompts/*.json`; it carries no builtin corpus, so the
-//     fallback the reference always has has no Go port.
-//   - The frozen task beside it is authored by renderPrompt over that template plus
-//     composePromptSystemRole and the two-language fixed instructions
-//     (electron/services/editor-inline-generation.ts:9-18, :50-72). Authoring it
-//     here would make this transport file a prompt author, which is the same reason
-//     generation:retry-draft-short-outline stays unbound
-//     (production_generation_write_linux.go:78-86).
-//   - The reduced admission refuses the field outright: syntheticParseSelection's
-//     key allowlist has no editorInlineInput (synthetic_generation_linux.go:405-417)
-//     and syntheticManifest writes no editorInline* key at all (:736-762), so a run
-//     this lane opened could never satisfy the recovery read below.
-//
-// The ledger itself is not the obstacle: store.GenerationLedger's closed family
-// allowlist (internal/store/generation_ledger.go:422-459) only refuses keys it
-// already names, and editorInline* is not among them. Nothing in the store has to
-// change for the two served names, and this file changes nothing there.
-//
-// # execute: refused
-//
-// execute IS the model call, and it must not be invented here. The renderer sends
-// only `{ handle }` (channel table above; src/services/editor-inline-generation.ts:
-// 60-74 calls it that way) because main owns the task, and the desktop owner
-// re-authors it from the frozen context on every attempt
-// (electron/services/main-generation-owner.ts:1435-1447 -> readEditorInlineTask).
-// This lane's one dispatch path requires the opposite: a renderer-frozen
-// invocationNonce and a renderer-frozen task
-// (synthetic_generation_linux.go:1297-1345), and it refuses a run that already has
-// an attempt. Binding execute would therefore mean authoring the prompt here -
-// the one thing the non-negotiable forbids - or returning model text this lane
-// never produced, which it must never do. With execute unbound there is no honest
-// way to open a run either, so begin stays refused and the pair keeps failing
-// closed at the 501 that says the server cannot do this yet.
+// The admission did not have to widen: openRun already merges a frozen manifest
+// stub (synthetic_generation_linux.go:879-951), and the ledger's closed family
+// allowlist (internal/store/generation_ledger.go:495-526) refuses only the keys it
+// already names, which editorInline* is not. Nothing in the store changes, and this
+// file changes nothing there.
 //
 // # read-recovery: served, from the database
 //
@@ -137,11 +112,11 @@ import (
 // not cancelled and the run's frozen binding still reproduces - this lane's
 // reproduction is Execute's own check (synthetic_generation_linux.go:1310-1326:
 // resolve the begin-time lease, rebuild the sources, compare the fingerprint).
-// Every row this lane can read today was written by another build and carries no
-// goOwnerSourceFingerprint, so the honest answer is the reference's own fallback,
-// 'conflict' (:1002 keeps the original text readable after a source or model
-// change); the renderer's execute gate therefore stays closed, which is right,
-// because execute is unbound.
+// A run this lane opened carries goOwnerSourceFingerprint and its lease, so a
+// healthy run answers 'current' and the renderer's execute gate opens; a run
+// written by another build carries neither, and the honest answer for it stays the
+// reference's own fallback, 'conflict' (:1002 keeps the original text readable
+// after a source or model change).
 //
 // # cancel: served, as the family's own stop
 //
@@ -214,7 +189,9 @@ func (e *productionEditorInline) ready() bool {
 	return e != nil && e.owner != nil && e.owner.open != nil && e.owner.inner != nil
 }
 
-// Bind installs the two served names. A nil owner is not an error: the names keep
+// Bind installs the four served names. The admitting half is bound first
+// (production_editor_inline_write_linux.go), so a run exists before the reads that
+// project one can be asked about it. A nil owner is not an error: the names keep
 // failing closed at GO_OPERATION_NOT_MIGRATED, exactly like the sibling binders.
 func (e *productionEditorInline) Bind(server *transport.Server) error {
 	if server == nil {
@@ -222,6 +199,17 @@ func (e *productionEditorInline) Bind(server *transport.Server) error {
 	}
 	if !e.ready() {
 		return nil
+	}
+	for _, bind := range []struct {
+		name string
+		call func(context.Context, transport.Caller, map[string]any, map[string]any) (any, error)
+	}{
+		{productionEditorInlineBeginName, e.begin},
+		{productionEditorInlineExecuteName, e.execute},
+	} {
+		if err := server.Bind(bind.name, productionEditorInlineWriteChannel(bind.call)); err != nil {
+			return err
+		}
 	}
 	read := productionEditorInlineChannel(e.read)
 	if err := server.Bind(productionEditorInlineReadRecoveryName, read); err != nil {
@@ -238,20 +226,9 @@ func (e *productionEditorInline) Bind(server *transport.Server) error {
 // productionGenerationMutation), and the failure envelope is the read half's.
 func productionEditorInlineChannel(call func(context.Context, transport.Caller, map[string]any, syntheticHandle) (any, error)) transport.Operation {
 	return func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
-		if len(args) != 2 {
-			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
-		}
-		raw, ok := args[1].(map[string]any)
-		if !ok || len(raw) != 3 {
-			return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
-		}
-		expected := make(map[string]any, 3)
-		for _, key := range []string{"projectId", "leaseId", "projectPath"} {
-			text, ok := raw[key].(string)
-			if !ok || text == "" || !utf8.ValidString(text) {
-				return productionGraphReadFailure(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
-			}
-			expected[key] = text
+		expected, err := productionEditorInlineSession(args)
+		if err != nil {
+			return productionGraphReadFailure(err)
 		}
 		handle, err := productionEditorInlineRequest(args[0])
 		if err != nil {
@@ -397,7 +374,9 @@ func (e *productionEditorInline) resolve(ctx context.Context, scope generationow
 // read answers editor-inline:read-recovery with the reference's four fields: the
 // run view, the frozen model id, the proved context and the source status. It
 // reserves no attempt, resolves no credential and opens no egress endpoint, so a
-// lane with no committed model origin still serves it.
+// lane with no committed model origin still serves it. The envelope is assembled by
+// recovery, which begin answers with too, so the two cannot answer different shapes
+// for the same run.
 func (e *productionEditorInline) read(ctx context.Context, caller transport.Caller, expected map[string]any, handle syntheticHandle) (any, error) {
 	if !e.ready() {
 		return nil, errProductionGenerationUnavailable
@@ -407,20 +386,7 @@ func (e *productionEditorInline) read(ctx context.Context, caller transport.Call
 		return nil, err
 	}
 	defer done()
-	resolved, err := e.resolve(ctx, scope, ledger, db, handle)
-	if err != nil {
-		return nil, err
-	}
-	view, err := e.owner.inner.viewOf(ctx, ledger, db, resolved.Run)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"view":         view,
-		"modelId":      resolved.ModelID,
-		"context":      resolved.Context,
-		"sourceStatus": e.sourceStatus(ctx, scope, ledger, db, resolved),
-	}, nil
+	return e.recovery(ctx, scope, ledger, db, handle)
 }
 
 // cancel answers editor-inline:cancel: the family's own stop over the ordinary

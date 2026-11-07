@@ -10,37 +10,19 @@ package main
 // (internal/transport), which is the answer the desktop controller's own inventory
 // check already understands for a name the server does not serve.
 //
-// # editor-inline: the two names that stay unbound
+// # editor-inline: all four names served
 //
-// `read-recovery` (production_editor_inline_linux.go:168) and `cancel` (:169) are
-// served: both read the manifest of a run this process itself wrote, so neither
-// needs anything outside this lane. The other two are not missing an adapter, they
-// are missing a port:
-//
-//   - `execute` IS the model call. In the reference it resolves a lease, builds the
-//     prompt for one frozen selection, dials the provider, and settles the artifact
-//     (electron/services/editor-inline-generation.ts). In this module that whole
-//     path is itself a browser-facing family: llm:begin-execution-lease,
-//     llm:generate, llm:generate-stream, llm:cancel and llm:close-execution-lease
-//     (production_llm_execution_linux.go:201-205, admitted through
-//     internal/llmlease :163 Begin and :210 Resolve). The renderer performs its own
-//     model call there and settles its own artifact; there is no server-side call
-//     an editor-inline execute could hand an inline selection to, and its request
-//     is an inline range of the author's paragraph rather than the chapter-draft
-//     plan those entry points admit. Serving it would therefore need either a new
-//     leased entry point - a change to the model authority - or a second provider
-//     path inside this file, which would be an unauthorized dial.
-//
-//   - `begin` needs the builtin prompt corpus. Its one required template key is
-//     `edit_selected_text`, and no Go file in this module names that key at all: the
-//     only prompt loader is internal/promptskills/service.go:29, which reads the
-//     author's installed prompts/*.json from the project directory and carries no
-//     builtin templates. A begin that minted a handle without the template would
-//     hand the renderer a context whose frozen prompt no execute could ever fill.
-//     The second half is the admission list: begin's selection is not the ordinary
-//     chapter-draft selection, so the reduced allowlist the ordinary lane admits
-//     does not cover it, and widening that allowlist is a change to the model
-//     authority rather than to this family.
+// `read-recovery` (production_editor_inline_linux.go) and `cancel` (:169) serve the
+// read and stop halves; `begin` and `execute` were refused here for two passes and
+// are now served by production_editor_inline_write_linux.go. The two premises the
+// refusal rested on were both false: the builtin template `edit_selected_text` does
+// ship (src/services/builtin-prompt-templates.ts:212, en-US overlay at
+// src/services/prompt-language.ts:141) and now arrives as a committed asset
+// (internal/prompttemplate), and a model call exists that this lane owns - the same
+// lease, executor and OrdinaryService generation:execute and
+// graph-generation:execute dispatch through. The admission did not need widening
+// either: the ledger's closed family allowlist refuses only the keys it names, and
+// editorInline* is not one of them (internal/store/generation_ledger.go:495-526).
 //
 // # review-revision: the two names that stay unbound
 //
@@ -105,11 +87,11 @@ const (
 	productionReviewRevisionRecovery  = "review-revision:read-recovery"
 )
 
-// productionInlineResidualEditorServed is the half of the editor-inline family this
-// lane binds, in the order web/operations.json lists it (read-recovery before
-// execute, cancel last).
+// productionInlineResidualEditorServed is the editor-inline family in the order
+// web/operations.json lists it: begin, read-recovery, execute, cancel.
 func productionInlineResidualEditorServed() []string {
-	return []string{productionEditorInlineReadRecoveryName, productionEditorInlineCancelName}
+	return []string{productionEditorInlineBeginName, productionEditorInlineReadRecoveryName,
+		productionEditorInlineExecuteName, productionEditorInlineCancelName}
 }
 
 // productionInlineResidualReviewServed is the review-revision family: all four names
@@ -119,49 +101,11 @@ func productionInlineResidualReviewServed() []string {
 		productionReviewRevisionRevision, productionReviewRevisionRecovery}
 }
 
-// productionInlineResidualEditorSeams is this record's answer for the two
-// editor-inline names the lane does not bind. Both are refused for a missing port,
-// not for an unfinished adapter: the adapter already reads the run's own manifest
-// (production_editor_inline_linux.go:526) and already projects the frozen input
-// (:611), which is everything begin and execute would need if the prompt template
-// and the model path existed.
+// productionInlineResidualEditorSeams is empty: all four editor-inline names are
+// bound. It stays as a function so the record's test can assert that emptiness
+// instead of asserting the absence of a symbol.
 func productionInlineResidualEditorSeams() []productionInlineResidualSeam {
-	template := productionInlineResidualPort{
-		Path: "../../internal/promptskills/service.go", Line: 29, Marker: "func (s *Service) LoadPrompts()",
-		Because: "the only prompt loader in this module reads the author's installed prompts/*.json; begin's template key edit_selected_text is a builtin and no Go file names it",
-	}
-	generate := productionInlineResidualPort{
-		Path: "production_llm_execution_linux.go", Line: 361, Marker: "func (x *productionLLMExecution) generate(",
-		Because: "llm:generate is where a model call is admitted, and it is the renderer that calls it",
-	}
-	stream := productionInlineResidualPort{
-		Path: "production_llm_execution_linux.go", Line: 382, Marker: "func (x *productionLLMExecution) generateStream(",
-		Because: "the streaming twin of the same dispatch",
-	}
-	begin := productionInlineResidualPort{
-		Path: "../../internal/llmlease/lease.go", Line: 163, Marker: "func (r *Registry) Begin(",
-		Because: "no model call happens without a lease, and this is the only place one is minted",
-	}
-	resolve := productionInlineResidualPort{
-		Path: "../../internal/llmlease/lease.go", Line: 210, Marker: "func (r *Registry) Resolve(",
-		Because: "a resumed run is admitted by resolving the lease it was started under",
-	}
-	return []productionInlineResidualSeam{
-		{
-			Operation: productionEditorInlineBeginName,
-			Family:    "editor-inline",
-			Missing:   []productionInlineResidualPort{template, generate, begin},
-			Answer: "serve it once the builtin prompt corpus carries edit_selected_text and the admitted selection covers an inline range; " +
-				"until then a handle it minted could not be executed by any port in this lane",
-		},
-		{
-			Operation: productionEditorInlineExecuteName,
-			Family:    "editor-inline",
-			Missing:   []productionInlineResidualPort{generate, stream, begin, resolve},
-			Answer: "serve it only through the leased dispatch above, for an inline selection that dispatch admits; " +
-				"a second provider path in this file would be an unauthorized dial",
-		},
-	}
+	return nil
 }
 
 // productionInlineResidualReviewSeams is empty: all four review-revision names are
