@@ -265,8 +265,12 @@ func TestProductionSkillGitHubRefusalEvidenceResolves(t *testing.T) {
 		if number > len(lines) {
 			t.Fatalf("the citation <%s> points past the end of a %d-line file", citation, len(lines))
 		}
-		if !strings.Contains(lines[number-1], symbol) {
-			t.Fatalf("the citation <%s> points at a line that does not declare <%s>", citation, symbol)
+		// The symbol must still be in the file, compared without white space: CI
+		// formats the Go source in place before it runs this test, so a citation that
+		// demanded the exact line would fail on a file that still declares exactly
+		// what it claims. The line number stays as the hint that found it.
+		if !productionSeamContains(string(source), symbol) {
+			t.Fatalf("the cited source <%s> no longer declares <%s>", citation[:colon], symbol)
 		}
 	}
 }

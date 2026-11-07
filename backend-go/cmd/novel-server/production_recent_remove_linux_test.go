@@ -278,8 +278,17 @@ func TestProductionRecentRemoveServesShelfRemoval(t *testing.T) {
 		}
 	})
 
-	t.Run("repeated-removal-refused", func(t *testing.T) {
-		refused(t, "a shelf entry that was already removed", []any{projectPath})
+	t.Run("repeated-removal-is-idempotent", func(t *testing.T) {
+		// The reference rewrites a navigation document without checking membership, so a
+		// second removal of the same entry succeeds and changes nothing.
+		var again productionRecentRemoveWire
+		productionEditorDecode(t, author, productionRecentRemoveName, []any{projectPath}, &again)
+		if !again.Success || again.Error != "" {
+			t.Fatalf("a repeated removal was refused: %s", again.Error)
+		}
+		if entries := shelf(t, author); len(entries) != 1 || entries[0] != secondPath {
+			t.Fatalf("the repeated removal changed the shelf to %v", entries)
+		}
 	})
 
 	// The removal is navigation state for this process and nothing more. A restart
@@ -341,11 +350,23 @@ func TestProductionRecentRemoveShelveNamesUnknownTarget(t *testing.T) {
 	if !ok || wire["success"] != true {
 		t.Fatalf("the removal did not answer the family's success envelope: %v", result)
 	}
-	if len(open.projects) != 1 || open.projects[0].listed.Path != "/shelf/b" {
-		t.Fatalf("the removal left %d entries; want exactly the other project", len(open.projects))
+	// The lane still admits both projects: a shelf entry is navigation, so dropping it
+	// may not withdraw the book from the library or from any of the family's proofs.
+	if len(open.projects) != 2 {
+		t.Fatalf("the removal changed the admitted inventory to %d entries; want both projects kept", len(open.projects))
 	}
-	if _, err := productionRecentRemoveShelve(open, "/shelf/a"); err == nil || err.Error() != productionRecentTargetUnknown {
-		t.Fatalf("a repeated removal was not refused by name: %v", err)
+	// What the author sees shrinks: the served shelf, and only the served shelf.
+	listed, err := open.RecentProjects(context.Background(), caller)
+	if err != nil {
+		t.Fatalf("read the shelf after the removal: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Path != "/shelf/b" {
+		t.Fatalf("the shelf after the removal is %v; want only the other project", listed)
+	}
+	// Removing it again is idempotent, the way the reference's navigation rewrite is:
+	// the author's intent is already satisfied, so it is not an error.
+	if _, err := productionRecentRemoveShelve(open, "/shelf/a"); err != nil {
+		t.Fatalf("a repeated removal was refused: %v", err)
 	}
 	if _, err := productionRecentRemoveShelve(nil, "/shelf/b"); err == nil || err.Error() != productionFSClosedCode {
 		t.Fatalf("a nil lane was not refused by name: %v", err)

@@ -282,12 +282,14 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 		operation := operation
 		t.Run("not-answerable-empty/"+operation, func(t *testing.T) {
 			response := author.call(t, operation, []any{})
-			if response.Code == http.StatusOK {
-				t.Fatalf("%s answered an empty call: %s", operation, response.Body.String())
-			}
 			if response.Code == http.StatusNotImplemented &&
 				strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
 				t.Fatalf("%s is unbound, which the served lane must not answer", operation)
+			}
+			// This family reports a refusal inside a 200 envelope, so the status is
+			// not the answer: a success member set to false is.
+			if response.Code == http.StatusOK && !strings.Contains(response.Body.String(), `"success":false`) {
+				t.Fatalf("%s answered an empty call as success: %s", operation, response.Body.String())
 			}
 		})
 	}
