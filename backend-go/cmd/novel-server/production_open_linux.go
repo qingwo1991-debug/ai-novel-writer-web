@@ -648,6 +648,14 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// graph-generation:execute and :confirm: execute dispatches the frozen graph
+		// task through the same lease and executor as generation:execute, and confirm
+		// settles a plan into one narrative-plan transaction plus the effect stamp
+		// (production_graph_generation_execute_linux.go, internal/store/graph_generation_confirm.go).
+		if bindErr := newProductionGraphGenerationWrites(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// generation:prepare-draft-context and generation:read-context project the
 		// chapter-draft context; both dial nothing and neither writes the author
 		// database. generation:commit-draft stays unbound: its composed text and

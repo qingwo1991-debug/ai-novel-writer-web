@@ -12,13 +12,13 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the production lane's graph-generation slice. Of the family's five
-// names (electron/controllers/generation-controller.ts:228-232) it binds one and leaves
-// two unbound; the remaining two are served elsewhere.
+// This file is the production lane's graph-generation read slice. Of the family's
+// five names (electron/controllers/generation-controller.ts:228-232) it binds one;
+// the other four are served elsewhere.
 //
 //	graph-generation:read      BOUND, READ, wire arity 2
-//	graph-generation:execute   NOT BOUND, see "Refused: execute"
-//	graph-generation:confirm   NOT BOUND, see "Refused: confirm"
+//	graph-generation:execute   served by production_graph_generation_execute_linux.go
+//	graph-generation:confirm   served by production_graph_generation_execute_linux.go
 //
 // Two more are served elsewhere: begin freezes the context beside the draft
 // admission (production_generation_begin_linux.go:65) and cancel stops the graph
@@ -99,68 +99,34 @@ import (
 //
 // # What a graph run already reuses
 //
-// Almost all of it, which is why the two refusals below are about the ends of a run
-// rather than the run. A graph run begun in this lane goes through the same admission
+// Almost all of it. A graph run begun in this lane goes through the same admission
 // as any other write (syntheticGeneration.admit), the same single ledger open and
 // budget (openRun, then the ledger's own open/budget methods), the same frozen binding,
 // and it freezes beside that binding the whole graph state - the context, its digest,
 // the input, the key, the origin epoch, the task and the task digest
-// (synthetic_generation_linux.go:1155-1163). A dispatch would go through the same one
+// (synthetic_generation_linux.go:1155-1163). A dispatch goes through the same one
 // generationowner.Executor and the one OrdinaryService, because
 // syntheticGeneration.Execute (:1297) is the single model path in this lane.
 //
-// What is missing is everything that turns a run into a graph RESULT and then into a
-// graph EFFECT, which is exactly the graph-only half of the reference.
-//
-// # Refused: execute
-//
-// It is a generation run, so it reuses the admission and the dispatch described above,
-// and the frozen task is already in the manifest the begin wrote, so nothing would have
-// to be authored. What is missing is the read-back: settling an attempt produces
-// artifact text, and the browser's very next call after execute is the read of the
-// derived result (src/services/graph-generation.ts:97 assertGraphResult refuses a
-// recovery without one). Turning artifact text into a graph result is
-// GraphGeneration.proof (electron/services/graph-generation.ts:38), which qualifies the
-// stored artifact against a graph reference - owning run, undiscarded status, matching
-// revision and text hash, finishReason stop - and then deriveGraphGenerationResult
-// (:14) per kind. No Go port implements that qualification, and the projection this
-// lane serves says so about itself (synthetic_graph_linux.go:46). Dispatching a run
-// whose output nothing in this lane can qualify burns an attempt and a model call to
-// produce an artifact the browser is then told does not exist.
-//
-// # Refused: confirm
-//
-// The ledger half of a confirmation is already ported, which is why this refusal is
-// stated narrowly: recordEffect (internal/store/generation_ledger.go:1215) patches
-// exactly one receipt key, admits graphEffects only for the three graph operations
-// (glEffectKeyAllowed, :465-479), scopes the attempt to its run and is idempotent on
-// replay. What is missing is what a confirmation has to do around it.
-//
-// The reference wraps the whole confirmation in one IMMEDIATE transaction: it proves
-// the artifact (:38), asserts the effect payload, writes the domain effect and stamps
-// the proof onto the attempt's usage receipt with its context hash and receipt hash
-// (electron/services/graph-generation.ts:126-132). In Go the plan effect writers each
-// begin their own transaction (internal/store/narrative.go:75 CreatePlan and :131
-// ConfirmEvent), the plot-tree store has no writer at all (internal/store/plottree.go
-// only reads), and recordEffect is its own transaction too - so the effect row and the
-// receipt stamp cannot commit together. Landing confirm means either an in-transaction
-// variant of every effect writer or a stamp that can join one, plus the artifact proof
-// above. Binding confirm over that gap would write effects the ledger could not later
-// prove, which is the exact failure the reference's proof exists to prevent.
-//
-// The two refused names are not installed as handlers that could only refuse: an
-// unbound inventoried name still fails closed at the registry's
-// GO_OPERATION_NOT_MIGRATED (internal/transport/server.go:116).
+// The two ends of a run - execute and confirm - are now served by
+// production_graph_generation_execute_linux.go: execute dispatches the frozen graph
+// task through that same lease and executor, and confirm re-proves the artifact,
+// derives the plan candidates, writes the chosen plan and stamps the graph effect in
+// one BEGIN IMMEDIATE transaction (internal/store/graph_generation_confirm.go). The
+// seam that once refused both names was retired with them.
 
 const (
 	// productionGraphGenerationRead is the one name this file binds. The wire request
 	// is `{ handle }` and the answer is GraphGenerationRecovery
 	// (src/shared/graph-generation.ts:42).
 	productionGraphGenerationRead = "graph-generation:read"
-	// productionGraphGenerationExecute is unbound: no artifact qualification and no
-	// result derivation.
+	// productionGraphGenerationExecute is served by
+	// production_graph_generation_execute_linux.go: the one model dispatch of the
+	// frozen graph task.
 	productionGraphGenerationExecute = "graph-generation:execute"
-	// productionGraphGenerationConfirm is unbound: no atomic effect plus receipt write.
+	// productionGraphGenerationConfirm is served by
+	// production_graph_generation_execute_linux.go: the one transaction that writes the
+	// plan and stamps the effect.
 	productionGraphGenerationConfirm = "graph-generation:confirm"
 )
 
@@ -313,14 +279,11 @@ type productionGraphGenerationSeam struct {
 	Missing   []productionGraphGenerationLine
 }
 
-// productionGraphGenerationRefused is the two names this file deliberately does not
-// bind, in the order the desktop controller registers them
-// (electron/controllers/generation-controller.ts:230-231).
+// productionGraphGenerationRefused is empty: this slice no longer leaves any name of
+// the graph family unbound. The two names it once refused are served by
+// production_graph_generation_execute_linux.go.
 func productionGraphGenerationRefused() []string {
-	return []string{
-		productionGraphGenerationExecute,
-		productionGraphGenerationConfirm,
-	}
+	return nil
 }
 
 // productionGraphGenerationServed is the answer graph-generation:read gives, anchored to
@@ -347,47 +310,19 @@ func productionGraphGenerationServed() []productionGraphGenerationLine {
 		},
 		{
 			Path: "synthetic_graph_linux.go", Line: 45, Marker: "effects: graph effects are recorded by confirmation, which is unbound.",
-			Note: "answers an empty effects list while confirm is refused",
+			Note: "the read projection still answers an empty effects list; confirmation is served elsewhere",
 		},
 		{
 			Path: "synthetic_graph_linux.go", Line: 46, Marker: "artifact/result: the Node projection qualifies",
-			Note: "answers no artifact and no result while execute is refused",
+			Note: "the read projection still omits artifact and result; the qualification is served elsewhere",
 		},
 	}
 }
 
-// productionGraphGenerationSeams is the whole answer for the two refused names. The
-// markers are quotes from the files, so the test proves each gap is still there and
-// still described the way this table describes it.
+// productionGraphGenerationSeams is empty: every name this slice once refused is now
+// served, so there is no gap left to document.
 func productionGraphGenerationSeams() []productionGraphGenerationSeam {
-	return []productionGraphGenerationSeam{
-		{
-			Operation: productionGraphGenerationExecute,
-			Missing: []productionGraphGenerationLine{
-				// The artifact qualification, and the derivation it feeds.
-				{Path: "../../../electron/services/graph-generation.ts", Line: 38, Marker: "private proof(run: DurableGenerationRun"},
-				{Path: "../../../electron/services/graph-generation.ts", Line: 14, Marker: "export function deriveGraphGenerationResult("},
-				// The projection this lane serves says the same thing about itself.
-				{Path: "synthetic_graph_linux.go", Line: 46, Marker: "artifact/result: the Node projection qualifies"},
-				// And the browser refuses a recovery without the result.
-				{Path: "../../../src/services/graph-generation.ts", Line: 97, Marker: "assertGraphResult(recovery)"},
-			},
-		},
-		{
-			Operation: productionGraphGenerationConfirm,
-			Missing: []productionGraphGenerationLine{
-				// The one-transaction confirmation: proof, payload, domain write, stamp.
-				{Path: "../../../electron/services/graph-generation.ts", Line: 130, Marker: "graphEffects: [...(usage.graphEffects as StoredGraphEffect[] ?? []), effect]"},
-				{Path: "../../../electron/services/graph-generation.ts", Line: 132, Marker: "}).immediate()"},
-				// The plan effect writers, each of which begins its own transaction and so
-				// cannot join the receipt stamp.
-				{Path: "../../internal/store/narrative.go", Line: 75, Marker: "func (n *Narrative) CreatePlan"},
-				{Path: "../../internal/store/narrative.go", Line: 131, Marker: "func (n *Narrative) ConfirmEvent"},
-				// The stamp itself is ported, which is what makes this refusal narrow.
-				{Path: "../../internal/store/generation_ledger.go", Line: 1215, Marker: `case "recordEffect":`},
-			},
-		},
-	}
+	return nil
 }
 
 // productionGraphGenerationSeamFor looks one refused name up, so a typo in the binder

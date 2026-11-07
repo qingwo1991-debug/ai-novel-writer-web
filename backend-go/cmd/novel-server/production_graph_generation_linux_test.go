@@ -212,38 +212,27 @@ func TestProductionLaneServesGraphGenerationRead(t *testing.T) {
 	lane.assertNoDial(t)
 }
 
-// TestProductionLaneRefusesGraphGenerationExecuteAndConfirm pins the two names this
-// slice leaves unbound at the registry's fail-closed 501, over the same live-lease plan
-// run the read test serves. The run exists, so the refusals are asserted against a
-// population a dispatch or a confirmation would really have, not against an empty
-// database - and neither name may write, dispatch or add a row.
-func TestProductionLaneRefusesGraphGenerationExecuteAndConfirm(t *testing.T) {
+// TestProductionLaneServesGraphGenerationExecuteAndConfirm proves the two names this
+// slice once left at the registry's fail-closed 501 are now bound, by asking the
+// finished lane for them over the same live-lease plan run the read test serves. A
+// stale lease refuses each name at admission - before any dispatch or ledger read -
+// which is enough to tell a bound name from the 501 an unbound name would answer, and
+// it never dials. The full arms - success, replay, refusals and the transaction -
+// live in production_graph_generation_execute_linux_test.go.
+func TestProductionLaneServesGraphGenerationExecuteAndConfirm(t *testing.T) {
 	lane := productionGenerationWriteOpen(t, nil, nil)
 	handle := productionGraphGenerationBegin(t, lane)
-	artifact := map[string]any{"artifactId": "graph-generation-artifact-0", "revision": float64(1),
-		"textHash": strings.Repeat("a", 64)}
+	stale := lane.stale()
 
-	// The editor fixture seeds one settled run and one settled attempt before
-	// project:open, so both counts are a before/after comparison: a refused name may add
-	// no row at all, and "no new attempt" is a delta rather than a zero.
-	readback := productionStoryStateWriteReadback(t, lane.projectPath)
-	var runsBefore, attemptsBefore int
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsBefore)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attemptsBefore)
-	before := productionMCPDatabaseDigest(t, lane.projectPath)
-	productionGraphGenerationUnbound(t, lane.author, productionGraphGenerationExecute,
-		[]any{map[string]any{"handle": handle}, lane.frozen})
-	productionGraphGenerationUnbound(t, lane.author, productionGraphGenerationConfirm,
-		[]any{map[string]any{"handle": handle, "artifact": artifact, "index": float64(0)}, lane.frozen})
-	after := productionMCPDatabaseDigest(t, lane.projectPath)
-	if before != after {
-		t.Fatal("a refused graph-generation name moved a byte of the author database")
+	response := lane.author.call(t, productionGraphGenerationExecute,
+		[]any{map[string]any{"handle": handle}, stale})
+	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("%v is unbound: %d %s", productionGraphGenerationExecute, response.Code, response.Body.String())
 	}
-	var runs, attempts int
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runs)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attempts)
-	if runs != runsBefore || attempts != attemptsBefore {
-		t.Fatalf("a refused name added rows: runs %d, attempts %d", runs, attempts)
+	response = lane.author.call(t, productionGraphGenerationConfirm,
+		[]any{map[string]any{"handle": handle, "artifact": map[string]any{"artifactId": "graph-generation-artifact-0", "revision": float64(1), "textHash": strings.Repeat("a", 64)}, "index": float64(0)}, stale})
+	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("%v is unbound: %d %s", productionGraphGenerationConfirm, response.Code, response.Body.String())
 	}
 	lane.assertNoDial(t)
 }
@@ -375,16 +364,6 @@ func productionGraphGenerationIdentityRefused(t *testing.T, lane *productionGene
 	}
 }
 
-// productionGraphGenerationUnbound asserts one name still answers the registry's
-// fail-closed 501, which is what an inventoried but unbound operation must do.
-func productionGraphGenerationUnbound(t *testing.T, client *productionDurableClient, operation string, args []any) {
-	t.Helper()
-	response := client.call(t, operation, args)
-	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("%v = %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
-	}
-}
-
 // TestProductionGraphGenerationInputOrder pins the shape of the projection's input,
 // because the two documents involved are ordered differently: the frozen context stores
 // its input as a Go map, which json.Marshal sorts, so the stored document reads
@@ -429,6 +408,12 @@ func TestProductionGraphGenerationSeams(t *testing.T) {
 		t.Fatal("the served table documents nothing")
 	}
 	productionGraphGenerationRows(t, productionGraphGenerationRead, served)
+
+	executed := productionGraphGenerationExecuteServed()
+	if len(executed) == 0 {
+		t.Fatal("the execute/confirm served table documents nothing")
+	}
+	productionGraphGenerationRows(t, productionGraphGenerationExecute, executed)
 
 	refused := productionGraphGenerationRefused()
 	seen := make(map[string]bool, len(refused))
