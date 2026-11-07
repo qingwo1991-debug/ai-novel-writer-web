@@ -30,29 +30,45 @@ import (
 // whose context IS the frozen finalization context
 // (src/shared/finalization-generation.ts:11): the slot, the finalized identity,
 // the chapter title and entities, the writing language, the resolved
-// PromptTemplate and the notes baseline. Nothing in Go can produce that value,
-// and the reused admission cannot freeze it:
+// PromptTemplate and the notes baseline. What has to move is listed below, and
+// one missing field is enough to refuse a freeze:
 //
-//   - The reduced admission freezes only what syntheticSelection carries, and its
-//     key allowlist (synthetic_generation_linux.go:396-405) has no finalization
-//     slot and no context field, so a finalization begin is refused with
-//     GENERATION_BEGIN_INVALID before the ledger is reached.
+//   - The reduced admission has no finalization slot: syntheticSelection
+//     (synthetic_generation_linux.go:386) carries no field for it and
+//     syntheticParseSelection's key allowlist (:410) rejects one, so a
+//     selection-shaped begin is refused with GENERATION_BEGIN_INVALID. That is a
+//     statement about the selection, not about the run: a write half that
+//     hand-writes its manifest the way production_editor_inline_write_linux.go
+//     does for editorInline* does not have to carry it in the selection at all.
 //   - syntheticManifest (synthetic_generation_linux.go:736-758) writes no
 //     finalizationGenerationSlotKey, no finalizationGenerationContext and no
-//     finalization task, so no run this lane opens can name a slot at all - and
+//     finalization task, so no run opened through openRun can name a slot - and
 //     the slot key is the only key the served read matches
 //     (synthetic_graph_linux.go:116).
-//   - The ledger admits that key for one operation only
-//     (internal/store/generation_ledger.go:436-437, refused as
-//     GENERATION_OPERATION_UNSUPPORTED at :477-481), so the chapter_notes step
-//     could not be frozen even if the manifest above were widened.
-//   - The context itself is not assemblable here: the finalized identity reader
-//     (SummaryRepository.readFinalizedCharacterContext) and the prompt template
-//     resolve (renderPrompt over src/services/builtin-prompt-templates.ts) have no
-//     Go counterpart - no Go file in this module names PromptTemplate or
-//     renderPrompt - and the task the desktop owner builds from them
-//     (electron/services/finalization-generation-source.ts:47-59) is a prompt
-//     author, not a projection.
+//   - The ledger is NOT the seam, and this bullet used to say it was. A re-test
+//     against the openRun pattern (production_finalization_generation_write_linux.go,
+//     TestProductionFinalizationGenerationWriteLedgerProbe) shows the opposite:
+//     glFamilyManifestAllowed (internal/store/generation_ledger.go:426) admits all
+//     seven finalization keys for both finalization operations (:447, and the same
+//     two for the effect at :477), and glPlanning (:492) is a name test that
+//     "finalized-chapter-notes" and "finalized-character-state" do not match, so
+//     neither gate applied at :518 or :694 touches this family. A hand-written
+//     CallJSON("open", ...) request can name this run; the ledger row that used to
+//     be cited here is dropped.
+//   - The context itself is not assemblable here, and the gap is one field:
+//     `template`. Six of the seven members have a Go producer - slot
+//     (syntheticFinalizationSlotKey, which the served read already validates),
+//     identity (store.FinalizedCharacters.ReadContext, served by
+//     production_finalized_character_linux.go), chapterTitle
+//     (finalization_outbox.chapter_title), chapterEntities (blueprints.characters),
+//     writingLanguage (the project core) and notesBaseline (blueprints.notes plus
+//     the draft's summary_snapshots rows). The template does not:
+//     captureFinalizationGenerationContext resolves it from the renderer's asset
+//     (electron/services/finalization-generation-source.ts:29, :35) and this
+//     module resolves exactly one prompt template, edit_selected_text
+//     (internal/prompttemplate/editselectedtext.go:165). The task the desktop
+//     builds from it (electron/services/finalization-generation-source.ts:47-59)
+//     is a prompt author, not a projection - which is why begin stays refused.
 //
 // A claimed slot would also be unreadable: FinalizationRead refuses every row
 // that carries the slot key with GENERATION_FINALIZATION_CONTEXT_INVALID
@@ -117,7 +133,9 @@ import (
 // the finalized proof, neither of which exists in Go. A commit also needs a
 // settled artifact from an attempt, which only execute can produce. With begin
 // and execute refused there is no artifact and no provable context, so a commit
-// handler could only ever answer GENERATION_FINALIZATION_CONTEXT_INVALID.
+// handler would answer GENERATION_FINALIZATION_ARTIFACT_INVALID for its refused
+// field and GENERATION_FINALIZATION_CONTEXT_INVALID for the run behind it -
+// never a domain write.
 //
 // What is left is this: the exact seam, name by name, so the next change starts
 // from the code that has to move instead of from a guess.
@@ -165,7 +183,11 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 			Missing: []productionFinalizationLine{
 				{Path: "synthetic_generation_linux.go", Line: 736, Marker: "func syntheticManifest("},
 				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 447, Marker: "finalized-character-state"},
+				// The refused field: the step's template exists only in the
+				// renderer's asset, and this module resolves one unrelated one
+				// (production_finalization_generation_write_linux.go).
+				{Path: productionFinalizationGenerationWriteTemplateAsset, Line: 1063, Marker: "key: 'generate_chapter_notes',"},
+				{Path: "../../internal/prompttemplate/editselectedtext.go", Line: 165, Marker: "func EditSelectedTextTemplate(language string) (Template, error) {"},
 			},
 		},
 		{
@@ -174,7 +196,9 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 				{Path: "synthetic_generation_linux.go", Line: 1337, Marker: "request[\"task\"]"},
 				{Path: "synthetic_generation_linux.go", Line: 1306, Marker: "request[\"invocationNonce\"]"},
 				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 439, Marker: "finalizationGenerationTask"},
+				// The task is rendered from the same template the begin above cannot
+				// freeze, so the field-level seam is the same one step later.
+				{Path: "../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
 			},
 		},
 		{
@@ -216,6 +240,12 @@ func productionFinalizationGenerationSeam(operation string) (productionFinalizat
 // so this binder also validates the import seam table
 // (production_import_finalization_generation_linux.go). That keeps one wired
 // entry point for the four names instead of a second binder nothing calls.
+//
+// The write half's own decision table is validated here too
+// (production_finalization_generation_write_linux.go): the seam table above says
+// which declarations have to move, that file says which field of the wire
+// contract is refused, and one wired entry point keeps the two from drifting into
+// two answers for the same three names.
 func bindProductionFinalizationGeneration(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
@@ -225,6 +255,9 @@ func bindProductionFinalizationGeneration(server *transport.Server) error {
 		if !found || len(seam.Missing) == 0 {
 			return errors.New("PRODUCTION_FINALIZATION_SEAM_INCOMPLETE")
 		}
+	}
+	if err := bindProductionFinalizationGenerationWrite(server); err != nil {
+		return err
 	}
 	if err := bindProductionImportGeneration(server); err != nil {
 		return err
