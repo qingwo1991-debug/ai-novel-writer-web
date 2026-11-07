@@ -7,11 +7,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
@@ -209,22 +211,6 @@ func TestProductionLaneConfirmsGraphRun(t *testing.T) {
 		t.Fatal("a conflicting confirm changed the committed database file")
 	}
 
-	// The transaction arm: a corrupt graphEffects value makes the stamp fail after the
-	// domain write, and the plan row must roll back with it.
-	productionGraphCorruptEffects(t, lane, handle)
-	code := productionLifecycleRefusal(t, "corrupt-effect confirm",
-		lane.author.call(t, "graph-generation:confirm",
-			[]any{map[string]any{"handle": handle, "artifact": artifact, "index": float64(0)}, lane.frozen}))
-	if code != "GENERATION_GRAPH_EFFECT_INVALID" {
-		t.Fatalf("the corrupt-effect confirm refused with %s; want GENERATION_GRAPH_EFFECT_INVALID", code)
-	}
-	productionStoryStateWriteScan(t, readback,
-		"SELECT COUNT(*) FROM narrative_thread_plans WHERE title=? AND target_start_chapter=? AND target_end_chapter=?",
-		[]any{"门后的秘密", float64(1), float64(3)}, &planCount)
-	if planCount != 1 {
-		t.Fatalf("the failed transaction left %d plan rows; want the one from the success arm", planCount)
-	}
-
 	// A foreign-project confirm and a stale-lease confirm never reach the ledger.
 	foreign := map[string]any{
 		"projectId":    productionGraphReadsForeignProjectID,
@@ -242,31 +228,96 @@ func TestProductionLaneConfirmsGraphRun(t *testing.T) {
 	lane.assertNoDial(t)
 }
 
-// productionGraphCorruptEffects pre-seeds the run's attempt with a graphEffects
-// value that is not an array, so the confirm stamp refuses after the plan write
-// and the transaction rolls back.
-func productionGraphCorruptEffects(t *testing.T, lane *productionGenerationWriteLane, handle map[string]any) {
+// productionGraphConfirmCorruptSeed seeds one settled plan graph run whose attempt
+// already carries a corrupt (non-array) graphEffects value, before the lane admits
+// the project: the write permit pins the database's content identity at admit, so
+// a corruption written afterwards would refuse as AUTHOR_WRITE_STALE instead of
+// reaching the stamp. It returns the identity the confirm request needs.
+func productionGraphConfirmCorruptSeed(t *testing.T, projectPath string) (runID, rootID, artifactID string, revision int64, textHash string) {
 	t.Helper()
-	db := productionGraphWriteOpen(t, lane.projectPath)
-	ledger := store.NewGenerationLedger(db, nil, nil)
-	value, err := ledger.Call(context.Background(), "get", []any{syntheticString(handle["runId"])})
+	db := productionGraphWriteOpen(t, projectPath)
+	ctx := context.Background()
+	epoch := "graph-confirm-corrupt-epoch"
+	scope := generationowner.Scope{Project: productionEditorProjectID, Epoch: epoch}
+	input := syntheticGraphInput{Kind: "plan", ChapterNumber: 1}
+	selection := syntheticSelection{UIActionNonce: "graph-confirm-corrupt-nonce"}
+	extra, err := (&syntheticGeneration{}).syntheticFreezeGraphContext(ctx, db, scope, selection, input)
 	if err != nil {
-		t.Fatalf("ledger get for tamper: %v", err)
+		t.Fatalf("freeze graph context: %v", err)
+	}
+	manifest := map[string]any{"operation": "narrative-thread-plan-candidate"}
+	for key, value := range extra {
+		manifest[key] = value
+	}
+	hash := strings.Repeat("a", 64)
+	fingerprint := map[string]any{}
+	for _, key := range []string{"chapterBriefHash", "authorGuidanceHash", "dependencyHash",
+		"contextSnapshotHash", "templateHash", "skillSnapshotHash", "modelLeaseRevision",
+		"policyHash", "outputContractHash"} {
+		fingerprint[key] = hash
+	}
+	budget := map[string]any{"maxPhysicalRequests": 3, "maxTokenLiability": 4000,
+		"maxOutputPerRequest": 1000, "maxActiveElapsedMs": 600000}
+	request := map[string]any{
+		"projectId":         productionEditorProjectID,
+		"epoch":             epoch,
+		"operation":         "narrative-thread-plan-candidate",
+		"uiActionNonce":     "graph-confirm-corrupt-nonce",
+		"frozenInputHash":   hash,
+		"contextSnapshotId": "graph-confirm-corrupt-context",
+		"fingerprint":       fingerprint,
+		"sourceManifest":    manifest,
+		"sourceRefs":        []any{},
+		"budget":            budget,
+	}
+	ordinal := 0
+	ledger := store.NewGenerationLedger(db, func() int64 { return 1700000000000 }, func() string {
+		ordinal++
+		return fmt.Sprintf("graph-confirm-corrupt-%02d", ordinal)
+	})
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := ledger.CallJSON(ctx, "open", json.RawMessage("["+string(encoded)+"]"))
+	if err != nil {
+		t.Fatalf("seed graph open: %v", err)
 	}
 	run := syntheticMap(value)
-	budget, err := ledger.Call(context.Background(), "budget", []any{syntheticString(run["rootActionId"])})
+	runID = syntheticString(run["runId"])
+	rootID = syntheticString(run["rootActionId"])
+	if runID == "" || rootID == "" {
+		t.Fatalf("seed graph open returned no identity: %v", run)
+	}
+	reserved, err := ledger.Call(ctx, "reserve", []any{runID, "graph:0", strings.Repeat("b", 64), 200, 100})
 	if err != nil {
-		t.Fatalf("ledger budget for tamper: %v", err)
+		t.Fatalf("seed graph reserve: %v", err)
 	}
-	attempts := syntheticSlice(syntheticMap(budget)["attempts"])
-	if len(attempts) != 1 {
-		t.Fatalf("the run has %d attempts to tamper; want 1", len(attempts))
+	receipt := syntheticMap(reserved)
+	attemptID := syntheticString(syntheticMap(receipt["attempt"])["attemptId"])
+	if attemptID == "" {
+		t.Fatalf("seed graph reserve returned no attempt: %v", reserved)
 	}
-	attemptID := syntheticString(syntheticMap(attempts[0])["attemptId"])
-	if _, err := ledger.Call(context.Background(), "recordEffect",
-		[]any{syntheticString(handle["runId"]), attemptID, "graphEffects", map[string]any{"corrupt": true}}); err != nil {
-		t.Fatalf("tamper recordEffect: %v", err)
+	if _, err := ledger.Call(ctx, "markDispatched", []any{attemptID}); err != nil {
+		t.Fatalf("seed graph markDispatched: %v", err)
 	}
+	if _, err := ledger.Call(ctx, "snapshot", []any{attemptID, 0, productionGraphPlanOutput}); err != nil {
+		t.Fatalf("seed graph snapshot: %v", err)
+	}
+	settled, err := ledger.Call(ctx, "settle", []any{attemptID, map[string]any{"trusted": true, "actualTokens": 120}, "stop"})
+	if err != nil {
+		t.Fatalf("seed graph settle: %v", err)
+	}
+	artifactMap := syntheticMap(syntheticMap(settled)["artifact"])
+	artifactID = syntheticString(artifactMap["artifactId"])
+	revision = syntheticNumber(artifactMap["revision"])
+	textHash = syntheticString(artifactMap["textHash"])
+	if _, err := ledger.Call(ctx, "recordEffect",
+		[]any{runID, attemptID, "graphEffects", map[string]any{"corrupt": true}}); err != nil {
+		t.Fatalf("seed graph corrupt effect: %v", err)
+	}
+	productionEditorCheckpoint(t, db, filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	return runID, rootID, artifactID, revision, textHash
 }
 
 // productionGraphWriteOpen opens a writable connection to the committed author
@@ -283,4 +334,44 @@ func productionGraphWriteOpen(t *testing.T, projectPath string) *sql.DB {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// TestProductionLaneConfirmRollsBackOnCorruptEffect is the transaction arm of the
+// confirm proof. It seeds a settled graph run whose attempt already carries a
+// corrupt graphEffects value before the lane admits the project, so the confirm
+// reaches the stamp, fails there, and the plan row the transaction just wrote must
+// roll back to absent. The corruption is seeded before admit because a write
+// afterwards would refuse as AUTHOR_WRITE_STALE before the stamp ever runs.
+func TestProductionLaneConfirmRollsBackOnCorruptEffect(t *testing.T) {
+	var runID, rootID, artifactID string
+	var revision int64
+	var textHash string
+	lane := productionGenerationWriteOpen(t, nil, func(t *testing.T, projectPath string) {
+		runID, rootID, artifactID, revision, textHash = productionGraphConfirmCorruptSeed(t, projectPath)
+	})
+	handle := map[string]any{
+		"projectId":    productionEditorProjectID,
+		"epoch":        "graph-confirm-corrupt-epoch",
+		"rootActionId": rootID,
+		"runId":        runID,
+	}
+	artifact := map[string]any{
+		"artifactId": artifactID,
+		"revision":   float64(revision),
+		"textHash":   textHash,
+	}
+	code := productionLifecycleRefusal(t, "corrupt-effect confirm",
+		lane.author.call(t, "graph-generation:confirm",
+			[]any{map[string]any{"handle": handle, "artifact": artifact, "index": float64(0)}, lane.frozen}))
+	if code != "GENERATION_GRAPH_EFFECT_INVALID" {
+		t.Fatalf("the corrupt-effect confirm refused with %s; want GENERATION_GRAPH_EFFECT_INVALID", code)
+	}
+	readback := productionStoryStateWriteReadback(t, lane.projectPath)
+	var planCount int
+	productionStoryStateWriteScan(t, readback,
+		"SELECT COUNT(*) FROM narrative_thread_plans", nil, &planCount)
+	if planCount != 0 {
+		t.Fatalf("the failed transaction left %d plan rows; want none", planCount)
+	}
+	lane.assertNoDial(t)
 }

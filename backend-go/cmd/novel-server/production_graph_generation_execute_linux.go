@@ -83,7 +83,7 @@ func (g *productionGraphGenerationWrites) Bind(server *transport.Server) error {
 					return nil, errors.New("GENERATION_GRAPH_REQUEST_INVALID")
 				}
 			}
-			if err := productionGraphGenerationIdentity(request["handle"], expected); err != nil {
+			if err := productionGraphConfirmIdentity(request["handle"], expected); err != nil {
 				return nil, err
 			}
 			handle, err := syntheticParseHandle(request["handle"])
@@ -186,6 +186,32 @@ func syntheticNonNegative(value any) (int64, bool) {
 	return int64(number), true
 }
 
+// productionGraphConfirmIdentity is the confirm half of the handle fence, and it
+// is deliberately looser than the read fence: the reference's require accepts a
+// handle epoch that is the run's binding epoch or its origin epoch, not the live
+// lease (electron/services/graph-generation.ts:25-30), because a confirmation may
+// settle a run whose lease has since rotated. It still refuses a handle that is
+// not exactly four keys or that names another project; the run's epoch is then
+// compared against the handle inside GraphConfirm, after the live lease was
+// already proved by the lane's admission.
+func productionGraphConfirmIdentity(handle any, expected map[string]any) error {
+	object := syntheticMap(handle)
+	if object == nil {
+		return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+	}
+	for key := range object {
+		switch key {
+		case "projectId", "epoch", "rootActionId", "runId":
+		default:
+			return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+		}
+	}
+	if syntheticString(object["projectId"]) != syntheticString(expected["projectId"]) {
+		return errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
+	}
+	return nil
+}
+
 // GraphExecute dispatches one graph run through the same path generation:execute
 // uses, with the frozen graph task instead of a browser task and the reference's
 // fixed invocation nonce.
@@ -264,6 +290,36 @@ func syntheticGraphOwnerTask(task graphgen.Task) (generationowner.Task, error) {
 	return ownerTask, nil
 }
 
+// syntheticGraphConfirmRun resolves the handle against the committed run for a
+// confirmation. It drops the live-lease epoch equality syntheticRequireRun keeps:
+// a confirm may settle a run whose lease rotated after it was frozen, exactly as
+// the reference's require accepts the binding epoch or the origin epoch
+// (electron/services/graph-generation.ts:25-30). The live lease is still proved
+// by the admission before this is reached, and the handle's epoch is compared
+// against the run's frozen epoch here.
+func syntheticGraphConfirmRun(ctx context.Context, ledger *store.GenerationLedger, scope generationowner.Scope, handle syntheticHandle) (map[string]any, map[string]any, map[string]any, error) {
+	args, err := syntheticArgs(handle.RunID)
+	if err != nil {
+		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	value, err := ledger.CallJSON(ctx, "get", args)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	run := syntheticMap(value)
+	if run == nil {
+		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	binding := syntheticMap(run["binding"])
+	manifest := syntheticMap(binding["sourceManifest"])
+	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
+		binding["projectId"] != scope.Project || binding["epoch"] != handle.Epoch ||
+		handle.ProjectID != scope.Project || manifest == nil {
+		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	return run, binding, manifest, nil
+}
+
 // GraphConfirm answers graph-generation:confirm for the plan kind: the admission
 // and context re-proof happen here, and the one transaction that writes the plan
 // and stamps the effect lives in the store.
@@ -273,7 +329,7 @@ func (s *syntheticGeneration) GraphConfirm(ctx context.Context, caller transport
 		return nil, err
 	}
 	defer done()
-	_, _, manifest, err := syntheticRequireRun(ctx, ledger, scope, handle)
+	_, _, manifest, err := syntheticGraphConfirmRun(ctx, ledger, scope, handle)
 	if err != nil {
 		return nil, err
 	}
