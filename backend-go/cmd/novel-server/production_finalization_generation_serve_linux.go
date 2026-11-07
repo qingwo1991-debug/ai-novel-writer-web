@@ -560,7 +560,7 @@ func productionFinalizationManifestText(selection syntheticSelection, scope gene
 		productionEditorInlineField{"finalizationGenerationSlot", slotText},
 		productionEditorInlineField{"finalizationGenerationSlotKey", productionEditorInlineQuote(slotKey)},
 		productionEditorInlineField{"finalizationGenerationContext", contextText},
-		productionEditorInlineField{"finalizationGenerationContextHash", productionEditorInlineQuote(syntheticHash(contextText))},
+		productionEditorInlineField{"finalizationGenerationContextHash", productionEditorInlineQuote(syntheticHash(string(contextText)))},
 		productionEditorInlineField{"finalizationGenerationOriginEpoch", productionEditorInlineQuote(originEpoch)},
 		productionEditorInlineField{"finalizationGenerationTask", taskText},
 		productionEditorInlineField{"finalizationGenerationTaskHash", productionEditorInlineQuote(syntheticHash(taskText))},
@@ -1031,11 +1031,11 @@ func (f *productionFinalizationServe) commit(ctx context.Context, caller transpo
 	if err != nil {
 		return nil, err
 	}
-	chapterTitle, chapterEntities, err := productionFinalizationChapterParts(ctx, db, resolved.Slot)
+	_, chapterEntities, err := productionFinalizationChapterParts(ctx, db, resolved.Slot)
 	if err != nil {
 		return nil, err
 	}
-	baseline, err := productionFinalizationNotesBaseline(ctx, db, resolved.Slot)
+	baseline, err := readProductionFinalizationNotesBaseline(ctx, db, resolved.Slot)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,7 +1060,7 @@ func (f *productionFinalizationServe) commit(ctx context.Context, caller transpo
 		return nil, saveErr
 	}
 	receipt := productionFinalizationNotesReceipt(chapterNotes, facts, blueprintUpdated)
-	if err := productionFinalizationStampEffect(ctx, db, proof.AttemptID, ref, syntheticHash(contextText), receipt); err != nil {
+	if err := productionFinalizationStampEffect(ctx, db, proof.AttemptID, ref, syntheticHash(string(contextText)), receipt); err != nil {
 		return nil, err
 	}
 	return receipt, nil
