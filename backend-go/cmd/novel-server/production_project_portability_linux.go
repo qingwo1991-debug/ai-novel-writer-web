@@ -4,7 +4,8 @@ package main
 
 // The project portability family: what a browser may do with the author's own
 // book as a *book* - look at its overview, copy it out as a portable archive,
-// put a portable archive back, and browse one directory of the open project.
+// put a portable archive back, browse one directory of the open project, and
+// import an old desktop project directory as a new copy in the library.
 //
 // Six browser operations were unserved. This file decides all six, and the
 // decision is the same shape every time: a name is served only when this lane
@@ -54,18 +55,26 @@ package main
 //                           librarypath so no request string ever reaches a
 //                           syscall.
 //
-// REFUSED, and the port each one is missing
+//   project:import-legacy-copy
+//                           The legacy copy, served by its own file
+//                           (production_project_import_legacy_linux.go) and bound
+//                           by Bind below. Two grants and no path: the source is
+//                           the directory `dialog:select-legacy-project` granted,
+//                           the destination the directory
+//                           `dialog:select-project-restore-target` granted, and
+//                           the result is a byte-for-byte copy of the legacy tree
+//                           into the library, proved by a digest of both trees. It
+//                           copies and never moves, it refuses a source that
+//                           carries this lane's own project files, an existing
+//                           destination and any path outside the roots, and a
+//                           refusal removes what it created. The conversion the
+//                           desktop also performs - lancedb vectors, the m05
+//                           character-asset migration, the transfer authority - is
+//                           still not ported, so the copy is the legacy bytes and
+//                           not yet a book this lane can open. That is stated in
+//                           that file rather than papered over here.
 //
-//   project:import-legacy-copy  The legacy import vector: an old desktop copy is
-//                           a *directory* of project trees, a lancedb vector
-//                           store and a per-project journal. Two of the three have
-//                           no Go port (internal/projectfs has no vector store,
-//                           and m05 character-asset migration lives in
-//                           electron/services/import-legacy*.ts), and the copy
-//                           carries its own portable transfer authority that this
-//                           lane's restore refuses rather than half-installs.
-//                           A binder here could only refuse every real request,
-//                           which the unbound name already does for free.
+// REFUSED, and the port it is missing
 //
 //   dialog:select-novel-files   Sources in a browser can only arrive as bytes,
 //                           and this mux has no upload route to put them in
@@ -120,16 +129,20 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// The six names this file decides. The four in the first block are bound by Bind;
-// the two in the second are deliberately absent so they keep answering
-// GO_OPERATION_NOT_MIGRATED.
+// The six names this family decides. Bind installs the first four here and the
+// legacy copy from its own file (production_project_import_legacy_linux.go); the
+// last is deliberately absent so it keeps answering GO_OPERATION_NOT_MIGRATED.
 const (
 	productionPortabilityPeekName    = "project:peek-overview"
 	productionPortabilityExportName  = "project:archive-export"
 	productionPortabilityRestoreName = "project:archive-restore"
 	productionPortabilityListName    = "fs:list-dir"
 
+	// The legacy copy this family used to refuse. Its handler lives in its own
+	// file; Bind installs it here so one family owns every name it answers.
 	productionPortabilityLegacyCopyName = "project:import-legacy-copy"
+
+	// Still refused, with its missing port named in the file header.
 	productionPortabilityNovelFilesName = "dialog:select-novel-files"
 )
 
@@ -211,14 +224,13 @@ func productionPortabilityOmitted() []archiveformat.OmittedItem {
 	}
 }
 
-// productionProjectPortabilityUnbound reports the two names this family refused
-// and the port each one is missing, so the answer to "why is this still 501" is
-// in the binary rather than in a commit message.
+// productionProjectPortabilityUnbound reports the one refused name this family
+// still answers and the port it is missing, so the answer to "why is this still
+// 501" is in the binary rather than in a commit message. The legacy copy used to
+// be on this list; it is served now, and production_project_import_legacy_linux.go
+// states what its copy does and does not convert.
 func productionProjectPortabilityUnbound() map[string]string {
 	return map[string]string{
-		productionPortabilityLegacyCopyName: "legacy-desktop-vector-and-asset-migration" +
-			" (electron/services/import-legacy*.ts; no Go vector store in internal/projectfs)" +
-			" plus portable-authority admission for a copied project",
 		productionPortabilityNovelFilesName: "browser-upload-ingress" +
 			" (POST /api/uploads is unbound in internal/transport, so no importsource" +
 			" owner can hold the selected bytes)",
@@ -266,7 +278,7 @@ func newProductionPortability(open *productionOpen, config productionConfig) *pr
 	}
 }
 
-// Bind installs the four served names. The order matters: fs:list-dir arrives
+// Bind installs the five served names. The order matters: fs:list-dir arrives
 // through transport's own confined handler, which also publishes
 // project:recent-list, so a lane that still binds that name standalone gets
 // OPERATION_ALREADY_BOUND here instead of a silently different shelf.
@@ -282,6 +294,13 @@ func (b *productionPortability) Bind(server *transport.Server) error {
 		return err
 	}
 	if err := server.Bind(productionPortabilityRestoreName, b.restore); err != nil {
+		return err
+	}
+	// The legacy copy used to be the name this binder could only refuse. It is
+	// served now, off the same allowlist and the same grant registry the pickers
+	// mint from, and it spends both tokens only after the two trees' digests agree
+	// (production_project_import_legacy_linux.go).
+	if err := server.Bind(productionPortabilityLegacyCopyName, b.importLegacyCopy); err != nil {
 		return err
 	}
 	return server.Bind(productionPortabilityPeekName, b.peek)

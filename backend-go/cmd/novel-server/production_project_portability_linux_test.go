@@ -809,22 +809,24 @@ func TestProductionPortabilityServesEditorNavigation(t *testing.T) {
 	}
 }
 
-// TestProductionPortabilityUnboundNamesNameTheirMissingPort proves the two refused
-// names are refused for a reason, and that the four served names are not on that
-// list.
+// TestProductionPortabilityUnboundNamesNameTheirMissingPort proves the one name
+// still refused is refused for a reason, and that the five served names are not on
+// that list. The legacy copy was the second refused name until its own file began
+// serving it (production_project_import_legacy_linux.go), so it must not be
+// reported unbound any more.
 func TestProductionPortabilityUnboundNamesNameTheirMissingPort(t *testing.T) {
 	unbound := productionProjectPortabilityUnbound()
-	for _, name := range []string{productionPortabilityLegacyCopyName, productionPortabilityNovelFilesName} {
+	for _, name := range []string{productionPortabilityNovelFilesName} {
 		port, held := unbound[name]
 		if !held || strings.TrimSpace(port) == "" {
 			t.Fatalf("%v is reported unbound without naming the port it lacks", name)
 		}
 	}
-	if len(unbound) != 2 {
+	if len(unbound) != 1 {
 		t.Fatalf("the unbound list carries %d names", len(unbound))
 	}
 	for _, name := range []string{productionPortabilityPeekName, productionPortabilityExportName,
-		productionPortabilityRestoreName, productionPortabilityListName} {
+		productionPortabilityRestoreName, productionPortabilityListName, productionPortabilityLegacyCopyName} {
 		if port, held := unbound[name]; held {
 			t.Fatalf("%v is served but reported unbound (%v)", name, port)
 		}
