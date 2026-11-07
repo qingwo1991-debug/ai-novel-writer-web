@@ -73,11 +73,11 @@ type productionInlineResidualSeam struct {
 	Answer    string
 }
 
-// The names this file records, spelled once so the test and the record cannot
-// drift apart. The two bound names already have constants in their own files.
+// The names this file still spells itself. Every other name the records list has its
+// constant in the file that binds it (the editor-inline four in
+// production_editor_inline_linux.go and production_editor_inline_write_linux.go), so
+// the record cannot drift from the binder.
 const (
-	productionEditorInlineBeginName   = "editor-inline:begin"
-	productionEditorInlineExecuteName = "editor-inline:execute"
 	// review-revision:commit-revision and :read-recovery are served now
 	// (production_review_revision_commit_linux.go): the visible-text and no-op gates
 	// turned out to be reproducible from counters the store already had, and the

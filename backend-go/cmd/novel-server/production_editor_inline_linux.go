@@ -63,7 +63,7 @@ import (
 // overlay at src/services/prompt-language.ts:141) and now reaches this binary as a
 // committed asset (internal/prompttemplate), and the model call is this lane's own:
 // generation:execute and graph-generation:execute already dispatch through the
-// lease and the one OrdinaryService. production_editor_inline_write_linux.go:17-113
+// lease and the one OrdinaryService. production_editor_inline_write_linux.go:24-123
 // records the whole composition - the frozen context, the rendered task, the one
 // dispatch, and the two narrowings it still keeps.
 //

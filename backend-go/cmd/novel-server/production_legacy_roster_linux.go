@@ -210,9 +210,10 @@
 //     function is the fixed system prompt plus the contract and the raw markdown
 //     (src/shared/legacy-roster-generation-pure.ts:55-66). Authoring it here would
 //     make this transport file a prompt author - the same reason
-//     editor-inline:begin and finalization-generation:begin stay unbound
-//     (production_editor_inline_linux.go:54-84,
-//     production_finalization_generation_linux.go:27-63).
+//     finalization-generation:begin stays unbound; editor-inline:begin is served
+//     now (production_editor_inline_write_linux.go), because its prompt is the
+//     shipped template, not prose this file would author
+//     (production_finalization_generation_linux.go:27-63).
 //
 // execute is additionally the model call, and it may not be invented: the
 // renderer sends only `{handle}` (src/shared/legacy-roster-generation.ts:27)

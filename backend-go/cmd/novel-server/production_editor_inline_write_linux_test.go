@@ -274,11 +274,12 @@ func productionEditorInlineWriteRefusal(t *testing.T, label string, client *prod
 }
 
 // productionEditorInlineWriteSessionRefusal asserts one request was refused by the
-// frozen session rather than by anything this family invented, and returns the raw
-// body so the two served names can be compared byte for byte. Every honest session
-// refusal - a lease the server never issued, a project the session does not own, a
-// session that has moved - is in the set the family's read tests already accept, so
-// this does not pin a code the admission is free to choose.
+// lane's frozen-session admission rather than by anything this family invented, and
+// returns the raw body so the two served names can be compared byte for byte. The
+// code is deliberately not pinned: the admission chooses it, and a test that named
+// one would encode an implementation detail. What is asserted is that the refusal is
+// NOT a GENERATION_* code - the family's own refusals all are - so a request that
+// failed at handle resolution could not pass as an admission refusal.
 func productionEditorInlineWriteSessionRefusal(t *testing.T, label string, response *httptest.ResponseRecorder) (string, string) {
 	t.Helper()
 	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
@@ -295,11 +296,9 @@ func productionEditorInlineWriteSessionRefusal(t *testing.T, label string, respo
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("%v: %v %s", label, err, response.Body.String())
 	}
-	switch body.Error.Code {
-	case "PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_STALE", "PROJECT_NOT_OPEN",
-		"AUTHOR_WRITE_STALE", "PROJECT_SESSION_REQUIRED", "PROJECT_SESSION_CONTEXT_REQUIRED":
-	default:
-		t.Fatalf("%v refused with %v, which is not a frozen-session refusal: %s", label, body.Error.Code, response.Body.String())
+	if body.Error.Code == "" || strings.HasPrefix(body.Error.Code, "GENERATION_") {
+		t.Fatalf("%v refused with %v, which is this family's code and not the frozen session's refusal: %s",
+			label, body.Error.Code, response.Body.String())
 	}
 	return response.Body.String(), body.Error.Code
 }

@@ -438,12 +438,17 @@ func productionEditorInlinePriorRun(ctx context.Context, db *sql.DB, projectID, 
 	defer rows.Close()
 	var found *productionEditorInlinePrior
 	for rows.Next() {
-		var actionJSON, runID, bindingJSON string
+		// A row another build wrote may carry a null action or binding; it can never
+		// be a run this family froze, so it is skipped rather than refusing the lookup.
+		var actionJSON, runID, bindingJSON sql.NullString
 		if err := rows.Scan(&actionJSON, &runID, &bindingJSON); err != nil {
 			return nil, err
 		}
+		if !actionJSON.Valid || !runID.Valid || !bindingJSON.Valid {
+			continue
+		}
 		var action map[string]any
-		if err := json.Unmarshal([]byte(actionJSON), &action); err != nil {
+		if err := json.Unmarshal([]byte(actionJSON.String), &action); err != nil {
 			return nil, err
 		}
 		if syntheticString(action["operation"]) != productionEditorInlineOperation ||
@@ -455,7 +460,7 @@ func productionEditorInlinePriorRun(ctx context.Context, db *sql.DB, projectID, 
 			return nil, errors.New(productionEditorInlineNonceConflict)
 		}
 		var binding map[string]any
-		if err := json.Unmarshal([]byte(bindingJSON), &binding); err != nil {
+		if err := json.Unmarshal([]byte(bindingJSON.String), &binding); err != nil {
 			return nil, err
 		}
 		manifest := syntheticMap(binding["sourceManifest"])
@@ -463,7 +468,7 @@ func productionEditorInlinePriorRun(ctx context.Context, db *sql.DB, projectID, 
 			return nil, errors.New(productionEditorInlineContextInvalid)
 		}
 		found = &productionEditorInlinePrior{
-			RunID:        runID,
+			RunID:        runID.String,
 			RootActionID: syntheticString(action["rootActionId"]),
 			Epoch:        syntheticString(binding["epoch"]),
 			Manifest:     manifest,
