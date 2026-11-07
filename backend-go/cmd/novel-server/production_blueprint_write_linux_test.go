@@ -544,13 +544,14 @@ func TestProductionLaneServesEditorWriteSurface(t *testing.T) {
 	// committed with their artifact and ACK in one main transaction, which this
 	// lane does not own. The refusal therefore has to stay fail-closed instead of
 	// becoming a handler that could only ever refuse.
-	t.Run("db:blueprint-update-notes-stays-unbound", func(t *testing.T) {
+	t.Run("db:blueprint-update-notes-answers-the-desktop-refusal", func(t *testing.T) {
 		fixture := newProductionWriteFixture(t)
 		before := productionWriteSnapshot(t, fixture.database)
 		response := fixture.author.call(t, "db:blueprint-update-notes",
 			[]any{1, "不得写入的备注", fixture.projectPath, fixture.frozen})
-		if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("db:blueprint-update-notes was bound on the production lane: %d %s",
+		if response.Code != http.StatusOK ||
+			!strings.Contains(response.Body.String(), "GENERATION_FINALIZATION_ADMISSION_REQUIRED") {
+			t.Fatalf("db:blueprint-update-notes answered %d %s, want the desktop's refusal",
 				response.Code, response.Body.String())
 		}
 		rows := productionWriteQuery(t, fixture.database, `SELECT notes FROM blueprints WHERE chapter_number = 1`)

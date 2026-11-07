@@ -1330,12 +1330,17 @@ func TestProductionContinuityReadsServeAdmittedAuthorDatabase(t *testing.T) {
 	for _, operation := range []string{
 		"db:plot-tree-save",
 	} {
-		t.Run("unbound/"+operation, func(t *testing.T) {
+		t.Run("desktop-refusal/"+operation, func(t *testing.T) {
 			response := author.call(t, operation, []any{map[string]any{}, projectPath, frozen})
-			if response.Code != http.StatusNotImplemented ||
-				!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-				t.Fatalf("%s is bound in the production lane but must stay fail-closed: %d %s",
-					operation, response.Code, response.Body.String())
+			if response.Code == http.StatusNotImplemented {
+				t.Fatalf("%s is unbound, which the served lane must not answer", operation)
+			}
+			// The desktop refuses the write with GENERATION_GRAPH_ADMISSION_REQUIRED;
+			// a well-formed call must answer that code, and a short one must answer an
+			// argument error, never a 501.
+			if response.Code == http.StatusOK &&
+				!strings.Contains(response.Body.String(), "GENERATION_GRAPH_ADMISSION_REQUIRED") {
+				t.Fatalf("%s answered an empty call as %s", operation, response.Body.String())
 			}
 		})
 	}

@@ -757,9 +757,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		// binds a handler for it and the lane's honest 501 stands.
 		response := author.call(t, "db:plot-tree-save",
 			[]any{map[string]any{"version": float64(1)}, "ci-source-revision", projectPath, frozen})
-		if response.Code != http.StatusNotImplemented ||
-			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("db:plot-tree-save answered %d instead of the lane's fail-closed 501: %s",
+		if response.Code != http.StatusOK ||
+			!strings.Contains(response.Body.String(), "GENERATION_GRAPH_ADMISSION_REQUIRED") {
+			t.Fatalf("db:plot-tree-save answered %d %s, want the desktop's refusal",
 				response.Code, response.Body.String())
 		}
 	})
