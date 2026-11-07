@@ -46,7 +46,8 @@ SCRATCH_ROOT = "/root/AI/rehearsal"
 CONTAINER = "novel-go-rehearsal"
 CONTAINER_PORT = 16082
 AUTHOR = "rehearsal-author"
-CLIENT = "rehearsal-tab"
+EXPORT_DIRECTORY = "rehearsal-export"
+CLIENT = "rehearsal-tab-0001"  # 16-128 chars, internal/transport/server.go:78
 
 
 def run(argv, **kwargs):
@@ -89,6 +90,27 @@ def prepare_scratch(scratch, live):
     target = os.path.join(scratch, "data")
     step("copy the author data directory into " + target)
     shutil.copytree(live, target, symlinks=True)
+    # The image runs as 65532:65532 (Dockerfile.go:39) and the writer lease refuses a
+    # data root it does not own (internal/writerlock, safeDirectory). The production
+    # compose instead runs the image as the data root's owner (user: 0:0), so either
+    # would do; chowning the COPY is the one that matches how CI rehearses it
+    # (.github/workflows/go-backend.yml:661).
+    try:
+        for base, directories, files in os.walk(target):
+            os.chown(base, 65532, 65532)
+            for name in files:
+                os.chown(os.path.join(base, name), 65532, 65532, follow_symlinks=False)
+    except PermissionError as error:
+        fail("the copy could not be handed to uid 65532 (run as root): " + str(error))
+    # The archive export writes into a directory the picker granted, and it refuses a
+    # destination it cannot see. A desktop author picks an existing folder, so the
+    # rehearsal creates one inside the library and hands the picker its name.
+    library = os.path.join(target, "workspaces")
+    if os.path.isdir(library):
+        destination = os.path.join(library, EXPORT_DIRECTORY)
+        os.makedirs(destination, exist_ok=True)
+        os.chown(destination, 65532, 65532)
+        os.chmod(destination, 0o700)
     return target
 
 
@@ -111,13 +133,20 @@ def tree_digest(root):
 def start_container(image, data, port):
     step("start the container against the copy on 127.0.0.1:%d" % port)
     run(["docker", "rm", "--force", CONTAINER], capture_output=True)
+    # --network host, and the binary binds loopback inside: the migration build
+    # refuses any other listen address by design (it is the scaffold's own guard,
+    # .github/workflows/go-backend.yml:519-520), so port publishing cannot be used -
+    # the journey step in CI runs it exactly this way too (:716-721). The container
+    # therefore listens on the host's loopback only.
     started = run([
         "docker", "run", "--detach", "--init", "--name", CONTAINER,
-        "-p", "127.0.0.1:%d:%d" % (port, CONTAINER_PORT),
-        "-v", data + ":/data",
-        "-e", "NOVEL_DATA_ROOT=/data",
+        "--network", "host", "--read-only",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128",
+        "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+        "--mount", "type=bind,source=" + data + ",target=/data",
+        "--env", "NOVEL_DATA_ROOT=/data",
         image,
-        "-listen", "0.0.0.0:%d" % CONTAINER_PORT,
+        "-listen", "127.0.0.1:%d" % port,
         "-static-dir", "/app/dist-web",
     ], capture_output=True)
     if started.returncode != 0:
@@ -133,11 +162,17 @@ def wait_healthy(base, timeout=90):
         try:
             with urllib.request.urlopen(base + "/healthz", timeout=3) as answer:
                 payload = json.loads(answer.read().decode("utf-8"))
-            if payload.get("status") == "ok":
+            # The probe answers {ok, runtime, electron, migrationComplete}: `ok` is
+            # the liveness member, and `runtime` is what distinguishes this image
+            # from the Node one during a cutover window.
+            if payload.get("ok") is True or payload.get("status") == "ok":
                 runtime = payload.get("runtime")
                 if runtime != "go":
                     fail("/healthz answered runtime %r; the cutover image must run go" % (runtime,))
-                print("   healthy, runtime " + runtime)
+                if payload.get("electron") is not False:
+                    fail("/healthz still claims an electron runtime: " + json.dumps(payload))
+                print("   healthy, runtime " + str(runtime) + ", migrationComplete " +
+                      str(payload.get("migrationComplete")))
                 return payload
             last = json.dumps(payload)
         except (urllib.error.URLError, OSError, ValueError) as error:
@@ -276,23 +311,86 @@ def read_surface(browser, context):
 
 
 def export_archive(browser, context, scratch):
-    step("export an archive and download it over HTTP")
-    answer = browser.operation("project:archive-export", [context["projectPath"], context],
+    """Mint a destination grant, export, and take the download the event names.
+
+    The wire is the renderer's: a picker grants a directory inside the library,
+    then project:archive-export takes {targetArchiveGrantId, projectSession} and
+    publishes browser:download-ready on the live event stream. The stream has to be
+    open FIRST - the hub delivers to the subscribers connected at that moment and
+    replays nothing to a fresh stream (internal/transport/archive_export.go:113).
+    """
+    import threading
+    step("mint a destination grant with the archive picker")
+    picked = browser.operation("dialog:select-project-archive-export",
+                               [{"rootId": "library", "relativePath": EXPORT_DIRECTORY}],
+                               allow_refusal=True)
+    if "error" in picked:
+        fail("the archive picker refused: " + json.dumps(picked["error"])[:400])
+    grant = (picked.get("result") or {}).get("grantId") or ""
+    if not grant:
+        fail("the archive picker returned no grantId: " + json.dumps(picked)[:400])
+    print("   grant " + grant[:12] + "...")
+
+    events = []
+    diagnostics = []
+    stop = threading.Event()
+
+    def listen():
+        request = urllib.request.Request(browser.base + "/api/events?client=" + CLIENT)
+        request.add_header("X-Novel-User", AUTHOR)
+        # The stream takes its tab from ?client=, not from the header
+        # (internal/transport/server.go:102-105).
+        request.add_header("X-Client-Id", CLIENT)
+        request.add_header("Accept", "text/event-stream")
+        request.add_header("Cookie", "; ".join("%s=%s" % (c.name, c.value) for c in browser.jar))
+        try:
+            with urlopen_with_timeout(request, 120) as stream:
+                diagnostics.append("stream status %s, type %s" % (
+                    stream.status, stream.headers.get("Content-Type", "?")))
+                for raw in stream:
+                    if stop.is_set():
+                        return
+                    line = raw.decode("utf-8", "replace").strip()
+                    if line.startswith("data:"):
+                        events.append(line[5:].strip())
+        except urllib.error.HTTPError as error:
+            diagnostics.append("stream answered HTTP %d: %s" % (error.code, error.read()[:200]))
+        except (urllib.error.URLError, OSError) as error:
+            diagnostics.append("stream failed: %s" % (error,))
+
+    thread = threading.Thread(target=listen, daemon=True)
+    thread.start()
+    time.sleep(0.5)
+
+    step("export the archive")
+    answer = browser.operation("project:archive-export",
+                               [{"targetArchiveGrantId": grant, "projectSession": context}],
                                allow_refusal=True)
     if "error" in answer:
         fail("project:archive-export refused: " + json.dumps(answer["error"])[:400])
     receipt = answer.get("result") or {}
     if not receipt.get("success", True):
         fail("project:archive-export reported failure: " + json.dumps(receipt)[:400])
-    download = receipt.get("downloadUrl") or receipt.get("url") or ""
-    if not download:
-        print("   receipt carries no download url; keys: " + ", ".join(sorted(receipt)))
-        return None, receipt
-    if download.startswith("/"):
-        target = download
-    else:
-        target = "/" + download.split("/", 3)[-1]
-    status, body, headers = browser.request("GET", target)
+    deadline = time.time() + 30
+    url = ""
+    while time.time() < deadline and not url:
+        for payload in list(events):
+            try:
+                decoded = json.loads(payload)
+            except ValueError:
+                continue
+            url = find_download_url(decoded, 0)
+            if url:
+                break
+        if not url:
+            time.sleep(0.2)
+    stop.set()
+    if not url:
+        fail("the export finished but published no browser:download-ready url; "
+             "events seen: " + json.dumps(events[:4])[:300] +
+             "; " + "; ".join(diagnostics) +
+             "; receipt keys: " + ", ".join(sorted(receipt)))
+    status, body, headers = browser.request("GET", url)
     if status != 200:
         fail("the archive download answered %d: %s" % (status, body[:200]))
     if len(body) < 1024:
@@ -300,9 +398,33 @@ def export_archive(browser, context, scratch):
     destination = os.path.join(scratch, "export.zip")
     with open(destination, "wb") as handle:
         handle.write(body)
-    print("   %s -> %s (%d bytes, %s)" % (target, destination, len(body),
+    print("   %s -> %s (%d bytes, %s)" % (url, destination, len(body),
                                           headers.get("Content-Type", "?")))
     return destination, receipt
+
+
+def urlopen_with_timeout(request, seconds):
+    return urllib.request.build_opener().open(request, timeout=seconds)
+
+
+def find_download_url(value, depth):
+    """The event carries {url, name} somewhere; find the download url in it."""
+    if depth > 6:
+        return ""
+    if isinstance(value, dict):
+        candidate = value.get("url")
+        if isinstance(candidate, str) and candidate.startswith("/api/downloads/"):
+            return candidate
+        for item in value.values():
+            found = find_download_url(item, depth + 1)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = find_download_url(item, depth + 1)
+            if found:
+                return found
+    return ""
 
 
 def zip_entries(path):
