@@ -76,6 +76,10 @@ func AdmitAuthor(ctx context.Context, config Config, project *projectfs.Project,
 		return nil, ErrAuthorSchemaUnsupported
 	}
 	assets := report.CanonicalAssets
+	// An asset that is present but EMPTY is not author data: projectfs reports a
+	// fixed asset directory as absent when it holds no entries, because the shipped
+	// gateway leaves an empty .ai-novel/lancedb behind after the knowledge base is
+	// cleared. Anything with bytes in it still refuses here.
 	if assets.LanceDB || assets.EmbeddingRegistry || assets.KnowledgeCopies {
 		return nil, ErrAuthorKnowledgeUnproved
 	}
