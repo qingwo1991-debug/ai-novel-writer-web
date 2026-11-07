@@ -198,7 +198,7 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
 				// The task is rendered from the same template the begin above cannot
 				// freeze, so the field-level seam is the same one step later.
-				{Path: "../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
+				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
 			},
 		},
 		{

@@ -169,7 +169,7 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 				// The one template this module resolves, which is not this family's.
 				{Path: "../../internal/prompttemplate/editselectedtext.go", Line: 165, Marker: "func EditSelectedTextTemplate(language string) (Template, error) {"},
 				// The member the context freezes from it.
-				{Path: "../../electron/services/finalization-generation-source.ts", Line: 35, Marker: "template: structuredClone(template),"},
+				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 35, Marker: "template: structuredClone(template),"},
 				// The served read that refuses any row carrying the slot key, so a
 				// begun run would be unobservable even with the template.
 				{Path: "synthetic_graph_linux.go", Line: 156, Marker: productionFinalizationGenerationWriteContextInvalid},
@@ -182,7 +182,7 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 			Missing: []productionFinalizationLine{
 				// The task is rendered from the context's template, so the missing
 				// asset is the same gap one step later.
-				{Path: "../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
+				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
 				// A run without a re-provable task is refused by the family's own read.
 				{Path: "../../electron/services/finalization-generation.ts", Line: 49, Marker: productionFinalizationGenerationWriteTaskInvalid},
 				// And there is no row for it to be read from.
