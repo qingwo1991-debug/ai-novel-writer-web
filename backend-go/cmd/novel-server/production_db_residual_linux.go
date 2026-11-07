@@ -66,12 +66,14 @@ import (
 //
 // # Why none of the three is bound here
 //
-// Two of them are refused by the reference itself and always will be:
+// None of them is a reference refusal this lane could publish as its own. Two
+// names of that kind do exist and are served elsewhere rather than here:
 // db:blueprint-update-notes and db:plot-tree-save are the original controller's
 // own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
-// serving them would be a divergence, not a migration.
+// serving them would be a divergence, not a migration
+// (production_reference_refusals_linux.go).
 //
-// The third has a narrower reason of its own:
+// The three names below each have a narrower reason of its own:
 //
 //   - db:import-run-effect-receipt-prepare and -commit: store.ImportRuns
 //     .PrepareEffectReceipt and .CommitEffectReceipt exist

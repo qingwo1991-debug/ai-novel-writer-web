@@ -49,7 +49,7 @@ import (
 // productionWriteSnapshot / productionWriteAssertUnchanged read the whole
 // database file, so a refusal is only "no write" when the bytes are the same
 // bytes. The refusals below may run the reference's own insert-only lazy repair
-// (blueprint-repository.ts:176-194, called at :770) before they refuse; that
+// (blueprint-repository.ts:176-194, called at :769) before they refuse; that
 // repair inserts nothing when the commit ledger is already represented, and a
 // no-op INSERT OR IGNORE, an empty BEGIN IMMEDIATE/COMMIT and a no-op UPDATE are
 // all byte-stable in SQLite, so the assertion is exact rather than approximate.
@@ -91,34 +91,15 @@ const (
 	productionDBSyncCompleteSeededUpdatedAt = "1999-12-31 23:59:59"
 )
 
-// productionDBSyncCompleteSchema is the durable fixture plus the two blueprint
-// ledgers the completion reads and writes, the character-roster operation receipt
-// the proof reads, and the identity/roster fact tables the authoritative roster
-// is derived from. The roster DDL is productionWriteSchema's own text, so the one
-// admission fingerprint this fixture pins hashes the same statements a real
-// project's sqlite_master holds.
+// productionDBSyncCompleteSchema is productionWriteSchema plus the one table the
+// completion proof reads that the write fixture does not already carry: the
+// character-roster operation receipt. The two blueprint ledgers and the
+// identity/roster fact tables the completion touches all come from
+// productionWriteSchema's own text, so this file never re-declares a table that
+// schema already has, and the one admission fingerprint still hashes the same
+// statements a real project's sqlite_master holds.
 func productionDBSyncCompleteSchema() []string {
 	return append([]string{
-		`CREATE TABLE blueprint_commit_operations (
- operation_id TEXT PRIMARY KEY,
- payload_hash TEXT NOT NULL,
- mode TEXT NOT NULL,
- start_chapter INTEGER NOT NULL,
- end_chapter INTEGER NOT NULL,
- character_sync_input TEXT NOT NULL,
- committed_at TEXT NOT NULL DEFAULT (datetime('now')))`,
-		`CREATE TABLE blueprint_character_sync_operations (
- operation_id TEXT PRIMARY KEY,
- blueprint_commit_operation_id TEXT NOT NULL UNIQUE,
- blueprint_commit_payload_hash TEXT NOT NULL,
- status TEXT NOT NULL DEFAULT 'pending',
- start_chapter INTEGER NOT NULL,
- end_chapter INTEGER NOT NULL,
- character_sync_input TEXT NOT NULL,
- completion_receipt TEXT DEFAULT NULL,
- created_at TEXT NOT NULL DEFAULT (datetime('now')),
- updated_at TEXT NOT NULL DEFAULT (datetime('now')),
- completed_at TEXT DEFAULT NULL)`,
 		`CREATE TABLE character_roster_operations (
  operation_id TEXT PRIMARY KEY,
  payload_hash TEXT NOT NULL,
@@ -139,7 +120,12 @@ func productionDBSyncCompleteSchema() []string {
 // operation receipt is written afterwards, from the revision and projection the
 // refresh itself stored, so the evidence names a revision the roster really
 // reached and a projection digest that really is the current one.
-func productionDBSyncCompleteSeed(t *testing.T, projectPath string) {
+//
+// mutate, when given, runs on the same handle before the checkpoint: a test that
+// needs a different pre-state has to reach it BEFORE admission, because the
+// admitted content identity is hashed at open and a later out-of-band write
+// stales the permit (AUTHOR_WRITE_STALE) instead of testing the handler.
+func productionDBSyncCompleteSeed(t *testing.T, projectPath string, mutate func(*sql.DB)) {
 	t.Helper()
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
@@ -177,8 +163,8 @@ func productionDBSyncCompleteSeed(t *testing.T, projectPath string) {
 		`INSERT INTO character_relationships (relationship_id, source_character_id, target_character_id, relation)
  VALUES ('rel-sync-2', '` + productionDBSyncCompleteCharacterB + `', '` + productionDBSyncCompleteCharacterA + `', '师徒')`,
 		`INSERT INTO blueprint_commit_operations
- (operation_id, payload_hash, mode, start_chapter, end_chapter, character_sync_input, committed_at)
- VALUES (?, ?, 'full', 1, 1, ?, '2024-05-06 07:08:09')`,
+ (operation_id, payload_hash, mode, start_chapter, end_chapter, character_sync_input)
+ VALUES (?, ?, 'full', 1, 1, ?)`,
 		`INSERT INTO blueprint_character_sync_operations
  (operation_id, blueprint_commit_operation_id, blueprint_commit_payload_hash, status,
   start_chapter, end_chapter, character_sync_input, created_at, updated_at)
@@ -226,6 +212,9 @@ func productionDBSyncCompleteSeed(t *testing.T, projectPath string) {
 		_ = db.Close()
 		t.Fatalf("seed the roster operation receipt: %v", err)
 	}
+	if mutate != nil {
+		mutate(db)
+	}
 	// The lane admits the file itself, so the seeded writes must be checkpointed
 	// into it: no sidecar may carry rows the admitted digest does not cover.
 	productionEditorCheckpoint(t, db, database)
@@ -244,11 +233,19 @@ type productionDBSyncCompleteFixture struct {
 	rosterProjection string
 }
 
-// newProductionDBSyncCompleteFixture builds the temporary data root, opens the
+// newProductionDBSyncCompleteFixture is the authoritative roster the happy path
+// needs, with no pre-admission mutation.
+func newProductionDBSyncCompleteFixture(t *testing.T) *productionDBSyncCompleteFixture {
+	t.Helper()
+	return newProductionDBSyncCompleteFixtureWith(t, nil)
+}
+
+// newProductionDBSyncCompleteFixtureWith builds the temporary data root, opens the
 // real production runtime over it, binds this batch's single-name binder next to
 // project:open and opens the one admitted project for one browser tab. Opening
-// the project is what issues the lease every request below names.
-func newProductionDBSyncCompleteFixture(t *testing.T) *productionDBSyncCompleteFixture {
+// the project is what issues the lease every request below names. mutate runs
+// before admission, on the fixture's own handle.
+func newProductionDBSyncCompleteFixtureWith(t *testing.T, mutate func(*sql.DB)) *productionDBSyncCompleteFixture {
 	t.Helper()
 	root := syntheticProductionDataDir(t)
 	library := filepath.Join(root, productionLibraryDirectory)
@@ -256,7 +253,7 @@ func newProductionDBSyncCompleteFixture(t *testing.T) *productionDBSyncCompleteF
 	seedProductionProject(t, library, productionDBSyncCompleteProjectName, productionDBSyncCompleteProjectID,
 		admission.CurrentSchemaVersion, schema)
 	projectPath := filepath.Join(library, productionDBSyncCompleteProjectName)
-	productionDBSyncCompleteSeed(t, projectPath)
+	productionDBSyncCompleteSeed(t, projectPath, mutate)
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 	meta := productionWriteQuery(t, database, `SELECT revision,projection_hash FROM character_roster_meta WHERE id='main'`)
 	if len(meta) != 1 {
@@ -320,12 +317,19 @@ func (f *productionDBSyncCompleteFixture) call(id, path string, frozen map[strin
 }
 
 // complete sends one completion with the live lease and returns the decoded
-// business result. A refused request still answers 200 with the reference's
-// {success:false,error} envelope, so a non-200 here would mean the binder was
-// never reached.
+// business result.
 func (f *productionDBSyncCompleteFixture) complete(id string) map[string]any {
 	f.t.Helper()
-	response := f.author.call(f.t, productionDBSyncCompleteName, []any{id, f.projectPath, f.frozen})
+	return f.business(id, f.projectPath, f.frozen)
+}
+
+// business sends one completion with any expected path and frozen context. A
+// refused request still answers 200 with the reference's {success:false,error}
+// envelope, so a non-200 here would mean the binder was never reached; the
+// argument-shape refusals are asserted through call instead.
+func (f *productionDBSyncCompleteFixture) business(id, path string, frozen map[string]any) map[string]any {
+	f.t.Helper()
+	response := f.call(id, path, frozen)
 	if response.Code != http.StatusOK {
 		f.t.Fatalf("%s: %d %s", productionDBSyncCompleteName, response.Code, response.Body.String())
 	}
@@ -339,27 +343,6 @@ func (f *productionDBSyncCompleteFixture) complete(id string) map[string]any {
 		f.t.Fatalf("%s: %v %s", productionDBSyncCompleteName, err, response.Body.String())
 	}
 	return wire.Result
-}
-
-// exec writes one author-side statement through a separate handle on the same
-// file and closes it again, so the refusal below starts from a file nobody holds
-// a write lock on.
-func (f *productionDBSyncCompleteFixture) exec(statement string, args ...any) {
-	f.t.Helper()
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(f.database)}
-	uri.RawQuery = "mode=rw"
-	db, err := sql.Open("sqlite3", uri.String())
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(statement, args...); err != nil {
-		_ = db.Close()
-		f.t.Fatalf("fixture write: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		f.t.Fatal(err)
-	}
 }
 
 // productionDBSyncCompleteRow reads the completion columns straight out of the
@@ -495,8 +478,11 @@ func TestProductionDBSyncCompleteProvesTheRosterAndWritesItsReceipt(t *testing.T
 	// succeeds and its receipt says only that - status 'already-satisfied' and no
 	// rosterReceipt at all, because there is no commit to name.
 	t.Run("without roster evidence", func(t *testing.T) {
-		fresh := newProductionDBSyncCompleteFixture(t)
-		fresh.exec(`DELETE FROM character_roster_operations`)
+		fresh := newProductionDBSyncCompleteFixtureWith(t, func(db *sql.DB) {
+			if _, err := db.Exec(`DELETE FROM character_roster_operations`); err != nil {
+				t.Fatalf("drop the roster operation receipt: %v", err)
+			}
+		})
 		result := fresh.complete(productionDBSyncCompleteSyncOperation)
 		if result["success"] != true {
 			t.Fatalf("%s refused a roster that already carries the facts: %v", productionDBSyncCompleteName, result)
@@ -529,16 +515,22 @@ func TestProductionDBSyncCompleteProvesTheRosterAndWritesItsReceipt(t *testing.T
 
 // TestProductionDBSyncCompleteRefusesANonAuthoritativeRoster is the refusal the
 // row's own gate names: a roster whose derived status is not 'ready' or 'empty'
-// (blueprint-repository.ts:377-379) is not authoritative, so the completion must
+// (blueprint-repository.ts:375-378) is not authoritative, so the completion must
 // answer that code and leave the file byte-identical with the row still pending.
 func TestProductionDBSyncCompleteRefusesANonAuthoritativeRoster(t *testing.T) {
-	fixture := newProductionDBSyncCompleteFixture(t)
-	// The reference derives the status from the persistent migration state, not
-	// from a caller's claim: 'legacy_markdown_pending' with preserved prose and no
-	// matching projection is 'legacy_repair_required', which :377 refuses.
-	fixture.exec(`UPDATE character_roster_meta
+	// The derived status is a fact about the project, not a caller's claim: a roster
+	// whose migration_state says 'legacy_markdown_pending' while character rows
+	// still exist derives 'inconsistent' (character_roster.go:510-527), and
+	// blueprint-repository.ts:377 throws for every status that is not ready or
+	// empty. The state is written before admission, like every author row a project
+	// already holds when the lane opens it.
+	fixture := newProductionDBSyncCompleteFixtureWith(t, func(db *sql.DB) {
+		if _, err := db.Exec(`UPDATE character_roster_meta
  SET migration_state='legacy_markdown_pending',legacy_markdown='旧的名单',projection_hash='',fact_hash=''
- WHERE id='main'`)
+ WHERE id='main'`); err != nil {
+			t.Fatalf("make the roster non-authoritative: %v", err)
+		}
+	})
 	before := productionWriteSnapshot(t, fixture.database)
 	result := fixture.complete(productionDBSyncCompleteSyncOperation)
 	if result["success"] != false {
@@ -559,7 +551,7 @@ func TestProductionDBSyncCompleteRefusesANonAuthoritativeRoster(t *testing.T) {
 
 // TestProductionDBSyncCompleteRefusesAnUncompletableRow covers the rows that can
 // never be completed: one the ledger never minted, one whose id is blank (the
-// reference's own pre-database check, :768) and one whose stored state is
+// reference's own pre-database check, :767) and one whose stored state is
 // contradictory (a pending row that already carries a receipt, :322-328). None of
 // them may reach a write.
 func TestProductionDBSyncCompleteRefusesAnUncompletableRow(t *testing.T) {
@@ -584,24 +576,31 @@ func TestProductionDBSyncCompleteRefusesAnUncompletableRow(t *testing.T) {
 		productionWriteAssertUnchanged(t, fixture.database, before, request.label)
 	}
 	// A pending row that already carries a receipt is not complete-able either: the
-	// row reader refuses the contradictory state before the proof runs.
-	fixture.exec(`UPDATE blueprint_character_sync_operations SET completion_receipt='{"version":1}'
- WHERE operation_id=?`, productionDBSyncCompleteSyncOperation)
-	before := productionWriteSnapshot(t, fixture.database)
-	result := fixture.complete(productionDBSyncCompleteSyncOperation)
+	// row reader refuses the contradictory state before the proof runs. The row is
+	// seeded into that state before admission, because a write after open would
+	// stale the permit rather than test the reader.
+	contradictory := newProductionDBSyncCompleteFixtureWith(t, func(db *sql.DB) {
+		if _, err := db.Exec(`UPDATE blueprint_character_sync_operations SET completion_receipt='{"version":1}'
+ WHERE operation_id=?`, productionDBSyncCompleteSyncOperation); err != nil {
+			t.Fatalf("seed the contradictory sync row: %v", err)
+		}
+	})
+	before := productionWriteSnapshot(t, contradictory.database)
+	result := contradictory.complete(productionDBSyncCompleteSyncOperation)
 	if result["success"] != false {
 		t.Fatalf("%s completed a row in a contradictory state: %v", productionDBSyncCompleteName, result)
 	}
 	if got := syntheticString(result["error"]); got != "Error: BLUEPRINT_CHARACTER_SYNC_STATE_INVALID" {
 		t.Fatalf("%s refused the contradictory row with %v, want the state-invalid code", productionDBSyncCompleteName, got)
 	}
-	productionWriteAssertUnchanged(t, fixture.database, before, "the contradictory-row refusal")
+	productionWriteAssertUnchanged(t, contradictory.database, before, "the contradictory-row refusal")
 }
 
-// TestProductionDBSyncCompleteRefusesForeignProjectAndStaleLease pins the two
-// admission refusals this name shares with its sibling reads: a context naming
-// another project, and a context naming a lease this lane never issued. Both are
-// decided before any SQL and both leave the file byte-identical.
+// TestProductionDBSyncCompleteRefusesForeignProjectAndStaleLease pins the three
+// admission refusals this name shares with its sibling reads: a project this lane
+// never opened, a frozen context that disagrees with the expected path, and a
+// lease this lane never issued. None of them may reach a write, so the file has to
+// stay byte-identical and the row pending.
 func TestProductionDBSyncCompleteRefusesForeignProjectAndStaleLease(t *testing.T) {
 	fixture := newProductionDBSyncCompleteFixture(t)
 	foreignPath := filepath.Join(filepath.Dir(fixture.projectPath), "foreign-novel")
@@ -610,27 +609,63 @@ func TestProductionDBSyncCompleteRefusesForeignProjectAndStaleLease(t *testing.T
 		"projectPath": foreignPath,
 		"leaseId":     fixture.frozen["leaseId"],
 	}
+
+	// A project this lane never opened is refused by the borrow before any SQL, and
+	// the answer is the reference's envelope rather than data.
 	before := productionWriteSnapshot(t, fixture.database)
-	response := fixture.call(productionDBSyncCompleteSyncOperation, foreignPath, foreign)
-	if response.Code != http.StatusConflict ||
-		!strings.Contains(response.Body.String(), "PROJECT_CONTEXT_CHANGED") {
-		t.Fatalf("%s under a foreign project = %d, want the context-changed refusal",
-			productionDBSyncCompleteName, response.Code)
-	}
+	productionDBSyncCompleteAssertLeaseRefusal(t,
+		fixture.business(productionDBSyncCompleteSyncOperation, foreignPath, foreign), "a foreign project")
 	productionWriteAssertUnchanged(t, fixture.database, before, "the foreign-project refusal")
 
+	// The reference's own throw (db-controller.ts:626,
+	// assertRequiredExpectedProjectPath): the expected path the request carries is
+	// not the frozen context's project. That is a transport refusal, decided before
+	// the database is borrowed.
+	before = productionWriteSnapshot(t, fixture.database)
+	response := fixture.call(productionDBSyncCompleteSyncOperation, foreignPath, fixture.frozen)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), "PROJECT_CONTEXT_CHANGED") {
+		t.Fatalf("%s with a disagreeing expected path = %d, want the context-changed refusal",
+			productionDBSyncCompleteName, response.Code)
+	}
+	productionWriteAssertUnchanged(t, fixture.database, before, "the context-changed refusal")
+
+	// A lease this lane never issued.
 	stale := map[string]any{
 		"projectId":   fixture.frozen["projectId"],
 		"projectPath": fixture.projectPath,
 		"leaseId":     productionDBSyncCompleteStaleLease,
 	}
 	before = productionWriteSnapshot(t, fixture.database)
-	productionDBSyncRefused(t, fixture.author, "stale lease", productionDBSyncCompleteName,
-		[]any{productionDBSyncCompleteSyncOperation, fixture.projectPath, stale})
+	productionDBSyncCompleteAssertLeaseRefusal(t,
+		fixture.business(productionDBSyncCompleteSyncOperation, fixture.projectPath, stale), "a stale lease")
 	productionWriteAssertUnchanged(t, fixture.database, before, "the stale-lease refusal")
 	row := productionDBSyncCompleteRow(t, fixture.database)
 	if got := syntheticString(row["status"]); got != "pending" {
 		t.Fatalf("a refused request moved the row to %v", got)
+	}
+}
+
+// productionDBSyncCompleteAssertLeaseRefusal requires the reference's refusal
+// envelope carrying one of the lease or project codes the borrow can raise. It
+// never pins a single code, exactly like the sibling reads' refusal helper,
+// because a stale lease, a foreign path and an unopened project are all honest
+// refusals and none of them may answer with data.
+func productionDBSyncCompleteAssertLeaseRefusal(t *testing.T, result map[string]any, label string) {
+	t.Helper()
+	if result["success"] != false {
+		t.Fatalf("%s was not refused: %v", label, result)
+	}
+	code, found := strings.CutPrefix(syntheticString(result["error"]), "Error: ")
+	if !found {
+		t.Fatalf("%s was refused without a symbolic code: %v", label, result)
+	}
+	switch code {
+	case "PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_STALE", "PROJECT_NOT_OPEN",
+		"AUTHOR_WRITE_STALE", "PROJECT_SESSION_REQUIRED", "PROJECT_SESSION_CONTEXT_REQUIRED",
+		"PROJECT_CONTEXT_CHANGED":
+	default:
+		t.Fatalf("%s was refused with %v, which is not a lease refusal", label, code)
 	}
 }
 

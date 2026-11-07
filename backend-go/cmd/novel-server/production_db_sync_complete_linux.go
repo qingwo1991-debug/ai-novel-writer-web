@@ -20,7 +20,7 @@ import (
 //
 // # The reference
 //
-//	electron/controllers/db-controller.ts:618-629
+//	electron/controllers/db-controller.ts:620-632
 //	  operations.handle('db:blueprint-character-sync-complete', async (
 //	    _event, operationId: string, expectedProjectPath: string,
 //	  ) => {
@@ -45,7 +45,7 @@ import (
 // The wire shape is therefore (operation id, project path, frozen context): the
 // id is the typed leading argument, the path is the second, and the frozen
 // three-key session is last - the same shape the family's single read already
-// serves (production_db_sync_reads_linux.go:103-106), read off
+// serves (production_db_sync_reads_linux.go:101-105), read off
 // src/shared/ipc-channels.ts and cross-checked against the call site above.
 //
 // # Why the answer is an envelope here and an error in the sibling reads
@@ -155,7 +155,7 @@ func (c *productionDBSyncComplete) complete() transport.Operation {
 		if err != nil {
 			return productionDBSyncCompleteRefusal(err), nil
 		}
-		// The reference's success envelope, verbatim (:623-626).
+		// The reference's success envelope, verbatim (:627-630).
 		return map[string]any{"success": true, "operation": operation}, nil
 	}
 }

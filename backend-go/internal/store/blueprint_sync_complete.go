@@ -15,7 +15,7 @@ import (
 // (electron/repositories/blueprint-repository.ts):
 //
 //	completeCharacterSyncOperation(:764-796)
-//	  ensureBlueprintCommitSchema(db)                       :770
+//	  ensureBlueprintCommitSchema(db)                       :769
 //	  tx.immediate():
 //	    readCharacterSyncOperation(db, operationId)         :771
 //	    if (operation.status === 'completed') {             :773
@@ -28,8 +28,8 @@ import (
 //	      updated_at=datetime('now')
 //	      WHERE operation_id=? AND status='pending'         :786
 //	    read-back + receipt assertion                       :787-793
-//	assertAuthoritativeCharacterSyncCompletion(:420-431)
-//	  the stored receipt must equal the freshly computed one :423-430
+//	assertAuthoritativeCharacterSyncCompletion(:420-432)
+//	  the stored receipt must equal the freshly computed one :426-430
 //
 // # What the roster proof actually checks
 //
@@ -37,8 +37,8 @@ import (
 // three checks, and each one is a fact this file re-derives rather than trusts:
 //
 //  1. the roster is authoritative at all: CharacterRosterRepository.read()
-//     (:976 -> readSnapshot :894) must answer status 'ready' or 'empty'
-//     (:377-379). Every other derived status - 'legacy_repair_required',
+//     (:976 -> readSnapshot :893) must answer status 'ready' or 'empty'
+//     (:375-378). Every other derived status - 'legacy_repair_required',
 //     'inconsistent' - and every roster store refusal is a refusal here.
 //  2. the frozen blueprint facts still hold in that roster
 //     (blueprintCharacterSyncFactError, src/shared/
@@ -50,14 +50,14 @@ import (
 //     carries legacy relationship prose, which stays read-only evidence
 //     (:78-81).
 //  3. the roster commit that owns this operation left hash/revision evidence
-//     (:383-407): exactly one character_roster_operations row for this
+//     (:382-406): exactly one character_roster_operations row for this
 //     operation id, committed_revision an integer in [1, roster.revision],
 //     payload_hash and projection_hash both 64 lowercase hex characters, and -
 //     when the evidence names the CURRENT roster revision - a projection_hash
 //     equal to the roster's own. Anything else is
 //     BLUEPRINT_CHARACTER_SYNC_EVIDENCE_MISMATCH.
 //
-// The receipt is the reference's own object and nothing more (:408-416):
+// The receipt is the reference's own object and nothing more (:407-417):
 //
 //	{ blueprintCommitOperationId, operationId, status: 'committed',
 //	  rosterReceipt: { operationId, payloadHash, revision, idempotent: false } }
@@ -80,7 +80,7 @@ import (
 //
 // The reference tests one branch before the roster one:
 //
-//	if (hasCharacterIdentitySchema(db)) { ... 'proposal-staged' ... }  :371-376
+//	if (hasCharacterIdentitySchema(db)) { ... 'proposal-staged' ... }  :370-374
 //
 // In a project with character_identity_meta it demands directory proposal
 // evidence (findCharacterProposalEvidence, character-proposal-service.ts:337-346,
@@ -293,7 +293,7 @@ func blueprintSyncAuthoritativeReceipt(ctx context.Context, conn *sql.Conn, row 
 	if !ok {
 		return nil, ErrBlueprintCharacterSyncInputInvalid
 	}
-	// :377-379 - the roster read is the authority, and only 'ready' or 'empty' is
+	// :375-378 - the roster read is the authority, and only 'ready' or 'empty' is
 	// authoritative. charactersRoster publishes the reference's own refusals for a
 	// project whose roster tables or meta row are missing or inconsistent, and they
 	// travel unchanged.
@@ -341,7 +341,7 @@ func blueprintSyncAuthoritativeReceipt(ctx context.Context, conn *sql.Conn, row 
 	revision, revisionOK := rrInteger(record["committed_revision"], 1)
 	rosterRevision, rosterOK := rrInteger(roster["revision"], 0)
 	rosterProjection, _ := roster["projectionHash"].(string)
-	// :394-407 - the evidence row must be this operation's, name a revision the
+	// :394-406 - the evidence row must be this operation's, name a revision the
 	// roster has actually reached, carry two well-formed digests, and agree with the
 	// current projection whenever it claims the current revision.
 	if !rosterOK {
@@ -353,7 +353,7 @@ func blueprintSyncAuthoritativeReceipt(ctx context.Context, conn *sql.Conn, row 
 		(revision == rosterRevision && projectionHash != rosterProjection) {
 		return nil, ErrBlueprintCharacterSyncEvidenceMismatch
 	}
-	// :408-416 - hash and revision evidence only; the roster snapshot itself stays
+	// :407-417 - hash and revision evidence only; the roster snapshot itself stays
 	// in its fact tables and is never copied into a receipt.
 	return map[string]any{
 		"blueprintCommitOperationId": commitID,
@@ -369,7 +369,7 @@ func blueprintSyncAuthoritativeReceipt(ctx context.Context, conn *sql.Conn, row 
 }
 
 // blueprintSyncReceiptEqual is the comparison assertAuthoritativeCharacterSyncCompletion
-// makes (:423-430): canonicalize both receipts and require the same bytes. Both
+// makes (:426-430): canonicalize both receipts and require the same bytes. Both
 // sides here are Go values, so plotJSON's deterministic key order is the
 // canonicalization: it sorts keys by UTF-16 code unit, and every receipt key is
 // ASCII, where that order coincides with the reference's en-US collation. A
@@ -402,9 +402,9 @@ func blueprintSyncReceiptEqual(stored any, authoritative map[string]any) error {
 // repair, which inserts nothing when the commit ledger is already represented.
 // The already-completed branch issues no write at all (:773-775), so a second
 // completion of the same row is idempotent - or, when the stored receipt no
-// longer matches the proof, BLUEPRINT_CHARACTER_SYNC_RECEIPT_MISMATCH (:429).
+// longer matches the proof, BLUEPRINT_CHARACTER_SYNC_RECEIPT_MISMATCH (:430).
 func (b *Blueprints) CompleteSync(ctx context.Context, id string) (map[string]any, error) {
-	// The reference checks the id before it reaches for the database (:768).
+	// The reference checks the id before it reaches for the database (:767).
 	if strings.TrimFunc(id, narrativeSpace) == "" {
 		return nil, ErrBlueprintCharacterSyncOperationIDRequired
 	}
@@ -412,7 +412,7 @@ func (b *Blueprints) CompleteSync(ctx context.Context, id string) (map[string]an
 		return nil, ErrProjectNotOpen
 	}
 	// The reference repairs as it reads and as it completes: ensureBlueprintCommitSchema
-	// is INSERT OR IGNORE over the commit ledger (:176-194, called at :770) and this
+	// is INSERT OR IGNORE over the commit ledger (:176-194, called at :769) and this
 	// lane's two sync reads already mirror it (blueprints.go:167, :174). It runs
 	// before the transaction, exactly where the reference runs it.
 	if _, err := b.db.ExecContext(ctx, blueprintBackfillSQL); err != nil {
@@ -430,7 +430,7 @@ func (b *Blueprints) CompleteSync(ctx context.Context, id string) (map[string]an
 		// :773-775 - the deciding lines: a completed row is never updated, it is
 		// PROVED, and it is returned unchanged when the proof agrees with the receipt
 		// already stored. That is the idempotent answer, and the mismatch refusal is
-		// the one assertAuthoritativeCharacterSyncCompletion raises inside it (:429).
+		// the one assertAuthoritativeCharacterSyncCompletion raises inside it (:430).
 		if row["status"] == "completed" {
 			authoritative, err := blueprintSyncAuthoritativeReceipt(ctx, conn, row)
 			if err != nil {
