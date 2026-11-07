@@ -26,6 +26,11 @@ on:
       - 'src/shared/**'
       - '.github/workflows/go-backend.yml'
   workflow_dispatch:
+    inputs:
+      test-regex:
+        description: 'When set, run only go tests matching this -run regex (verbose) instead of the full suite.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -457,7 +462,13 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl || status=$?
+          if test -n "${{ github.event.inputs.test-regex }}"; then
+            # A workflow_dispatch debug run: one package, one -run regex, verbose, so
+            # a single failing test's full output is captured in the job log.
+            go test -count=1 -timeout=4m -run "${{ github.event.inputs.test-regex }}" -v ./cmd/novel-server | tee /tmp/go-tests.jsonl || status=$?
+          else
+            go test -count=1 -timeout=4m -json ./... | tee /tmp/go-tests.jsonl || status=$?
+          fi
           if test "$status" -ne 0; then
             printf '::error title=go test failures::%s\n' "$(grep '"Action":"fail"' /tmp/go-tests.jsonl | grep -o '"Package":"[^"]*","Test":"[^"]*"' | tr '\n' ' ' | cut -c1-600)"
             grep '"Action":"fail"' /tmp/go-tests.jsonl | grep -o '"Package":"[^"]*"' | sed 's/.*\///' | sort -u | while read -r pkg; do
