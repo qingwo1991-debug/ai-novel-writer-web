@@ -312,9 +312,11 @@ func (e *productionEditorInline) reproduce(ctx context.Context, scope generation
 		// equals runScope, the minting scope and the rebuilt scope are identical and
 		// the failure must be purpose or record mismatch; if they differ, the binding
 		// carries a different project/epoch than the scope begin minted under.
-		log.Printf("novel-server: editor-inline sourceStatus=conflict step=resolve callerScope==runScope=%v projectChanged=%v epochChanged=%v callerEpoch=%s runEpoch=%s",
-			scope == runScope, scope.Project != runScope.Project, scope.Epoch != runScope.Epoch,
-			productionEditorInlineTrace(scope.Epoch), productionEditorInlineTrace(runScope.Epoch))
+		// The scope is identical, so name the actual refusal code - resolve returns a
+		// symbolic code (MODEL_EXECUTION_LEASE_*, GENERATION_EPOCH_STALE,
+		// MODEL_PROFILE_UNAVAILABLE, GENERATION_MODEL_CHANGED), safe to print.
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=resolve callerScope==runScope=%v code=%v",
+			scope == runScope, err)
 		return nil, "", err
 	}
 	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
