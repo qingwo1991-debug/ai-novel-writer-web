@@ -396,10 +396,13 @@ func testProductionEditorInlineWriteBegin(t *testing.T) {
 	if got := productionEditorInlineWriteStored(t, db, runID, "editorInlineContextHash"); got != `"`+productionEditorInlineDigest(storedContext)+`"` {
 		t.Fatalf("the frozen context digest is %v, not the digest of the stored context", got)
 	}
-	// No re-serialization: the document's < and & are raw in the stored binding, and
-	// the members are in the order the builder wrote them.
-	if !strings.Contains(storedContext, productionEditorInlineWriteDocument) {
-		t.Fatalf("the stored context does not carry the document verbatim: %s", storedContext)
+	// No re-serialization: the document's < and & stay raw in the stored binding (the
+	// hand-written quote escapes quotes, backslashes and control characters but never
+	// HTML-escapes), and the members are in the order the builder wrote them. The
+	// whole document cannot be a substring here: its newlines are JSON-escaped to \n,
+	// which is exactly why the decoded documentText is asserted equal at :371 above.
+	if !strings.Contains(storedContext, "甲&乙") || !strings.Contains(storedContext, "<笑>") {
+		t.Fatalf("the stored context HTML-escaped the document's special characters: %s", storedContext)
 	}
 	if strings.Contains(storedContext, `\u003c`) || strings.Contains(storedContext, `\u0026`) {
 		t.Fatalf("the stored context was HTML-escaped, so its digest is not a digest of the author's document: %s", storedContext)
