@@ -156,14 +156,27 @@ func productionReviewRevisionLaneSeed(t *testing.T, projectPath string, trigger 
  VALUES (?,?,?,?,?,?,1,'not-generated',0)`, []any{"cycle-2", "root-cycle-2", 2,
 			productionReviewRevisionLaneFindingHash, sourceHash, productionReviewRevisionLaneFindingHash}},
 	}
-	if trigger {
-		statements = append(statements, struct {
-			query string
-			args  []any
-		}{query: productionReviewRevisionLaneTrigger})
-	}
 	productionDBMaintenanceExec(t, seed, statements)
 	productionDBMaintenanceCheckpoint(t, seed, database)
+	if trigger {
+		// The trigger is created AFTER the checkpoint and through a connection of this
+		// test's own, because admission fingerprints sqlite_master: a trigger inside
+		// the seeded database would make the project's schema unrecognizable and the
+		// lane would refuse to open it (SCHEMA_UNRECOGNIZED). Creating it now means
+		// the lane still admits the pinned schema and the commit genuinely runs into
+		// the abort - which is what this arm exists to prove.
+		after, err := sql.Open("sqlite3", (&url.URL{Scheme: "file",
+			Path:     filepath.ToSlash(database), RawQuery: "mode=rw&_foreign_keys=on"}).String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		after.SetMaxOpenConns(1)
+		productionDBMaintenanceExec(t, after, []struct {
+			query string
+			args  []any
+		}{{query: productionReviewRevisionLaneTrigger}})
+		productionDBMaintenanceCheckpoint(t, after, database)
+	}
 }
 
 // productionReviewRevisionLaneOpen builds the fixture, seeds it, opens the
