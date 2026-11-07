@@ -475,10 +475,19 @@ def start_browser_proxy(base, port):
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
             request = client.Request(target + self.path, data=body, method=method)
-            for name in ("Cookie", "Content-Type", "X-CSRF-Token", "X-Client-Id", "Origin"):
+            for name in ("Cookie", "Content-Type", "X-CSRF-Token", "X-Client-Id"):
                 if self.headers.get(name):
                     request.add_header(name, self.headers[name])
             request.add_header("X-Novel-User", AUTHOR)
+            # The lane's origin allowlist is its own listen address
+            # (security.NewOrigins("http://" + address)), and it refuses any other
+            # Origin with ORIGIN_DENIED. The browser talks to the shim, so the shim
+            # speaks as the lane: exactly one Origin, exactly one Host, and the
+            # browser's Sec-Fetch-Site replaced with same-origin. Without this the page
+            # would look broken for a reason that has nothing to do with the product.
+            request.add_header("Origin", target)
+            request.add_header("Host", target.split("//", 1)[-1])
+            request.add_header("Sec-Fetch-Site", "same-origin")
             try:
                 with client.urlopen(request, timeout=60) as answer:
                     payload, status, headers = answer.read(), answer.status, answer.headers
@@ -522,6 +531,8 @@ def main():
     parser.add_argument("--port", type=int, default=16099,
                         help="loopback port the rehearsal container publishes (default: %(default)s)")
     parser.add_argument("--down", action="store_true", help="remove the container when done")
+    parser.add_argument("--browser-only", action="store_true",
+                        help="start the container and the browser shim without driving the API journey, so a human can open the project themselves")
     parser.add_argument("--browser-proxy", action="store_true",
                         help="also serve a loopback shim that adds the trusted-proxy header")
     parser.add_argument("--proxy-port", type=int, default=16098)
@@ -557,6 +568,15 @@ def main():
         if status != 200 or b'id="root"' not in body:
             fail("the app shell did not answer: %d %s" % (status, body[:200]))
         print("   %s, %d bytes" % (headers.get("Content-Type", "?"), len(body)))
+        if arguments.browser_only:
+            print("   browser-only: the API journey is skipped so a human can open the project")
+            server = start_browser_proxy(base, arguments.proxy_port)
+            print("  browser          http://127.0.0.1:%d" % arguments.proxy_port)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                print()
+            return
         browser.bootstrap()
         projects = discover_projects(browser)
         context = open_project(browser, projects[0])
