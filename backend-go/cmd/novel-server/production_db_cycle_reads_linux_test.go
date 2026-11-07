@@ -320,7 +320,7 @@ func productionDBCycleResult(t *testing.T, response *httptest.ResponseRecorder) 
 	var wire struct {
 		Result json.RawMessage `json:"result"`
 	}
-	if err := json.Unmarshal(response.Bytes(), &wire); err != nil || len(wire.Result) == 0 {
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || len(wire.Result) == 0 {
 		t.Fatalf("decode operation result: %v", err)
 	}
 	return wire.Result

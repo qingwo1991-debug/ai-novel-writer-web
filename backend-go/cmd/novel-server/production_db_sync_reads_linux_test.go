@@ -466,9 +466,9 @@ func TestProductionDBSyncGetRepairsOnceAndReadsOneRow(t *testing.T) {
 	if after := productionDBSyncCount(t, database, "SELECT COUNT(*) FROM blueprint_character_sync_operations"); after != 4 {
 		t.Fatalf("the second get duplicated rows: %d sync rows, want 4", after)
 	}
-	input, updatedAt := productionDBSyncAuthorRow(t, database)
-	if input != productionDBSyncAuthorInput || updatedAt != "1999-12-31 23:59:59" {
-		t.Fatalf("the get repair overwrote the author row: input %v, updated_at %v", input, updatedAt)
+	authorInput, authorUpdatedAt := productionDBSyncAuthorRow(t, database)
+	if authorInput != productionDBSyncAuthorInput || authorUpdatedAt != "1999-12-31 23:59:59" {
+		t.Fatalf("the get repair overwrote the author row: input %v, updated_at %v", authorInput, authorUpdatedAt)
 	}
 
 	// A missing id is the reference's null, not an error and not a fabricated row.
@@ -555,7 +555,7 @@ func productionDBSyncResult(t *testing.T, response *httptest.ResponseRecorder) j
 	var wire struct {
 		Result json.RawMessage `json:"result"`
 	}
-	if err := json.Unmarshal(response.Bytes(), &wire); err != nil || len(wire.Result) == 0 {
+	if err := json.Unmarshal(response.Body.Bytes(), &wire); err != nil || len(wire.Result) == 0 {
 		t.Fatalf("decode operation result: %v", err)
 	}
 	return wire.Result
