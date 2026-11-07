@@ -49,6 +49,7 @@ CONTAINER = "novel-go-rehearsal"
 CONTAINER_PORT = 16082
 AUTHOR = "rehearsal-author"
 EXPORT_DIRECTORY = "rehearsal-export"
+RESTORE_DIRECTORY = "rehearsal-restore"
 CLIENT = "rehearsal-tab-0001"  # 16-128 chars, internal/transport/server.go:78
 
 
@@ -109,10 +110,11 @@ def prepare_scratch(scratch, live):
     # rehearsal creates one inside the library and hands the picker its name.
     library = os.path.join(target, "workspaces")
     if os.path.isdir(library):
-        destination = os.path.join(library, EXPORT_DIRECTORY)
-        os.makedirs(destination, exist_ok=True)
-        os.chown(destination, 65532, 65532)
-        os.chmod(destination, 0o700)
+        for name in (EXPORT_DIRECTORY, RESTORE_DIRECTORY):
+            destination = os.path.join(library, name)
+            os.makedirs(destination, exist_ok=True)
+            os.chown(destination, 65532, 65532)
+            os.chmod(destination, 0o700)
     return target
 
 
@@ -589,6 +591,75 @@ def find_download_url(value, depth):
     return ""
 
 
+
+def restore_archive(browser, context, scratch):
+    """Restore the exported archive into a fresh project and compare a chapter.
+
+    This is the rollback drill: the archive the export produced is re-imported as a
+    new project, and a chapter read from the restored book has to equal the chapter
+    read from the original. Two opaque grant ids travel - the archive picker's and
+    the destination picker's - and no path is ever named on the wire.
+    """
+    step("restore the archive into a fresh destination")
+    archive = browser.operation("dialog:select-project-archive",
+                                [{"rootId": "library",
+                                  "relativePath": EXPORT_DIRECTORY + "/project.anovel"}],
+                                allow_refusal=True)
+    if "error" in archive:
+        fail("the archive picker refused: " + json.dumps(archive["error"])[:400])
+    archive_grant = (archive.get("result") or {}).get("grantId") or ""
+    target = browser.operation("dialog:select-project-restore-target",
+                               [{"rootId": "library", "relativePath": RESTORE_DIRECTORY}],
+                               allow_refusal=True)
+    if "error" in target:
+        fail("the restore-target picker refused: " + json.dumps(target["error"])[:400])
+    target_grant = (target.get("result") or {}).get("grantId") or ""
+    if not archive_grant or not target_grant:
+        fail("the restore pickers returned %r / %r" % (archive_grant, target_grant))
+    answer = browser.operation("project:archive-restore",
+                               [{"archiveGrantId": archive_grant,
+                                 "targetGrantId": target_grant}], allow_refusal=True)
+    if "error" in answer:
+        fail("project:archive-restore refused: " + json.dumps(answer["error"])[:400])
+    receipt = answer.get("result") or {}
+    if not receipt.get("success", True):
+        fail("project:archive-restore reported failure: " + json.dumps(receipt)[:400])
+    restored_path = receipt.get("targetPath") or receipt.get("projectPath") or ""
+    if not restored_path:
+        # The receipt describes the restore rather than naming a path, so the
+        # library is asked which project now exists in the destination directory.
+        for project in discover_projects(browser):
+            if project["path"].rstrip("/").endswith("/" + RESTORE_DIRECTORY):
+                restored_path = project["path"]
+    print("   restored to %s; keys: %s" % (restored_path or "(not named)",
+                                           ", ".join(sorted(receipt)) or "(none)"))
+    if not restored_path:
+        fail("the restore succeeded but the library shows no project in " + RESTORE_DIRECTORY)
+    original = browser.result("db:draft-get-full", [1, context["projectPath"], context])
+    reopened = browser.result("project:open", [restored_path, "rehearsal-restore", restored_path])
+    if not reopened.get("success") or not reopened.get("dbReady"):
+        fail("the restored project did not open: " + json.dumps(reopened)[:300])
+    inner = reopened.get("project") or {}
+    restored_context = {"projectId": inner.get("id"), "leaseId": inner.get("sessionLease"),
+                        "projectPath": restored_path}
+    copy = browser.result("db:draft-get-full", [1, restored_path, restored_context])
+    # Compare the prose itself, not a hash member: db:draft-get-full carries the
+    # body, and a restore that dropped or truncated it would still match on metadata.
+    original_content = (original or {}).get("content")
+    restored_content = (copy or {}).get("content")
+    if not original_content or original_content != restored_content:
+        fail("chapter 1 did not survive the round trip: %d vs %d characters" % (
+            len(original_content or ""), len(restored_content or "")))
+    if (original or {}).get("wordCount") != (copy or {}).get("wordCount"):
+        fail("the restored chapter counted %r words, the original %r" % (
+            (copy or {}).get("wordCount"), (original or {}).get("wordCount")))
+    import hashlib
+    digest = hashlib.sha256(original_content.encode("utf-8")).hexdigest()[:12]
+    print("   chapter 1 restored byte for byte (%d characters, sha256 %s...)" % (
+        len(restored_content), digest))
+    return receipt, restored_path
+
+
 def zip_entries(path):
     import zipfile
     with zipfile.ZipFile(path) as archive:
@@ -607,8 +678,13 @@ def check_copy_untouched(before, after, scratch, allowed_new, allowed_changed=()
         if relative not in before:
             added.append(relative)
     unexpected_added = [name for name in added if not any(name.startswith(prefix) for prefix in allowed_new)]
+    unexpected_removed = [name for name in removed
+                          if not any(name.endswith(suffix) for suffix in allowed_changed)]
     if removed:
-        fail("the reads removed %d file(s): %s" % (len(removed), removed[:5]))
+        print("   %d file(s) gone: %s" % (len(removed), removed[:5]))
+    if unexpected_removed:
+        fail("the rehearsal removed %d file(s) it did not ask to remove: %s" % (
+            len(unexpected_removed), unexpected_removed[:5]))
     unexpected_changed = [name for name in changed
                           if not any(name.endswith(suffix) for suffix in allowed_changed)]
     if changed:
@@ -696,6 +772,8 @@ def main():
     parser.add_argument("--port", type=int, default=16099,
                         help="loopback port the rehearsal container publishes (default: %(default)s)")
     parser.add_argument("--down", action="store_true", help="remove the container when done")
+    parser.add_argument("--restore", action="store_true",
+                        help="also restore the exported archive into a fresh project and compare a chapter")
     parser.add_argument("--import-chapters", type=int, default=0,
                         help="also import this many synthetic finished chapters through db:draft-import-finalized-batch")
     parser.add_argument("--browser-only", action="store_true",
@@ -756,6 +834,8 @@ def main():
         if archive:
             entries = zip_entries(archive)
             print("   archive holds %d entries: %s" % (len(entries), ", ".join(entries[:6])))
+        if arguments.restore:
+            restore_archive(browser, context, scratch)
         # A rehearsal that imports a manuscript writes that project's database and
         # its SQLite sidecars, and nothing else: anything beyond those three names is
         # a write nobody asked for.
@@ -764,9 +844,12 @@ def main():
             written = (".ai-novel/project.db", ".ai-novel/project.db-wal", ".ai-novel/project.db-shm")
         else:
             written = ()
+        allowed_new = [".ai-novel/tmp", "exports/"]
+        if arguments.restore:
+            # A restore creates a whole new project tree; that is the point of it.
+            allowed_new.append(RESTORE_DIRECTORY)
         changed, added = check_copy_untouched(
-            before, tree_digest(data), scratch,
-            [".ai-novel/tmp", "exports/"], written)
+            before, tree_digest(data), scratch, allowed_new, written)
         refused = [name for name, verdict, _ in findings if verdict == "refused"]
         print()
         print("REHEARSAL SUMMARY")
