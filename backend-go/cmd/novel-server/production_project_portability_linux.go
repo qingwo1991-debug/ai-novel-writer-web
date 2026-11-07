@@ -626,7 +626,10 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 		discard()
 		return refuse(productionPortabilityCodeSourceChanged)
 	}
-	snapshotPath := filepath.Join(staging, projectfs.DatabaseName)
+	// StageDatabase writes the staged set as snapshot.db (+ its sidecars), not
+	// as the archive entry's name project.db. Opening project.db here created an
+	// empty database, so the schema verifier refused every export.
+	snapshotPath := filepath.Join(staging, productionCloudBackupStagedDatabase)
 	if checkpointErr := productionCloudBackupCheckpoint(ctx, snapshotPath); checkpointErr != nil {
 		discard()
 		return refuse(productionPortabilityCodeSourceChanged)
