@@ -844,6 +844,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// ninety of its hundred and three, and this table records the thirteen that have
 		// no port in this lane, with the reference gate and the missing symbol for each
 		// (production_db_residual_linux.go). It installs nothing.
+		// The two blueprint sync reads and the pending-review-recheck list: the sync
+		// reads mirror the reference's own insert-only repair on the read path, and the
+		// store list was written for this lane (production_db_sync_reads_linux.go,
+		// production_db_cycle_reads_linux.go).
+		func() error { return newProductionDBSyncReads(open.durable).Bind(server) },
+		func() error { return newProductionDBCycleReads(open.durable).Bind(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any

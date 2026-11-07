@@ -8,64 +8,62 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the db family's residual: the thirteen inventoried `db:*` names
-// this lane answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
+// This file is the db family's residual: the ten inventoried `db:*` names this
+// lane still answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
 // (internal/transport/server.go:116) instead of serving, and the exact code that
 // has to move before any of them can be installed as a handler.
 //
-// # What this batch measured
+// # What this file measured
 //
-// The inventory is 281 names (web/operations.json). This lane installs 231 of
-// them (production_served_count_linux_test.go:23) and 103 of the 281 are `db:*`,
-// so the db slice this file is about is 103 wide. Reading every binder the lane
-// really calls - the three `for _, bind := range []func() error{` lists
-// (production_open_linux.go:528, :544, :698) and the named binders between them,
-// plus each table those binders iterate - puts 90 of the 103 in the served set and
-// leaves these 13:
+// The inventory is 281 names (web/operations.json), 103 of them `db:*`. Reading
+// every binder the lane really calls - the `for _, bind := range []func() error{`
+// lists (production_open_linux.go:528, :544, :698) and the named binders between
+// them, plus each table those binders iterate - puts 93 of the 103 in the served
+// set and leaves these 10:
 //
 //	db:blueprint-character-sync-complete      db:import-run-prepare-inspection
-//	db:blueprint-character-sync-get           db:plot-tree-save
-//	db:blueprint-character-sync-list-pending  db:project-clear-generated-data
-//	db:blueprint-clear-all                    db:project-core-commit-generated
-//	db:blueprint-update-notes                 db:review-cycle-list-pending-rechecks
-//	db:import-global-facts-commit             db:import-run-effect-receipt-prepare
-//	                                          db:import-run-effect-receipt-commit
+//	db:blueprint-clear-all                    db:plot-tree-save
+//	db:blueprint-update-notes                 db:project-clear-generated-data
+//	db:import-run-effect-receipt-commit       db:project-core-commit-generated
+//	db:import-run-effect-receipt-prepare      db:import-global-facts-commit
+//
+// Three names left this table when they were served, and their rows are worth
+// remembering because the reason they were refused was wrong:
+//
+//   - db:blueprint-character-sync-get and -list-pending were refused because
+//     they repair as they read. The reference repairs as it reads too
+//     (electron/repositories/blueprint-repository.ts:734 and :758 call the
+//     insert-only ensureBlueprintCommitSchema at :176-194, with a deterministic
+//     key and OR IGNORE), so mirroring it is fidelity: they are served now by
+//     production_db_sync_reads_linux.go, and the repair is proven idempotent
+//     there. GetSync still refuses a COMPLETED row with GENERATION_OWNER_REQUIRED,
+//     because the authoritative-roster proof (:420) has no port here.
+//   - db:review-cycle-list-pending-rechecks had "no store list"; one was written
+//     (internal/store/reviewcycle_read_tx.go) and the name is served by
+//     production_db_cycle_reads_linux.go. The reference's planRecheck classifier
+//     is still unported, which can add a cycle to the answer but never drop one.
 //
 // The complement is asserted, not assumed: TestProductionLaneDBResidualIsTheUnservedSlice
 // takes the bound set from the finished lane (transport.Server.BoundOperations),
 // takes the `db:` names from the registry the same lane loaded, and requires
 // bound+residual to cover the slice exactly, in both directions.
 //
-// # Why none of the thirteen is bound here
+// # Why none of the ten is bound here
 //
-// This batch was asked to look for the cheap shape - a store function that
-// already exists with no provider method in front of it - and then to bind it.
-// Seven of the thirteen have no store function at all: store.Blueprints has none
-// of clearAll, completeCharacterSyncOperation or updateNotes, store.ProjectCore
-// has no CommitGenerated, no store file names ImportGlobalFactsRepository.commit,
-// no store file names ProjectClearRepository.clearGeneratedData, and the
-// review-cycle family has exactly one read (ReadAbsentReviewCycleTx) and no
-// listPendingRechecks. Writing any of them would mean inventing the semantics it
-// carries - a completion receipt, an authoritative-roster proof, a child-effect
-// stamp, a multi-table destructive boundary - which this batch may not invent.
+// Two of them are refused by the reference itself and always will be:
+// db:blueprint-update-notes and db:plot-tree-save are the original controller's
+// own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
+// serving them would be a divergence, not a migration.
 //
-// The other six DO have a store function behind them, and each is refused for a
-// narrower reason of its own, recorded in its seam row below:
+// The other eight each have a narrower reason of its own:
 //
-//   - db:blueprint-character-sync-get and -list-pending: Blueprints.GetSync and
-//     PendingSync exist, and both execute the reference's own lazy repair, one
-//     `INSERT OR IGNORE` into blueprint_character_sync_operations, before they
-//     select (internal/store/blueprints.go:137, the statement at :165 and :170).
-//     The only borrow that can hold that statement is the writable
-//     borrowAuthorDatabase (production_durable_linux.go:313), so binding either
-//     name would let a read mutate the author's database - the one thing the
-//     read fence of this lane does not do, and the one thing a test can prove
-//     only by giving it up. GetSync additionally refuses a completed row for want
-//     of the authoritative-roster proof (internal/store/blueprints.go:178), so
-//     the row the recovery flow actually reads - the completed one
-//     (src/services/workflows/directory-character-sync-recovery.ts:53-60) - could
-//     not be answered at all.
-//
+//   - db:blueprint-clear-all and db:project-clear-generated-data: destructive
+//     boundaries over several tables with no store function behind either, and no
+//     single transaction handle to carry them (the only BEGIN IMMEDIATE handle is
+//     unexported, internal/store/reviewrevision.go:41).
+//   - db:blueprint-character-sync-complete: needs the authoritative-roster proof
+//     (electron/repositories/blueprint-repository.ts:420) and a store receipt
+//     writer (:764) that do not exist here.
 //   - db:import-run-effect-receipt-prepare and -commit: store.ImportRuns
 //     .PrepareEffectReceipt and .CommitEffectReceipt exist
 //     (internal/store/importrun_receipts.go:1152, :1259) and both take an
@@ -73,39 +71,22 @@ import (
 //     and it proves the handle against live in-process runs
 //     (electron/controllers/db-controller.ts:425, :437); this repository has no
 //     such proof, and the two store guards disagree about a nil one - prepare
-//     merely makes the handle optional (:984) while commit refuses the handle
-//     outright (:1003, GENERATION_GUARD_REQUIRED). A nil proof therefore writes
-//     receipts this lane could never commit; a non-nil proof that fails closed
-//     refuses every real request twice over. production_importrun_residual_linux.go
-//     reaches the same conclusion and keeps them refused there.
-//
-//   - db:plot-tree-save: store.PlotTree.Save exists, but the reference refuses
-//     the renderer's write unconditionally
-//     (electron/controllers/db-controller.ts:886-895, GENERATION_GRAPH_ADMISSION_REQUIRED),
-//     so there is nothing to wire: a handler here could only restate that
-//     refusal, and a name that can only refuse stays unbound on purpose. Its
-//     family siblings -read and -clear are served
-//     (production_open_linux.go:729, :753).
-//
-//   - db:import-run-prepare-inspection: the inspection store and the parsing
-//     writes both exist (internal/importsource/inspection.go:158, :165;
-//     internal/store/importrun_lifecycle.go:796, :1048), but the reference's handler
-//     starts
-//     by consuming an inspection id and its preview CAS, and this lane never puts
-//     that CAS on the wire (internal/transport/import_selection.go:110-116). So
-//     the id a request carries cannot reach the chapters BeginParsing requires,
-//     which is the same gap production_importrun_residual_linux.go:36-52 records
-//     for the author-preview sibling.
+//     makes the handle optional (:984) while commit refuses it outright
+//     (:1003, GENERATION_GUARD_REQUIRED). A nil proof would write receipts this
+//     lane could never commit; a non-nil proof that fails closed refuses every
+//     real request twice over.
+//   - db:import-run-prepare-inspection: the inspection CAS never appears on the
+//     wire (internal/importsource/inspection.go:165), so an id minted by this
+//     lane could never reach BeginParsing.
+//   - db:import-global-facts-commit and db:project-core-commit-generated: the
+//     first has no store port at all, and the second must stamp a child effect and
+//     write the core row in one transaction that this lane has no handle for.
 //
 // # Binder
 //
-// bindProductionDBResidual installs nothing, so wiring it moves no count: the
-// served set stays at productionServedOperations
-// (production_served_count_linux_test.go:23). It is wired the way the
-// finalization and agent-generation slices are - one entry in the binder list that
-// starts at production_open_linux.go:698, next to bindProductionAgentGeneration
-// (production_open_linux.go:708) - and what that buys is the seam check running
-// inside the real lane instead of only inside this test:
+// bindProductionDBResidual installs nothing, so wiring it moves no count. It is
+// wired next to the other seam binders, and what that buys is the seam check
+// running inside the real lane instead of only inside this test:
 //
 //	func() error { return bindProductionDBResidual(server) },
 //
@@ -113,12 +94,10 @@ import (
 // name's own row, with the arity and path index this table already records, so
 // the wire shape cannot drift from the renderer's call site.
 
-// The thirteen names, spelled once each so the binder, the seam table and the
+// The ten names, spelled once each so the binder, the seam table and the
 // test cannot disagree with the controller that registers them.
 const (
 	productionDBResidualBlueprintSyncComplete = "db:blueprint-character-sync-complete"
-	productionDBResidualBlueprintSyncGet      = "db:blueprint-character-sync-get"
-	productionDBResidualBlueprintSyncPending  = "db:blueprint-character-sync-list-pending"
 	productionDBResidualBlueprintClearAll     = "db:blueprint-clear-all"
 	productionDBResidualBlueprintUpdateNotes  = "db:blueprint-update-notes"
 	productionDBResidualGlobalFactsCommit     = "db:import-global-facts-commit"
@@ -128,7 +107,6 @@ const (
 	productionDBResidualPlotTreeSave          = "db:plot-tree-save"
 	productionDBResidualProjectClearGenerated = "db:project-clear-generated-data"
 	productionDBResidualProjectCoreCommitGen  = "db:project-core-commit-generated"
-	productionDBResidualPendingReviewRechecks = "db:review-cycle-list-pending-rechecks"
 	productionDBResidualInventoryPrefix       = "db:"
 )
 
@@ -175,40 +153,6 @@ func productionDBResidualLineOf(path string, line int, marker string) production
 // never a handler this lane could install today.
 func productionDBResidualSeams() []productionDBResidualSeam {
 	return []productionDBResidualSeam{
-		{
-			// The reference serves this read. The gate recorded here is this port's
-			// own refusal, raised for a completed row it cannot prove.
-			Operation: productionDBResidualBlueprintSyncGet,
-			Arity:     3,
-			PathIndex: 1,
-			Gate:      "GENERATION_OWNER_REQUIRED",
-			Port:      "store.Blueprints.GetSync exists but repairs as it reads, and refuses a completed row",
-			Missing:   []productionDBResidualLine{
-				// The repair is one DML statement the reference also runs inside its
-				// read (ensureBlueprintCommitSchema), so it is faithful and still a
-				// write: no read-only borrow can carry it.
-				productionDBResidualLineOf("../../internal/store/blueprints.go", 137, "INSERT OR IGNORE INTO blueprint_character_sync_operations("),
-				productionDBResidualLineOf("../../internal/store/blueprints.go", 178, `if row!=nil&&row["status"]=="completed"{return nil,ErrGenerationOwnerRequired}`),
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 755, "static getCharacterSyncOperation(operationId: string)"),
-				// And the proof that would make a completed row readable, which is the
-				// same missing owner.
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 420, "function assertAuthoritativeCharacterSyncCompletion("),
-			},
-		},
-		{
-			Operation: productionDBResidualBlueprintSyncPending,
-			Arity:     2,
-			PathIndex: 0,
-			Port:      "store.Blueprints.PendingSync exists but repairs as it reads",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../internal/store/blueprints.go", 165, "func (b *Blueprints) PendingSync(ctx context.Context)"),
-				productionDBResidualLineOf("../../internal/store/blueprints.go", 137, "INSERT OR IGNORE INTO blueprint_character_sync_operations("),
-				// The transport already says why this read cannot be published as one:
-				// the binder it belongs to is not the one this lane can take.
-				productionDBResidualLineOf("../../internal/transport/blueprints_read.go", 62, "A read that writes"),
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 732, "static listPendingCharacterSyncOperations()"),
-			},
-		},
 		{
 			Operation: productionDBResidualBlueprintSyncComplete,
 			Arity:     3,
@@ -336,18 +280,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 				productionDBResidualLineOf("../../internal/store/projectcore.go", 156, "func (r *ProjectCore) Update(ctx context.Context, data map[string]any) error"),
 			},
 		},
-		{
-			Operation: productionDBResidualPendingReviewRechecks,
-			Arity:     2,
-			PathIndex: 0,
-			Port:      "no store read: the review-cycle family has only the absent-cycle read, not the pending-recheck projection",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/repositories/review-cycle-repository.ts", 505, "static listPendingRechecks(db: Database.Database)"),
-				productionDBResidualLineOf("../../internal/store/reviewcycle_read_tx.go", 12, "REVIEW_CYCLE_PROJECTION_UNAVAILABLE"),
-				productionDBResidualLineOf("../../internal/store/reviewcycle_read_tx.go", 17, "func ReadAbsentReviewCycleTx("),
-				productionDBResidualLineOf("../../internal/transport/editor_review_cycle_read.go", 30, "recheck projection"),
-			},
-		},
 	}
 }
 
@@ -355,8 +287,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 // seam table lists them, so the binder and the test walk one list.
 func productionDBResidualOperations() []string {
 	return []string{
-		productionDBResidualBlueprintSyncGet,
-		productionDBResidualBlueprintSyncPending,
 		productionDBResidualBlueprintSyncComplete,
 		productionDBResidualBlueprintClearAll,
 		productionDBResidualBlueprintUpdateNotes,
@@ -367,7 +297,6 @@ func productionDBResidualOperations() []string {
 		productionDBResidualPlotTreeSave,
 		productionDBResidualProjectClearGenerated,
 		productionDBResidualProjectCoreCommitGen,
-		productionDBResidualPendingReviewRechecks,
 	}
 }
 
