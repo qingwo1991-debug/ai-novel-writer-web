@@ -313,11 +313,92 @@ func (f *productionPortabilityFixture) pick(t *testing.T, operation, relative st
 	return answer.GrantID
 }
 
+// productionPortabilityEventStream is the browser's live /api/events
+// subscription. It is opened before the export, because the event is published
+// to the subscribers connected at that moment; the renderer also opens the
+// stream at bootstrap and keeps it open across the operation.
+type productionPortabilityEventStream struct {
+	reader *bufio.Reader
+}
+
+// openEventStream starts the event stream the browser keeps open. The server's
+// SSE history only replays to a reconnect that sends Last-Event-ID, which a
+// fresh tab has never received, so a stream that opens after the export can
+// never see the download event.
+func (f *productionPortabilityFixture) openEventStream(t *testing.T) *productionPortabilityEventStream {
+	t.Helper()
+	live := httptest.NewServer(f.handler)
+	request, requestErr := http.NewRequest(http.MethodGet, live.URL+"/api/events?client="+url.QueryEscape(f.client.tab), nil)
+	if requestErr != nil {
+		live.Close()
+		t.Fatal(requestErr)
+	}
+	request.Header.Set("X-Novel-User", productionPortabilityFixtureAuthor)
+	request.AddCookie(f.client.cookie)
+	client := &http.Client{Timeout: 20 * time.Second}
+	response, streamErr := client.Do(request)
+	if streamErr != nil {
+		live.Close()
+		t.Fatalf("open the event stream: %v", streamErr)
+	}
+	t.Cleanup(func() {
+		_ = response.Body.Close()
+		live.Close()
+	})
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		t.Fatalf("the event stream was refused with %d %s", response.StatusCode, string(body))
+	}
+	reader := bufio.NewReader(response.Body)
+	connected, readErr := reader.ReadString('\n')
+	if readErr != nil || strings.TrimSpace(connected) != ": connected" {
+		t.Fatalf("the event stream did not open: %v %v", readErr, connected)
+	}
+	return &productionPortabilityEventStream{reader: reader}
+}
+
+// awaitDownload reads the browser's own channel after the export: the handler
+// publishes browser:download-ready with the one URL that serves the archive.
+func (s *productionPortabilityEventStream) awaitDownload(t *testing.T) (string, string) {
+	t.Helper()
+	if s == nil || s.reader == nil {
+		t.Fatal("the event stream is not open")
+	}
+	for line := 0; line < 128; line++ {
+		text, readErr := s.reader.ReadString('\n')
+		if readErr != nil {
+			t.Fatalf("the event stream ended before a download was published: %v", readErr)
+		}
+		trimmed := strings.TrimSpace(text)
+		if !strings.HasPrefix(trimmed, "data:") {
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))), &payload); err != nil {
+			continue
+		}
+		// The renderer subscribes to browser:download-ready
+		// (src/components/BrowserDialogs.tsx), so the name is the contract.
+		envelope, ok := payload.(map[string]any)
+		if !ok || envelope["channel"] != "browser:download-ready" {
+			continue
+		}
+		if download, name, found := productionPortabilityFindDownload(payload, 0); found {
+			return download, name
+		}
+	}
+	t.Fatal("the export never published a download URL")
+	return "", ""
+}
+
 // exportRequest is the archive the browser asked for: its receipt, the URL the
 // download event carried, and the name on disk.
 func (f *productionPortabilityFixture) export(t *testing.T) (archiveformat.ExportReceipt, string, string) {
 	t.Helper()
 	grant := f.pick(t, "dialog:select-project-archive-export", productionPortabilityFixtureOutput)
+	// Subscribe first: the renderer's EventSource is open before it invokes the
+	// export, and the hub delivers the event only to live subscribers.
+	stream := f.openEventStream(t)
 	var answer struct {
 		Success bool                        `json:"success"`
 		Error   string                      `json:"error"`
@@ -330,53 +411,8 @@ func (f *productionPortabilityFixture) export(t *testing.T) (archiveformat.Expor
 	if !answer.Success || answer.Error != "" {
 		t.Fatalf("project:archive-export refused: %s", answer.Error)
 	}
-	download, name := f.downloadReady(t)
+	download, name := stream.awaitDownload(t)
 	return answer.Receipt, download, name
-}
-
-// downloadReady reads the browser's own channel: the export publishes
-// browser:download-ready with the one URL that serves the archive, and the event
-// stream replays it to a tab that connects afterwards.
-func (f *productionPortabilityFixture) downloadReady(t *testing.T) (string, string) {
-	t.Helper()
-	live := httptest.NewServer(f.handler)
-	defer live.Close()
-	request, requestErr := http.NewRequest(http.MethodGet, live.URL+"/api/events?client="+url.QueryEscape(f.client.tab), nil)
-	if requestErr != nil {
-		t.Fatal(requestErr)
-	}
-	request.Header.Set("X-Novel-User", productionPortabilityFixtureAuthor)
-	request.AddCookie(f.client.cookie)
-	client := &http.Client{Timeout: 20 * time.Second}
-	response, streamErr := client.Do(request)
-	if streamErr != nil {
-		t.Fatalf("open the event stream: %v", streamErr)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		t.Fatalf("the event stream was refused with %d %s", response.StatusCode, string(body))
-	}
-	reader := bufio.NewReader(response.Body)
-	for line := 0; line < 128; line++ {
-		text, readErr := reader.ReadString('\n')
-		if readErr != nil {
-			t.Fatalf("the event stream ended before a download was published: %v", readErr)
-		}
-		trimmed := strings.TrimSpace(text)
-		if !strings.HasPrefix(trimmed, "data:") {
-			continue
-		}
-		var payload any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))), &payload); err != nil {
-			continue
-		}
-		if download, name, found := productionPortabilityFindDownload(payload, 0); found {
-			return download, name
-		}
-	}
-	t.Fatal("the export never published a download URL")
-	return "", ""
 }
 
 // productionPortabilityFindDownload walks one event payload for the download
