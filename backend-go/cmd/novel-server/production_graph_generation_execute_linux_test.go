@@ -102,8 +102,12 @@ func TestProductionLaneExecutesGraphRun(t *testing.T) {
 	if status == "discarded" {
 		t.Fatalf("the settled artifact is discarded: %s", artifactJSON)
 	}
-	if !strings.Contains(artifactJSON, productionGraphPlanOutput) {
-		t.Fatalf("the settled artifact does not carry the dispatched text: %s", artifactJSON)
+	var storedArtifact map[string]any
+	if err := json.Unmarshal([]byte(artifactJSON), &storedArtifact); err != nil {
+		t.Fatalf("the settled artifact json: %v", err)
+	}
+	if text, _ := storedArtifact["text"].(string); text != productionGraphPlanOutput {
+		t.Fatalf("the settled artifact does not carry the dispatched text: %v", storedArtifact)
 	}
 
 	// A replay of the same handle is idempotent, not a second dispatch: the frozen
@@ -161,7 +165,7 @@ func TestProductionLaneConfirmsGraphRun(t *testing.T) {
 	if plan["title"] != "门后的秘密" || plan["targetStartChapter"] != float64(1) || plan["targetEndChapter"] != float64(3) {
 		t.Fatalf("the confirmed plan is not the chosen candidate: %v", plan)
 	}
-	if syntheticString(plan["id"]) == "" {
+	if syntheticNumber(plan["id"]) < 1 {
 		t.Fatalf("the confirmed plan has no row id: %v", plan)
 	}
 
