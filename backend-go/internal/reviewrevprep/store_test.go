@@ -290,10 +290,11 @@ func TestRevokeCallerInvalidatesOnlyThatCaller(t *testing.T) {
 	alice := testBinding("alice")
 	bob := testBinding("bob")
 	aliceFirst := mustPrepare(t, store, alice, testPreparedContext())
-	aliceSecond := mustPrepare(t, store, alice, testPreparedContext())
+	// The second prepare replaces the first (import-inspection-store.ts:123-124), so
+	// alice holds exactly one live handle and bob holds one: two in total.
 	bobID := mustPrepare(t, store, bob, testPreparedContext())
-	if count := store.ActiveCount(); count != 3 {
-		t.Fatalf("ActiveCount = %d, want 3", count)
+	if count := store.ActiveCount(); count != 2 {
+		t.Fatalf("ActiveCount = %d, want 2", count)
 	}
 
 	store.RevokeCaller("alice")
@@ -301,12 +302,8 @@ func TestRevokeCallerInvalidatesOnlyThatCaller(t *testing.T) {
 	if count := store.ActiveCount(); count != 1 {
 		t.Fatalf("ActiveCount after revoke = %d, want 1", count)
 	}
-	for _, id := range []string{aliceFirst, aliceSecond} {
-		if _, err := store.Peek(id, alice); err != nil {
-			requireCode(t, err, ErrHandleUnknown)
-		} else {
-			t.Fatal("revoked handle is still live")
-		}
+	if _, err := store.Peek(aliceFirst, alice); err == nil {
+		t.Fatal("the replaced handle still resolves after the caller was revoked")
 	}
 	if _, err := store.Peek(bobID, bob); err != nil {
 		t.Fatalf("bob Peek after alice revoke: %v", err)
@@ -430,13 +427,17 @@ func TestPrepareMintsDistinctIDs(t *testing.T) {
 	if first == second {
 		t.Fatal("two prepares for one context returned the same id")
 	}
-	for _, id := range []string{first, second} {
-		if _, err := store.Peek(id, binding); err != nil {
-			t.Fatalf("Peek: %v", err)
-		}
+	// One caller holds one live handle (import-inspection-store.ts:123-124), so the
+	// first id stops resolving and the count stays at one; the ids being distinct is
+	// what the replacement proves.
+	if _, err := store.Peek(first, binding); err == nil {
+		t.Fatal("the replaced handle still resolves")
 	}
-	if count := store.ActiveCount(); count != 2 {
-		t.Fatalf("ActiveCount = %d, want 2", count)
+	if _, err := store.Peek(second, binding); err != nil {
+		t.Fatalf("Peek: %v", err)
+	}
+	if count := store.ActiveCount(); count != 1 {
+		t.Fatalf("ActiveCount = %d, want 1 (a caller holds one live handle)", count)
 	}
 	// The id carries nothing: no project, caller, generation or hash fragment.
 	for _, fragment := range []string{"project-alpha", "alice", "run-1", "review-chapter", testPreparedContext().ContextHash} {
