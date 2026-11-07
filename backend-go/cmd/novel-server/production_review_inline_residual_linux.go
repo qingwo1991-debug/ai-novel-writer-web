@@ -96,6 +96,11 @@ type productionInlineResidualSeam struct {
 const (
 	productionEditorInlineBeginName   = "editor-inline:begin"
 	productionEditorInlineExecuteName = "editor-inline:execute"
+	// review-revision:commit-revision and :read-recovery are served now
+	// (production_review_revision_commit_linux.go): the visible-text and no-op gates
+	// turned out to be reproducible from counters the store already had, and the
+	// recovery read is one deferred transaction. The two names are kept here only
+	// because the family's served list below names them.
 	productionReviewRevisionRevision  = "review-revision:commit-revision"
 	productionReviewRevisionRecovery  = "review-revision:read-recovery"
 )
@@ -107,10 +112,11 @@ func productionInlineResidualEditorServed() []string {
 	return []string{productionEditorInlineReadRecoveryName, productionEditorInlineCancelName}
 }
 
-// productionInlineResidualReviewServed is the half of the review-revision family
-// this lane binds.
+// productionInlineResidualReviewServed is the review-revision family: all four names
+// are bound now.
 func productionInlineResidualReviewServed() []string {
-	return []string{productionReviewRevisionPrepare, productionReviewRevisionCommitReview}
+	return []string{productionReviewRevisionPrepare, productionReviewRevisionCommitReview,
+		productionReviewRevisionRevision, productionReviewRevisionRecovery}
 }
 
 // productionInlineResidualEditorSeams is this record's answer for the two
@@ -158,41 +164,9 @@ func productionInlineResidualEditorSeams() []productionInlineResidualSeam {
 	}
 }
 
-// productionInlineResidualReviewSeams is this record's answer for the two
-// review-revision names the lane does not bind. The prose reasons are in
-// production_review_revision_linux.go:74-106; these are the locations they name.
+// productionInlineResidualReviewSeams is empty: all four review-revision names are
+// bound. It stays as a function so the record's test can assert that emptiness
+// instead of asserting the absence of a symbol.
 func productionInlineResidualReviewSeams() []productionInlineResidualSeam {
-	visibility := productionInlineResidualPort{
-		Path: "../../../src/shared/visible-text-integrity.ts", Line: 26,
-		Marker:  "export function assertMechanicallyCompleteVisibleText(",
-		Because: "the gate that refuses a truncated or fenced-off revision; Unicode property expressions with no port in this module",
-	}
-	noop := productionInlineResidualPort{
-		Path: "../../../src/shared/review-cycle.ts", Line: 95, Marker: "export function isNoopRevision(",
-		Because: "a revision that changes nothing must be refused, and this is the only definition of 'nothing'",
-	}
-	write := productionInlineResidualPort{
-		Path: "../../internal/store/reviewrevision.go", Line: 301, Marker: "func (r *ReviewRevisions) ReplacePending(",
-		Because: "the write half is already ported, which is why the refusal now rests on the gate alone",
-	}
-	rebuild := productionInlineResidualPort{
-		Path: "../../internal/store/draft_commit_tx.go", Line: 56, Marker: "rebuildBinding has no Go port",
-		Because: "read-recovery's sourceStatus is a rebuild-and-compare of the run's binding, and only the compare half exists",
-	}
-	return []productionInlineResidualSeam{
-		{
-			Operation: productionReviewRevisionRevision,
-			Family:    "review-revision",
-			Missing:   []productionInlineResidualPort{visibility, noop, write},
-			Answer: "serve it once the visible-text and no-op gates have a Go port; the pending-revision write it needs is already " +
-				"internal/store/reviewrevision.go:301, so that is the only thing between this name and the author's chapter",
-		},
-		{
-			Operation: productionReviewRevisionRecovery,
-			Family:    "review-revision",
-			Missing:   []productionInlineResidualPort{rebuild},
-			Answer: "serve it once a lease can rebuild a run's binding and read its settled artifact; a recovery that answered " +
-				"neither would leave canResume unknowable and the renderer would spend another model call",
-		},
-	}
+	return nil
 }

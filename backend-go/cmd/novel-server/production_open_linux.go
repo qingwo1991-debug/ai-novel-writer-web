@@ -858,6 +858,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// transaction, after the run, epoch and root checks the reference makes
 		// (production_project_core_generated_linux.go).
 		func() error { return newProductionProjectCoreGenerated(open.durable).Bind(server) },
+		// review-revision:commit-revision and :read-recovery: the visible-text and
+		// no-op gates turned out to be reproducible from counters the store already
+		// had, and the recovery read is one deferred transaction
+		// (production_review_revision_commit_linux.go).
+		func() error { return newProductionReviewRevisionCommits(open.durable).Bind(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any
