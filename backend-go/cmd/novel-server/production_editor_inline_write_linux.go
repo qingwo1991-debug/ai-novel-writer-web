@@ -276,12 +276,24 @@ func (e *productionEditorInline) begin(ctx context.Context, caller transport.Cal
 func (e *productionEditorInline) reproduce(ctx context.Context, scope generationowner.Scope, db *sql.DB, resolved *productionEditorInlineRun) (*generationowner.Binding, string, error) {
 	// Each refusal names the step symbolically (never the error text), so a CI run
 	// can tell which input to the shared reproduction failed.
+	//
+	// The begin-time lease was minted under the run's own frozen project and epoch
+	// (openEditorInlineRun writes both from the scope it admitted). Resolve and
+	// BindSources must use THAT scope, not the caller's live session lease: a
+	// recovery read of a run frozen under an earlier lease still reproduces, exactly
+	// as the reference proves the live lease at admission and the run's own epoch
+	// separately (main-generation-owner.ts:990-995).
+	runScope := scope
+	if binding := syntheticMap(syntheticMap(resolved.Run)["binding"]); binding != nil {
+		runScope.Project = syntheticString(binding["projectId"])
+		runScope.Epoch = syntheticString(binding["epoch"])
+	}
 	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
 	if leaseID == "" {
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "lease-missing")
 		return nil, "", errors.New(productionEditorInlineLeaseMissing)
 	}
-	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, scope, syntheticGenerationPurpose); err != nil {
+	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, runScope, syntheticGenerationPurpose); err != nil {
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "resolve")
 		return nil, "", err
 	}
@@ -290,7 +302,7 @@ func (e *productionEditorInline) reproduce(ctx context.Context, scope generation
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "rebuild")
 		return nil, "", err
 	}
-	binding, err := e.owner.inner.registry.BindSources(ctx, scope, leaseID, set.Sources, set.Selection)
+	binding, err := e.owner.inner.registry.BindSources(ctx, runScope, leaseID, set.Sources, set.Selection)
 	if err != nil {
 		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "bind")
 		return nil, "", err
