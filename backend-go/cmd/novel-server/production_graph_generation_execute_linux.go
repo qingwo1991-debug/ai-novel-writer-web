@@ -90,7 +90,7 @@ func (g *productionGraphGenerationWrites) Bind(server *transport.Server) error {
 			if err != nil {
 				return nil, err
 			}
-			artifact, err := productionGraphArtifact(request["artifact"])
+			artifact, err := parseProductionGraphArtifact(request["artifact"])
 			if err != nil {
 				return nil, err
 			}
@@ -140,10 +140,10 @@ type productionGraphArtifact struct {
 	TextHash   string
 }
 
-// productionGraphArtifact validates one GraphGenerationArtifact: exactly three
+// parseProductionGraphArtifact validates one GraphGenerationArtifact: exactly three
 // keys, a non-empty id, a non-negative safe-integer revision and a 64-character
 // lowercase hex text hash.
-func productionGraphArtifact(value any) (productionGraphArtifact, error) {
+func parseProductionGraphArtifact(value any) (productionGraphArtifact, error) {
 	invalid := errors.New("GENERATION_GRAPH_ARTIFACT_INVALID")
 	object := syntheticMap(value)
 	if object == nil || len(object) != 3 {
