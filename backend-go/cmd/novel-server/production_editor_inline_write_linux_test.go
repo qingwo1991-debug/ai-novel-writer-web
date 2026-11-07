@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -327,13 +328,19 @@ func testProductionEditorInlineWriteBegin(t *testing.T) {
 	answer := productionEditorInlineWriteAnswer(t, "begin", lane.author, productionEditorInlineBeginName, request, lane.frozen)
 
 	// The four fields of EditorInlineRecovery, in the reference's own terms.
+	view := syntheticMap(answer["view"])
+	handle := syntheticMap(view["handle"])
+	runID := syntheticString(handle["runId"])
+	rootID := syntheticString(handle["rootActionId"])
 	if got := syntheticString(answer["sourceStatus"]); got != "current" {
+		// Log only the key names of the manifest the recovery read parsed back, so a
+		// CI run shows whether modelLeaseId/goOwnerSourceFingerprint survived the write.
+		productionEditorInlineWriteManifestKeys(t, db, runID)
 		t.Fatalf("begin answered sourceStatus %v; a run this lane just froze under the live lease must reproduce its own binding", got)
 	}
 	if got := syntheticString(answer["modelId"]); got != productionTestModelID {
 		t.Fatalf("begin answered modelId %v, want %v", got, productionTestModelID)
 	}
-	view := syntheticMap(answer["view"])
 	if view == nil {
 		t.Fatalf("begin answered no view: %v", answer)
 	}
@@ -343,9 +350,6 @@ func testProductionEditorInlineWriteBegin(t *testing.T) {
 	if got := syntheticString(view["status"]); got != "running" {
 		t.Fatalf("begin projected status %v, want running", got)
 	}
-	handle := syntheticMap(view["handle"])
-	runID := syntheticString(handle["runId"])
-	rootID := syntheticString(handle["rootActionId"])
 	if runID == "" || rootID == "" {
 		t.Fatalf("begin projected no run identity: %v", handle)
 	}
@@ -823,4 +827,36 @@ func productionEditorInlineWriteAttemptPurpose(t *testing.T, db *sql.DB, runID s
 		t.Fatalf("%v", err)
 	}
 	return syntheticString(value["purpose"])
+}
+
+// productionEditorInlineWriteManifestKeys logs the key names (never the values) of
+// the sourceManifest the recovery read parsed back from one run's binding, so a CI
+// failure can show whether modelLeaseId and goOwnerSourceFingerprint survived the
+// write the begin made.
+func productionEditorInlineWriteManifestKeys(t *testing.T, db *sql.DB, runID string) {
+	t.Helper()
+	if db == nil || runID == "" {
+		return
+	}
+	var stored string
+	if err := db.QueryRow(`SELECT binding_json FROM generation_runs WHERE run_id=?`, runID).Scan(&stored); err != nil {
+		t.Logf("begin read back: could not read binding_json for run %v: %v", runID, err)
+		return
+	}
+	raw, ok := productionEditorInlineRawMember([]byte(stored), "sourceManifest")
+	if !ok {
+		t.Logf("begin read back: binding_json holds no sourceManifest")
+		return
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Logf("begin read back: sourceManifest is not an object: %v", err)
+		return
+	}
+	keys := make([]string, 0, len(manifest))
+	for key := range manifest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	t.Logf("begin read back manifest keys: %v", keys)
 }

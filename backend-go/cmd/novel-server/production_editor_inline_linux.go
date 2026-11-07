@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"net/http"
 	"strings"
@@ -437,15 +438,22 @@ func (e *productionEditorInline) cancel(ctx context.Context, caller transport.Ca
 // answers 'conflict' instead of applying text to sources the run never froze.
 func (e *productionEditorInline) sourceStatus(ctx context.Context, scope generationowner.Scope, ledger *store.GenerationLedger, db *sql.DB, resolved *productionEditorInlineRun) string {
 	conflict := "conflict"
-	if e.owner.inner.registry == nil {
+	// Every conflict branch names the step symbolically, never the underlying error,
+	// so a CI run can say which input to reproduce failed without echoing a path or a
+	// provider message.
+	conflictAt := func(step string) string {
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", step)
 		return conflict
+	}
+	if e.owner.inner.registry == nil {
+		return conflictAt("registry-missing")
 	}
 	budget, err := syntheticCall(ctx, ledger, "budget", syntheticString(resolved.Run["rootActionId"]))
 	if err != nil {
-		return conflict
+		return conflictAt("budget-read")
 	}
 	if syntheticString(syntheticMap(syntheticMap(budget)["root"])["status"]) == "cancelled" {
-		return conflict
+		return conflictAt("budget-cancelled")
 	}
 	fingerprint := syntheticString(resolved.Manifest["goOwnerSourceFingerprint"])
 	// A run opened by another build freezes no source fingerprint, so this lane
@@ -453,14 +461,15 @@ func (e *productionEditorInline) sourceStatus(ctx context.Context, scope generat
 	// conflict. A run this lane froze reproduces through the one helper execute
 	// shares, so the two cannot disagree about whether the binding still holds.
 	if fingerprint == "" {
-		return conflict
+		return conflictAt("fingerprint-missing")
 	}
 	_, current, err := e.reproduce(ctx, scope, db, resolved)
 	if err != nil {
+		// reproduce logs its own granular step (lease-missing/resolve/rebuild/bind).
 		return conflict
 	}
 	if current != fingerprint {
-		return conflict
+		return conflictAt("fingerprint-mismatch")
 	}
 	return "current"
 }

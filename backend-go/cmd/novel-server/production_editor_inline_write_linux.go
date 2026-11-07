@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -273,19 +274,25 @@ func (e *productionEditorInline) begin(ctx context.Context, caller transport.Cal
 // this one helper, so a source that reproduces in execute can never read "conflict"
 // here and vice versa.
 func (e *productionEditorInline) reproduce(ctx context.Context, scope generationowner.Scope, db *sql.DB, resolved *productionEditorInlineRun) (*generationowner.Binding, string, error) {
+	// Each refusal names the step symbolically (never the error text), so a CI run
+	// can tell which input to the shared reproduction failed.
 	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
 	if leaseID == "" {
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "lease-missing")
 		return nil, "", errors.New(productionEditorInlineLeaseMissing)
 	}
 	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, scope, syntheticGenerationPurpose); err != nil {
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "resolve")
 		return nil, "", err
 	}
 	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
 	if err != nil {
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "rebuild")
 		return nil, "", err
 	}
 	binding, err := e.owner.inner.registry.BindSources(ctx, scope, leaseID, set.Sources, set.Selection)
 	if err != nil {
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=%s", "bind")
 		return nil, "", err
 	}
 	return binding, binding.Fingerprint(), nil
