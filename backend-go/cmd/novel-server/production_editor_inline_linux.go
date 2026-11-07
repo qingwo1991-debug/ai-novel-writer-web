@@ -447,25 +447,19 @@ func (e *productionEditorInline) sourceStatus(ctx context.Context, scope generat
 	if syntheticString(syntheticMap(syntheticMap(budget)["root"])["status"]) == "cancelled" {
 		return conflict
 	}
-	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
 	fingerprint := syntheticString(resolved.Manifest["goOwnerSourceFingerprint"])
-	// A run opened by another build freezes neither of these, so this lane cannot
-	// claim its sources are unchanged; the reference's own fallback is conflict.
-	if leaseID == "" || fingerprint == "" {
+	// A run opened by another build freezes no source fingerprint, so this lane
+	// cannot claim its sources are unchanged; the reference's own fallback is
+	// conflict. A run this lane froze reproduces through the one helper execute
+	// shares, so the two cannot disagree about whether the binding still holds.
+	if fingerprint == "" {
 		return conflict
 	}
-	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, scope, syntheticGenerationPurpose); err != nil {
-		return conflict
-	}
-	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
+	_, current, err := e.reproduce(ctx, scope, db, resolved)
 	if err != nil {
 		return conflict
 	}
-	binding, err := e.owner.inner.registry.BindSources(ctx, scope, leaseID, set.Sources, set.Selection)
-	if err != nil {
-		return conflict
-	}
-	if binding.Fingerprint() != fingerprint {
+	if current != fingerprint {
 		return conflict
 	}
 	return "current"

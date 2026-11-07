@@ -265,6 +265,32 @@ func (e *productionEditorInline) begin(ctx context.Context, caller transport.Cal
 	return e.recovery(ctx, scope, ledger, db, handle)
 }
 
+// reproduce re-derives the frozen source binding for a resolved run: the exact
+// reproduction syntheticGeneration.Execute uses to gate a dispatch (resolve the
+// begin-time lease, rebuild the frozen sources, bind them and read the digest). It
+// returns the rebuilt binding and its fingerprint, or an error when the lease, the
+// sources or the model no longer reproduce. begin's sourceStatus and execute share
+// this one helper, so a source that reproduces in execute can never read "conflict"
+// here and vice versa.
+func (e *productionEditorInline) reproduce(ctx context.Context, scope generationowner.Scope, db *sql.DB, resolved *productionEditorInlineRun) (*generationowner.Binding, string, error) {
+	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
+	if leaseID == "" {
+		return nil, "", errors.New(productionEditorInlineLeaseMissing)
+	}
+	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, scope, syntheticGenerationPurpose); err != nil {
+		return nil, "", err
+	}
+	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
+	if err != nil {
+		return nil, "", err
+	}
+	binding, err := e.owner.inner.registry.BindSources(ctx, scope, leaseID, set.Sources, set.Selection)
+	if err != nil {
+		return nil, "", err
+	}
+	return binding, binding.Fingerprint(), nil
+}
+
 // execute answers editor-inline:execute: the one dispatch of the frozen task, then
 // the settled attempt projected as the browser's MainGenerationExecuteReceipt.
 func (e *productionEditorInline) execute(ctx context.Context, caller transport.Caller, expected map[string]any, request map[string]any) (any, error) {
@@ -304,24 +330,14 @@ func (e *productionEditorInline) execute(ctx context.Context, caller transport.C
 	if err != nil {
 		return nil, err
 	}
-	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
-	if leaseID == "" {
-		return nil, errors.New(productionEditorInlineLeaseMissing)
-	}
-	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, scope, syntheticGenerationPurpose); err != nil {
-		return nil, err
-	}
-	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
+	binding, fingerprint, err := e.reproduce(ctx, scope, db, resolved)
 	if err != nil {
 		return nil, err
 	}
-	binding, err := e.owner.inner.registry.BindSources(ctx, scope, leaseID, set.Sources, set.Selection)
-	if err != nil {
-		return nil, err
-	}
-	if binding.Fingerprint() != syntheticString(resolved.Manifest["goOwnerSourceFingerprint"]) {
+	if fingerprint != syntheticString(resolved.Manifest["goOwnerSourceFingerprint"]) {
 		return nil, errors.New(productionEditorInlineSourceChanged)
 	}
+	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
 	frozen, err := e.owner.inner.executor.Prepare(ctx, scope, leaseID, task, syntheticRootOutputTokens, binding)
 	if err != nil {
 		return nil, err
