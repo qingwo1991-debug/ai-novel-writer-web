@@ -214,6 +214,14 @@ func (r *productionImportRunResiduals) Bind(server *transport.Server) error {
 			return err
 		}
 	}
+	// The three names this family still refuses have their own seam file. Its
+	// binder installs nothing on the wire, but it validates the seam at startup
+	// and refuses a name that a sibling has already bound, so the refusal cannot
+	// silently become a stale note. The served count is unchanged: no name here
+	// is bound.
+	if err := newProductionImportRunReceipts(r.durable).Bind(server); err != nil {
+		return err
+	}
 	return nil
 }
 
