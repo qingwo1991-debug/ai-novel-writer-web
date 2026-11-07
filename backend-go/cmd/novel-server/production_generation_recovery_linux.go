@@ -125,6 +125,19 @@ import (
 // the tests prove that against a live lease holding a genuinely interrupted run, a
 // completed one and a real failed-attempt id, so the refusal cannot be explained
 // away as "there was nothing to answer".
+//
+// # Re-check after the graph/ledger work (this session)
+//
+// graph-generation:execute/:confirm, generation:compose-visible and the ledger
+// effect writer (recordEffect) landed after the refusal above. None of them
+// ports readPlanningContinuation, readBlueprintAuthorEdit or rebuildBinding, so
+// find-blueprint-recovery's writeState and list-recovery's planning/drafts
+// buckets are still unbuildable. The editors and batches buckets are served by
+// sibling names, but the recovery binder is wired with only the server
+// (production_open_linux.go:733) and cannot reach the owner those buckets need;
+// the bucket table in production_generation_recovery_reads_linux.go pins each
+// bucket, served or refused, so the two names stay 501 for a reason that is
+// still true.
 
 const (
 	productionGenerationRecoveryList      = "generation:list-recovery"
@@ -326,6 +339,12 @@ func bindProductionGenerationRecovery(server *transport.Server) error {
 		if !found || len(seam.Missing) == 0 {
 			return errors.New("PRODUCTION_GENERATION_RECOVERY_SEAM_INCOMPLETE")
 		}
+	}
+	// The bucket table of list-recovery is verified against the same lane: the
+	// two served buckets stay served by their sibling names and the two refused
+	// names stay unbound (production_generation_recovery_reads_linux.go).
+	if err := bindProductionGenerationRecoveryReads(server); err != nil {
+		return err
 	}
 	// Nothing is bound: the three refused names keep failing closed at
 	// GO_OPERATION_NOT_MIGRATED, and the served one keeps the handler the
