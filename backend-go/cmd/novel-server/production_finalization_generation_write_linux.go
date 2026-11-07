@@ -184,7 +184,7 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 				// asset is the same gap one step later.
 				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
 				// A run without a re-provable task is refused by the family's own read.
-				{Path: "../../electron/services/finalization-generation.ts", Line: 49, Marker: productionFinalizationGenerationWriteTaskInvalid},
+				{Path: "../../../electron/services/finalization-generation.ts", Line: 49, Marker: productionFinalizationGenerationWriteTaskInvalid},
 				// And there is no row for it to be read from.
 				{Path: "synthetic_graph_linux.go", Line: 156, Marker: productionFinalizationGenerationWriteContextInvalid},
 			},
@@ -195,7 +195,7 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 			Code:      productionFinalizationGenerationWriteArtifactInvalid,
 			Missing: []productionFinalizationLine{
 				// No attempt of a run this lane can open ever settles an artifact.
-				{Path: "../../electron/services/finalization-generation.ts", Line: 55, Marker: productionFinalizationGenerationWriteArtifactInvalid},
+				{Path: "../../../electron/services/finalization-generation.ts", Line: 55, Marker: productionFinalizationGenerationWriteArtifactInvalid},
 				// The domain writes the effect would have to be atomic with.
 				{Path: "../../internal/transport/summary.go", Line: 45, Marker: "db:continuity-save-finalized"},
 				{Path: "../../internal/transport/blueprints.go", Line: 26, Marker: "db:blueprint-update-notes"},
