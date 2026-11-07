@@ -33,6 +33,8 @@ import argparse
 import hashlib
 import http.cookiejar
 import json
+import re
+import unicodedata
 import os
 import shutil
 import subprocess
@@ -247,6 +249,166 @@ class Browser(object):
         return answer.get("result")
 
 
+
+
+HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF),
+              (0x20000, 0x2A6DF), (0x2A700, 0x2EBEF), (0x2F800, 0x2FA1F),
+              (0x30000, 0x323AF))
+LETTER = r"[^\W\d_]"
+WORD_PATTERN = re.compile(LETTER + LETTER + r"*(?:['\u2019]" + LETTER + LETTER + r"*)*")
+# JavaScript's \s set, which the reference removes with the punctuation classes.
+SPACE_PUNCT_SYMBOL = re.compile(
+    "[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
+    "[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*"
+    "|[{}]".format(
+        "".join("\\u%04x" % code for code in ()) or "",
+        ""),
+    re.UNICODE) if False else None
+
+
+def is_han(character):
+    code = ord(character)
+    return any(low <= code <= high for low, high in HAN_RANGES)
+
+
+def is_space_punct_symbol(character):
+    """Whitespace, punctuation or symbol, the set draft-units.ts removes."""
+    import unicodedata
+    if character.isspace():
+        return True
+    category = unicodedata.category(character)
+    return category.startswith("P") or category.startswith("S") or character == "\ufeff"
+
+
+def count_draft_units(text):
+    """internal/draftalg/draftunits.go:222-234, the visible prose unit.
+
+    The reference sends this number with every imported chapter and the store
+    refuses a chapter whose claimed count differs (finalized_draft_import.go:358),
+    so the rehearsal has to compute it the same way the renderer does: Han code
+    points count one each, words in any script count one, and every remaining
+    visible code point keeps the historical per-code-point behaviour.
+    """
+    import unicodedata
+    normalized = unicodedata.normalize("NFC", text)
+    han = sum(1 for character in normalized if is_han(character))
+    without_han = "".join(" " if is_han(character) else character for character in normalized)
+    words = len(WORD_PATTERN.findall(without_han))
+    remainder = WORD_PATTERN.sub("", without_han)
+    remainder = "".join(character for character in remainder if not is_space_punct_symbol(character))
+    return han + words + len(remainder)
+
+
+def count_draft_units_reference(text):
+    """A slow, literal transcription used by the rehearsal's own self-check."""
+    import unicodedata
+    normalized = unicodedata.normalize("NFC", text)
+    han = 0
+    without_han = []
+    for character in normalized:
+        if is_han(character):
+            han += 1
+            without_han.append(" ")
+        else:
+            without_han.append(character)
+    joined = "".join(without_han)
+    words = len(WORD_PATTERN.findall(joined))
+    remainder = WORD_PATTERN.sub("", joined)
+    visible = [character for character in remainder if not is_space_punct_symbol(character)]
+    return han + words + len(visible)
+
+
+SYNTHETIC_SUBJECTS = [
+    "雨夜", "旧码头", "停电的机房", "第七次重启", "半页手稿", "远处的信号塔",
+    "空白的日志", "凌晨三点的告警", "备份磁带", "无人接听", "硬盘灯", "换了三次的保险丝",
+]
+SYNTHETIC_VERBS = [
+    "把手电照向", "在纸上描出", "反复核对", "把名字写进", "数着", "听见",
+    "拆开", "封好", "念出", "绕过", "记下", "擦掉",
+]
+SYNTHETIC_OBJECTS = [
+    "走廊尽头的门", "那一行被划掉的时间", "服务器机柜的编号", "妹妹留下的便签",
+    "监控里缺失的三十秒", "收音机里的杂音", "地图上标红的街区", "第 12 号备份",
+]
+
+
+def synthetic_chapters(count):
+    """Deterministic synthetic manuscript: no author text, no real data."""
+    chapters = []
+    for index in range(1, count + 1):
+        subject = SYNTHETIC_SUBJECTS[(index - 1) % len(SYNTHETIC_SUBJECTS)]
+        verb = SYNTHETIC_VERBS[(index - 1) % len(SYNTHETIC_VERBS)]
+        thing = SYNTHETIC_OBJECTS[(index - 1) % len(SYNTHETIC_OBJECTS)]
+        body = ["第%d章 %s" % (index, subject), ""]
+        for paragraph in range(6):
+            body.append(
+                "他%s%s，第%d次确认%s还在原处。窗外的%s没有停，机房的风扇声像一条"
+                "没有尽头的河。他把这一页抄进本子，页码写成 %d，笔画压得很重，"
+                "像是怕重启以后连这行字也一起消失。" % (
+                    verb, thing, paragraph + 1, "电源指示灯", subject, index * 10 + paragraph))
+            body.append("")
+        content = "\n".join(body).strip() + "\n"
+        chapters.append({
+            "chapterNumber": index,
+            "title": subject,
+            "content": content,
+            # The store refuses a chapter whose claimed count is not the visible
+            # prose count of the bytes it is about to freeze
+            # (internal/store/finalized_draft_import.go:358), so the rehearsal
+            # computes it exactly as the renderer does.
+            "wordCount": count_draft_units(content),
+        })
+    return chapters
+
+
+def import_chapters(browser, context, count, scratch):
+    """Send a finished manuscript batch the way the renderer does."""
+    path = context["projectPath"]
+    chapters = synthetic_chapters(count)
+    total = sum(len(chapter["content"]) for chapter in chapters)
+    step("import %d finished chapters (%d characters, synthetic)" % (count, total))
+    started = time.time()
+    answer = browser.operation("db:draft-import-finalized-batch", [{
+        "operationId": "rehearsal-import-" + time.strftime("%Y%m%dT%H%M%S"),
+        "chapters": chapters,
+    }, path, context], allow_refusal=True)
+    elapsed = time.time() - started
+    if "error" in answer:
+        fail("db:draft-import-finalized-batch refused: " + json.dumps(answer["error"])[:500])
+    result = answer.get("result") or {}
+    print("   committed %d chapters in %.1fs; answer keys: %s" % (
+        count, elapsed, ", ".join(sorted(result)) or "(none)"))
+    # db:draft-list is per-chapter (its first argument is the chapter number), so the
+    # whole-manuscript assertion is db:draft-list-all, and the max-finalized read is
+    # what the renderer uses to decide where the book ends.
+    drafts = browser.result("db:draft-list-all", [path, context])
+    if not isinstance(drafts, list):
+        fail("db:draft-list-all answered %s after the batch import" % (type(drafts).__name__,))
+    numbers = sorted(int(draft.get("chapterNumber", 0)) for draft in drafts)
+    if len(numbers) != count or numbers[0] != 1 or numbers[-1] != count:
+        fail("the import left %d chapters numbered %s" % (len(numbers), numbers[:5]))
+    finalized = [draft for draft in drafts if draft.get("status") == "finalized"]
+    if len(finalized) != count:
+        fail("%d of %d imported chapters are not finalized" % (count - len(finalized), count))
+    highest = browser.result("db:draft-get-max-finalized-chapter", [path, context])
+    # The read answers the number itself (the reference returns -1 or 0 when nothing
+    # is finalized), so both a bare number and an object with a chapter member count.
+    if isinstance(highest, dict):
+        highest = highest.get("chapterNumber", highest.get("chapter"))
+    if int(highest if isinstance(highest, (int, float)) else -1) != count:
+        fail("db:draft-get-max-finalized-chapter answered %r, want %d" % (highest, count))
+    print("   %d chapters finalized, highest finalized chapter is %d" % (count, count))
+    for probe in (1, count):
+        full = browser.result("db:draft-get-full", [probe, path, context])
+        expected = chapters[probe - 1]["content"]
+        if not isinstance(full, dict) or full.get("content") != expected:
+            fail("chapter %d did not read back as imported" % (probe,))
+        if full.get("status") not in ("draft", "finalized"):
+            fail("chapter %d came back with status %r" % (probe, full.get("status")))
+    print("   chapters 1 and %d read back byte for byte" % (count,))
+    return chapters
+
+
 def discover_projects(browser):
     step("discover the admitted projects (GET /api/library)")
     status, body, _ = browser.request("GET", "/api/library")
@@ -433,8 +595,8 @@ def zip_entries(path):
         return sorted(archive.namelist())
 
 
-def check_copy_untouched(before, after, scratch, allowed_new):
-    step("prove the copy of the author data is unchanged by the reads")
+def check_copy_untouched(before, after, scratch, allowed_new, allowed_changed=()):
+    step("prove the copy changed only where the rehearsal asked it to")
     changed, added, removed = [], [], []
     for relative, digest in before.items():
         if relative not in after:
@@ -447,10 +609,13 @@ def check_copy_untouched(before, after, scratch, allowed_new):
     unexpected_added = [name for name in added if not any(name.startswith(prefix) for prefix in allowed_new)]
     if removed:
         fail("the reads removed %d file(s): %s" % (len(removed), removed[:5]))
+    unexpected_changed = [name for name in changed
+                          if not any(name.endswith(suffix) for suffix in allowed_changed)]
     if changed:
-        # A served write is allowed to change the database it wrote; a read-only
-        # rehearsal must change nothing, so this is reported, never hidden.
         print("   %d file(s) changed: %s" % (len(changed), changed[:5]))
+    if unexpected_changed:
+        fail("the rehearsal changed %d file(s) it did not ask to change: %s" % (
+            len(unexpected_changed), unexpected_changed[:5]))
     if unexpected_added:
         print("   %d new file(s): %s" % (len(unexpected_added), unexpected_added[:5]))
     print("   %d file(s) unchanged, %d new, %d changed" % (
@@ -531,6 +696,8 @@ def main():
     parser.add_argument("--port", type=int, default=16099,
                         help="loopback port the rehearsal container publishes (default: %(default)s)")
     parser.add_argument("--down", action="store_true", help="remove the container when done")
+    parser.add_argument("--import-chapters", type=int, default=0,
+                        help="also import this many synthetic finished chapters through db:draft-import-finalized-batch")
     parser.add_argument("--browser-only", action="store_true",
                         help="start the container and the browser shim without driving the API journey, so a human can open the project themselves")
     parser.add_argument("--browser-proxy", action="store_true",
@@ -583,11 +750,23 @@ def main():
         findings = read_surface(browser, context)
         for name, verdict, detail in findings:
             print("   %-28s %-9s %s" % (name, verdict, detail))
+        if arguments.import_chapters:
+            import_chapters(browser, context, arguments.import_chapters, scratch)
         archive, receipt = export_archive(browser, context, scratch)
         if archive:
             entries = zip_entries(archive)
             print("   archive holds %d entries: %s" % (len(entries), ", ".join(entries[:6])))
-        changed, added = check_copy_untouched(before, tree_digest(data), scratch, [".ai-novel/tmp", "exports/"])
+        # A rehearsal that imports a manuscript writes that project's database and
+        # its SQLite sidecars, and nothing else: anything beyond those three names is
+        # a write nobody asked for.
+        written = ()
+        if arguments.import_chapters:
+            written = (".ai-novel/project.db", ".ai-novel/project.db-wal", ".ai-novel/project.db-shm")
+        else:
+            written = ()
+        changed, added = check_copy_untouched(
+            before, tree_digest(data), scratch,
+            [".ai-novel/tmp", "exports/"], written)
         refused = [name for name, verdict, _ in findings if verdict == "refused"]
         print()
         print("REHEARSAL SUMMARY")
