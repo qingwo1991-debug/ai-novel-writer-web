@@ -108,7 +108,7 @@ package main
 // keeps a row only when its provenance carries a source (:136-138), and of the four
 // writers of character_identity_proposals
 //
-//	internal/store/dbmaintenance.go:669            import, with "provenance": nil (:655)
+//	internal/store/dbmaintenance.go:671            import, with "provenance": nil (:657)
 //	internal/store/finalization_outbox.go:342      the fcs: freeze receipt, not a proposal
 //	production_character_proposals_linux.go:691    generation/architecture
 //	internal/admission/upgrade_v2.go:463           the M02 schema upgrade, which copies
@@ -167,7 +167,7 @@ func productionCharacterProposalPendingProofSeams() []productionCharacterProposa
 		Marker: "productionCharacterProposalSourceProofUnavailable",
 	}
 	writer := productionCharacterProposalSeamLine{
-		Path: "../../internal/store/dbmaintenance.go", Line: 655,
+		Path: "../../internal/store/dbmaintenance.go", Line: 657,
 		Marker: `"provenance": nil`,
 	}
 	return []productionCharacterProposalSeam{
@@ -213,9 +213,9 @@ type productionCharacterProposalPendingEnvelopeWriter struct {
 func productionCharacterProposalPendingEnvelopeWriters() []productionCharacterProposalPendingEnvelopeWriter {
 	return []productionCharacterProposalPendingEnvelopeWriter{
 		{
-			Path: "../../internal/store/dbmaintenance.go", Line: 669,
+			Path: "../../internal/store/dbmaintenance.go", Line: 671,
 			Marker: "INSERT INTO character_identity_proposals",
-			Kind:   "import", Provenance: "nil", ProvenanceLine: 655,
+			Kind:   "import", Provenance: "nil", ProvenanceLine: 657,
 		},
 		{
 			Path: "../../internal/store/finalization_outbox.go", Line: 342,

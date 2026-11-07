@@ -473,6 +473,42 @@ func productionDBMaintenanceImportRequest(operationID string, rosterRevision int
 //
 // Calling it twice is the same success, because clearAll has no receipt and no
 // return value (blueprint-repository.ts:806-811): the second call deletes nothing.
+// TestProductionDBMaintenanceBlueprintClearRefusesWhileARunIsOpen is the guard this
+// lane adds to the reference's clearAll: the reference retires the recovery run inside
+// the transaction (blueprint-repository.ts:613-619) and this lane has no port for that
+// classifier, so a live directory run could put back every row the clear removed.
+//
+// The running row is seeded BEFORE the lane opens the project: the write permit pins
+// the database's content identity at admit time, so a row inserted afterwards is a
+// different refusal (AUTHOR_WRITE_STALE) and would test the permit instead of the guard.
+func TestProductionDBMaintenanceBlueprintClearRefusesWhileARunIsOpen(t *testing.T) {
+	root, projectPath, database, contract := productionDBMaintenanceRoot(t)
+	productionDBMaintenanceExec(t, productionDBMaintenanceOpen(t, database, "mode=rw"), []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json, revision)
+ VALUES ('root-running-1', 'idem-running-1', '{}', '{}', 0)`, nil},
+		{`INSERT INTO generation_runs (run_id, root_action_id, binding_json, status, created_at_ms, open_key)
+ VALUES ('run-running-1', 'root-running-1', '{"sourceManifest":{"operation":"chapter-blueprint-directory"}}',
+ 'running', 1700000000001, 'open-running-1')`, nil},
+	})
+	server := productionDBMaintenanceLane(t, root, contract)
+	author, frozen := productionDBMaintenanceAdmit(t, server, projectPath)
+	if count := productionDBMaintenanceCount(t, database, "blueprints"); count != 2 {
+		t.Fatalf("the fixture carries %d blueprints, want 2", count)
+	}
+	before := productionDBMaintenanceDigest(t, database)
+	if code := productionDBMaintenanceRefusal(t, author, productionDBMaintenanceBlueprintClearName,
+		[]any{projectPath, frozen}); code != "BLUEPRINT_CLEAR_RUN_IN_FLIGHT" {
+		t.Fatalf("the in-flight-run clear refused with %v, want BLUEPRINT_CLEAR_RUN_IN_FLIGHT", code)
+	}
+	productionDBMaintenanceUnchanged(t, database, before, "the in-flight-run blueprint clear")
+	if count := productionDBMaintenanceCount(t, database, "blueprints"); count != 2 {
+		t.Fatalf("the refused clear removed blueprints: %d left, want 2", count)
+	}
+}
+
 func TestProductionDBMaintenanceBlueprintClearAllKeepsEveryDraft(t *testing.T) {
 	root, projectPath, database, contract := productionDBMaintenanceRoot(t)
 	server := productionDBMaintenanceLane(t, root, contract)
@@ -485,34 +521,6 @@ func TestProductionDBMaintenanceBlueprintClearAllKeepsEveryDraft(t *testing.T) {
 		productionDBMaintenanceCount(t, database, "blueprint_character_sync_operations") != 2 {
 		t.Fatal("fixture does not carry two rows in each blueprint table")
 	}
-
-	// A run that is still open is refused by name: this lane cannot retire it inside
-	// the transaction the reference retires it in (blueprint-repository.ts:613-619),
-	// so clearing under a live directory run would let that run put the rows back.
-	productionDBMaintenanceExec(t, productionDBMaintenanceOpen(t, database, "mode=rw"), []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json, revision)
- VALUES ('root-running-1', 'idem-running-1', '{}', '{}', 0)`, nil},
-		{`INSERT INTO generation_runs (run_id, root_action_id, binding_json, status, created_at_ms, open_key)
- VALUES ('run-running-1', 'root-running-1', '{"sourceManifest":{"operation":"chapter-blueprint-directory"}}',
- 'running', 1700000000001, 'open-running-1')`, nil},
-	})
-	inFlight := productionDBMaintenanceDigest(t, database)
-	if code := productionDBMaintenanceRefusal(t, author, productionDBMaintenanceBlueprintClearName,
-		[]any{projectPath, frozen}); code != "BLUEPRINT_CLEAR_RUN_IN_FLIGHT" {
-		t.Fatalf("the in-flight-run clear refused with %v, want BLUEPRINT_CLEAR_RUN_IN_FLIGHT", code)
-	}
-	productionDBMaintenanceUnchanged(t, database, inFlight, "the in-flight-run blueprint clear")
-	if count := productionDBMaintenanceCount(t, database, "blueprints"); count != 2 {
-		t.Fatalf("the refused in-flight-run clear removed blueprints: %d left, want 2", count)
-	}
-	// Finish the run, so the success arm below runs with no live writer.
-	productionDBMaintenanceExec(t, productionDBMaintenanceOpen(t, database, "mode=rw"), []struct {
-		query string
-		args  []any
-	}{{`UPDATE generation_runs SET status='completed' WHERE run_id='run-running-1'`, nil}})
 
 	before := productionDBMaintenanceDigest(t, database)
 	response := author.call(t, productionDBMaintenanceBlueprintClearName, []any{projectPath, frozen})
