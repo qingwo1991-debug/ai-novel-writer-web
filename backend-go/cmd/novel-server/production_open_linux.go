@@ -854,6 +854,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// store and each proves what it preserved, not only what it cleared
 		// (production_db_maintenance_linux.go, internal/store/dbmaintenance.go).
 		func() error { return newProductionDBMaintenance(open.durable).Bind(server) },
+		// project-core-commit-generated writes the allowlisted core columns in one
+		// transaction, after the run, epoch and root checks the reference makes
+		// (production_project_core_generated_linux.go).
+		func() error { return newProductionProjectCoreGenerated(open.durable).Bind(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any

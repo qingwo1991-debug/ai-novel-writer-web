@@ -151,14 +151,20 @@ func projectCoreBinding(value any) (any, error) {
 	}
 }
 
-// Update ignores unknown keys and only updates allowlisted fields. Presence of
-// charactersArch (including an explicit null) rejects the entire operation.
-func (r *ProjectCore) Update(ctx context.Context, data map[string]any) error {
-	if r == nil || r.db == nil {
-		return ErrProjectNotOpen
-	}
+// projectCoreUpdateStatement builds the one UPDATE ProjectCore.Update performs:
+// a dynamic SET over the allowlisted columns the caller named, `updated_at =
+// datetime('now')`, and `WHERE id = ?` with 'main' (project-core-repository.ts
+// :204, :208). It answers the empty string for a request that named no
+// allowlisted field, because the reference returns at :201 before appending
+// updated_at - such a call writes nothing at all, it does not write a timestamp.
+//
+// The builder is apart from Update because db:project-core-commit-generated runs
+// the same statement on a reserved connection inside its own immediate
+// transaction (projectcore_generated_tx.go). One builder means the two entry
+// points to project_core cannot drift into writing different columns.
+func projectCoreUpdateStatement(data map[string]any) (string, []any, error) {
 	if _, present := data["charactersArch"]; present {
-		return ErrProjectCoreCharactersArchReadOnly
+		return "", nil, ErrProjectCoreCharactersArchReadOnly
 	}
 	clauses := make([]string, 0, len(projectCoreFields))
 	values := make([]any, 0, len(projectCoreFields))
@@ -175,17 +181,30 @@ func (r *ProjectCore) Update(ctx context.Context, data map[string]any) error {
 		}
 		binding, err := projectCoreBinding(value)
 		if err != nil {
-			return err
+			return "", nil, err
 		}
 		clauses = append(clauses, field.column+" = ?")
 		values = append(values, binding)
 	}
 	if len(clauses) == 0 {
-		return nil
+		return "", nil, nil
 	}
 	clauses = append(clauses, "updated_at = datetime('now')")
 	values = append(values, "main")
-	_, err := r.db.ExecContext(ctx, "UPDATE project_core SET "+strings.Join(clauses, ", ")+" WHERE id = ?", values...)
+	return "UPDATE project_core SET " + strings.Join(clauses, ", ") + " WHERE id = ?", values, nil
+}
+
+// Update ignores unknown keys and only updates allowlisted fields. Presence of
+// charactersArch (including an explicit null) rejects the entire operation.
+func (r *ProjectCore) Update(ctx context.Context, data map[string]any) error {
+	if r == nil || r.db == nil {
+		return ErrProjectNotOpen
+	}
+	statement, values, err := projectCoreUpdateStatement(data)
+	if err != nil || statement == "" {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, statement, values...)
 	return err
 }
 

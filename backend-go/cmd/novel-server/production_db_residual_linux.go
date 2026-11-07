@@ -8,7 +8,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the db family's residual: the seven inventoried `db:*` names this
+// This file is the db family's residual: the six inventoried `db:*` names this
 // lane still answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
 // (internal/transport/server.go:116) instead of serving, and the exact code that
 // has to move before any of them can be installed as a handler.
@@ -19,14 +19,14 @@ import (
 // every binder the lane really calls - the `for _, bind := range []func() error{`
 // lists (production_open_linux.go:528, :544, :698) and the named binders between
 // them, plus each table those binders iterate - puts 93 of the 103 in the served
-// set and leaves these 10:
+// set and leaves these ten, of which four have been served since:
 //
 //	db:blueprint-character-sync-complete      db:import-run-prepare-inspection
 //	db:blueprint-update-notes                 db:plot-tree-save
-//	db:import-run-effect-receipt-commit       db:project-core-commit-generated
+//	db:import-run-effect-receipt-commit
 //	db:import-run-effect-receipt-prepare
 //
-// Three names left this table when they were served, and their rows are worth
+// Four names left this table when they were served, and their rows are worth
 // remembering because the reason they were refused was wrong:
 //
 //   - db:blueprint-character-sync-get and -list-pending were refused because
@@ -41,25 +41,30 @@ import (
 //     (internal/store/reviewcycle_read_tx.go) and the name is served by
 //     production_db_cycle_reads_linux.go. The reference's planRecheck classifier
 //     is still unported, which can add a cycle to the answer but never drop one.
+//   - db:project-core-commit-generated was refused because "the child-effect stamp
+//     it must commit with has no writer or shared transaction". The transaction
+//     half was wrong: internal/store/dbmaintenance.go:126 is one reserved
+//     connection, BEGIN IMMEDIATE and a bounded rollback, and the new store port
+//     reuses it. The stamp half was a no-op for every run this lane can begin -
+//     the reference's own withChildEffect is `if (!id) return effect()`
+//     (electron/services/agent-generation.ts:349) for a child with no
+//     agentWorkflowRegistrationId, and generation:begin cannot mint that key. It
+//     is served by production_project_core_generated_linux.go.
 //
 // The complement is asserted, not assumed: TestProductionLaneDBResidualIsTheUnservedSlice
 // takes the bound set from the finished lane (transport.Server.BoundOperations),
 // takes the `db:` names from the registry the same lane loaded, and requires
 // bound+residual to cover the slice exactly, in both directions.
 //
-// # Why none of the seven is bound here
+// # Why none of the six is bound here
 //
 // Two of them are refused by the reference itself and always will be:
 // db:blueprint-update-notes and db:plot-tree-save are the original controller's
 // own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
 // serving them would be a divergence, not a migration.
 //
-// The other five each have a narrower reason of its own:
+// The other four each have a narrower reason of its own:
 //
-//   - db:blueprint-clear-all and db:project-clear-generated-data: destructive
-//     boundaries over several tables with no store function behind either, and no
-//     single transaction handle to carry them (the only BEGIN IMMEDIATE handle is
-//     unexported, internal/store/reviewrevision.go:41).
 //   - db:blueprint-character-sync-complete: needs the authoritative-roster proof
 //     (electron/repositories/blueprint-repository.ts:420) and a store receipt
 //     writer (:764) that do not exist here.
@@ -77,9 +82,6 @@ import (
 //   - db:import-run-prepare-inspection: the inspection CAS never appears on the
 //     wire (internal/importsource/inspection.go:165), so an id minted by this
 //     lane could never reach BeginParsing.
-//   - db:import-global-facts-commit and db:project-core-commit-generated: the
-//     first has no store port at all, and the second must stamp a child effect and
-//     write the core row in one transaction that this lane has no handle for.
 //
 // # Binder
 //
@@ -105,7 +107,6 @@ const (
 	productionDBResidualPrepareInspection     = "db:import-run-prepare-inspection"
 	productionDBResidualPlotTreeSave          = "db:plot-tree-save"
 	productionDBResidualProjectClearGenerated = "db:project-clear-generated-data"
-	productionDBResidualProjectCoreCommitGen  = "db:project-core-commit-generated"
 	productionDBResidualInventoryPrefix       = "db:"
 )
 
@@ -233,25 +234,11 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 				productionDBResidualLineOf("../../internal/transport/plottree_read.go", 16, "db:plot-tree-save stays unbound because the original refuses it"),
 			},
 		},
-		{
-			Operation: productionDBResidualProjectCoreCommitGen,
-			Arity:     3,
-			PathIndex: 1,
-			Gate:      "GENERATION_OWNER_REQUIRED",
-			Port:      "store.ProjectCore.Update exists, but the child-effect stamp it must commit with has no writer or shared transaction",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 204, "database.transaction(() => withGenerationAgentChildEffect(request.generationRunHandle, () => {"),
-				productionDBResidualLineOf("../../../electron/controllers/generation-controller.ts", 67, "export function withGenerationAgentChildEffect"),
-				// The one store write the transaction would carry, on its own
-				// transaction handle: there is no seam to join a second write to.
-				productionDBResidualLineOf("../../internal/store/projectcore.go", 156, "func (r *ProjectCore) Update(ctx context.Context, data map[string]any) error"),
-			},
-		},
 	}
 }
 
-// productionDBResidualOperations is the family's thirteen names in the order the
-// seam table lists them, so the binder and the test walk one list.
+// productionDBResidualOperations is the family's six residual names in the order
+// the seam table lists them, so the binder and the test walk one list.
 func productionDBResidualOperations() []string {
 	return []string{
 		productionDBResidualBlueprintSyncComplete,
@@ -260,7 +247,6 @@ func productionDBResidualOperations() []string {
 		productionDBResidualReceiptCommit,
 		productionDBResidualPrepareInspection,
 		productionDBResidualPlotTreeSave,
-		productionDBResidualProjectCoreCommitGen,
 	}
 }
 
