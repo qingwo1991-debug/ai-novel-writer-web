@@ -69,7 +69,8 @@ const (
 	// for the two seeded cycles; this lane never reads it, and a value that is not
 	// a digest would make the seed fail rather than the test.
 	productionReviewRevisionLaneFindingHash = "1111111111111111111111111111111111111111111111111111111111111111"
-	
+)
+
 // productionReviewRevisionLane is one disposable admitted project, the
 // transport server this file assembled, and the author session over it.
 type productionReviewRevisionLane struct {
