@@ -33,6 +33,27 @@
    `internal/generationowner/binding.go:35` 的 prompt key 正则拒绝 `graph-plan` 而拒绝每一次真实调用。
    计数只能证明装了 handler；成功路径必须有测试跑过一遍。
 
+## 一之三、演练结果（用 CI 镜像 + 作者数据副本）
+
+`scripts/go-cutover-rehearsal.py` 用 CI 产出的镜像跑真实容器，数据目录是**副本**，
+按浏览器同样的协议（X-Novel-User + cookie 会话 + CSRF）驱动，结果：
+
+- `/healthz` → `{ok:true, runtime:"go", electron:false}`；不带受信代理头时 `/api/bootstrap` 401；
+  首页返回构建好的 React 外壳（`id="root"`）。
+- `project:open` 成功，11 个读操作全部有答案（名册、草稿列表、模型配置等）。
+- `dialog:select-project-archive-export` 发 grant → `project:archive-export` →
+  SSE `browser:download-ready` → 下载 729KB 归档（manifest、freeze、project.db、authority）。
+- 副本 **0 个文件被改动**，只有导出产生的那 1 个新文件。
+
+演练中查出并修掉的两个真问题：
+
+1. **归档导出对每一次真实调用都拒绝**：暂存写的是 `snapshot.db`，导出却打开 `project.db`，
+   SQLite 顺手建了个空库，schema 校验读到 `user_version=0` → `PORTABLE_CONTEXT_INVALID`。
+   已改用 `productionCloudBackupStagedDatabase`。
+2. **空的 `.ai-novel/lancedb` 目录挡住了整本书的写入准入**：旧网关清空知识库后会留下空目录，
+   准入把"目录存在"当成"有知识资产"，于是 `AUTHOR_WRITE_KNOWLEDGE_UNPROVED`。
+   现在空目录不算资产（条目仍进 inventory，写入 diff 不受影响），目录里有文件仍然拒绝。
+
 ## 一之二、验收门槛（两段，别混）
 
 | 门槛 | 内容 | 现在还差 |
