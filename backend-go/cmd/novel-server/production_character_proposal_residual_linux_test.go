@@ -7,15 +7,39 @@ import (
 	"testing"
 )
 
-// TestProductionCharacterProposalResidualVerdict proves the re-examination recorded
-// in production_character_proposal_residual_linux.go is still true, in the only way
-// a comment cannot: the transaction handle that record cites is still unexported,
-// the two halves of the family still take a database rather than a transaction, the
-// twin that would fix it still exists for a neighbouring read but not for this one,
-// and the family's own seam table still names the same two operations. The line
-// reader is the one the sibling residual record defines, so both records are read
-// the same way.
+// This file proves the re-examined record in
+// production_character_proposal_residual_linux.go: the transactional claim the family
+// used to refuse with is retired, the lines that retire it are still there, and the
+// two names are still the family's refused ones. The line reader is the one the
+// record's own test defines
+// (production_character_proposal_pending_linux_test.go), so both notes are read the
+// same way: a marker must be on the cited line, not merely somewhere in the file.
 func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
+	// The verdict is the one sentence this record exists to keep true, so it has to
+	// name the retraction and the surviving blocker. A verdict that named neither
+	// would be the prose assertion this record was rewritten to replace.
+	verdict := productionCharacterProposalResidualVerdict
+	for _, want := range []string{
+		"internal/store/summary.go:681",
+		"finalized-character-generation-proof.ts:13",
+		"importCharacterEntriesFromArtifacts",
+	} {
+		if !strings.Contains(verdict, want) {
+			t.Fatalf("the verdict does not name %v", want)
+		}
+	}
+	// The two sentences the old record published are gone, not reworded: the family
+	// must not refuse for a reason the store disproves.
+	for _, gone := range []string{
+		"cannot be composed in one transaction",
+		"no exported store call composes",
+		"the only BEGIN IMMEDIATE handle is unexported (internal/store/reviewrevision.go:41) and the proposal reader and writer take a *sql.DB",
+	} {
+		if strings.Contains(verdict, gone) {
+			t.Fatalf("the verdict still carries the retracted claim %v", gone)
+		}
+	}
+
 	seams := productionCharacterProposalResidualSeams()
 	if len(seams) != 2 {
 		t.Fatalf("the record covers %v names; the family refuses two", len(seams))
@@ -54,56 +78,26 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 			}
 		}
 	}
-	// Every cited line still carries its marker.
+	// The four served names carry no seam: a seam is only ever a promise that the
+	// name is refused.
+	for _, operation := range served {
+		if _, documented := productionCharacterProposalPendingSeam(operation); documented {
+			t.Fatalf("%v is served but carries a seam", operation)
+		}
+	}
+	// Every cited line still carries its marker, so the record cannot outlive the
+	// declarations it names.
 	for _, seam := range seams {
-		if len(seam.Missing) < 6 {
-			t.Fatalf("%v cites only %v ports; the record carries the transaction, the two halves and the three proofs",
+		if len(seam.Missing) < 5 {
+			t.Fatalf("%v cites only %v ports; the record carries the four proof entry points and the gate",
 				seam.Operation, len(seam.Missing))
 		}
 		for _, port := range seam.Missing {
-			if err := productionResidualSourceClaims(port.Path, port.Line, port.Marker); err != nil {
-				t.Fatalf("%v cites it: %v", seam.Operation, err)
-			}
+			productionCharacterProposalPendingCitedLine(t, port.Path, port.Line, port.Marker)
 		}
 	}
-	// The transaction handle is unexported: that is the whole reason a package main
-	// adapter cannot compose the receipt and the projection itself. Assert the
-	// receiver and the method name as the file spells them, so exporting it (or
-	// moving it) is a test failure rather than a silent change of facts.
-	immediate, err := productionResidualSourceLineOf("../../internal/store/reviewrevision.go", "*ReviewRevisions) immediate(")
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	if strings.Contains(immediate, "*ReviewRevisions) Immediate(") {
-		t.Fatalf("internal/store/reviewrevision.go now exports the immediate handle, so this record's claim needs re-reading")
-	}
-	// The two halves of this family take a database, never a transaction: this is
-	// what "cannot compose in one transaction" means concretely.
-	for _, arm := range []struct {
-		path   string
-		line   int
-		marker string
-	}{
-		{"production_character_proposals_linux.go", 1667, "db *sql.DB"},
-		{"production_character_proposals_linux.go", 1762, "db *sql.DB"},
-	} {
-		found, err := productionResidualSourceLineOf(arm.path, arm.marker)
-		if err != nil {
-			t.Fatalf("%v no longer takes a database, so the record's claim needs re-reading: %v",
-				arm.path, err)
-		}
-		if strings.Contains(found, "*sql.Tx") {
-			t.Fatalf("%v now takes a transaction: this name can be composed and served",
-				arm.path)
-		}
-	}
-	// The pattern that would fix it already exists next door, which is what makes
-	// the gap a missing twin rather than an unknown design.
-	if _, err := productionResidualSourceLineOf("../../internal/store/finalized_character_context.go", "tx *sql.Tx"); err != nil {
-		t.Fatalf("the *sql.Tx twin the record points at is gone: %v", err)
-	}
-	// The family's own table is untouched by this record and still refuses the same
-	// two names, so the sharpened text and the published seam cannot disagree.
+	// The family's own table still refuses the same two names, in the same order, so
+	// the sharpened record and the published seam cannot disagree.
 	pending := productionCharacterProposalPendingSeams()
 	if len(pending) != len(seams) {
 		t.Fatalf("the family refuses %v names and this record covers %v", len(pending), len(seams))
@@ -114,9 +108,16 @@ func TestProductionCharacterProposalResidualVerdict(t *testing.T) {
 				seam.Operation, seams[position].Operation)
 		}
 	}
-	// The verdict must name the handle it rests on, otherwise it is the same prose
-	// assertion this record was written to replace.
-	if !strings.Contains(productionCharacterProposalResidualVerdict, "internal/store/reviewrevision.go:41") {
-		t.Fatalf("the verdict no longer names the unexported immediate handle")
+	// The retraction is evidence, not a change of mind: every line it cites still
+	// exists, and the handle it retired the claim about is still unexported - the
+	// composition lives in the store, which is why package main never needed it.
+	retraction := productionCharacterProposalResidualRetraction()
+	if len(retraction) < 5 {
+		t.Fatalf("the retraction cites %v lines; the record rests on five", len(retraction))
 	}
+	for _, line := range retraction {
+		productionCharacterProposalPendingCitedLine(t, line.Path, line.Line, line.Marker)
+	}
+	productionCharacterProposalPendingCitedLine(t, "../../internal/store/reviewrevision.go", 41,
+		"func (r *ReviewRevisions) immediate(")
 }
