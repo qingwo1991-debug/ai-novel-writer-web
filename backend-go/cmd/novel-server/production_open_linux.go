@@ -863,6 +863,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// had, and the recovery read is one deferred transaction
 		// (production_review_revision_commit_linux.go).
 		func() error { return newProductionReviewRevisionCommits(open.durable).Bind(server) },
+		// db:plot-tree-save and db:blueprint-update-notes: the desktop's own controller
+		// refuses both, so a browser should get that refusal, not a 501 that looks like
+		// "not migrated" (production_reference_refusals_linux.go).
+		func() error { return bindProductionReferenceRefusals(open.durable)(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any

@@ -16,11 +16,11 @@ import (
 
 // productionDBResidualServed is the db slice this lane actually installs, as
 // measured by reading every binder production_open_linux.go calls and every
-// table those binders iterate: 97 of the 103 inventoried `db:*` names, leaving
+// table those binders iterate: 99 of the 103 inventoried `db:*` names, leaving
 // the six in production_db_residual_linux.go. Both halves are pinned below
 // against the finished lane rather than against hand counting, so a batch that
 // binds one of the six has to move this number and delete the row.
-const productionDBResidualServed = 97
+const productionDBResidualServed = 99
 
 // The two wire values every request below reuses: an operation id of the shape
 // the blueprint sync family takes, and the execution lease an import run receipt
@@ -244,9 +244,6 @@ func productionDBResidualRequest(seam productionDBResidualSeam, projectPath stri
 	switch seam.Operation {
 	case productionDBResidualBlueprintSyncComplete:
 		args[0] = productionDBResidualOperationID
-	case productionDBResidualBlueprintUpdateNotes:
-		args[0] = 1
-		args[1] = "chapter plot notes"
 	case productionDBResidualGlobalFactsCommit:
 		args[0] = map[string]any{"facts": []any{}, "mode": "replace"}
 	case productionDBResidualReceiptPrepare:
@@ -260,9 +257,6 @@ func productionDBResidualRequest(seam productionDBResidualSeam, projectPath stri
 		args[3] = execution
 	case productionDBResidualPrepareInspection:
 		args[0] = map[string]any{"inspectionId": "inspection-0", "purpose": "reference"}
-	case productionDBResidualPlotTreeSave:
-		args[0] = map[string]any{"threads": []any{}, "events": []any{}}
-		args[1] = "source-revision-0"
 	case productionDBResidualProjectClearGenerated:
 		args[0] = map[string]any{"scopes": []any{}}
 	}

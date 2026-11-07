@@ -100,12 +100,10 @@ import (
 const (
 	productionDBResidualBlueprintSyncComplete = "db:blueprint-character-sync-complete"
 	productionDBResidualBlueprintClearAll     = "db:blueprint-clear-all"
-	productionDBResidualBlueprintUpdateNotes  = "db:blueprint-update-notes"
 	productionDBResidualGlobalFactsCommit     = "db:import-global-facts-commit"
 	productionDBResidualReceiptCommit         = "db:import-run-effect-receipt-commit"
 	productionDBResidualReceiptPrepare        = "db:import-run-effect-receipt-prepare"
 	productionDBResidualPrepareInspection     = "db:import-run-prepare-inspection"
-	productionDBResidualPlotTreeSave          = "db:plot-tree-save"
 	productionDBResidualProjectClearGenerated = "db:project-clear-generated-data"
 	productionDBResidualInventoryPrefix       = "db:"
 )
@@ -166,20 +164,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 			},
 		},
 		{
-			Operation: productionDBResidualBlueprintUpdateNotes,
-			Arity:     4,
-			PathIndex: 2,
-			Gate:      "GENERATION_FINALIZATION_ADMISSION_REQUIRED",
-			Port:      "no store method updates chapter notes; the reference gate needs the artifact/ACK transaction",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 636, "operations.handle('db:blueprint-update-notes', async ("),
-				productionDBResidualLineOf("../../internal/transport/blueprints.go", 26, `"db:blueprint-update-notes":return fail(errors.New("GENERATION_FINALIZATION_ADMISSION_REQUIRED"))`),
-				// The transaction the notes would have to ride: artifact and ACK under
-				// one owner proof, which is what the finalization outbox owns.
-				productionDBResidualLineOf("../../internal/store/finalization_outbox.go", 228, "func (r *FinalizationOutbox) CommitWithOwnerProof("),
-			},
-		},
-		{
 			Operation: productionDBResidualReceiptPrepare,
 			Arity:     4,
 			PathIndex: 2,
@@ -222,18 +206,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 				productionDBResidualLineOf("../../internal/transport/import_selection.go", 112, `"inspectionId": summary.InspectionID`),
 			},
 		},
-		{
-			Operation: productionDBResidualPlotTreeSave,
-			Arity:     4,
-			PathIndex: 2,
-			Gate:      "GENERATION_GRAPH_ADMISSION_REQUIRED",
-			Port:      "the reference refuses every renderer write, so the binder could only restate that refusal",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 886, "operations.handle('db:plot-tree-save', async ("),
-				productionDBResidualLineOf("../../internal/transport/plottree.go", 22, `name=="db:plot-tree-save"{return fail(errors.New("GENERATION_GRAPH_ADMISSION_REQUIRED"))}`),
-				productionDBResidualLineOf("../../internal/transport/plottree_read.go", 16, "db:plot-tree-save stays unbound because the original refuses it"),
-			},
-		},
 	}
 }
 
@@ -242,11 +214,9 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 func productionDBResidualOperations() []string {
 	return []string{
 		productionDBResidualBlueprintSyncComplete,
-		productionDBResidualBlueprintUpdateNotes,
 		productionDBResidualReceiptPrepare,
 		productionDBResidualReceiptCommit,
 		productionDBResidualPrepareInspection,
-		productionDBResidualPlotTreeSave,
 	}
 }
 
