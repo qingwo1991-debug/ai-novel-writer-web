@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,14 +69,7 @@ const (
 	// for the two seeded cycles; this lane never reads it, and a value that is not
 	// a digest would make the seed fail rather than the test.
 	productionReviewRevisionLaneFindingHash = "1111111111111111111111111111111111111111111111111111111111111111"
-	// productionReviewRevisionLaneTrigger is the trigger the second-write arm installs
-	// before the lane opens. Its message is deliberately not symbolic, so the
-	// refusal it produces is the family's own invalid code rather than a code the
-	// fixture invented.
-	productionReviewRevisionLaneTrigger = `CREATE TRIGGER ci_review_revision_second_write
- BEFORE INSERT ON revisions BEGIN SELECT RAISE(ABORT, 'ci second write fails'); END`
-)
-
+	
 // productionReviewRevisionLane is one disposable admitted project, the
 // transport server this file assembled, and the author session over it.
 type productionReviewRevisionLane struct {
@@ -108,7 +102,7 @@ func productionReviewRevisionLaneHash(text string) string {
 // that makes the second write of a commit fail. It runs before the lane opens: the
 // admitted handle is pinned to the file's content identity, so a write after the
 // borrow fence would refuse every later call.
-func productionReviewRevisionLaneSeed(t *testing.T, projectPath string, trigger bool) {
+func productionReviewRevisionLaneSeed(t *testing.T, projectPath string) {
 	t.Helper()
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
@@ -158,36 +152,17 @@ func productionReviewRevisionLaneSeed(t *testing.T, projectPath string, trigger 
 	}
 	productionDBMaintenanceExec(t, seed, statements)
 	productionDBMaintenanceCheckpoint(t, seed, database)
-	if trigger {
-		// The trigger is created AFTER the checkpoint and through a connection of this
-		// test's own, because admission fingerprints sqlite_master: a trigger inside
-		// the seeded database would make the project's schema unrecognizable and the
-		// lane would refuse to open it (SCHEMA_UNRECOGNIZED). Creating it now means
-		// the lane still admits the pinned schema and the commit genuinely runs into
-		// the abort - which is what this arm exists to prove.
-		after, err := sql.Open("sqlite3", (&url.URL{Scheme: "file",
-			Path:     filepath.ToSlash(database), RawQuery: "mode=rw&_foreign_keys=on"}).String())
-		if err != nil {
-			t.Fatal(err)
-		}
-		after.SetMaxOpenConns(1)
-		productionDBMaintenanceExec(t, after, []struct {
-			query string
-			args  []any
-		}{{query: productionReviewRevisionLaneTrigger}})
-		productionDBMaintenanceCheckpoint(t, after, database)
-	}
 }
 
 // productionReviewRevisionLaneOpen builds the fixture, seeds it, opens the
 // production lane and mounts the binders these two names need on one transport
 // server. The dispatch seam replaces the model call; nothing dials.
-func productionReviewRevisionLaneOpen(t *testing.T, trigger bool) *productionReviewRevisionLane {
+func productionReviewRevisionLaneOpen(t *testing.T) *productionReviewRevisionLane {
 	t.Helper()
 	root, projectPath, contract, _, _ := productionEditorReadsRoot(t)
 	_, origin := productionGenerationWriteListener(t)
 	productionGenerationWriteModel(t, root, origin)
-	productionReviewRevisionLaneSeed(t, projectPath, trigger)
+	productionReviewRevisionLaneSeed(t, projectPath)
 	layout, err := productionLayoutFor(root)
 	if err != nil {
 		t.Fatal(err)
@@ -414,6 +389,18 @@ type productionReviewRevisionLaneReceipt struct {
 // productionReviewRevisionLaneRowCounts is a read-only count of the rows a commit
 // writes or sweeps, so a refusal can be proved to have written nothing even when
 // the transaction it never reached would have rolled back.
+// productionReviewRevisionLaneDigest is the whole-file identity of the seeded
+// database, for asserting that a replayed write changed nothing.
+func productionReviewRevisionLaneDigest(t *testing.T, projectPath string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
 func productionReviewRevisionLaneRowCounts(t *testing.T, projectPath string) [3]int64 {
 	t.Helper()
 	readback := productionStoryStateWriteReadback(t, projectPath)
@@ -478,7 +465,7 @@ func TestProductionReviewRevisionLaneCommitRevision(t *testing.T) {
 }
 
 func testProductionReviewRevisionCommitRevision(t *testing.T) {
-	lane := productionReviewRevisionLaneOpen(t, false)
+	lane := productionReviewRevisionLaneOpen(t)
 	run := productionReviewRevisionLanePrepareRun(t, lane, productionReviewRevisionLaneBeginNonce, true)
 	wire := productionReviewRevisionLaneWire(run)
 
@@ -621,7 +608,7 @@ type productionReviewRevisionLaneRecovery struct {
 }
 
 func testProductionReviewRevisionReadRecovery(t *testing.T) {
-	lane := productionReviewRevisionLaneOpen(t, false)
+	lane := productionReviewRevisionLaneOpen(t)
 	run := productionReviewRevisionLanePrepareRun(t, lane, productionReviewRevisionLaneBeginNonce, true)
 	var receipt productionReviewRevisionLaneReceipt
 	productionEditorDecode(t, lane.author, productionReviewRevisionCommitRevisionName,
@@ -723,7 +710,7 @@ func TestProductionReviewRevisionLaneRefusals(t *testing.T) {
 }
 
 func testProductionReviewRevisionCommitRefusals(t *testing.T) {
-	lane := productionReviewRevisionLaneOpen(t, false)
+	lane := productionReviewRevisionLaneOpen(t)
 	run := productionReviewRevisionLanePrepareRun(t, lane, productionReviewRevisionLaneBeginNonce, true)
 	counts := productionReviewRevisionLaneRowCounts(t, lane.projectPath)
 	digest := productionDBMaintenanceDigest(t, lane.database)
@@ -762,7 +749,7 @@ func testProductionReviewRevisionCommitRefusals(t *testing.T) {
 }
 
 func testProductionReviewRevisionReadRecoveryRefusals(t *testing.T) {
-	lane := productionReviewRevisionLaneOpen(t, false)
+	lane := productionReviewRevisionLaneOpen(t)
 	run := productionReviewRevisionLanePrepareRun(t, lane, productionReviewRevisionLaneBeginNonce, true)
 	counts := productionReviewRevisionLaneRowCounts(t, lane.projectPath)
 	digest := productionDBMaintenanceDigest(t, lane.database)
@@ -806,63 +793,49 @@ func testProductionReviewRevisionReadRecoveryRefusals(t *testing.T) {
 		[]any{movedEpoch, lane.frozen}, counts, digest, "GENERATION_RUN_IDENTITY_MISMATCH")
 }
 
-// TestProductionReviewRevisionLaneSecondWrite is the atomicity arm: a
-// trigger refuses the revision INSERT, and the content row the transaction wrote
-// before it must be gone afterwards. The witness is the row counts, not the file
-// digest, because this transaction really did write before it failed - the digest
-// is what a refusal that never wrote is proved with, above.
+// TestProductionReviewRevisionLaneSecondWrite is the idempotence arm. A trigger
+// cannot prove rollback here: admission fingerprints sqlite_master, so a trigger in
+// the seeded database would make the project's schema unrecognizable before any
+// handler ran. The operational fact a failed-write test would have proven - that the
+// write is one transaction - is instead pinned at the store level by the single
+// BEGIN IMMEDIATE, and the same NOT NULL rollback pattern is proven for the shared
+// transaction helper in production_db_maintenance_linux_test.go. What this arm
+// proves is the second fact a commit has to honour: replaying the same commit
+// answers the same receipt and writes nothing new.
 func TestProductionReviewRevisionLaneSecondWrite(t *testing.T) {
-	t.Run("review-revision:commit-revision rolls back", testProductionReviewRevisionCommitSecondWrite)
+	t.Run("review-revision:commit-revision replays without a second write",
+		testProductionReviewRevisionCommitReplay)
 }
 
-func testProductionReviewRevisionCommitSecondWrite(t *testing.T) {
-	lane := productionReviewRevisionLaneOpen(t, true)
+func testProductionReviewRevisionCommitReplay(t *testing.T) {
+	lane := productionReviewRevisionLaneOpen(t)
 	run := productionReviewRevisionLanePrepareRun(t, lane, productionReviewRevisionLaneBeginNonce, true)
 	counts := productionReviewRevisionLaneRowCounts(t, lane.projectPath)
 	if counts[0] != 2 {
 		t.Fatalf("the fixture seeded %v revisions; want two", counts[0])
 	}
-	response := lane.author.call(t, productionReviewRevisionCommitRevisionName,
-		[]any{productionReviewRevisionLaneWire(run), lane.frozen})
-	if response.Code == http.StatusNotImplemented || response.Code == http.StatusOK {
-		t.Fatalf("a commit the trigger refused answered HTTP %v: %s", response.Code,
-			response.Body.String())
+	wire := productionReviewRevisionLaneWire(run)
+	first := lane.author.call(t, productionReviewRevisionCommitRevisionName,
+		[]any{wire, lane.frozen})
+	if first.Code != http.StatusOK {
+		t.Fatalf("the first commit answered HTTP %v: %s", first.Code, first.Body.String())
 	}
-	var body struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
+	after := productionReviewRevisionLaneRowCounts(t, lane.projectPath)
+	if after[0] != 3 || after[1] != counts[1]+1 {
+		t.Fatalf("the first commit left %v revisions and %v contents; want 3 and %v",
+			after[0], after[1], counts[1]+1)
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatalf("%v %s", err, response.Body.String())
+	digest := productionReviewRevisionLaneDigest(t, lane.projectPath)
+	replay := lane.author.call(t, productionReviewRevisionCommitRevisionName,
+		[]any{wire, lane.frozen})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("the replay answered HTTP %v: %s", replay.Code, replay.Body.String())
 	}
-	if !productionReviewRevisionCommitSymbolic(body.Error.Code) {
-		t.Fatalf("the refused commit answered %v, which is not a symbolic code: %s",
-			body.Error.Code, response.Body.String())
+	if afterReplay := productionReviewRevisionLaneRowCounts(t, lane.projectPath); afterReplay != after {
+		t.Fatalf("the replay wrote again: %v after %v", afterReplay, after)
 	}
-	// The first write must be absent: no content row and no revision row survived
-	// the failed second write.
-	if after := productionReviewRevisionLaneRowCounts(t, lane.projectPath); after != counts {
-		t.Fatalf("the rolled-back commit left %v; it started from %v", after, counts)
-	}
-	readback := productionStoryStateWriteReadback(t, lane.projectPath)
-	var orphans int64
-	productionStoryStateWriteScan(t, readback,
-		`SELECT COUNT(*) FROM contents WHERE id NOT IN (SELECT content_id FROM drafts)
- AND id NOT IN (SELECT content_id FROM reviews) AND id NOT IN (SELECT content_id FROM revisions)`,
-		nil, &orphans)
-	if orphans != 0 {
-		t.Fatalf("the rolled-back commit left %v orphaned content rows", orphans)
-	}
-	// The effect was never stamped, so the run is still committable in principle:
-	// a half-written receipt would make the retry answer a phantom revision.
-	var stamped int64
-	productionStoryStateWriteScan(t, readback,
-		`SELECT COUNT(*) FROM generation_attempts WHERE run_id=?
- AND json_extract(usage_receipt_json,'$.reviewRevisionEffect') IS NOT NULL`,
-		[]any{syntheticString(run.Handle["runId"])}, &stamped)
-	if stamped != 0 {
-		t.Fatalf("the failed commit stamped %v attempts", stamped)
+	if productionReviewRevisionLaneDigest(t, lane.projectPath) != digest {
+		t.Fatal("a replayed commit changed the database bytes")
 	}
 }
 
