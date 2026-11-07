@@ -8,7 +8,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the db family's residual: the ten inventoried `db:*` names this
+// This file is the db family's residual: the seven inventoried `db:*` names this
 // lane still answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
 // (internal/transport/server.go:116) instead of serving, and the exact code that
 // has to move before any of them can be installed as a handler.
@@ -22,10 +22,9 @@ import (
 // set and leaves these 10:
 //
 //	db:blueprint-character-sync-complete      db:import-run-prepare-inspection
-//	db:blueprint-clear-all                    db:plot-tree-save
-//	db:blueprint-update-notes                 db:project-clear-generated-data
+//	db:blueprint-update-notes                 db:plot-tree-save
 //	db:import-run-effect-receipt-commit       db:project-core-commit-generated
-//	db:import-run-effect-receipt-prepare      db:import-global-facts-commit
+//	db:import-run-effect-receipt-prepare
 //
 // Three names left this table when they were served, and their rows are worth
 // remembering because the reason they were refused was wrong:
@@ -48,14 +47,14 @@ import (
 // takes the `db:` names from the registry the same lane loaded, and requires
 // bound+residual to cover the slice exactly, in both directions.
 //
-// # Why none of the ten is bound here
+// # Why none of the seven is bound here
 //
 // Two of them are refused by the reference itself and always will be:
 // db:blueprint-update-notes and db:plot-tree-save are the original controller's
 // own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
 // serving them would be a divergence, not a migration.
 //
-// The other eight each have a narrower reason of its own:
+// The other five each have a narrower reason of its own:
 //
 //   - db:blueprint-clear-all and db:project-clear-generated-data: destructive
 //     boundaries over several tables with no store function behind either, and no
@@ -94,7 +93,7 @@ import (
 // name's own row, with the arity and path index this table already records, so
 // the wire shape cannot drift from the renderer's call site.
 
-// The ten names, spelled once each so the binder, the seam table and the
+// The names, spelled once each so the binder, the seam table and the
 // test cannot disagree with the controller that registers them.
 const (
 	productionDBResidualBlueprintSyncComplete = "db:blueprint-character-sync-complete"
@@ -166,17 +165,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 			},
 		},
 		{
-			Operation: productionDBResidualBlueprintClearAll,
-			Arity:     2,
-			PathIndex: 0,
-			Port:      "no store method deletes every blueprint row; Blueprints.Delete takes one chapter key",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 806, "static clearAll(): void"),
-				productionDBResidualLineOf("../../internal/store/blueprints.go", 129, "func (b *Blueprints) Delete(ctx context.Context,chapter any)"),
-				productionDBResidualLineOf("../../internal/transport/blueprints.go", 15, "BindBlueprints deliberately excludes clear-all and completion of character sync"),
-			},
-		},
-		{
 			Operation: productionDBResidualBlueprintUpdateNotes,
 			Arity:     4,
 			PathIndex: 2,
@@ -188,17 +176,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 				// The transaction the notes would have to ride: artifact and ACK under
 				// one owner proof, which is what the finalization outbox owns.
 				productionDBResidualLineOf("../../internal/store/finalization_outbox.go", 228, "func (r *FinalizationOutbox) CommitWithOwnerProof("),
-			},
-		},
-		{
-			Operation: productionDBResidualGlobalFactsCommit,
-			Arity:     3,
-			PathIndex: 1,
-			Port:      "no store function implements ImportGlobalFactsRepository.commit",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/repositories/import-global-facts-repository.ts", 162, "static commit(candidate: ImportGlobalFactsRequest"),
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 50, "project-global-facts"),
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 236, "operations.handle('db:import-global-facts-commit', async ("),
 			},
 		},
 		{
@@ -257,16 +234,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 			},
 		},
 		{
-			Operation: productionDBResidualProjectClearGenerated,
-			Arity:     3,
-			PathIndex: 1,
-			Port:      "no store function implements ProjectClearRepository.clearGeneratedData",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/repositories/project-clear-repository.ts", 87, "static clearGeneratedData(options: ProjectClearOptions"),
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 245, "operations.handle('db:project-clear-generated-data', async ("),
-			},
-		},
-		{
 			Operation: productionDBResidualProjectCoreCommitGen,
 			Arity:     3,
 			PathIndex: 1,
@@ -288,14 +255,11 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 func productionDBResidualOperations() []string {
 	return []string{
 		productionDBResidualBlueprintSyncComplete,
-		productionDBResidualBlueprintClearAll,
 		productionDBResidualBlueprintUpdateNotes,
-		productionDBResidualGlobalFactsCommit,
 		productionDBResidualReceiptPrepare,
 		productionDBResidualReceiptCommit,
 		productionDBResidualPrepareInspection,
 		productionDBResidualPlotTreeSave,
-		productionDBResidualProjectClearGenerated,
 		productionDBResidualProjectCoreCommitGen,
 	}
 }

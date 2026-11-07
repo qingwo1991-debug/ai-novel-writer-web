@@ -850,6 +850,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// production_db_cycle_reads_linux.go).
 		func() error { return newProductionDBSyncReads(open.durable).Bind(server) },
 		func() error { return newProductionDBCycleReads(open.durable).Bind(server) },
+		// The three destructive maintenance writes: each is one transaction in the
+		// store and each proves what it preserved, not only what it cleared
+		// (production_db_maintenance_linux.go, internal/store/dbmaintenance.go).
+		func() error { return newProductionDBMaintenance(open.durable).Bind(server) },
 		func() error { return bindProductionDBResidual(server) },
 		// fs:write-json is the confined JSON write: same confinement and same frozen
 		// context as fs:write-file, with the document encoded and validated before any

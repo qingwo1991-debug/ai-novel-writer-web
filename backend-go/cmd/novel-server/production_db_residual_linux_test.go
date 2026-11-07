@@ -16,11 +16,11 @@ import (
 
 // productionDBResidualServed is the db slice this lane actually installs, as
 // measured by reading every binder production_open_linux.go calls and every
-// table those binders iterate: 93 of the 103 inventoried `db:*` names, leaving
-// the ten in production_db_residual_linux.go. Both halves are pinned below
+// table those binders iterate: 96 of the 103 inventoried `db:*` names, leaving
+// the seven in production_db_residual_linux.go. Both halves are pinned below
 // against the finished lane rather than against hand counting, so a batch that
-// binds one of the ten has to move this number and delete the row.
-const productionDBResidualServed = 93
+// binds one of the seven has to move this number and delete the row.
+const productionDBResidualServed = 96
 
 // The two wire values every request below reuses: an operation id of the shape
 // the blueprint sync family takes, and the execution lease an import run receipt
@@ -97,7 +97,7 @@ func TestProductionLaneDBResidualIsTheUnservedSlice(t *testing.T) {
 	t.Logf("db slice: %d served, %d refused, %d inventoried", len(served), len(residual), len(inventory))
 }
 
-// TestProductionLaneRefusesDBResidual pins the ten names where this lane
+// TestProductionLaneRefusesDBResidual pins the seven names where this lane
 // leaves them: unbound, answering the fail-closed 501
 // GO_OPERATION_NOT_MIGRATED, under the live lease, a stale lease and no lease at
 // all. One subtest per name, so a failure names the channel that moved.
