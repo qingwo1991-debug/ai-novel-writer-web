@@ -849,6 +849,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// store list was written for this lane (production_db_sync_reads_linux.go,
 		// production_db_cycle_reads_linux.go).
 		func() error { return newProductionDBSyncReads(open.durable).Bind(server) },
+		// db:blueprint-character-sync-complete: the roster proof the desktop uses
+		// before it accepts a completed sync row, plus the receipt writer
+		// (production_db_sync_complete_linux.go).
+		func() error { return newProductionDBSyncComplete(open.durable).Bind(server) },
 		func() error { return newProductionDBCycleReads(open.durable).Bind(server) },
 		// The three destructive maintenance writes: each is one transaction in the
 		// store and each proves what it preserved, not only what it cleared

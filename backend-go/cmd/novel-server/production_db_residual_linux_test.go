@@ -16,18 +16,17 @@ import (
 
 // productionDBResidualServed is the db slice this lane actually installs, as
 // measured by reading every binder production_open_linux.go calls and every
-// table those binders iterate: 99 of the 103 inventoried `db:*` names, leaving
-// the six in production_db_residual_linux.go. Both halves are pinned below
+// table those binders iterate: 100 of the 103 inventoried `db:*` names, leaving
+// the three in production_db_residual_linux.go. Both halves are pinned below
 // against the finished lane rather than against hand counting, so a batch that
-// binds one of the six has to move this number and delete the row.
-const productionDBResidualServed = 99
+// binds one of the three has to move this number and delete the row.
+const productionDBResidualServed = 100
 
-// The two wire values every request below reuses: an operation id of the shape
-// the blueprint sync family takes, and the execution lease an import run receipt
-// write names.
+// The execution lease every request below names. The blueprint sync family used
+// to share this block with its own operation id; that name is served now, so its
+// request shape moved with the row into production_db_sync_complete_linux_test.go.
 const (
-	productionDBResidualOperationID = "blueprint-sync-0"
-	productionDBResidualExecution   = "db-residual-execution-0"
+	productionDBResidualExecution = "db-residual-execution-0"
 )
 
 // TestProductionLaneDBResidualIsTheUnservedSlice pins the measurement this batch
@@ -97,7 +96,7 @@ func TestProductionLaneDBResidualIsTheUnservedSlice(t *testing.T) {
 	t.Logf("db slice: %d served, %d refused, %d inventoried", len(served), len(residual), len(inventory))
 }
 
-// TestProductionLaneRefusesDBResidual pins the six names where this lane
+// TestProductionLaneRefusesDBResidual pins the three names where this lane
 // leaves them: unbound, answering the fail-closed 501
 // GO_OPERATION_NOT_MIGRATED, under the live lease, a stale lease and no lease at
 // all. One subtest per name, so a failure names the channel that moved.
@@ -111,8 +110,7 @@ func TestProductionLaneDBResidualIsTheUnservedSlice(t *testing.T) {
 //
 // The database is byte-compared over the whole file after every request of the
 // family: none of these names may mutate the author's data, and the ones that
-// would (the two blocking-sync reads, the receipt writes) are exactly the ones
-// this batch refused.
+// would (the receipt writes) are exactly the ones this batch refused.
 func TestProductionLaneRefusesDBResidual(t *testing.T) {
 	root, projectPath, database, contract := productionGraphReadsRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
@@ -242,8 +240,6 @@ func productionDBResidualRequest(seam productionDBResidualSeam, projectPath stri
 	args[seam.Arity-1] = expected
 	execution := map[string]any{"owner": productionDBResidualExecution, "epoch": 1}
 	switch seam.Operation {
-	case productionDBResidualBlueprintSyncComplete:
-		args[0] = productionDBResidualOperationID
 	case productionDBResidualGlobalFactsCommit:
 		args[0] = map[string]any{"facts": []any{}, "mode": "replace"}
 	case productionDBResidualReceiptPrepare:

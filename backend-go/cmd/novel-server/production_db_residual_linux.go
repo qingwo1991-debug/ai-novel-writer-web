@@ -8,7 +8,7 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the db family's residual: the six inventoried `db:*` names this
+// This file is the db family's residual: the three inventoried `db:*` names this
 // lane still answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
 // (internal/transport/server.go:116) instead of serving, and the exact code that
 // has to move before any of them can be installed as a handler.
@@ -18,15 +18,13 @@ import (
 // The inventory is 281 names (web/operations.json), 103 of them `db:*`. Reading
 // every binder the lane really calls - the `for _, bind := range []func() error{`
 // lists (production_open_linux.go:528, :544, :698) and the named binders between
-// them, plus each table those binders iterate - puts 93 of the 103 in the served
-// set and leaves these ten, of which four have been served since:
+// them, plus each table those binders iterate - leaves these three unserved:
 //
-//	db:blueprint-character-sync-complete      db:import-run-prepare-inspection
-//	db:blueprint-update-notes                 db:plot-tree-save
 //	db:import-run-effect-receipt-commit
 //	db:import-run-effect-receipt-prepare
+//	db:import-run-prepare-inspection
 //
-// Four names left this table when they were served, and their rows are worth
+// Five names left this table when they were served, and their rows are worth
 // remembering because the reason they were refused was wrong:
 //
 //   - db:blueprint-character-sync-get and -list-pending were refused because
@@ -50,24 +48,31 @@ import (
 //     (electron/services/agent-generation.ts:349) for a child with no
 //     agentWorkflowRegistrationId, and generation:begin cannot mint that key. It
 //     is served by production_project_core_generated_linux.go.
+//   - db:blueprint-character-sync-complete was refused because "no store method
+//     writes the completion receipt; the roster proof it needs does not exist".
+//     The proof did exist, in parts: the roster read that answers status,
+//     revision, projectionHash and entries was already the store's own
+//     charactersRoster (character_roster.go:466), and only the fact proof
+//     (blueprint-character-sync-evidence.ts:63-91), the
+//     character_roster_operations evidence check and the receipt writer were
+//     missing. They are internal/store/blueprint_sync_complete.go, one
+//     BEGIN IMMEDIATE on the borrowed handle, and the name is served by
+//     production_db_sync_complete_linux.go.
 //
 // The complement is asserted, not assumed: TestProductionLaneDBResidualIsTheUnservedSlice
 // takes the bound set from the finished lane (transport.Server.BoundOperations),
 // takes the `db:` names from the registry the same lane loaded, and requires
 // bound+residual to cover the slice exactly, in both directions.
 //
-// # Why none of the six is bound here
+// # Why none of the three is bound here
 //
 // Two of them are refused by the reference itself and always will be:
 // db:blueprint-update-notes and db:plot-tree-save are the original controller's
 // own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
 // serving them would be a divergence, not a migration.
 //
-// The other four each have a narrower reason of its own:
+// The third has a narrower reason of its own:
 //
-//   - db:blueprint-character-sync-complete: needs the authoritative-roster proof
-//     (electron/repositories/blueprint-repository.ts:420) and a store receipt
-//     writer (:764) that do not exist here.
 //   - db:import-run-effect-receipt-prepare and -commit: store.ImportRuns
 //     .PrepareEffectReceipt and .CommitEffectReceipt exist
 //     (internal/store/importrun_receipts.go:1152, :1259) and both take an
@@ -98,7 +103,6 @@ import (
 // The names, spelled once each so the binder, the seam table and the
 // test cannot disagree with the controller that registers them.
 const (
-	productionDBResidualBlueprintSyncComplete = "db:blueprint-character-sync-complete"
 	productionDBResidualBlueprintClearAll     = "db:blueprint-clear-all"
 	productionDBResidualGlobalFactsCommit     = "db:import-global-facts-commit"
 	productionDBResidualReceiptCommit         = "db:import-run-effect-receipt-commit"
@@ -152,18 +156,6 @@ func productionDBResidualLineOf(path string, line int, marker string) production
 func productionDBResidualSeams() []productionDBResidualSeam {
 	return []productionDBResidualSeam{
 		{
-			Operation: productionDBResidualBlueprintSyncComplete,
-			Arity:     3,
-			PathIndex: 1,
-			Gate:      "BLUEPRINT_CHARACTER_SYNC_ROSTER_NOT_READY",
-			Port:      "no store method writes the completion receipt; the roster proof it needs does not exist",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 764, "static completeCharacterSyncOperation("),
-				productionDBResidualLineOf("../../../electron/repositories/blueprint-repository.ts", 377, "BLUEPRINT_CHARACTER_SYNC_ROSTER_NOT_READY"),
-				productionDBResidualLineOf("../../internal/transport/blueprints.go", 15, "BindBlueprints deliberately excludes clear-all and completion of character sync"),
-			},
-		},
-		{
 			Operation: productionDBResidualReceiptPrepare,
 			Arity:     4,
 			PathIndex: 2,
@@ -209,11 +201,10 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 	}
 }
 
-// productionDBResidualOperations is the family's six residual names in the order
+// productionDBResidualOperations is the family's three residual names in the order
 // the seam table lists them, so the binder and the test walk one list.
 func productionDBResidualOperations() []string {
 	return []string{
-		productionDBResidualBlueprintSyncComplete,
 		productionDBResidualReceiptPrepare,
 		productionDBResidualReceiptCommit,
 		productionDBResidualPrepareInspection,
