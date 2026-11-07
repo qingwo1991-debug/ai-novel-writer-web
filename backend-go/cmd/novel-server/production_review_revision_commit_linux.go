@@ -190,7 +190,13 @@ func (r *productionReviewRevisionCommits) commitRevision(ctx context.Context, ca
 	// operation, so a handle prepared for a review cannot be spent on a revision.
 	parsed.Request.AssertPrepared = productionReviewRevisionCommitPrepared(registry, caller,
 		contextValue.LeaseID, contextValue.ProjectID, parsed.ContextID)
-	return store.NewReviewRevisions(db).CommitRevision(ctx, parsed.Request)
+	result, err := store.NewReviewRevisions(db).CommitRevision(ctx, parsed.Request)
+	if err == nil {
+		// A spent handle lingers in the reference only until the next prepare of the
+		// same caller replaces it; revoking here is the same promise with no wait.
+		registry.RevokeCaller(caller.SessionID + ":" + caller.ClientID)
+	}
+	return result, err
 }
 
 // readRecovery serves `review-revision:read-recovery`. The request is exactly

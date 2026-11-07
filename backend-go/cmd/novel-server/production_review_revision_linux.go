@@ -139,6 +139,10 @@ const productionReviewRevisionAuthorInputID = "review-revision-context"
 // refuses anything below 32 bytes (internal/reviewrevprep/store.go:82); the key is
 // process-random, so no other process can resolve the handles this one mints.
 const productionReviewRevisionServerKeyBytes = 32
+// productionReviewRevisionMaxActive and MaxPerCaller are the process-wide caps
+// above, one per live session preparing at once.
+const productionReviewRevisionMaxActive = 64
+const productionReviewRevisionMaxPerCaller = 16
 
 // The family's own symbolic refusals. The first three are the reference's own
 // strings (review-revision-generation.ts:118-124); the last is the lane's
@@ -311,12 +315,21 @@ var (
 // productionReviewRevisionNewRegistry builds the production registry from a
 // process-random key. No renderer value, no project path and no generation is mixed
 // in, so an entry MAC only ever proves "this process minted this handle".
+//
+// The reference bounds MAX_INSPECTIONS to 2 per renderer window
+// (import-inspection-store.ts:60); this lane has one process where every session is a
+// window, so the caps are the process-wide equivalents. A re-prepare replaces the
+// caller's handle either way, and a successful commit revokes the caller's handles,
+// so these bounds are reached only by many distinct sessions preparing at once.
 func productionReviewRevisionNewRegistry() (*reviewrevprep.Store, error) {
 	key := make([]byte, productionReviewRevisionServerKeyBytes)
 	if _, err := rand.Read(key); err != nil {
 		return nil, errProductionReviewRevisionStore
 	}
-	return reviewrevprep.NewStore(key, reviewrevprep.StoreOptions{})
+	return reviewrevprep.NewStore(key, reviewrevprep.StoreOptions{
+		MaxActive:    productionReviewRevisionMaxActive,
+		MaxPerCaller: productionReviewRevisionMaxPerCaller,
+	})
 }
 
 // productionReviewRevisionRegistry returns the process's registry, constructing it
@@ -487,7 +500,13 @@ func (r *productionReviewRevisions) commitReview(ctx context.Context, caller tra
 	// on a review even though both are arity 1 in the same family.
 	parsed.Request.AssertPrepared = productionReviewRevisionCommitPrepared(registry, caller,
 		contextValue.LeaseID, contextValue.ProjectID, parsed.ContextID)
-	return store.NewReviewRevisions(db).CommitReview(ctx, parsed.Request)
+	result, err := store.NewReviewRevisions(db).CommitReview(ctx, parsed.Request)
+	if err == nil {
+		// A spent handle lingers in the reference only until the next prepare of the
+		// same caller replaces it; revoking here is the same promise with no wait.
+		registry.RevokeCaller(caller.SessionID + ":" + caller.ClientID)
+	}
+	return result, err
 }
 
 // productionReviewRevisionCommitPrepared is the handle proof commit-review hands

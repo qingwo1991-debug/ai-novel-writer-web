@@ -72,9 +72,8 @@ func (e *productionResidualLineError) Error() string {
 // one port and the sentence that says what lifting the refusal would take.
 func productionResidualSeams(t *testing.T, family string, seams []productionInlineResidualSeam) {
 	t.Helper()
-	if len(seams) == 0 {
-		t.Fatalf("%s records no refused names", family)
-	}
+	// An empty list is legitimate once a family is fully served: the caller's own
+	// served+refused==4 check is what proves every name is accounted for.
 	for _, seam := range seams {
 		if seam.Operation == "" || seam.Family != family {
 			t.Fatalf("%s records a seam for %v in family %v", family, seam.Operation, seam.Family)
