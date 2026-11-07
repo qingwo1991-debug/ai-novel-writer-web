@@ -532,14 +532,23 @@ func TestStoreLimits(t *testing.T) {
 				t.Fatal("Prepare above MaxActive succeeded")
 			}
 		}},
-		{"entries per caller", StoreOptions{MaxActive: 8, MaxPerCaller: 1}, func(t *testing.T, store *Store, clock *fakeClock) {
-			mustPrepare(t, store, testBinding("alice"), testPreparedContext())
-			if _, err := store.Prepare(testBinding("alice"), testPreparedContext()); err != nil {
-				requireCode(t, err, ErrLimit)
-			} else {
-				t.Fatal("Prepare above MaxPerCaller succeeded")
+		{"re-prepare replaces the caller's handle", StoreOptions{MaxActive: 8, MaxPerCaller: 1}, func(t *testing.T, store *Store, clock *fakeClock) {
+			// The reference replaces the caller's previous inspection on every prepare
+			// (import-inspection-store.ts:123-124), so one caller can never exceed its
+			// own cap by preparing again: the second prepare succeeds and the first
+			// handle stops resolving.
+			first := mustPrepare(t, store, testBinding("alice"), testPreparedContext())
+			second := mustPrepare(t, store, testBinding("alice"), testPreparedContext())
+			if first == second {
+				t.Fatal("a re-prepare returned the same handle instead of replacing it")
 			}
-			// Another caller is unaffected by one caller's own cap.
+			if _, err := store.Peek(first, testBinding("alice")); err == nil {
+				t.Fatal("the replaced handle still resolves")
+			}
+			if _, err := store.Peek(second, testBinding("alice")); err != nil {
+				t.Fatalf("the replacement handle does not resolve: %v", err)
+			}
+			// Another caller is unaffected and keeps its own handle.
 			mustPrepare(t, store, testBinding("bob"), testPreparedContext())
 		}},
 		{"retained bytes", StoreOptions{MaxTextBytes: 140}, func(t *testing.T, store *Store, clock *fakeClock) {

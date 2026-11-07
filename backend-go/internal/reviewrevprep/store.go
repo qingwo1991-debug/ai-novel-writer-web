@@ -74,7 +74,8 @@ import (
 // Bounds. defaultTTL is IMPORT_INSPECTION_TTL_MS (import-inspection-store.ts:11)
 // and maxTTL keeps a forgotten handle from pinning frozen text for longer than
 // the sibling allows (inspection.go:84 rejects anything above ten minutes).
-// maxActive and maxPerCaller cap entry counts the way inspection.go:140 does,
+// maxActive caps entry counts the way inspection.go:140 does; maxPerCaller is
+// retained for the options surface and the store's own tests,
 // maxTextBytes caps retained frozen bytes the way maxAggregateBytes does
 // (inspection-store.ts:119-121), maxIdentityBytes/maxStatusBytes/maxHandleBytes
 // bound the strings this package echoes back, handleDigestDomain separates the
@@ -168,8 +169,10 @@ var ErrPurposeMismatch = errors.New("REVIEW_REVISION_PREP_PURPOSE_MISMATCH")
 // consume the handle.
 var ErrContextChanged = errors.New("REVIEW_REVISION_PREP_CONTEXT_CHANGED")
 
-// ErrLimit refuses a prepare that would exceed maxActive or maxPerCaller,
-// mirroring IMPORT_INSPECTION_LIMIT (import-inspection-store.ts:122).
+// ErrLimit refuses a prepare that would exceed maxActive, mirroring
+// IMPORT_INSPECTION_LIMIT (import-inspection-store.ts:122). A caller's own
+// re-prepare never reaches it: the caller's previous handle is replaced first,
+// exactly as the reference does (:123-124), so one caller holds one live handle.
 var ErrLimit = errors.New("REVIEW_REVISION_PREP_LIMIT")
 
 // ErrStoreUnavailable refuses every call on a nil *Store instead of panicking in
@@ -361,16 +364,20 @@ func (s *Store) Prepare(binding Binding, context PreparedContext) (string, error
 	if len(s.entries) >= s.maxActive {
 		return "", ErrLimit
 	}
-	own := 0
+	// One caller holds one live handle: a re-prepare replaces the caller's previous
+	// one, exactly as the reference does before it inserts
+	// (import-inspection-store.ts:123-124, "One renderer session owns at most one
+	// pending inspection; reselection replaces it"). The per-caller bound therefore
+	// only ever refuses a caller that holds MORE than one handle at once, which can
+	// no longer happen through Prepare.
+	for id, item := range s.entries {
+		if item.binding.Caller == binding.Caller {
+			delete(s.entries, id)
+		}
+	}
 	retained := int64(0)
 	for _, item := range s.entries {
-		if item.binding.Caller == binding.Caller {
-			own++
-		}
 		retained += int64(len(item.context.Text))
-	}
-	if own >= s.maxPerCaller {
-		return "", ErrLimit
 	}
 	if int64(len(context.Text)) > s.maxTextBytes-retained {
 		return "", ErrTextTooLarge
