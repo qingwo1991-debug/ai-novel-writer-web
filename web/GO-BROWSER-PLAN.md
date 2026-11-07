@@ -4,7 +4,21 @@
 > **后端 + 浏览器，没有桌面端**。凡是"只能在桌面上做"的操作，不是待办，是不存在。
 
 数字口径不变：已服务数量是构建断言（`production_served_count_linux_test.go`），
-当前 **162 / 281**，`e9dc6440` 全绿。
+当前 **235 / 281**，`0187a809` 全绿。
+
+### 本文件三个阶段的实测结果（回填）
+
+| 阶段 | 状态 | 证据 |
+| --- | --- | --- |
+| P0 定稿解锁（`kb:import-text`、`kb:import-finalized-text`） | **已完成** | 两个名字在 235 里，定稿链路的名字全部已服务 |
+| P1 40 章导入 | **已用真实容器跑通** | `scripts/go-cutover-rehearsal.py --import-chapters 40`：40 章合成正文一次事务落库，40 章全部 `finalized`，第 1 / 40 章按字节读回，`db:draft-get-max-finalized-chapter` = 40 |
+| P2 备份与回滚演练 | **已用真实容器跑通** | `--restore`：导出 904 KB 归档 → 两个 picker grant → `project:archive-restore` → 新项目打开后第 1 章正文与词数与原件完全一致 |
+| P2 compose 切换 | **未执行，等作者决定** | 生产容器仍在跑旧镜像；回滚 digest 已记录 |
+
+P1 的一个硬事实（写进脚本注释，避免下次再踩）：`db:draft-import-finalized-batch`
+要求每章带上**渲染进程算出的可见字数**（`internal/draftalg/draftunits.go:222`），
+与章节正文不符就整批拒绝（`internal/store/finalized_draft_import.go:358`）。
+不是服务端算，是客户端算完随请求带上——脚本因此按同一算法算了一遍。
 
 ## 零、为什么重排
 
