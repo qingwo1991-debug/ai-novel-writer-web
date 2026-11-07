@@ -308,11 +308,13 @@ func (e *productionEditorInline) reproduce(ctx context.Context, scope generation
 		return nil, "", errors.New(productionEditorInlineLeaseMissing)
 	}
 	if _, err := e.owner.inner.registry.Resolve(ctx, leaseID, runScope, syntheticGenerationPurpose); err != nil {
-		// Names, not values: enough to see whether the rebuilt scope's epoch differs
-		// from what the registry holds, without echoing any secret in full.
-		log.Printf("novel-server: editor-inline sourceStatus=conflict step=resolve project=%s epoch=%s lease=%s",
-			productionEditorInlineTrace(runScope.Project), productionEditorInlineTrace(runScope.Epoch),
-			productionEditorInlineTrace(leaseID))
+		// The decisive fact: did the rebuild change the scope at all? If callerScope
+		// equals runScope, the minting scope and the rebuilt scope are identical and
+		// the failure must be purpose or record mismatch; if they differ, the binding
+		// carries a different project/epoch than the scope begin minted under.
+		log.Printf("novel-server: editor-inline sourceStatus=conflict step=resolve callerScope==runScope=%v projectChanged=%v epochChanged=%v callerEpoch=%s runEpoch=%s",
+			scope == runScope, scope.Project != runScope.Project, scope.Epoch != runScope.Epoch,
+			productionEditorInlineTrace(scope.Epoch), productionEditorInlineTrace(runScope.Epoch))
 		return nil, "", err
 	}
 	set, err := e.owner.inner.rebuildSourcesForRun(ctx, db, resolved.Manifest)
