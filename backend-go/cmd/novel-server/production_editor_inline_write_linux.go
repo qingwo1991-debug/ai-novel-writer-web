@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -751,11 +752,19 @@ func productionEditorInlineQuote(text string) string {
 // (the nine hashes, the budget, the source refs). None of them carries prose, so the
 // standard encoder's key order and HTML escaping cannot reach a hashed text.
 func productionEditorInlineJSON(value any) (string, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
+	// SetEscapeHTML(false) is what the reference's JSON.stringify does: it escapes
+	// quotes, backslashes and control characters but never <, >, &, U+2028 or U+2029.
+	// json.Marshal would HTML-escape those, so a frozen context hash taken over the
+	// escaped bytes would diverge from the stored text the ledger quotes raw.
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
 		return "", err
 	}
-	return string(raw), nil
+	// json.Encoder.Encode appends a newline that json.Marshal does not.
+	return strings.TrimSuffix(buffer.String(), "
+"), nil
 }
 
 // productionEditorInlineStringArray renders a string list in its own order.

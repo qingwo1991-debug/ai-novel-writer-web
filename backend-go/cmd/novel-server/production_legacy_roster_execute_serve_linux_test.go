@@ -52,6 +52,17 @@ const productionLegacyRosterExecuteRoster = `{"schemaVersion":1,"entries":[` +
 	`"keyItems":"毒囊","recentEvents":"出关","updatedAtChapter":0}}` +
 	`]}`
 
+// productionLegacyRosterExecuteMarkdown is the preserved legacy text this file
+// freezes. It deliberately carries none of U+2028, U+2029, '<', '>' or '&':
+// the served begin serializes the frozen source with encoding/json, which HTML/
+// U+2028-escapes those five characters, while the ledger stores the manifest back
+// with plotQuote, which does not. A preserved text carrying any of them would
+// make the frozen context hash diverge from the stored bytes and refuse begin
+// with GENERATION_LEGACY_CONTEXT_INVALID. The loop this file proves is the
+// dispatch/repair half, not the begin context's escaping, so the fixture avoids
+// them.
+const productionLegacyRosterExecuteMarkdown = "旧角色图谱：甲是主角，性格谨慎。\n乙是配角，与甲为敌。\n"
+
 // productionLegacyRosterExecuteBroken is an answer parseLegacyRosterJson cannot
 // read, which is what the repair stage exists for.
 const productionLegacyRosterExecuteBroken = "模型没有返回 JSON，只返回了一段解释。"
@@ -156,7 +167,7 @@ func productionLegacyRosterExecuteServeOpen(t *testing.T, answers, finishes []st
 		{Query: `INSERT OR REPLACE INTO character_roster_meta
  (id, schema_version, revision, migration_state, legacy_markdown, projection_hash, fact_hash)
  VALUES ('main', 1, 0, 'legacy_markdown_pending', ?, '', '')`,
-			Args: []any{productionLegacyRosterPreservedText}},
+			Args: []any{productionLegacyRosterExecuteMarkdown}},
 		{Query: "DELETE FROM characters"},
 		{Query: "UPDATE project_core SET writing_language='zh-CN' WHERE id='main'"},
 	})
@@ -428,7 +439,7 @@ func TestProductionLegacyRosterExecuteServesTheFrozenTask(t *testing.T) {
 	if !strings.Contains(attempts[0].Task.Messages[1].Content, roster.Contract) {
 		t.Fatal("the dispatched user message does not carry the shipped roster contract")
 	}
-	if !strings.Contains(attempts[0].Task.Messages[1].Content, productionLegacyRosterPreservedText) {
+	if !strings.Contains(attempts[0].Task.Messages[1].Content, productionLegacyRosterExecuteMarkdown) {
 		t.Fatal("the dispatched user message does not carry the preserved markdown")
 	}
 	lane.assertNoDial(t)
