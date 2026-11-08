@@ -69,7 +69,11 @@ func run() error {
 		return err
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
+	// The synthetic migration scaffold may only listen on loopback. The production
+	// lane (NOVEL_DATA_ROOT set) must bind 0.0.0.0 inside its container so the
+	// host's 127.0.0.1:6081 publish reaches it; the gateway is still the only
+	// client that can pass authentication.
+	if ip == nil || (!ip.IsLoopback() && dataRoot == "") {
 		return errors.New("migration scaffold may listen only on a loopback IP")
 	}
 	if *libraryDir != "" && (!underTempRoot(*libraryDir) || !privateSyntheticGlobalRoot(filepath.Dir(*libraryDir))) {
