@@ -81,12 +81,15 @@ import (
 // (internal/generationowner/lease.go:162-163), the private-model loader and the
 // frozen-source readers. All of them live on the one owner
 // production_open_linux.go:591 creates as a local variable, and this adapter is
-// built with open.durable alone (:627). The assert is also invoked inside the
-// receipt's own BEGIN IMMEDIATE on the single pooled connection
-// (importrun_receipts.go:987, :1005 -> importrun.go:948), so a prover here that
-// read the database through the borrowed pool would deadlock instead of proving
-// anything - the store names that shape itself
-// (internal/store/character_proposal_pending.go:34-37). The unexported
+// built with open.durable alone (:627). The deadlock objection is now FALSE and
+// retracted: the assert is invoked inside the receipt's own BEGIN IMMEDIATE on
+// the single reserved connection (importrun_receipts.go:987, :1005 ->
+// importrun.go:948), so it must be store-native - and store-native composition on
+// that connection is proven (internal/store/character_proposal_pending.go:27-37
+// composes a receipt and a projection inside one BEGIN IMMEDIATE). The blocker is
+// not the connection; it is that a store-native assert still has to rebuild the
+// binding fingerprint, and that rebuild needs the owner's model-profile loader
+// this adapter is not given. The unexported
 // dcAssertSources (internal/store/draft_commit_tx.go:272-288) is not a substitute
 // either: it proves a draft-commit epoch and root, not an import-effect handle, and
 // is bound to the draft lane's own run row.

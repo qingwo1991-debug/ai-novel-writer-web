@@ -1,11 +1,11 @@
 //go:build linux
 
-// This file serves one of the seven `legacy-roster` names - the source proof -
-// and production_legacy_roster_serve_linux.go serves the run's own three beside
-// it. Three stay refused:
+// This file serves two of the seven `legacy-roster` names - the source proof
+// and the adoption - and production_legacy_roster_serve_linux.go serves the
+// run's own three beside it. Two stay refused:
 //
 //	legacy-roster:read-source      web/operations.json:263  served here
-//	legacy-roster:adopt-existing   web/operations.json:264  refused, see "adopt-existing"
+//	legacy-roster:adopt-existing   web/operations.json:264  served (production_legacy_roster_adopt_linux.go)
 //	legacy-roster:begin            web/operations.json:265  served (production_legacy_roster_serve_linux.go)
 //	legacy-roster:read             web/operations.json:266  served (same file)
 //	legacy-roster:execute          web/operations.json:267  refused, see "execute"
@@ -129,7 +129,7 @@
 // and a safe-integer violation. A BLOB is encoded as
 // {"type":"Buffer","data":[...]}, which is what JSON.stringify does to a Buffer.
 //
-// # adopt-existing: refused, and why
+// # adopt-existing: served now (production_legacy_roster_adopt_linux.go)
 //
 // The adoption is not a second extraction. It re-reads the same source, rebuilds
 // the read-only projection from the cards the author already has, and records the
@@ -138,7 +138,7 @@
 // (electron/services/legacy-roster-source.ts:71-104, and the S06D evidence note
 // docs/research/novel-quality-modernization/s06d-legacy-roster-evidence.md).
 //
-// It is refused because the reference does all of it in ONE transaction:
+// It was refused because the reference does all of it in ONE transaction:
 //
 //	const requestHash = textHash(JSON.stringify(original)), operationId = prefix + request.operationId
 //	return db.transaction(() => {                    // :80
@@ -179,11 +179,12 @@
 // fail-closed 501 GO_OPERATION_NOT_MIGRATED (internal/transport/server.go), which
 // is what a name with a missing port is supposed to say.
 //
-// The port that would let it be served is one line of store API, not a new
-// writer: characterIdentityRefreshProjection and the approval insert taking a
-// caller-owned *sql.Conn from one `immediate` scope. Whoever adds it must reuse
-// that helper; re-rendering the projection in this package would be a second
-// writer of the same text (rosterMarkdown/factsJSON, internal/store/character_roster.go:288-390).
+// That port is now built: (*Characters).AdoptLegacyRoster
+// (internal/store/character_roster_adoption.go) runs the projection refresh and
+// the approval insert on one reserved connection inside one `immediate` scope,
+// reusing characterIdentityRefreshProjection, so the projection is not re-rendered
+// in this package. The raw-row facts hash stays here (productionLegacyRosterJSON)
+// and is passed back in through the `source` callback.
 //
 // # begin/read/cancel: served, execute/stage: refused
 //
@@ -333,16 +334,17 @@ func newProductionLegacyRoster(durable *productionDurableOpen) *productionLegacy
 	return &productionLegacyRoster{durable: durable}
 }
 
-// Bind installs `legacy-roster:read-source` and nothing else. A nil or closed
-// bridge installs nothing, so every name of the family keeps failing closed at
-// GO_OPERATION_NOT_MIGRATED instead of being published as a handler that can only
-// refuse.
+// Bind installs `legacy-roster:read-source` and `legacy-roster:adopt-existing`.
+// A nil or closed bridge installs nothing, so every name of the family keeps
+// failing closed at GO_OPERATION_NOT_MIGRATED instead of being published as a
+// handler that can only refuse.
 //
-// The wire arity is the request arity (zero, generation-controller.ts:233) plus
-// the frozen context, so exactly one argument arrives and it IS the context. The
-// borrow runs after it is parsed, which is the reference's own order: the
-// controller proves the project context before it dispatches
-// (generation-controller.ts:184-186).
+// The read-source wire arity is the request arity (zero,
+// generation-controller.ts:233) plus the frozen context, so exactly one argument
+// arrives and it IS the context. The adoption is arity one plus the context, so
+// two arguments arrive: the request and the context. The borrow runs after the
+// context is parsed, which is the reference's own order: the controller proves
+// the project context before it dispatches (generation-controller.ts:184-186).
 func (l *productionLegacyRoster) Bind(server *transport.Server) error {
 	if l == nil || l.durable == nil {
 		return nil
@@ -350,7 +352,7 @@ func (l *productionLegacyRoster) Bind(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
-	return server.Bind(productionLegacyRosterReadSourceName,
+	if err := server.Bind(productionLegacyRosterReadSourceName,
 		func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 			if len(args) != 1 {
 				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
@@ -375,7 +377,17 @@ func (l *productionLegacyRoster) Bind(server *transport.Server) error {
 				return nil, productionLegacyRosterFailure(err)
 			}
 			return answer, nil
-		})
+		}); err != nil {
+			return err
+		}
+		return server.Bind(productionLegacyRosterAdoptExistingName, l.adoptExisting)
+}
+
+// productionLegacyRosterQuerier is the query surface the source proof runs over.
+// Both *sql.DB and a reserved *sql.Conn satisfy it, so the same proof serves the
+// read-source handler and the adoption's in-transaction source read.
+type productionLegacyRosterQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 // productionLegacyRosterReadSource is readLegacyRosterSource
@@ -392,8 +404,20 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 	if db == nil {
 		return nil, store.ErrProjectNotOpen
 	}
+	snapshot, err := store.NewCharacters(db).ReadRoster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return productionLegacyRosterReadSourceOn(ctx, db, snapshot)
+}
+
+// productionLegacyRosterReadSourceOn is the same source proof over a caller's
+// query surface, with the snapshot already read. The adoption runs it on the
+// reserved connection inside its transaction, so the CAS tokens and the writes
+// observe one state.
+func productionLegacyRosterReadSourceOn(ctx context.Context, q productionLegacyRosterQuerier, snapshot map[string]any) (*productionLegacyRosterSource, error) {
 	// :49 hasCharacterIdentitySchema
-	present, err := productionLegacyRosterIdentitySchema(ctx, db)
+	present, err := productionLegacyRosterIdentitySchema(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -401,17 +425,17 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 		return nil, productionLegacyRosterIDSchemaRequired
 	}
 	// :50 SELECT genre,writing_language FROM project_core WHERE id='main'
-	core, err := productionLegacyRosterSelect(ctx, db, "SELECT genre,writing_language FROM project_core WHERE id='main'")
+	core, err := productionLegacyRosterSelect(ctx, q, "SELECT genre,writing_language FROM project_core WHERE id='main'")
 	if err != nil {
 		return nil, err
 	}
 	// :51-53 the three value reads the reference folds into one guard, in its order.
-	identityRevision, err := productionLegacyRosterRevision(ctx, db,
+	identityRevision, err := productionLegacyRosterRevision(ctx, q,
 		"SELECT revision FROM character_identity_meta WHERE id='main'")
 	if err != nil {
 		return nil, err
 	}
-	rawLegacy, err := productionLegacyRosterLegacyText(ctx, db)
+	rawLegacy, err := productionLegacyRosterLegacyText(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +448,7 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 		return nil, productionLegacyRosterSourceInvalid
 	}
 	// :40-42 the actual rows, in the reference's three orders.
-	characters, err := productionLegacyRosterSelect(ctx, db,
+	characters, err := productionLegacyRosterSelect(ctx, q,
 		"SELECT * FROM characters ORDER BY character_id")
 	if err != nil {
 		return nil, err
@@ -445,12 +469,12 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 			activeIDs = append(activeIDs, text)
 		}
 	}
-	aliases, err := productionLegacyRosterSelect(ctx, db,
+	aliases, err := productionLegacyRosterSelect(ctx, q,
 		"SELECT * FROM character_aliases ORDER BY character_id,name,source_key,valid_from")
 	if err != nil {
 		return nil, err
 	}
-	relationships, err := productionLegacyRosterSelect(ctx, db,
+	relationships, err := productionLegacyRosterSelect(ctx, q,
 		"SELECT * FROM character_relationships ORDER BY relationship_id")
 	if err != nil {
 		return nil, err
@@ -467,11 +491,7 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 	}
 	// :59 the snapshot is the last read, exactly as in the reference's object
 	// literal: an unreadable roster therefore answers the store's own refusal, not
-	// a partial source.
-	snapshot, err := store.NewCharacters(db).ReadRoster(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// a partial source. It is supplied by the caller.
 	return &productionLegacyRosterSource{
 		Snapshot:         snapshot,
 		RawLegacy:        *rawLegacy,
@@ -487,8 +507,8 @@ func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*product
 // productionLegacyRosterIdentitySchema is hasCharacterIdentitySchema
 // (electron/repositories/character-repository.ts:8-10): the one table whose
 // absence means this project has no identity lane at all.
-func productionLegacyRosterIdentitySchema(ctx context.Context, db *sql.DB) (bool, error) {
-	rows, err := db.QueryContext(ctx,
+func productionLegacyRosterIdentitySchema(ctx context.Context, q productionLegacyRosterQuerier) (bool, error) {
+	rows, err := q.QueryContext(ctx,
 		"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", productionLegacyRosterIdentityTable)
 	if err != nil {
 		return false, err
@@ -508,8 +528,8 @@ func productionLegacyRosterIdentitySchema(ctx context.Context, db *sql.DB) (bool
 // `revision(value)` guard does: a safe non-negative integer. An absent row answers
 // -1 so the caller can fold it into its own guard, because the reference's
 // `.pluck().get()` answers undefined there and `revision(undefined)` is false.
-func productionLegacyRosterRevision(ctx context.Context, db *sql.DB, query string) (int64, error) {
-	rows, err := productionLegacyRosterSelect(ctx, db, query)
+func productionLegacyRosterRevision(ctx context.Context, q productionLegacyRosterQuerier, query string) (int64, error) {
+	rows, err := productionLegacyRosterSelect(ctx, q, query)
 	if err != nil {
 		return 0, err
 	}
@@ -537,8 +557,8 @@ func productionLegacyRosterRevision(ctx context.Context, db *sql.DB, query strin
 // productionLegacyRosterLegacyText reads the preserved legacy roster, or nil when
 // the row or the column is not text. It never trims, normalizes or re-encodes: the
 // reference hands the raw string on and hashes exactly those bytes.
-func productionLegacyRosterLegacyText(ctx context.Context, db *sql.DB) (*string, error) {
-	rows, err := productionLegacyRosterSelect(ctx, db,
+func productionLegacyRosterLegacyText(ctx context.Context, q productionLegacyRosterQuerier) (*string, error) {
+	rows, err := productionLegacyRosterSelect(ctx, q,
 		"SELECT legacy_markdown FROM character_roster_meta WHERE id='main'")
 	if err != nil {
 		return nil, err
@@ -589,8 +609,8 @@ func (r productionLegacyRosterRow) field(key string) (any, bool) {
 
 // productionLegacyRosterSelect runs one statement and returns its rows in the
 // driver's own column order.
-func productionLegacyRosterSelect(ctx context.Context, db *sql.DB, query string) ([]productionLegacyRosterRow, error) {
-	rows, err := db.QueryContext(ctx, query)
+func productionLegacyRosterSelect(ctx context.Context, q productionLegacyRosterQuerier, query string) ([]productionLegacyRosterRow, error) {
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -912,8 +932,8 @@ func productionLegacyRosterFailure(err error) error {
 }
 
 // productionLegacyRosterOperations is the whole family in the order
-// web/operations.json lists it (:263-269): the one name Bind serves first, then
-// the six it refuses.
+// web/operations.json lists it (:263-269): the two names Bind serves first, then
+// the run names and the two it refuses.
 func productionLegacyRosterOperations() []string {
 	return []string{
 		productionLegacyRosterReadSourceName,
@@ -944,10 +964,9 @@ type productionLegacyRosterGap struct {
 	Missing   []productionLegacyRosterSeamLine
 }
 
-// productionLegacyRosterSeams is this file's whole answer for the three names it
-// does not bind: the multi-stage repair loop for execute, the proof plus the
-// sibling proposal refusal for stage, and the two transactions plus the
-// reference call for the adoption.
+// productionLegacyRosterSeams is this file's whole answer for the two names it
+// does not bind: the multi-stage repair loop for execute, and the proof plus the
+// sibling proposal refusal for stage.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
 	repairLoop := productionLegacyRosterSeamLine{
 		Path: "../../../electron/services/main-generation-owner.ts", Line: 1143,
@@ -969,22 +988,6 @@ func productionLegacyRosterSeams() []productionLegacyRosterGap {
 		Path: "production_character_proposals_linux.go", Line: 268,
 		Marker: "GENERATION_LEGACY_ADMISSION_REQUIRED",
 	}
-	projection := productionLegacyRosterSeamLine{
-		Path: "../../internal/store/character_roster.go", Line: 591,
-		Marker: "func (r *Characters) RefreshIdentityProjection(",
-	}
-	projectionBody := productionLegacyRosterSeamLine{
-		Path: "../../internal/store/character_roster.go", Line: 562,
-		Marker: "func characterIdentityRefreshProjection(",
-	}
-	immediate := productionLegacyRosterSeamLine{
-		Path: "../../internal/store/reviewrevision.go", Line: 41,
-		Marker: "func (r *ReviewRevisions) immediate(",
-	}
-	adoption := productionLegacyRosterSeamLine{
-		Path: "../../../electron/services/legacy-roster-source.ts", Line: 95,
-		Marker: "refreshCharacterIdentityProjection(db)",
-	}
 	return []productionLegacyRosterGap{
 		{
 			Operation: productionLegacyRosterExecuteName,
@@ -993,10 +996,6 @@ func productionLegacyRosterSeams() []productionLegacyRosterGap {
 		{
 			Operation: productionLegacyRosterStageName,
 			Missing:   []productionLegacyRosterSeamLine{proof, stageRefusal},
-		},
-		{
-			Operation: productionLegacyRosterAdoptExistingName,
-			Missing:   []productionLegacyRosterSeamLine{projection, projectionBody, immediate, adoption},
 		},
 	}
 }

@@ -94,14 +94,17 @@ import (
 //	   (production_generation_begin_linux.go:134). The receipt lane is built at
 //	   production_open_linux.go:627 with `open.durable` alone, so it reaches none
 //	   of them, and there is no second constructor to call.
-//	c. The assert is invoked from INSIDE the receipt's own BEGIN IMMEDIATE on the
-//	   single reserved connection (internal/store/importrun_receipts.go:987 and
-//	   :1005, called from importRunImmediate, internal/store/importrun.go:948).
-//	   A package-main prover holding the borrowed *sql.DB would need a second
-//	   connection while that transaction holds the only one - the shape
-//	   internal/store/character_proposal_pending.go:34-37 already calls "a
-//	   deadlock rather than a proof". So the proof would have to be store-native,
-//	   and the store cannot obtain a generation registry.
+//	c. The deadlock objection is now FALSE and is retracted. The assert runs
+//	   inside the receipt's BEGIN IMMEDIATE on the single reserved connection
+//	   (internal/store/importrun_receipts.go:987 and :1005, called from
+//	   importRunImmediate, internal/store/importrun.go:948), so it must be
+//	   store-native - and store-native composition on that very connection is
+//	   proven: internal/store/character_proposal_pending.go:27-37 composes a
+//	   receipt and a projection inside one BEGIN IMMEDIATE on one reserved
+//	   connection. The blocker is not the connection; it is that a store-native
+//	   assert still has to rebuild the binding fingerprint, and that rebuild
+//	   needs the registry's model-profile loader, which is reason b, not a
+//	   second transaction.
 //	d. No import run can exist in this lane in the first place. The generation
 //	   ledger refuses the `importSlot` manifest key for EVERY operation
 //	   (internal/store/generation_ledger.go:505, with glFamilyManifestAllowed
@@ -222,7 +225,7 @@ import (
 // while the decision says it is served).
 // production_importrun_residual_linux.go:212-224 installs the four served names
 // and then calls this binder, so the check runs inside the real lane. The served
-// count is unchanged at 255 because no name here is bound; the db family's
+// count is unchanged at 261 because no name here is bound; the db family's
 // residual table (production_db_residual_linux.go:153-215) still names the same
 // three, and the count pin (production_served_count_linux_test.go:24) is
 // deliberately untouched.
@@ -283,7 +286,7 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     4,
 			PathIndex: 2,
 			Gate:      "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED",
-			Port:      "the source proof has no owner: the fingerprint rebuild needs a generation registry this lane is not given, and a package-main prover over the borrowed pool would deadlock inside the receipt transaction",
+			Port:      "the source proof has no owner: the assert runs store-side on the receipt's one reserved BEGIN IMMEDIATE connection (character_proposal_pending.go proves the store composes a receipt and a projection there), but the fingerprint rebuild needs the generation registry's model-profile loader, which this lane is not given",
 			Missing: []productionImportRunReceiptLine{
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 118, "type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot) error"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 984, "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED"),

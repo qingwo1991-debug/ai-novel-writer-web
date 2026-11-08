@@ -399,7 +399,7 @@ func TestProductionLegacyRosterRefusesASourceItCannotName(t *testing.T) {
 	})
 }
 
-// TestProductionLaneRefusesLegacyRosterNames pins the three names this lane
+// TestProductionLaneRefusesLegacyRosterNames pins the two names this lane
 // still leaves unbound where the plan puts them: answering the fail-closed 501
 // GO_OPERATION_NOT_MIGRATED, with nothing written while they do. begin, read and
 // cancel are served by production_legacy_roster_serve_linux.go and are not in
@@ -424,7 +424,6 @@ func TestProductionLaneRefusesLegacyRosterNames(t *testing.T) {
 		"rootActionId": "legacy-roster-missing-root", "runId": "legacy-roster-missing-run"}
 
 	for _, operation := range []string{
-		productionLegacyRosterAdoptExistingName,
 		productionLegacyRosterExecuteName,
 		productionLegacyRosterStageName,
 	} {
@@ -454,7 +453,7 @@ func TestProductionLaneRefusesLegacyRosterNames(t *testing.T) {
 }
 
 // TestProductionLegacyRosterBinderIsTheOneName pins the binder's own contract: it
-// installs exactly the served names and never the refused three, it publishes
+// installs exactly the served names and never the refused two, it publishes
 // nothing without a bridge, and every name of the family stays inventoried so an
 // absent handler is 501 and never the 404 of a name the registry does not know.
 func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
@@ -480,10 +479,11 @@ func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 			t.Fatalf("%s is not inventoried, so its unbound answer would not be 501: %v", operation, err)
 		}
 	}
-	// The four served names must never be documented as refused, and the three
+	// The five served names must never be documented as refused, and the two
 	// refused ones must be.
 	for _, served := range []string{
 		productionLegacyRosterReadSourceName,
+		productionLegacyRosterAdoptExistingName,
 		productionLegacyRosterBeginName,
 		productionLegacyRosterReadName,
 		productionLegacyRosterCancelName,
@@ -499,7 +499,7 @@ func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 		}
 		documented++
 	}
-	if documented != len(productionLegacyRosterOperations())-4 {
+	if documented != len(productionLegacyRosterOperations())-5 {
 		t.Fatalf("%d names are documented as refused, want every name but the four served ones", documented)
 	}
 	// A closed or unknown refusal must never leak a SQLite message or a path: the

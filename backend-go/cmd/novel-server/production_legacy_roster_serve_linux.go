@@ -32,7 +32,7 @@ import (
 //	legacy-roster:cancel        served   (productionLegacyRosterServe.cancel)
 //	legacy-roster:execute       refused  (the multi-stage repair loop)
 //	legacy-roster:stage         refused  (the proof + proposal staging)
-//	legacy-roster:adopt-existing refused (the one-transaction adoption)
+//	legacy-roster:adopt-existing served   (production_legacy_roster_adopt_linux.go)
 //
 // The seam this session re-tested is the finalization/editor-inline pattern: a
 // shipped prompt template in internal/prompttemplate (compact JSON of the real

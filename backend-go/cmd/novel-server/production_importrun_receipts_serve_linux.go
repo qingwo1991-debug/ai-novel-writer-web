@@ -60,14 +60,15 @@ import (
 //     with `open.durable` only, so it can reach none of them, and the profile
 //     loader itself is a closure over the private model list
 //     (production_generation_begin_linux.go:134).
-//   - The assert is invoked from INSIDE the receipt's own BEGIN IMMEDIATE on the
-//     one reserved connection (internal/store/importrun_receipts.go:987 and :1005
-//     are called from importRunImmediate, internal/store/importrun.go:948). A
-//     package-main prover holding the borrowed *sql.DB would take a second
-//     connection while that transaction holds the only one; the store already
-//     names that shape "a deadlock rather than a proof"
-//     (internal/store/character_proposal_pending.go:34-37). The proof therefore
-//     has to be store-native, and the store cannot reach a Registry.
+//   - The deadlock objection is now FALSE and is retracted. The assert is invoked
+//     from INSIDE the receipt's own BEGIN IMMEDIATE on the one reserved connection
+//     (internal/store/importrun_receipts.go:987 and :1005 are called from
+//     importRunImmediate, internal/store/importrun.go:948), so it must be
+//     store-native - and store-native composition on that connection is proven:
+//     internal/store/character_proposal_pending.go:27-37 composes a receipt and a
+//     projection inside one BEGIN IMMEDIATE. The blocker is not the connection; it
+//     is that a store-native assert still has to rebuild the binding fingerprint,
+//     and the store cannot reach a Registry.
 //   - No import run can exist in this lane at all: the generation ledger refuses
 //     the `importSlot` manifest key for EVERY operation
 //     (internal/store/generation_ledger.go:505 with glFamilyManifestAllowed
@@ -95,7 +96,7 @@ import (
 // Consume still demands it (:165-167), but the picker's response drops it, so
 // the value the CAS exists to prove would have to be invented by the handler.
 //
-// Nothing in this file binds a name. The lane's served count stays 255
+// Nothing in this file binds a name. The lane's served count stays 261
 // (production_served_count_linux_test.go:24); this file only makes the three
 // refusals a checked decision instead of a paragraph.
 

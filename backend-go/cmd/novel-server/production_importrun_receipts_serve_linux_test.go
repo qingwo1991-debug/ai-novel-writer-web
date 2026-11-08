@@ -13,8 +13,10 @@ import (
 // inspection name, and they prove two things the seam file's own test does not:
 // that the refusal bodies are byte-identical across the live, stale and foreign
 // request shapes (the authority matrix the batch asks for, inverted to the
-// refused answer), and that the two claims that changed this pass - ReproduceBinding
-// and the store's existing generation_runs read - are real declarations, not
+// refused answer), and that the claim this pass retested - the deadlock objection
+// is FALSE because the store already composes a receipt and a projection on one
+// reserved BEGIN IMMEDIATE connection - and the surviving claim (the fingerprint
+// rebuild needs the registry's model-profile loader) are real declarations, not
 // prose.
 //
 // There is deliberately no success subtest and no replay-as-success subtest: no
@@ -124,10 +126,12 @@ func TestProductionImportRunReceiptRefusalsAreByteIdentical(t *testing.T) {
 
 // TestProductionImportRunReceiptServeProofMarkers re-reads the declarations this
 // pass's correction rests on. It does not duplicate the seam table's own marker
-// walk; it pins only the new evidence: ReproduceBinding exists but still resolves
-// a registry lease record, the reference's requireRun has no live-epoch check for
-// this assert, the reference derives its model receipt from a read-only evidence
-// profile rather than a lease, and the served picker still drops the preview CAS.
+// walk; it pins the new evidence: the store composes a receipt and a projection on
+// one reserved BEGIN IMMEDIATE connection (so the deadlock objection is false),
+// and the surviving reason - the fingerprint rebuild needs the registry's
+// model-profile loader - is still real. It also pins that ReproduceBinding exists
+// but still resolves a registry lease record, the reference's requireRun has no
+// live-epoch check for this assert, and the served picker still drops the preview CAS.
 func TestProductionImportRunReceiptServeProofMarkers(t *testing.T) {
 	markers := []struct {
 		path   string
@@ -136,6 +140,7 @@ func TestProductionImportRunReceiptServeProofMarkers(t *testing.T) {
 		{"../../internal/generationowner/binding.go", "func (r *Registry) ReproduceBinding("},
 		{"../../internal/generationowner/lease.go", "// resolveReproduce is resolve minus the live-session currency check."},
 		{"../../internal/generationowner/lease.go", "MODEL_EXECUTION_LEASE_INVALID"},
+		{"../../internal/store/character_proposal_pending.go", "connection inside one BEGIN IMMEDIATE"},
 		{"../../internal/store/character_proposal_pending.go", "FROM generation_runs WHERE run_id=?"},
 		{"../../internal/store/character_proposal_pending.go", "ErrCharacterProposalPendingProofUnavailable"},
 		{"../../internal/store/character_proposal_pending.go", "which is a deadlock rather than a proof"},
