@@ -418,19 +418,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:import-run-prepare-inspection")
 	})
 
-	// db:import-run-effect-receipt-prepare: refused. That readback plus a receipt
-	// INSERT into import_run_receipts.
-	t.Run("db:import-run-effect-receipt-prepare", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-effect-receipt-prepare",
-			[]any{map[string]any{}, productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-effect-receipt-prepare")
-	})
-
-	// db:import-run-effect-receipt-commit: refused. That readback plus the ledger
-	// commit.
-	t.Run("db:import-run-effect-receipt-commit", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-effect-receipt-commit",
-			[]any{productionImportRunResumableID, "knowledge", "1-2-aaaaaaaa", productionImportRunLease(), projectPath, frozen})
-		unchanged(t, "db:import-run-effect-receipt-commit")
-	})
+	// The two effect-receipt names are served now (their source proof reads the run
+	// on the receipt's own connection), so this file no longer pins them unbound.
 }
