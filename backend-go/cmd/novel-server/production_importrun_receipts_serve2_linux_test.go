@@ -166,10 +166,12 @@ func productionImportRunReceiptsServe2LaneOpen(t *testing.T) *productionImportRu
 	}
 }
 
-// productionImportRunReceiptsServe2Seed writes the four style runs and the two
-// chapters each of them would freeze. The success run is the import-generation
-// fixture's own style run, so the frozen prompt refs and the language are the ones
-// that lane already proved.
+// productionImportRunReceiptsServe2Seed writes the runs the three lane tests drive:
+// the success and identity arms use the import-generation fixture's own style run,
+// the slot arm begins the fixture's own global run, and the three refusal arms use
+// two running style runs plus one more for the absent-prepare shape. Every run gets
+// the two chapters its stage's freeze would capture, so the prompt refs and the
+// language are the ones that lane already proved.
 func productionImportRunReceiptsServe2Seed(t *testing.T, projectPath string) {
 	t.Helper()
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
@@ -181,21 +183,29 @@ func productionImportRunReceiptsServe2Seed(t *testing.T, projectPath string) {
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	for _, runID := range []string{
-		productionImportGenerationStyleRunID,
-		productionImportRunReceiptsServe2AbsentPrepareRun,
-		productionImportRunReceiptsServe2AbsentCommitRun,
-		productionImportRunReceiptsServe2StaleRun,
+	for _, run := range []struct {
+		id    string
+		stage string
+	}{
+		{productionImportGenerationStyleRunID, "style"},
+		{productionImportGenerationGlobalRunID, "global"},
+		{productionImportRunReceiptsServe2AbsentPrepareRun, "style"},
+		{productionImportRunReceiptsServe2AbsentCommitRun, "style"},
+		{productionImportRunReceiptsServe2StaleRun, "style"},
 	} {
+		// effect_namespace is the store's own derivation: "import:" + purpose + ":" + id
+		// (internal/store/importrun_receipts.go importRunReceiptParse). The seed must
+		// write exactly that, or the store's own read-back validation refuses the
+		// receipt as IMPORT_RUN_RECEIPT_CORRUPT before the lane is even opened.
 		if _, err := db.Exec(`INSERT INTO import_runs (id, purpose, root_run_id, effect_namespace,
  source_fingerprint, manifest_fingerprint, locale, stage, status, execution_owner, execution_epoch,
  lease_expires_at, total_chapters, manifest_chapter_count, manifest_word_count, cancel_requested)
- VALUES (?, 'reference', ?, ?, ?, ?, 'zh-CN', 'style', 'running', ?, ?, ?, 2, 2, 12, 0)`,
-			runID, runID+"-root", "import:"+runID,
+ VALUES (?, 'reference', ?, ?, ?, ?, 'zh-CN', ?, 'running', ?, ?, ?, 2, 2, 12, 0)`,
+			run.id, run.id+"-root", "import:reference:"+run.id,
 			strings.Repeat("a", 64), productionImportGenerationManifestFingerprint,
-			productionImportGenerationExecutionOwner, productionImportGenerationExecutionEpoch,
+			run.stage, productionImportGenerationExecutionOwner, productionImportGenerationExecutionEpoch,
 			productionImportGenerationLeaseExpiry); err != nil {
-			t.Fatalf("seed import run %s: %v", runID, err)
+			t.Fatalf("seed import run %s: %v", run.id, err)
 		}
 		for number, chapter := range []struct {
 			title string
@@ -206,9 +216,9 @@ func productionImportRunReceiptsServe2Seed(t *testing.T, projectPath string) {
 		} {
 			if _, err := db.Exec(`INSERT INTO import_run_chapters (run_id, chapter_number, title,
  content_fingerprint, content_size, content_snapshot) VALUES (?, ?, ?, ?, ?, ?)`,
-				runID, int64(number+1), chapter.title, syntheticHash(chapter.body),
+				run.id, int64(number+1), chapter.title, syntheticHash(chapter.body),
 				int64(len(chapter.body)), chapter.body); err != nil {
-				t.Fatalf("seed import chapter %s/%d: %v", runID, number+1, err)
+				t.Fatalf("seed import chapter %s/%d: %v", run.id, number+1, err)
 			}
 		}
 	}
@@ -574,6 +584,16 @@ func TestProductionImportRunReceiptsServe2RefusesAForeignRun(t *testing.T) {
 	if generationRunID == "" || rootActionID == "" || epoch == "" {
 		t.Fatalf("generation:begin answered no run handle: %v", begun)
 	}
+	// The slot arm needs a REAL run frozen for the global slot. It is begun here,
+	// BEFORE the byte image is captured, because a begin legitimately writes its own
+	// root and run; only the two refusals must leave the image untouched.
+	var global map[string]any
+	productionImportRunReceiptsServe2Result(t, lane, "generation:begin",
+		[]any{productionImportGenerationSelection("global", "receipt-serve2-global-begin"), lane.frozen}, &global)
+	globalHandle := syntheticMap(global["handle"])
+	if globalHandle == nil || syntheticString(globalHandle["runId"]) == "" {
+		t.Fatalf("the global begin answered no run handle: %v", global)
+	}
 	live := productionImportRunReceiptsServe2Lease(productionImportGenerationExecutionEpoch)
 	before := productionImportRunResidualImage(t, lane.database)
 
@@ -593,13 +613,6 @@ func TestProductionImportRunReceiptsServe2RefusesAForeignRun(t *testing.T) {
 	}
 
 	// The handle is a real run, but frozen for another import slot: :1462.
-	var global map[string]any
-	productionImportRunReceiptsServe2Result(t, lane, "generation:begin",
-		[]any{productionImportGenerationSelection("global", "receipt-serve2-global-begin"), lane.frozen}, &global)
-	globalHandle := syntheticMap(global["handle"])
-	if globalHandle == nil || syntheticString(globalHandle["runId"]) == "" {
-		t.Fatalf("the global begin answered no run handle: %v", global)
-	}
 	slotChanged := productionImportRunReceiptsServe2ExpectRefusal(t, lane,
 		productionImportRunReceiptsPrepareOperation,
 		productionImportRunReceiptsServe2PrepareArgs(productionImportGenerationStyleRunID,
