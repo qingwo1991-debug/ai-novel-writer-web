@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"os"
 )
 
@@ -154,7 +155,9 @@ func productionImportRunReceiptsOwnerInstalled() bool {
 	if err != nil {
 		return false
 	}
-	return productionSeamContains(string(raw), productionImportRunReceiptsOwnerServe2Binder)
+	// The wiring line is a call expression, which gofmt leaves byte-identical, so a
+	// plain containment is enough here; productionSeamContains lives in the test.
+	return strings.Contains(string(raw), productionImportRunReceiptsOwnerServe2Binder)
 }
 
 // productionImportRunReceiptsOwnerFact is one declaration the audit above quotes,
