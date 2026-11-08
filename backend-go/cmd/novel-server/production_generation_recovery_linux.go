@@ -104,27 +104,14 @@ import (
 // would describe rows this lane can read but can never have written. Serving a
 // null instead would tell the blueprint page there is nothing to recover.
 //
-// # Refused: generation:retry-draft-short-outline, for the narrower reason
+// # generation:retry-draft-short-outline: served elsewhere
 //
-// The only implementation in this module authors its own task:
-// syntheticGeneration.RetryDraftShortOutline builds one hardcoded message
-// (synthetic_generation_linux.go:1450), so lending it would make this lane the
-// author of the text the provider receives. The reference authors nothing - it
-// re-dispatches the task the failed attempt froze, read back from the attempt's
-// usage receipt (main-generation-owner.ts:189) and proved against the material
-// decision's short-outline hash and the stored request hash (:190-196). Faithful
-// porting would not be prompt authoring, but this lane's dispatch never records a
-// replayTask: OrdinaryService.Execute hands the generation service a request with
-// no ReplayTask field (internal/generationowner/ordinary.go:149), so every attempt
-// written here has nothing for a faithful retry to re-dispatch. The missing port is
-// the frozen task record on the dispatch path; until it exists the only available
-// retry is the authored one, and that one this lane refuses
-// (production_generation_write_linux.go:92).
-//
-// Nothing here writes, so a refused call leaves the author database byte-identical;
-// the tests prove that against a live lease holding a genuinely interrupted run, a
-// completed one and a real failed-attempt id, so the refusal cannot be explained
-// away as "there was nothing to answer".
+// This name is no longer refused here. The dispatch now records the frozen task
+// as the attempt's replayTask (internal/generationowner/ordinary.go), so a
+// faithful retry reads that task back, proves it against the material decision's
+// short-outline hash and the stored request hash, and re-dispatches it
+// (production_retry_draft_outline_linux.go). This file keeps only the two names
+// that still have no port: list-recovery and find-blueprint-recovery.
 //
 // # Re-check after the graph/ledger work (this session)
 //
@@ -143,7 +130,6 @@ const (
 	productionGenerationRecoveryList      = "generation:list-recovery"
 	productionGenerationRecoveryFind      = "generation:find-blueprint-recovery"
 	productionGenerationRecoveryDirectory = "generation:list-directory-progress"
-	productionGenerationRecoveryRetry     = "generation:retry-draft-short-outline"
 )
 
 // productionGenerationRecoveryLine is one declaration that has to exist for a
@@ -178,14 +164,13 @@ func productionGenerationRecoveryServedOperations() []string {
 }
 
 // productionGenerationRecoveryRefusedOperations is the two names that stay 501,
-// plus the retry this file also refuses, spelled once so the binder, the seam table
-// and the test cannot drift from the controller that registers them
-// (electron/controllers/generation-controller.ts:264, :279-281).
+// spelled once so the binder, the seam table and the test cannot drift from the
+// controller that registers them (electron/controllers/generation-controller.ts:
+// 264, :279-281).
 func productionGenerationRecoveryRefusedOperations() []string {
 	return []string{
 		productionGenerationRecoveryList,
 		productionGenerationRecoveryFind,
-		productionGenerationRecoveryRetry,
 	}
 }
 
@@ -257,19 +242,6 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// And the ledger refuses to open the operation this name reads, so no
 				// such run can be created here either.
 				{Path: "../../internal/store/generation_ledger.go", Line: 694, Marker: `if glPlanning(glText(request["operation"])) {`},
-			},
-		},
-		{
-			Operation: productionGenerationRecoveryRetry,
-			Missing: []productionGenerationRecoveryLine{
-				// The only retry in this module authors its own message.
-				{Path: "synthetic_generation_linux.go", Line: 1450, Marker: "retry draft short outline after length stop"},
-				// The reference re-dispatches the task the failed attempt froze.
-				{Path: "../../../electron/services/main-generation-owner.ts", Line: 189, Marker: "const task = usage.replayTask"},
-				// Which this lane's dispatch never records.
-				{Path: "../../internal/generationowner/ordinary.go", Line: 149, Marker: "RunID: runID, InvocationNonce: nonce, RequestHash: hash,"},
-				// The refusal this file keeps, for the narrower reason above.
-				{Path: "production_generation_write_linux.go", Line: 92, Marker: "It is not a ledger transition, it is a provider call"},
 			},
 		},
 	}
@@ -346,7 +318,7 @@ func bindProductionGenerationRecovery(server *transport.Server) error {
 	if err := bindProductionGenerationRecoveryReads(server); err != nil {
 		return err
 	}
-	// Nothing is bound: the three refused names keep failing closed at
+	// Nothing is bound: the two refused names keep failing closed at
 	// GO_OPERATION_NOT_MIGRATED, and the served one keeps the handler the
 	// batch/directory slice already installed.
 	return nil

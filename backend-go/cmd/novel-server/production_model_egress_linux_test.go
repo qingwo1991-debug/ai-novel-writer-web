@@ -334,10 +334,11 @@ func TestProductionLaneRefusesAbsentOrMalformedOriginWithoutFailingStartup(t *te
 }
 
 // TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution proves the
-// policy is only a dispatch boundary: with an origin committed, every generation
-// name the lane does not own still fails closed and the committed-state reads keep
-// answering. generation:execute is the one dispatch name the lane does own, so it
-// is excluded here and asserted by
+// policy is only a dispatch boundary: with an origin committed, the generation
+// retry name is now bound by the generation write batch and answers the family
+// envelope instead of the fail-closed 501, and the committed-state reads keep
+// answering. generation:execute is the one dispatch name the lane owns through the
+// executor, so its dispatch is excluded here and asserted by
 // TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist.
 func TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution(t *testing.T) {
 	root := syntheticProductionDataDir(t)
@@ -350,21 +351,14 @@ func TestProductionModelEgressDoesNotBindTheRemainingGenerationExecution(t *test
 	}
 	defer cleanup()
 	author := newProductionDurableClient(t, handler, productionTestTab)
-	// generation:begin is the admitted run-admission name (asserted by
-	// TestProductionLaneAdmitsGenerationBeginUnderTheLiveLease) and
-	// generation:execute the admitted dispatch name. The ledger mutations and the
-	// two family cancels are bound by the generation write batch now, so the one
-	// name left here is the one that re-dispatches a request the browser never
-	// froze: it must keep failing closed even with a policy in place.
-	for _, operation := range []string{
-		"generation:retry-draft-short-outline",
-	} {
-		response := author.call(t, operation, []any{})
-		if response.Code != http.StatusNotImplemented ||
-			!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("%s answered %d instead of the lane's fail-closed 501: %s",
-				operation, response.Code, response.Body.String())
-		}
+	// The retry name is served by the generation write batch
+	// (production_retry_draft_outline_linux.go): a policy in place is a dispatch
+	// boundary, not a reason to keep the name fail-closed. An empty argument list is
+	// refused by the family's own mutation adapter, not by the 501 registry.
+	response := author.call(t, "generation:retry-draft-short-outline", []any{})
+	if response.Code == http.StatusNotImplemented || strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
+		t.Fatalf("generation:retry-draft-short-outline is still the lane's fail-closed 501: %d %s",
+			response.Code, response.Body.String())
 	}
 	// The already-served model reads are untouched by the new policy.
 	var defaultModel any

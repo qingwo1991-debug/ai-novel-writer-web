@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,8 +23,9 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
-// This file proves the eight write names production_generation_write_linux.go
-// binds: one subtest per operation, each driven over the real HTTP handler and
+// This file proves the eight non-retry write names production_generation_write_linux.go
+// binds (the retry name is asserted by TestProductionRetryDraftShortOutline): one
+// subtest per operation, each driven over the real HTTP handler and
 // then read back through a connection of the test's own - the ledger store over a
 // read-only handle, never the lane's admitted handle and never the receipt - so
 // every assertion is on persisted state.
@@ -268,9 +268,10 @@ func productionGenerationWriteSeedOutbox(t *testing.T, projectPath string) {
 }
 
 // TestProductionGenerationWritesServeTheLedgerMutationsThisLaneOwns drives the
-// five generation names production_generation_write_linux.go binds. Each subtest
-// works on its own fixture, its own loopback endpoint and its own admitted run, so
-// a failure names one operation.
+// five non-retry generation mutation names production_generation_write_linux.go
+// binds (the retry name is asserted by TestProductionRetryDraftShortOutline). Each
+// subtest works on its own fixture, its own loopback endpoint and its own admitted
+// run, so a failure names one operation.
 func TestProductionGenerationWritesServeTheLedgerMutationsThisLaneOwns(t *testing.T) {
 	t.Run("generation:bind-material-decision", testProductionGenerationWriteMaterialDecision)
 	t.Run("generation:discard-candidate", testProductionGenerationWriteDiscardCandidate)
@@ -281,9 +282,6 @@ func TestProductionGenerationWritesServeTheLedgerMutationsThisLaneOwns(t *testin
 	t.Run("finalization-generation:cancel", func(t *testing.T) {
 		testProductionGenerationWriteFamilyCancel(t, "finalization-generation:cancel", "GENERATION_FINALIZATION_REQUEST_INVALID")
 	})
-	// The refused sibling is asserted last, so the same test states both halves of
-	// the decision: the family is live and this name is still not bound.
-	t.Run("generation:retry-draft-short-outline", testProductionGenerationWriteRefusesShortOutlineRetry)
 }
 
 // productionGenerationWriteDecisionOf reads one run's frozen manifest back through
@@ -568,22 +566,6 @@ func testProductionGenerationWriteFamilyCancel(t *testing.T, operation, invalidC
 	}
 	if !bytes.Equal(lane.bytes(t), baseline) {
 		t.Fatalf("a refused %s changed the committed database file", operation)
-	}
-	lane.assertNoDial(t)
-}
-
-// testProductionGenerationWriteRefusesShortOutlineRetry states the refusal this
-// file derives: the family is bound and answers, and the one name that would make
-// this lane a prompt author stays fail-closed.
-func testProductionGenerationWriteRefusesShortOutlineRetry(t *testing.T) {
-	lane := productionGenerationWriteOpen(t, nil, nil)
-	handle := lane.begin(t, productionEditorBeginRequest(productionGenerationWriteBeginNonce))
-	response := lane.author.call(t, "generation:retry-draft-short-outline", []any{
-		map[string]any{"handle": handle, "failedAttemptId": "ci-not-an-attempt"}, lane.frozen,
-	})
-	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("generation:retry-draft-short-outline is bound in the production lane: %d %s",
-			response.Code, response.Body.String())
 	}
 	lane.assertNoDial(t)
 }

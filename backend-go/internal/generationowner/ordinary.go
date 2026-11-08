@@ -145,12 +145,21 @@ func (s *OrdinaryService) Execute(ctx context.Context, frozen *Frozen, runID, no
 	if hash == "" {
 		return nil, failure("GENERATION_REQUEST_HASH_INVALID")
 	}
+	// The frozen task is the reference's replayTask: recorded on the attempt's
+	// usage receipt so a faithful retry can read it back and re-dispatch it
+	// instead of authoring a new message. It is serialised as raw JSON so the
+	// ledger's ordered writer preserves the task's exact field order.
+	taskRaw, err := json.Marshal(frozen.task)
+	if err != nil {
+		return nil, failure("GENERATION_SEMANTIC_TASK_INVALID")
+	}
 	return s.service.Execute(context.WithValue(ctx, ordinaryContextKey{}, frozen), generation.Request{
 		RunID: runID, InvocationNonce: nonce, RequestHash: hash,
 		ProviderRequest: frozen,
 		ReservedTokens:  frozen.plan.Reserved, RequestedOutputTokens: frozen.plan.Output,
 		InputUpperBoundTokens: frozen.plan.Input, ReasoningUpperBoundTokens: frozen.plan.Reasoning,
 		UsagePolicy: policy, Purpose: frozen.task.Purpose, BudgetDecision: frozen.plan.BudgetDecision,
+		ReplayTask: json.RawMessage(taskRaw),
 	})
 }
 

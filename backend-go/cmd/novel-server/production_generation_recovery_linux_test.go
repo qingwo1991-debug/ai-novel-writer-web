@@ -416,13 +416,12 @@ func TestProductionGenerationRecoveryDirectoryProgressEmpty(t *testing.T) {
 }
 
 // TestProductionLaneRefusesGenerationRecovery pins generation:list-recovery and
-// generation:find-blueprint-recovery - and the retry this file also refuses - at the
-// registry's fail-closed 501 over a session that really holds the states they would
-// project: a run admitted between admission and dispatch, and a run that settled
-// with a stop. The point is that the refusal is not vacuous - there is state to
-// answer about, one attempt id to retry, and a live lease to read it under - and
-// that reaching the three names still writes nothing, dispatches nothing and
-// leaves the author database byte-identical.
+// generation:find-blueprint-recovery at the registry's fail-closed 501 over a
+// session that really holds the states they would project: a run admitted between
+// admission and dispatch, and a run that settled with a stop. The point is that the
+// refusal is not vacuous - there is state to answer about and a live lease to read
+// it under - and that reaching the two names still writes nothing, dispatches
+// nothing and leaves the author database byte-identical.
 func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
 	seam := &productionGenerationSeam{text: "雨停之前，她把书翻到最后一页。"}
 	lane := productionGenerationWriteOpen(t, seam.dispatch, nil)
@@ -479,29 +478,16 @@ func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
 	if settledStatus != "settled" && settledStatus != "unknown" {
 		t.Fatalf("the completed run's attempt never reached a terminal state: %v", settledStatus)
 	}
-	var attemptID string
-	productionStoryStateWriteScan(t, readback, "SELECT attempt_id FROM generation_attempts WHERE run_id=?",
-		[]any{syntheticString(completed["runId"])}, &attemptID)
-	if attemptID == "" {
-		t.Fatal("the settled attempt has no id to retry")
-	}
 
-	// The retry request is the browser's own shape
-	// (src/shared/generation-owner-contract.ts:310): a handle and the failed attempt.
-	retry := map[string]any{"handle": completed, "failedAttemptId": attemptID}
 	before := productionMCPDatabaseDigest(t, lane.projectPath)
 	productionRecoveryUnbound(t, lane.author, productionGenerationRecoveryList, []any{lane.frozen})
 	productionRecoveryUnbound(t, lane.author, productionGenerationRecoveryFind, []any{lane.frozen})
-	productionRecoveryUnbound(t, lane.author, productionGenerationRecoveryRetry, []any{retry, lane.frozen})
 	after := productionMCPDatabaseDigest(t, lane.projectPath)
 	if before != after {
-		t.Fatal("a refused recovery or retry moved a byte of the author database")
+		t.Fatal("a refused recovery moved a byte of the author database")
 	}
-	// The three refusals ran after the whole-file digest and before it was taken
-	// again, so a retry that dispatched behind the 501 would show up here even when
-	// its own row never committed.
 	if seam.dispatched() != 1 {
-		t.Fatalf("a refused retry dispatched the provider seam: %d calls", seam.dispatched())
+		t.Fatalf("a refused recovery dispatched the provider seam: %d calls", seam.dispatched())
 	}
 	var runsAfter, attemptsAfter int
 	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsAfter)
@@ -528,7 +514,7 @@ func productionRecoveryUnbound(t *testing.T, client *productionDurableClient, op
 // been shifted by an unrelated edit is not a regression, while a row that was
 // deleted is. The recorded line is still reported, so a reader finds it quickly.
 func TestProductionGenerationRecoverySeams(t *testing.T) {
-	refused := make(map[string]bool, 3)
+	refused := make(map[string]bool, 2)
 	for _, operation := range productionGenerationRecoveryRefusedOperations() {
 		if refused[operation] {
 			t.Fatalf("%v is listed twice", operation)
@@ -540,8 +526,8 @@ func TestProductionGenerationRecoverySeams(t *testing.T) {
 		}
 		productionRecoveryMarkers(t, operation, seam.Missing)
 	}
-	if len(refused) != 3 {
-		t.Fatalf("the refusal list covers %d names, want 3", len(refused))
+	if len(refused) != 2 {
+		t.Fatalf("the refusal list covers %d names, want 2", len(refused))
 	}
 	// The two names this file exists for are refused; the one with a port is not.
 	for _, operation := range []string{productionGenerationRecoveryList, productionGenerationRecoveryFind} {

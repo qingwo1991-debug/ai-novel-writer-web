@@ -16,12 +16,13 @@ import (
 
 // This file is the production lane's WRITE slice of the two families whose
 // binders are atomic across names this lane already serves: the generation
-// ledger mutations and the finalization outbox. It publishes exactly eight
+// ledger mutations and the finalization outbox. It publishes exactly nine
 // names and nothing else:
 //
 //	generation:bind-material-decision          generation.go:48
 //	generation:discard-candidate               generation.go:120
 //	generation:restart                         generation.go:114
+//	generation:retry-draft-short-outline       production_retry_draft_outline_linux.go
 //	graph-generation:cancel                    generation.go:81
 //	finalization-generation:cancel             generation.go:95
 //	finalization:commit                        finalization.go:112 (BindFinalization)
@@ -35,12 +36,13 @@ import (
 // generation:cancel, generation:pause and generation:resume, which
 // production_open_linux.go already binds through BindGenerationBegin,
 // BindGenerationExecute and BindGenerationLifecycle. The same binder would also
-// install generation:retry-draft-short-outline, which this lane must not serve
-// (the refusal is derived below). Each name is therefore installed with
-// server.Bind, the exported single-name binder (internal/transport/server.go:73-77),
-// exactly the way production_review_write_linux.go:51-56 installs its own slice.
-// Bind refuses an uninventoried name (OPERATION_NOT_EXPOSED) and an already bound
-// one (OPERATION_ALREADY_BOUND), so a name this file should not publish - or a
+// install generation:retry-draft-short-outline, which this lane serves through a
+// faithful re-dispatch rather than through the atomic binder. Each name is
+// therefore installed with server.Bind, the exported single-name binder
+// (internal/transport/server.go:73-77), exactly the way
+// production_review_write_linux.go:51-56 installs its own slice. Bind refuses an
+// uninventoried name (OPERATION_NOT_EXPOSED) and an already bound one
+// (OPERATION_ALREADY_BOUND), so a name this file should not publish - or a
 // sibling binder that took one of these names first - is a startup error instead
 // of silent dead code or a silent collision.
 //
@@ -62,14 +64,15 @@ import (
 // had a usable policy never serves any of these names - a run can only exist here
 // if this lane admitted it, and admission refuses without that policy.
 //
-// None of the five dials: bind-material-decision writes one ledger row
-// (synthetic_generation_linux.go:1605 "replaceUnstartedBinding"),
+// None of the five non-retry names dials: bind-material-decision writes one
+// ledger row (synthetic_generation_linux.go:1605 "replaceUnstartedBinding"),
 // discard-candidate writes one artifact status (:1635 -> generation/service.go:795),
 // the two family cancels are the ordinary stop (generation/service.go stop ->
 // ledger "pause"), and restart opens a replacement run and cancels the old root
-// (:1475 -> :1483), writing ledger rows only. The executor's Egress client is
-// never reached, which the tests assert with a loopback listener that receives no
-// connection.
+// (:1475 -> :1483), writing ledger rows only. The retry name is the one exception:
+// it re-dispatches the proven frozen task through the executor (see its own
+// section below). The executor's Egress client is never reached by the other five,
+// which the tests assert with a loopback listener that receives no connection.
 //
 // # generation:restart, judged rather than assumed
 //
@@ -87,16 +90,16 @@ import (
 // live run to a restarted run and asserting the ledger rows, with the loopback
 // listener untouched.
 //
-// # Refused: generation:retry-draft-short-outline
+// # generation:retry-draft-short-outline, re-dispatched rather than authored
 //
-// It is not a ledger transition, it is a provider call this lane cannot honestly
-// make. It synthesizes its own task and message - "retry draft short outline after
-// length stop" - (synthetic_generation_linux.go:1163-1167), prepares it
-// (:1169) and dispatches it through the service (:1178). The browser freezes no
-// such request, so binding it would turn this lane into a prompt author, and the
-// renderer's own availability gate (the material decision's shortOutlinePromptHash)
-// is not authority this lane holds. It stays unbound and keeps failing closed at
-// GO_OPERATION_NOT_MIGRATED.
+// It is a provider call, so it needs the owner this file already wraps. It does
+// not author a prompt: OrdinaryService.Execute records the frozen task on the
+// attempt's usage receipt as replayTask (internal/generationowner/ordinary.go),
+// and productionRetryDraftShortOutline reads that task back, proves it against
+// the material decision's shortOutlinePromptHash and the stored request hash,
+// then re-dispatches it (production_retry_draft_outline_linux.go). A run with no
+// failed short-outline attempt, or a tampered replayTask/request hash, is refused
+// by name without dispatching.
 type productionGenerationWrites struct {
 	owner *productionGeneration
 }
@@ -109,7 +112,7 @@ func newProductionGenerationWrites(owner *productionGeneration) *productionGener
 	return &productionGenerationWrites{owner: owner}
 }
 
-// Bind installs the five generation names. A nil owner installs nothing and is
+// Bind installs the six generation names. A nil owner installs nothing and is
 // not an error (the names keep failing closed), exactly like
 // transport.BindGenerationReads with a nil provider; the caller only calls this
 // in the branch that built an owner.
@@ -136,6 +139,9 @@ func (w *productionGenerationWrites) Bind(server *transport.Server) error {
 		}},
 		{"generation:restart", 2, func(ctx context.Context, caller transport.Caller, expected map[string]any, args []any) (any, error) {
 			return w.owner.Restart(ctx, caller, expected, args[0], args[1])
+		}},
+		{"generation:retry-draft-short-outline", 1, func(ctx context.Context, caller transport.Caller, expected map[string]any, args []any) (any, error) {
+			return w.owner.RetryDraftShortOutline(ctx, caller, expected, args[0])
 		}},
 		// The graph and finalization channels carry `{ handle }`, not the handle
 		// itself (src/services/graph-generation.ts:40,

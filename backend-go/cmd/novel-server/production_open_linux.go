@@ -640,10 +640,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			return nil, nil, bindErr
 		}
 		// The remaining ledger mutations of the family - material decisions, candidate
-		// discards, restart and the two family cancels - travel the same owner, because
-		// none of them dials: restart runs the begin body and then stops the old root,
-		// so it is not a second run-admission path. retry-draft-short-outline is absent:
-		// it synthesises a task the browser never froze and re-dispatches it.
+		// discards, restart, the two family cancels and retry-draft-short-outline - travel
+		// the same owner: restart runs the begin body and then stops the old root, so it
+		// is not a second run-admission path, and the retry re-dispatches the frozen task
+		// it reads back from the failed attempt rather than authoring a new one.
 		if bindErr := newProductionGenerationWrites(owner).Bind(server); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
