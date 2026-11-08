@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
