@@ -78,13 +78,6 @@ func TestProductionLaneRefusesImportGeneration(t *testing.T) {
 	// refused despite naming it, not because it is missing.
 	importHandle := map[string]any{"projectId": projectID, "epoch": leaseID,
 		"rootActionId": seedRootID, "runId": seedRunID}
-	finalizationSlot := productionGraphReadsSlot(productionGraphReadsOwnedFinalizationID)
-	finalizationRoot, finalizationRun := productionFinalizationGenerationRun(t, database,
-		productionGraphReadsSlotKey(t, finalizationSlot))
-	finalizationHandle := map[string]any{"projectId": projectID, "epoch": leaseID,
-		"rootActionId": finalizationRoot, "runId": finalizationRun}
-	artifact := map[string]any{"artifactId": "import-generation-artifact",
-		"revision": 1, "textHash": strings.Repeat("a", 64)}
 
 	t.Run("import-generation:read", func(t *testing.T) {
 		productionImportGenerationSeamProof(t, productionImportGenerationRead)
