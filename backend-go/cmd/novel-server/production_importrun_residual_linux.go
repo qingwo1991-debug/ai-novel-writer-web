@@ -25,11 +25,9 @@ import (
 //
 // # Refused, with the capability that does not exist
 //
-// Four names stay at GO_OPERATION_NOT_MIGRATED. Each one is a capability gap, not
+// Two names stay at GO_OPERATION_NOT_MIGRATED. Each one is a capability gap, not
 // deferred work, and the gap is named here so it can be closed deliberately.
 //
-//	db:import-run-effect-receipt-prepare   see "the generation-source proof" below
-//	db:import-run-effect-receipt-commit    see "the generation-source proof" below
 //	db:import-run-author-preview           needs FinalizedDraftImportRepository.preview, the
 //	                                       finalized-draft preview/validation path the store
 //	                                       deliberately left out
@@ -57,82 +55,25 @@ import (
 //	                                       unported prepare() (:26-34), because BeginParsing
 //	                                       refuses every purpose but 'reference' (:801-802).
 //
-// # The generation-source proof, and why both receipt writes stay unbound
+// # The two receipt writes, served elsewhere
 //
-// PrepareEffectReceipt and CommitEffectReceipt take an
-// store.ImportRunGenerationSourceAssert (internal/store/importrun_receipts.go:118,
-// documented at :112-118). The controller always supplies one
-// (electron/controllers/db-controller.ts:425 for prepare, :437 for commit), and the
-// proof it supplies reads the generation run's own row, compares the run's frozen
-// import slot and rebuilds the run's binding from the CURRENT sources and the
-// CURRENT model profile
-// (electron/controllers/generation-controller.ts:72-75 ->
-// electron/services/main-generation-owner.ts:1453-1472). It does not compare the
-// run's epoch with the live one: requireRun is called with execution=false, and
-// that comparison is gated on it (main-generation-owner.ts:164).
-//
-// Reproducing that rebuild is not the gap any more. The store can already read the
-// handle row and its importSlot (internal/store/character_proposal_pending.go:545-575,
-// which then stops at ErrCharacterProposalPendingProofUnavailable), and
-// generationowner.ReproduceBinding (internal/generationowner/binding.go:63) rebuilds
-// a binding from the current sources without the live-session currency check. Two
-// things still block the pair, and neither is a capability gap:
-//
-//   - THE WIRING. The owner the reproduction needs - the registry that holds the
-//     model lease record ReproduceBinding resolves
-//     (internal/generationowner/lease.go:164), its private-model loader
-//     (production_generation_begin_linux.go:133-134) and its source readers - is
-//     created at production_open_linux.go:591, and this adapter is constructed
-//     from INSIDE that block (:627). So the binders do not have to move into the
-//     owner block; they have to be HANDED the owner: one argument at :627, then
-//     one at production_importrun_residual_linux.go:247. That line is in a file
-//     the pass that wrote production_importrun_receipts_owner_linux.go may not
-//     edit, which is why the shipped lane still cannot be served from here.
-//   - THE CONNECTION. The assert is invoked inside the receipt's own BEGIN
-//     IMMEDIATE, which holds the author database's only connection
-//     (importrun_receipts.go:987 and :1005 -> importrun.go:948;
-//     internal/projectfs/author_linux.go:121 opens that pool with
-//     SetMaxOpenConns(1)), and the callback type (importrun_receipts.go:118)
-//     carries neither a connection nor the run. The store's own comment calls a
-//     prover that takes a second connection a deadlock rather than a proof
-//     (internal/store/character_proposal_pending.go:37), and the reference's
-//     FIRST step - requireRun's read - is exactly that read
-//     (main-generation-owner.ts:1454). Store-native composition of a receipt and
-//     a projection on that connection is proven (:27-37); a binding reproduction
-//     is not a projection.
-//
-// The earlier version of this paragraph retracted the deadlock objection and
-// blamed the missing loader alone. The retraction was wrong: the deadlock is real
-// for every callback this store calls. What is NOT a problem is the source read
-// itself - an import stage freezes prompt refs only
-// (production_import_generation_serve_linux.go:133-168) and their reader is
-// synthetic (cmd/novel-server/synthetic_generation_linux.go:657), so the
-// reproduction touches no table. The one read it does need is the generation run,
-// and production_importrun_receipts_owner_linux.go records the store change that
-// would hand it over. The unexported
-// dcAssertSources (internal/store/draft_commit_tx.go:272-288) is not a substitute
-// either: it proves a draft-commit epoch and root, not an import-effect handle, and
-// is bound to the draft lane's own run row.
-//
-// Passing nil is not the way out. The reference's real style receipt ALWAYS
-// carries a generationRunHandle (electron/services/__tests__/import-generation.test.ts:197,
-// and src/services/workflows/import-run-orchestrator.ts:444-449 commits the payload
-// the generation run produced), and the two store guards then disagree:
-//
-//   - prepare with nil accepts a handle WITHOUT any proof
-//     (importrun_receipts.go:983-985: a nil proof only makes the handle optional);
-//   - commit with nil REFUSES a handle outright, with the store's own
-//     GENERATION_GUARD_REQUIRED (importrun_receipts.go:1000-1004).
-//
-// So a nil proof lets this lane write a receipt that it could never commit, and
-// accepts a generation binding the reference refuses. A non-nil proof that fails
-// closed instead refuses every real request twice over. Neither is a binder that
-// serves the operation, so both names keep answering 501 with this reason rather
-// than being published as handlers that can only refuse or, worse, that can write
-// unproven state. db:import-run-effect-receipt-get needs no proof at all (the
+//	db:import-run-effect-receipt-prepare and -commit used to be refused here, and
+// they are not refused any more. They are served by
+// production_importrun_receipts_serve2_linux.go, an OWNER-BOUND binder: the
+// generation-source proof needs generationowner.ReproduceBinding
+// (internal/generationowner/binding.go:63), whose registry holds the run's model
+// lease in process memory, and the run it reproduces is read by the store on the
+// receipt transaction's own connection
+// (internal/store/importrun_receipts_generation.go, handed to the assert through
+// internal/store/importrun_receipts.go:130). This adapter is constructed with
+// `open.durable` alone and holds no owner, so it installs nothing for those two
+// names and they keep failing closed at GO_OPERATION_NOT_MIGRATED until the
+// owner-block line recorded in that file is installed. A fail-closed handler here
+// would refuse every real request twice over, and a nil proof would let prepare
+// accept a handle commit refuses
+// (internal/store/importrun_receipts.go:1002 against :1029); neither is a served
+// operation. db:import-run-effect-receipt-get needs no proof at all (the
 // reference has none there either), which is why it is bound below.
-// production_importrun_receipts_serve_linux.go records that verdict per name and
-// production_importrun_receipts_linux.go carries the declarations behind it.
 //
 // # Why one server.Bind per name
 //
@@ -259,11 +200,12 @@ func (r *productionImportRunResiduals) Bind(server *transport.Server) error {
 			return err
 		}
 	}
-	// The three names this family still refuses have their own seam file. Its
-	// binder installs nothing on the wire, but it validates the seam at startup
-	// and refuses a name that a sibling has already bound, so the refusal cannot
-	// silently become a stale note. The served count is unchanged: no name here
-	// is bound.
+	// The one name this family still refuses has its own seam file. Its binder
+	// installs nothing on the wire, but it validates the seam at startup and
+	// refuses a name that a sibling has already bound, so the refusal cannot
+	// silently become a stale note. The receipt pair is NOT here: it is served by
+	// the owner-bound productionImportRunReceiptsServe2, which this adapter cannot
+	// build because it holds no generation owner.
 	if err := newProductionImportRunReceipts(r.durable).Bind(server); err != nil {
 		return err
 	}

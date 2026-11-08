@@ -721,6 +721,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// db:import-run-effect-receipt-prepare/-commit prove the import run's sources
+		// against the model profile, reading the run on the receipt's own connection
+		// (production_importrun_receipts_serve2_linux.go).
+		if bindErr := newProductionImportRunReceiptsServe2(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}

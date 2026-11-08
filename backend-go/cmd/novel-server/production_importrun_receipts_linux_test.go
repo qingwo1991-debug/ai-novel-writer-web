@@ -13,24 +13,24 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// These tests pin the import-run family's last three names where this batch
-// leaves them: refused by name, with the missing proof and, for the two receipt
-// channels, the exact execution lease that would have made a served handler
-// succeed.
+// These tests pin the import-run receipt family where this pass leaves it: the two
+// receipt writes are SERVED by production_importrun_receipts_serve2_linux.go (driven
+// end to end in production_importrun_receipts_serve2_linux_test.go), one name -
+// db:import-run-prepare-inspection - is still refused with the declaration that
+// keeps it refused, and the lane's residual adapter, which holds no generation owner,
+// installs nothing for the served pair.
 //
 // # What is deliberately absent
 //
-// There is no success subtest, no replay-as-success subtest and no
-// foreign-project-vs-stale-lease authority matrix, because no name in this file
-// is bound. The 501 GO_OPERATION_NOT_MIGRATED is decided before the handler reads
-// the request envelope, the path or the lease; only the JSON body and its
-// argument shape are parsed first (internal/transport/server.go:111-116). A
-// "success" assertion here would have to be written against a handler that does
-// not exist. The calls below therefore use the reference's real wire shape and a
-// REAL live execution lease, and prove that even the branch that needs no
-// generation proof - the replay of an already committed receipt - is not served.
-// The success-path requirements in the batch description apply to names that are
-// served; none of these three is.
+// There is no success subtest here, because no name in THIS file is bound. The 501
+// GO_OPERATION_NOT_MIGRATED is decided before the handler reads the request
+// envelope, the path or the lease; only the JSON body and its argument shape are
+// parsed first (internal/transport/server.go:111-116). A "success" assertion here
+// would have to be written against a handler this file does not install, and the
+// served-name journeys belong to the file that installs them. The calls below
+// therefore use the reference's real wire shape and a REAL live execution lease, and
+// prove that even the branch that needs no generation proof - the replay of an
+// already committed receipt - is not served by an ownerless lane.
 //
 // # Why the requests are still fully formed
 //
@@ -57,13 +57,12 @@ import (
 //	:2429-2432
 //	  return { receipt: validatedReceipt, run: this.get(runId)!, cancelApplied: run.cancel_requested === 1 }
 //
-// Both return before the generation-source assert. That is why "serve only the
-// replay" was considered and refused: it would answer 200 for a receipt the
-// desktop wrote while answering 501 for the prepare that produced it, and it
-// would publish a success the reference's own prepare would have refused with
-// GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED. The replay subtest below drives that
-// exact shape and asserts the lane still answers 501 and leaves the committed
-// row untouched.
+// Both return before the generation-source assert. That is why a replay reader was
+// never a substitute for the served write: it would answer 200 for a receipt the
+// desktop wrote while a lane without the owner answered 501 for the prepare that
+// produced it. The replay subtest below drives that exact shape against the
+// ownerless adapter and asserts it answers 501 and leaves the committed row
+// untouched.
 //
 // # The byte image
 //
@@ -209,13 +208,18 @@ func TestProductionImportRunReceiptSeamsStayRefused(t *testing.T) {
 	productionImportRunResidualAssertUnchanged(t, f.database, settled, "the three refused names")
 }
 
-// TestProductionImportRunReceiptReplayIsNotASubstitute drives the one branch that
-// does not need the generation-source proof: both runs already have a committed
-// project-writing-style receipt, so a prepare replay and a commit replay are the
-// exact shapes the reference would answer 200 for. The lane still answers 501,
-// and the two committed rows are read back over a separate mode=ro connection to
-// prove the refusal did not replay, re-commit or re-apply either effect.
-func TestProductionImportRunReceiptReplayIsNotASubstitute(t *testing.T) {
+// TestProductionImportRunReceiptReplayIsNotServedWithoutTheOwner drives the one
+// branch that needs no generation-source proof at all - the replay of an already
+// committed receipt, which the reference answers before the assert
+// (electron/repositories/import-run-repository.ts:2367-2374 and :2427-2432) - and
+// asserts it is STILL not served by this lane's residual adapter. That adapter is
+// constructed with `open.durable` alone and holds no generation owner, so it
+// installs no handler for the pair: the two names stay at 501, and the committed
+// rows are untouched. The served binder is owner-bound
+// (production_importrun_receipts_serve2_linux.go), so "no owner, no handler" is the
+// rule that keeps a replay from becoming a 200 the desktop would never give for the
+// prepare that produced it.
+func TestProductionImportRunReceiptReplayIsNotServedWithoutTheOwner(t *testing.T) {
 	f := productionImportRunReceiptSeed(t)
 	rows := productionImportRunWriteQuery(t, f.database, `SELECT run_id, state, effect_receipt_json
  FROM import_run_receipts WHERE stage = 'style' AND batch_id = 'done' ORDER BY run_id`)
@@ -237,25 +241,24 @@ func TestProductionImportRunReceiptReplayIsNotASubstitute(t *testing.T) {
 		before[runID] = body
 	}
 	execution := productionImportRunResidualLeaseWire(productionImportRunResidualStyleEpoch)
-	seams := []productionImportRunReceiptSeam{
-		{Operation: productionImportRunReceiptsPrepareOperation, Arity: 4, PathIndex: 2},
-		{Operation: productionImportRunReceiptsCommitOperation, Arity: 6, PathIndex: 4},
-	}
 	settled := productionImportRunResidualImage(t, f.database)
-	// The seeded receipt was prepared with exactly this payload, so the prepare
-	// call is the reference's idempotent branch (import-run-repository.ts:2366-2374),
-	// not its CONFLICT branch. The handle-carrying reference shape is exercised in
-	// TestProductionImportRunReceiptSeamsStayRefused; here the point is that even
-	// an exact replay is not served by this lane.
-	prepareArgs := productionImportRunReceiptWire(seams[0], f.projectPath, f.frozen, execution)
+	// The seeded receipt was prepared with exactly this payload, so the prepare call is
+	// the reference's idempotent branch, not its CONFLICT branch.
+	prepareArgs := productionImportRunReceiptWire(
+		productionImportRunReceiptSeam{Operation: productionImportRunReceiptsPrepareOperation, Arity: 4, PathIndex: 2},
+		f.projectPath, f.frozen, execution)
 	prepareRequest, ok := prepareArgs[0].(map[string]any)
 	if !ok {
 		t.Fatalf("the prepare request is %T, not an object", prepareArgs[0])
 	}
 	prepareRequest["payload"] = map[string]any{"writingStyle": productionImportRunResidualStyle}
-	productionImportRunReceiptRefused(t, f.author, seams[0].Operation, prepareArgs, "an already committed prepare replay")
-	productionImportRunReceiptRefused(t, f.author, seams[1].Operation,
-		productionImportRunReceiptWire(seams[1], f.projectPath, f.frozen, execution), "an already committed commit replay")
+	productionImportRunReceiptRefused(t, f.author, productionImportRunReceiptsPrepareOperation, prepareArgs,
+		"an already committed prepare replay in an ownerless lane")
+	productionImportRunReceiptRefused(t, f.author, productionImportRunReceiptsCommitOperation,
+		productionImportRunReceiptWire(
+			productionImportRunReceiptSeam{Operation: productionImportRunReceiptsCommitOperation, Arity: 6, PathIndex: 4},
+			f.projectPath, f.frozen, execution),
+		"an already committed commit replay in an ownerless lane")
 	productionImportRunResidualAssertUnchanged(t, f.database, settled, "the two replay shapes")
 	after := productionImportRunWriteQuery(t, f.database, `SELECT run_id, state, effect_receipt_json
  FROM import_run_receipts WHERE stage = 'style' AND batch_id = 'done' ORDER BY run_id`)
@@ -280,18 +283,16 @@ func TestProductionImportRunReceiptReplayIsNotASubstitute(t *testing.T) {
 // this test fails and the seam's claim has to be re-argued instead of silently
 // becoming stale.
 func TestProductionImportRunReceiptSeamProof(t *testing.T) {
-	want := map[string]bool{
-		productionImportRunReceiptsPrepareOperation:    true,
-		productionImportRunReceiptsCommitOperation:     true,
-		productionImportRunReceiptsInspectionOperation: true,
-	}
+	// One row: the two receipt names are SERVED by
+	// production_importrun_receipts_serve2_linux.go, so they have no seam left.
+	want := map[string]bool{productionImportRunReceiptsInspectionOperation: true}
 	seams := productionImportRunReceiptSeams()
 	if len(seams) != len(want) {
 		t.Fatalf("the seam table holds %v rows, want %v", len(seams), len(want))
 	}
 	for _, seam := range seams {
 		if !want[seam.Operation] {
-			t.Fatalf("%v is not one of the three refused names", seam.Operation)
+			t.Fatalf("%v is not the refused import-run name", seam.Operation)
 		}
 		delete(want, seam.Operation)
 		if seam.Arity < 2 || seam.PathIndex < 0 || seam.PathIndex > seam.Arity-2 {
@@ -327,7 +328,8 @@ func TestProductionImportRunReceiptSeamProof(t *testing.T) {
 		// sourceManifest alone is not the signal: importrun_lifecycle.go has a
 		// local string variable of that name for a parsed source's manifest
 		// fingerprint. These four tokens are the generation-run proof itself, and
-		// none of them appears in either live-run file today.
+		// none of them appears in either live-run file today. The store's own read
+		// lives in its own file for exactly this reason.
 		for _, forbidden := range []string{"generation_runs", "binding_json", "importSlot", "generationRunHandle"} {
 			if strings.Contains(string(raw), forbidden) {
 				t.Fatalf("%v now names %v; the store's live-run read may have grown the generation proof this seam says it lacks", path, forbidden)

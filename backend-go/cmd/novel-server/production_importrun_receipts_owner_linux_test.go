@@ -19,42 +19,30 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
-// These tests pin why production_importrun_receipts_owner_linux.go publishes no
-// handler, and nothing here installs one. They are the executable half of that
-// file's audit:
+// These tests are the executable half of
+// production_importrun_receipts_owner_linux.go's wiring record, and they pin the two
+// things that changed:
 //
-//	1. the assert's first step cannot read inside the receipt transaction, because
-//	   the transaction holds the author database's only connection and the callback
-//	   is handed no connection of its own;
-//	2. the owner is in scope at the receipt binder's call site and is still not
-//	   passed to it, so the fix is one argument in a file this pass may not edit;
-//	3. a real import-bound generation run does exist (the batch's second premise is
-//	   dead) and its frozen source selection is prompt-only, which is what makes the
-//	   fingerprint reproduction - the missing piece - need no database read at all.
+//	1. the store's generation-source proof now RECEIVES the run. A real
+//	   PrepareEffectReceipt call against a real sqlite database opened with the
+//	   production pool shape (one connection, exactly what projectfs gives the author
+//	   handle) completes inside the transaction, and the assert is handed the
+//	   binding_json, the root's status and the stopped attempt's artifact instead of
+//	   opening a read of its own. The previous pass measured that same call ending in
+//	   context.DeadlineExceeded; this one ends in a prepared receipt.
+//	2. the wiring record still describes the shipped source: the owner block opens
+//	   where it says, the anchor binder it names is still installed from that block,
+//	   and the literal line this family needs is the call the served binder takes. It
+//	   does not assert that the line is absent, because the pass that installs it must
+//	   not have to edit this file.
 //
-// # Why the deadlock is measured instead of argued
-//
-// Claim 1 used to be prose. It is now a real store call against a real sqlite
-// database opened with the production pool shape (one connection, exactly what
-// projectfs gives the author handle), a real running import run with a live
-// execution lease, and a real generation run bound to the requested slot. The
-// assert is the reference's own first step, so the call reaches it: everything
-// before it - the key check, the stage check, the payload canonicalization, the
-// execution lease, the checkpoint and the bound-run query - passes. What fails is
-// the read, and it fails with the request context's deadline, after the deadline,
-// which is the shape of a wait that has no other connection to complete on.
-// Nothing is written: the transaction rolls back, and the receipt and ledger
-// tables are read back over a separate mode=ro connection.
-//
-// # Why the refusal tests are shaped this way
-//
-// No subtest here asserts a 200, a success envelope or a replay-as-success,
-// because neither name is bound. The success-path requirements in a served-name
-// batch apply to served names; production_importrun_receipts_linux_test.go:20-33
-// records the same rule for the pair.
+// There is no "the assert deadlocks" subtest any more: the callback no longer takes
+// a database handle, so the shape it measured cannot be constructed. That is the
+// point of the change, and asserting it in prose would be weaker than the positive
+// test below.
 
 const (
-	// productionImportRunReceiptsOwnerProofRunID is the import run the deadlock
+	// productionImportRunReceiptsOwnerProofRunID is the import run the store-level
 	// proof is driven against: style stage, running, live lease.
 	productionImportRunReceiptsOwnerProofRunID = "owner-proof-style-run"
 	// productionImportRunReceiptsOwnerProofRootID is the generation root the frozen
@@ -63,24 +51,41 @@ const (
 	// productionImportRunReceiptsOwnerProofGenerationRunID is the generation run
 	// bound to the proof run's slot.
 	productionImportRunReceiptsOwnerProofGenerationRunID = "owner-proof-generation-run"
+	// productionImportRunReceiptsOwnerProofAttemptID and ...ArtifactID are the one
+	// settled attempt and the artifact the proof requires.
+	productionImportRunReceiptsOwnerProofAttemptID  = "owner-proof-attempt"
+	productionImportRunReceiptsOwnerProofArtifactID = "owner-proof-artifact"
 	// productionImportRunReceiptsOwnerProofEpoch is the execution lease both the
 	// seeded import run and the request carry.
 	productionImportRunReceiptsOwnerProofEpoch = int64(5)
 	// productionImportRunReceiptsOwnerProofLease is the run's frozen binding epoch,
 	// the value requireRun compares against the handle.
 	productionImportRunReceiptsOwnerProofLease = "owner-proof-lease"
-	// productionImportRunReceiptsOwnerProofWait bounds the wait. It is long enough
-	// that reaching the assert is certain and short enough that a deadlock is a
-	// failing assertion rather than a hung test binary.
-	productionImportRunReceiptsOwnerProofWait = 300 * time.Millisecond
+	// productionImportRunReceiptsOwnerProofText is the artifact's visible text. Its
+	// sha256 is the textHash the reference re-derives.
+	productionImportRunReceiptsOwnerProofText = "导入推演：门后有人，灯下无影。"
+	// productionImportRunReceiptsOwnerProofWait bounds the call. A proof that took a
+	// second connection would wait for the one the transaction holds and end here;
+	// a proof that reads the evidence finishes in milliseconds.
+	productionImportRunReceiptsOwnerProofWait = 5 * time.Second
 )
 
-// TestProductionImportRunReceiptsOwnerAssertDeadlocksOnTheReceiptConnection
-// drives store.ImportRuns.PrepareEffectReceipt with the reference's first assert
-// step and pins the only outcome it can have today: a wait for the connection the
-// receipt transaction is holding, ended by the request context, with nothing
-// written.
-func TestProductionImportRunReceiptsOwnerAssertDeadlocksOnTheReceiptConnection(t *testing.T) {
+// productionImportRunReceiptsOwnerProofEvidence is what the witness assert saw. It is
+// filled inside the store's transaction, so a field it read is a field the store
+// handed over.
+type productionImportRunReceiptsOwnerProofEvidence struct {
+	calls    int
+	slot     store.ImportRunGenerationSlot
+	run      store.ImportRunGenerationEvidence
+	handleID string
+}
+
+// TestProductionImportRunReceiptsOwnerProofReadsOnTheReceiptConnection drives
+// store.ImportRuns.PrepareEffectReceipt with a witness proof over a real database
+// opened exactly like the author pool, and pins the outcome the widened callback
+// makes possible: the proof is called inside the transaction, it is handed the run,
+// and nothing waits for a second connection.
+func TestProductionImportRunReceiptsOwnerProofReadsOnTheReceiptConnection(t *testing.T) {
 	projectPath := productionImportRunResidualSeedProject(t, productionImportRunResidualSeed{
 		ID: productionImportRunReceiptsOwnerProofRunID, Purpose: "reference", Stage: "style",
 		Status: "running", Resumable: 1,
@@ -103,12 +108,9 @@ func TestProductionImportRunReceiptsOwnerAssertDeadlocksOnTheReceiptConnection(t
 	// The production pool, exactly: one connection, which the receipt's BEGIN
 	// IMMEDIATE reserves for the whole of the callback.
 	db.SetMaxOpenConns(1)
-	// The residual schema is the import family's; the generation run the assert
-	// reads is the binding's own two columns plus the row identity.
-	if _, err := db.Exec(`CREATE TABLE generation_runs (
- run_id TEXT PRIMARY KEY, root_action_id TEXT NOT NULL, binding_json TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
+	// The generation ledger's four tables, with the columns the store's evidence read
+	// selects. They are written here rather than created by the generation lane
+	// because this test is about the receipt transaction's read, not about a begin.
 	binding, err := json.Marshal(map[string]any{
 		"projectId": productionImportRunResidualProjectID,
 		"epoch":     productionImportRunReceiptsOwnerProofLease,
@@ -119,15 +121,74 @@ func TestProductionImportRunReceiptsOwnerAssertDeadlocksOnTheReceiptConnection(t
 				"stage":   "style",
 				"batchId": "done",
 			},
+			"promptKeys":               []any{"analyze_writing_style"},
+			"modelLeaseId":             "owner-proof-model-lease",
+			"goOwnerSourceFingerprint": syntheticHash("owner-proof-fingerprint"),
 		},
+		"sourceRefs": []any{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO generation_runs (run_id, root_action_id, binding_json)
- VALUES (?, ?, ?)`, productionImportRunReceiptsOwnerProofGenerationRunID,
-		productionImportRunReceiptsOwnerProofRootID, string(binding)); err != nil {
+	artifact, err := json.Marshal(map[string]any{
+		"artifactId": productionImportRunReceiptsOwnerProofArtifactID,
+		"attemptId":  productionImportRunReceiptsOwnerProofAttemptID,
+		"text":       productionImportRunReceiptsOwnerProofText,
+		"textHash":   syntheticHash(productionImportRunReceiptsOwnerProofText),
+		"revision":   int64(1),
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	action, err := json.Marshal(map[string]any{"status": "active", "rootActionId": productionImportRunReceiptsOwnerProofRootID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := json.Marshal(map[string]any{
+		"purpose": "analyze-writing-style",
+		"result":  map[string]any{"finishReason": "stop"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`CREATE TABLE generation_runs (
+ run_id TEXT PRIMARY KEY, root_action_id TEXT NOT NULL, binding_json TEXT NOT NULL)`, nil},
+		{`CREATE TABLE generation_roots (
+ root_action_id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, action_json TEXT NOT NULL,
+ budget_json TEXT NOT NULL, active_elapsed_ms INTEGER NOT NULL DEFAULT 0, active_since_ms INTEGER,
+ blocked_code TEXT, revision INTEGER NOT NULL DEFAULT 0)`, nil},
+		{`CREATE TABLE generation_attempts (
+ attempt_id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL,
+ root_action_id TEXT NOT NULL, attempt_json TEXT NOT NULL, usage_receipt_json TEXT,
+ invocation_nonce TEXT NOT NULL)`, nil},
+		{`CREATE TABLE generation_artifacts (
+ artifact_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL,
+ artifact_json TEXT NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'partial')`, nil},
+		{`INSERT INTO generation_runs (run_id, root_action_id, binding_json) VALUES (?, ?, ?)`,
+			[]any{productionImportRunReceiptsOwnerProofGenerationRunID,
+				productionImportRunReceiptsOwnerProofRootID, string(binding)}},
+		{`INSERT INTO generation_roots (root_action_id, idempotency_key, action_json, budget_json)
+ VALUES (?, ?, ?, ?)`,
+			[]any{productionImportRunReceiptsOwnerProofRootID, "owner-proof-key", string(action), "{}"}},
+		{`INSERT INTO generation_attempts (attempt_id, reservation_id, run_id, root_action_id,
+ attempt_json, usage_receipt_json, invocation_nonce) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[]any{productionImportRunReceiptsOwnerProofAttemptID, "owner-proof-reservation",
+				productionImportRunReceiptsOwnerProofGenerationRunID,
+				productionImportRunReceiptsOwnerProofRootID,
+				`{"status":"settled"}`, string(usage), "import:0"}},
+		{`INSERT INTO generation_artifacts (artifact_id, attempt_id, run_id, artifact_json, revision, status)
+ VALUES (?, ?, ?, ?, ?, ?)`,
+			[]any{productionImportRunReceiptsOwnerProofArtifactID,
+				productionImportRunReceiptsOwnerProofAttemptID,
+				productionImportRunReceiptsOwnerProofGenerationRunID, string(artifact), int64(1), "partial"}},
+	} {
+		if _, err := db.Exec(statement.query, statement.args...); err != nil {
+			t.Fatalf("seed %v: %v", statement.query, err)
+		}
 	}
 	request := store.ImportRunPrepareEffectReceiptRequest{
 		RunID: productionImportRunReceiptsOwnerProofRunID, Stage: "style", BatchID: "done",
@@ -145,195 +206,189 @@ func TestProductionImportRunReceiptsOwnerAssertDeadlocksOnTheReceiptConnection(t
 	execution := store.ImportRunExecution{
 		Owner: productionImportRunResidualOwner, Epoch: productionImportRunReceiptsOwnerProofEpoch,
 	}
+	witness := &productionImportRunReceiptsOwnerProofEvidence{}
+	proof := func(handle any, slot store.ImportRunGenerationSlot, run store.ImportRunGenerationEvidence) error {
+		witness.calls++
+		witness.slot = slot
+		witness.run = run
+		witness.handleID = syntheticString(syntheticMap(handle)["runId"])
+		// A proof with no database handle cannot read one: this is the whole point of
+		// the widened callback, and any attempt to open a second connection here would
+		// have to come from the test, not from the store.
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), productionImportRunReceiptsOwnerProofWait)
 	defer cancel()
 	started := time.Now()
-	_, err = store.NewImportRuns(db).PrepareEffectReceipt(ctx, execution, request,
-		productionImportRunReceiptsOwnerAssert(ctx, db))
+	prepared, err := store.NewImportRuns(db).PrepareEffectReceipt(ctx, execution, request, proof)
 	elapsed := time.Since(started)
-	if err == nil {
-		t.Fatal("the assert's first read returned inside the receipt transaction, so the audit's first blocker is gone")
+	if err != nil {
+		t.Fatalf("the receipt proof failed inside its own transaction: %v", err)
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("the assert failed with %v, not with the connection wait the audit names", err)
+	if elapsed >= productionImportRunReceiptsOwnerProofWait {
+		t.Fatalf("the receipt proof took %v, which is the deadline that had to expire", elapsed)
 	}
-	if elapsed < productionImportRunReceiptsOwnerProofWait {
-		t.Fatalf("the assert returned after %v, before the deadline that had to expire", elapsed)
+	if witness.calls != 1 {
+		t.Fatalf("the store called the proof %v times, want one", witness.calls)
 	}
-	// A refused or rolled-back prepare writes neither the receipt nor its ledger
-	// row. Both are read over a separate mode=ro connection, so the assertion is
-	// about committed bytes and not about this handle's view.
-	for _, table := range []string{"import_run_receipts", "import_effect_ledger"} {
-		rows := productionImportRunWriteQuery(t, database, "SELECT COUNT(*) AS total FROM "+table)
-		if len(rows) != 1 || productionImportRunWriteNumber(rows[0], "total") != 0 {
-			t.Fatalf("the timed-out prepare left rows in %v: %v", table, rows)
-		}
+	if witness.handleID != productionImportRunReceiptsOwnerProofGenerationRunID {
+		t.Fatalf("the proof was handed handle %v", witness.handleID)
+	}
+	// The slot is the receipt's own, and it is what the proof compares the frozen one
+	// with.
+	if witness.slot.RunID != productionImportRunReceiptsOwnerProofRunID || witness.slot.Stage != "style" ||
+		witness.slot.BatchID != "done" {
+		t.Fatalf("the proof was handed slot %v", witness.slot)
+	}
+	// The evidence: the run, its binding verbatim, the root's status and the settled
+	// attempt with its artifact.
+	if !witness.run.RunPresent || witness.run.RunID != productionImportRunReceiptsOwnerProofGenerationRunID ||
+		witness.run.RootActionID != productionImportRunReceiptsOwnerProofRootID {
+		t.Fatalf("the proof was handed run %v", witness.run)
+	}
+	if string(witness.run.BindingJSON) != string(binding) {
+		t.Fatalf("the proof was handed a rewritten binding: %v", string(witness.run.BindingJSON))
+	}
+	if !witness.run.RootPresent || witness.run.RootStatus != "active" {
+		t.Fatalf("the proof was handed root %v present=%v status=%v",
+			witness.run.RootActionID, witness.run.RootPresent, witness.run.RootStatus)
+	}
+	if len(witness.run.Attempts) != 1 {
+		t.Fatalf("the proof was handed %v attempts, want one", len(witness.run.Attempts))
+	}
+	attempt := witness.run.Attempts[0]
+	if attempt.AttemptID != productionImportRunReceiptsOwnerProofAttemptID || !attempt.ArtifactPresent ||
+		attempt.ArtifactID != productionImportRunReceiptsOwnerProofArtifactID ||
+		attempt.ArtifactStatus != "partial" {
+		t.Fatalf("the proof was handed attempt %v", attempt)
+	}
+	if string(attempt.UsageReceiptJSON) != string(usage) || string(attempt.ArtifactJSON) != string(artifact) {
+		t.Fatalf("the proof was handed a rewritten attempt payload: %v", attempt)
+	}
+	// And the receipt the proof earned is committed by the same transaction. It is
+	// read back over a separate mode=ro connection.
+	receipt, _ := prepared.(map[string]any)
+	if receipt == nil || productionImportRunWriteText(receipt, "state") != "prepared" {
+		t.Fatalf("the prepared receipt is %v", prepared)
+	}
+	rows := productionImportRunWriteQuery(t, database, `SELECT state, payload_hash FROM import_run_receipts
+ WHERE run_id = ? AND stage = 'style' AND batch_id = 'done'`, productionImportRunReceiptsOwnerProofRunID)
+	if len(rows) != 1 || productionImportRunWriteText(rows[0], "state") != "prepared" {
+		t.Fatalf("the committed receipt row is %v", rows)
 	}
 }
 
-// TestProductionImportRunReceiptsOwnerIsOneArgumentInsideTheOwnerBlock pins the
-// wiring the audit asks for. The owner block opens at production_open_linux.go:591
-// and the receipt family's binder is constructed from inside it, before an
-// owner-bound binder that already receives `owner`; handing the owner over would
-// be exactly one extra argument on that call, and the moment the argument is
-// added this refusal has to be re-argued instead of silently outliving its
-// reason.
-func TestProductionImportRunReceiptsOwnerIsOneArgumentInsideTheOwnerBlock(t *testing.T) {
+// TestProductionImportRunReceiptsOwnerEvidenceReadIsAnOwnConnectionRead pins the
+// store's own read from the public surface: in a project that never wrote a
+// generation run there is no generation_runs table at all, and the read reports NO
+// RUN rather than failing with a driver error. The prover therefore owns every
+// refusal code, and the absent-run answer is GENERATION_RUN_MISSING on both legs of
+// the receipt.
+func TestProductionImportRunReceiptsOwnerEvidenceReadIsAnOwnConnectionRead(t *testing.T) {
+	projectPath := productionImportRunResidualSeedProject(t, productionImportRunResidualSeed{
+		ID: productionImportRunReceiptsOwnerProofRunID, Purpose: "reference", Stage: "style",
+		Status: "running", Resumable: 1,
+		ExecutionOwner: productionImportRunResidualOwner,
+		ExecutionEpoch: productionImportRunReceiptsOwnerProofEpoch,
+		LeaseExpiresAt: productionImportRunResidualLiveLease(),
+	})
+	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
+	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
+	uri.RawQuery = "mode=rw"
+	db, err := sql.Open("sqlite3", uri.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}()
+	db.SetMaxOpenConns(1)
+	// The residual schema has no generation table, so this database is exactly the
+	// "the author never generated anything" shape.
+	existing := productionImportRunWriteQuery(t, database, `SELECT COUNT(*) AS total FROM sqlite_master
+ WHERE type = 'table' AND name = 'generation_runs'`)
+	if len(existing) != 1 || productionImportRunWriteNumber(existing[0], "total") != 0 {
+		t.Fatalf("the residual schema now carries generation_runs: %v", existing)
+	}
+	request := store.ImportRunPrepareEffectReceiptRequest{
+		RunID: productionImportRunReceiptsOwnerProofRunID, Stage: "style", BatchID: "done",
+		EffectKey: "writing-style", Kind: "project-writing-style",
+		Payload: map[string]any{
+			"writingStyle": productionImportRunResidualStyle,
+			"generationRunHandle": map[string]any{
+				"projectId":    productionImportRunResidualProjectID,
+				"epoch":        productionImportRunReceiptsOwnerProofLease,
+				"rootActionId": productionImportRunReceiptsOwnerProofRootID,
+				"runId":        productionImportRunReceiptsOwnerProofGenerationRunID,
+			},
+		},
+	}
+	execution := store.ImportRunExecution{
+		Owner: productionImportRunResidualOwner, Epoch: productionImportRunReceiptsOwnerProofEpoch,
+	}
+	seen := 0
+	_, err = store.NewImportRuns(db).PrepareEffectReceipt(context.Background(), execution, request,
+		func(handle any, slot store.ImportRunGenerationSlot, run store.ImportRunGenerationEvidence) error {
+			seen++
+			if run.RunPresent || len(run.Attempts) != 0 || run.BindingJSON != nil {
+				t.Fatalf("the read invented a run in a database with no generation table: %v", run)
+			}
+			return errors.New("GENERATION_RUN_MISSING")
+		})
+	if err == nil || err.Error() != "GENERATION_RUN_MISSING" {
+		t.Fatalf("the absent-run prepare answered %v, want the prover's own code", err)
+	}
+	if seen != 1 {
+		t.Fatalf("the proof ran %v times, want one", seen)
+	}
+	// Nothing was written: the proof runs before the receipt's INSERT.
+	rows := productionImportRunWriteQuery(t, database, `SELECT COUNT(*) AS total FROM import_run_receipts
+ WHERE run_id = ?`, productionImportRunReceiptsOwnerProofRunID)
+	if len(rows) != 1 || productionImportRunWriteNumber(rows[0], "total") != 0 {
+		t.Fatalf("the refused prepare wrote %v", rows)
+	}
+}
+
+// TestProductionImportRunReceiptsOwnerFactsAreReal re-reads every declaration the
+// wiring record names, and checks the owner block's ordering: the block opens before
+// the owner-bound binder the new line is anchored to. The marker search is
+// productionSeamContains, not a line compare, because CI formats the Go source before
+// these tests run.
+func TestProductionImportRunReceiptsOwnerFactsAreReal(t *testing.T) {
+	for _, fact := range productionImportRunReceiptsOwnerFacts() {
+		raw, err := os.ReadFile(fact.Path)
+		if err != nil {
+			t.Fatalf("%v: %v", fact.Path, err)
+		}
+		if !productionSeamContains(string(raw), fact.Marker) {
+			t.Fatalf("%v no longer documents %v (recorded at line %v): %v",
+				fact.Path, fact.Marker, fact.Line,
+				productionSeamDiagnosis(string(raw), fact.Marker, fact.Line))
+		}
+	}
 	raw, err := os.ReadFile("production_open_linux.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := string(raw)
-	for _, marker := range []string{
-		productionImportRunReceiptsOwnerBlockLine,
-		productionImportRunReceiptsOwnerWiringLine,
-		productionImportRunReceiptsOwnerLateOwnerLine,
-	} {
-		if !productionSeamContains(source, marker) {
-			t.Fatalf("production_open_linux.go no longer contains the owner-block line the audit names: %v", marker)
-		}
-	}
-	compact := productionSeamCompact(source)
+	compact := productionSeamCompact(string(raw))
 	block := strings.Index(compact, productionSeamCompact(productionImportRunReceiptsOwnerBlockLine))
-	wiring := strings.Index(compact, productionSeamCompact(productionImportRunReceiptsOwnerWiringLine))
-	late := strings.Index(compact, productionSeamCompact(productionImportRunReceiptsOwnerLateOwnerLine))
-	if block < 0 || wiring < 0 || late < 0 || block >= wiring || wiring >= late {
-		t.Fatalf("the receipt binder is no longer between the owner block and an owner-bound binder: %v %v %v",
-			block, wiring, late)
+	anchor := strings.Index(compact, productionSeamCompact(productionImportRunReceiptsOwnerLateOwnerLine))
+	residual := strings.Index(compact, productionSeamCompact(productionImportRunReceiptsOwnerResidualBinder))
+	if block < 0 || anchor < 0 || residual < 0 || block >= residual || block >= anchor {
+		t.Fatalf("the owner block no longer contains both binders in order: %v %v %v", block, residual, anchor)
 	}
-	if productionSeamContains(source, productionImportRunReceiptsOwnerWiringFixed) {
-		t.Fatal("the receipt binder now receives the owner; the refusal in production_importrun_receipts_owner_linux.go must be re-argued")
-	}
-	residual, err := os.ReadFile("production_importrun_residual_linux.go")
+	// The record's line is the binder's own constructor call, so a rename on either
+	// side fails here instead of drifting.
+	serve, err := os.ReadFile("production_importrun_receipts_serve2_linux.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !productionSeamContains(string(residual), productionImportRunReceiptsOwnerBinderLine) {
-		t.Fatal("the residual binder no longer calls the receipt seam binder with the durable alone")
+	if !productionSeamContains(string(serve), productionImportRunReceiptsOwnerServe2Binder) {
+		t.Fatalf("the served binder no longer takes the owner: %v", productionImportRunReceiptsOwnerServe2Binder)
 	}
-	// The audit quotes the store's own evidence, so a change there is a change to
-	// the reason the pair is refused.
-	for _, fact := range productionImportRunReceiptsOwnerFacts() {
-		content, err := os.ReadFile(fact.Path)
-		if err != nil {
-			t.Fatalf("%v: %v", fact.Path, err)
-		}
-		if !productionSeamContains(string(content), fact.Marker) {
-			t.Fatalf("%v no longer documents %v (recorded at line %v): %v",
-				fact.Path, fact.Marker, fact.Line, productionSeamDiagnosis(string(content), fact.Marker, fact.Line))
-		}
-	}
-	// Both names are still refused by decision and by seam, and the seam no longer
-	// blames the generation ledger: it admits the import keys now, so the ledger is
-	// not what keeps the pair unbound.
-	for _, name := range []string{
-		productionImportRunReceiptsPrepareOperation,
-		productionImportRunReceiptsCommitOperation,
-	} {
-		seam, present := productionImportRunReceiptSeamFor(name)
-		if !present {
-			t.Fatalf("%v has no seam row, so its refusal has no documented reason", name)
-		}
-		for _, line := range seam.Missing {
-			if line.Path == "../../internal/store/generation_ledger.go" {
-				t.Fatalf("%v still blames the generation ledger, which now admits the import manifest keys", name)
-			}
-		}
-		served := false
-		for _, decision := range productionImportRunReceiptServeDecisions() {
-			if decision.Operation == name && decision.Served {
-				served = true
-			}
-		}
-		if served {
-			t.Fatalf("%v is recorded as served while no handler is bound for it", name)
-		}
-	}
-}
-
-// TestProductionImportRunReceiptsOwnerRunIsPromptOnly begins a real import-bound
-// generation run through the frozen session and reads its frozen manifest back.
-// It kills the batch's second premise - such a run can exist - and it records the
-// one fact that makes the missing reproduction cheap: the frozen selection is
-// prompt refs only, and the prompt reader is pure, so ReproduceBinding over this
-// run needs no database read at all.
-func TestProductionImportRunReceiptsOwnerRunIsPromptOnly(t *testing.T) {
-	lane := productionImportGenerationLaneOpen(t)
-	var begun map[string]any
-	productionImportGenerationDecoded(t, lane, "generation:begin",
-		[]any{productionImportGenerationSelection("style", "import-receipt-owner-style-begin"), lane.frozen}, &begun)
-	handle := syntheticMap(begun["handle"])
-	if handle == nil || syntheticString(handle["runId"]) == "" {
-		t.Fatalf("generation:begin answered no run handle for the style import slot: %v", begun)
-	}
-	runID := syntheticString(handle["runId"])
-	rows := productionImportRunWriteQuery(t, lane.database,
-		`SELECT binding_json FROM generation_runs WHERE run_id = ?`, runID)
-	if len(rows) != 1 {
-		t.Fatalf("the frozen style run is %v rows in generation_runs, want one", len(rows))
-	}
-	var binding struct {
-		ProjectID  string `json:"projectId"`
-		Epoch      string `json:"epoch"`
-		SourceRefs []struct {
-			SourceID string `json:"sourceId"`
-			Revision int64  `json:"revision"`
-			Hash     string `json:"contentHash"`
-		} `json:"sourceRefs"`
-		SourceManifest struct {
-			ModelLeaseID             string `json:"modelLeaseId"`
-			GoOwnerSourceFingerprint string `json:"goOwnerSourceFingerprint"`
-			ImportSlot               struct {
-				RunID   string `json:"runId"`
-				Stage   string `json:"stage"`
-				BatchID string `json:"batchId"`
-			} `json:"importSlot"`
-		} `json:"sourceManifest"`
-	}
-	if err := json.Unmarshal([]byte(productionImportRunWriteText(rows[0], "binding_json")), &binding); err != nil {
-		t.Fatalf("the frozen binding does not decode: %v", err)
-	}
-	// The run is frozen against the stage's own slot, for this project and this
-	// session lease. The lease the receipt request carries is the binding's epoch,
-	// so the epoch half of the reproduction scope is already on the wire.
-	if binding.SourceManifest.ImportSlot.RunID != productionImportGenerationStyleRunID ||
-		binding.SourceManifest.ImportSlot.Stage != "style" ||
-		binding.SourceManifest.ImportSlot.BatchID != "done" {
-		t.Fatalf("the frozen binding names another slot: %v", binding.SourceManifest.ImportSlot)
-	}
-	if binding.ProjectID != lane.projectID || binding.Epoch != lane.leaseID {
-		t.Fatalf("the frozen binding is scoped to %v/%v, want %v/%v",
-			binding.ProjectID, binding.Epoch, lane.projectID, lane.leaseID)
-	}
-	// The lease record ReproduceBinding resolves, and the digest it compares with.
-	if binding.SourceManifest.ModelLeaseID == "" {
-		t.Fatal("the frozen manifest carries no modelLeaseId, so ReproduceBinding has no lease to resolve")
-	}
-	if !syntheticHashPattern.MatchString(binding.SourceManifest.GoOwnerSourceFingerprint) {
-		t.Fatalf("the frozen manifest carries no binding fingerprint: %v",
-			binding.SourceManifest.GoOwnerSourceFingerprint)
-	}
-	// The constructive half: every frozen source is a prompt capability, whose
-	// reader is synthetic. A reproduction over these refs touches no table.
-	if len(binding.SourceRefs) == 0 {
-		t.Fatal("the frozen binding carries no source refs")
-	}
-	for _, ref := range binding.SourceRefs {
-		if !strings.HasPrefix(ref.SourceID, "prompt:") {
-			t.Fatalf("the style run froze %v, which the pure prompt reader cannot reproduce", ref.SourceID)
-		}
-		if ref.Revision < 0 || !syntheticHashPattern.MatchString(ref.Hash) {
-			t.Fatalf("the frozen ref %v carries revision %v and hash %v", ref.SourceID, ref.Revision, ref.Hash)
-		}
-	}
-	// The import run the slot names is the seeded one, still running under the
-	// lease the receipt request would carry.
-	for _, row := range productionImportRunWriteQuery(t, lane.database,
-		`SELECT stage, status, execution_owner, execution_epoch FROM import_runs WHERE id = ?`,
-		productionImportGenerationStyleRunID) {
-		if productionImportRunWriteText(row, "stage") != "style" ||
-			productionImportRunWriteText(row, "status") != "running" {
-			t.Fatalf("the slot's import run is not a running style run: %v", row)
-		}
+	if !productionSeamContains(string(serve), "func newProductionImportRunReceiptsServe2(owner *productionGeneration)") {
+		t.Fatal("the served binder's constructor no longer takes the generation owner")
 	}
 }

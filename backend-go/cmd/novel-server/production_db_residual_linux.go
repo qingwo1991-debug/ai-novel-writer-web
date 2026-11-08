@@ -158,33 +158,6 @@ func productionDBResidualLineOf(path string, line int, marker string) production
 func productionDBResidualSeams() []productionDBResidualSeam {
 	return []productionDBResidualSeam{
 		{
-			Operation: productionDBResidualReceiptPrepare,
-			Arity:     4,
-			PathIndex: 2,
-			Gate:      "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED",
-			Port:      "store.ImportRuns.PrepareEffectReceipt needs a generation-source proof this module does not have",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 1153, "ImportRunPrepareEffectReceiptRequest, assertSources"),
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 118, "type ImportRunGenerationSourceAssert func"),
-				// A nil proof only makes the handle optional, so prepare would accept a
-				// binding commit then refuses.
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 984, "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED"),
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 418, "operations.handle('db:import-run-effect-receipt-prepare', async ("),
-			},
-		},
-		{
-			Operation: productionDBResidualReceiptCommit,
-			Arity:     6,
-			PathIndex: 4,
-			Gate:      "GENERATION_GUARD_REQUIRED",
-			Port:      "store.ImportRuns.CommitEffectReceipt needs the same proof, and refuses a handle without it",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 1260, "execution ImportRunExecution, assertSources ImportRunGenerationSourceAssert"),
-				productionDBResidualLineOf("../../internal/store/importrun_receipts.go", 1003, "GENERATION_GUARD_REQUIRED"),
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 428, "operations.handle('db:import-run-effect-receipt-commit', async ("),
-			},
-		},
-		{
 			Operation: productionDBResidualPrepareInspection,
 			Arity:     3,
 			PathIndex: 1,
@@ -207,8 +180,6 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 // the seam table lists them, so the binder and the test walk one list.
 func productionDBResidualOperations() []string {
 	return []string{
-		productionDBResidualReceiptPrepare,
-		productionDBResidualReceiptCommit,
 		productionDBResidualPrepareInspection,
 	}
 }

@@ -3,258 +3,158 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
-
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
+	"os"
 )
 
-// This file is the OWNER half of the import-run receipt audit, and it publishes
-// no handler. The pair stays at GO_OPERATION_NOT_MIGRATED for two reasons that
-// are about THIS pass's write scope and about the store's own calling
-// convention, not about the two premises the batch invalidated. Both of those
-// premises are recorded as dead below, because leaving them in place would be
-// the stale note the seam file exists to prevent.
+// This file is the WIRING RECORD for the import-run receipt pair, and it
+// publishes no handler of its own: the handlers live in
+// production_importrun_receipts_serve2_linux.go, and the seam that used to keep
+// the pair at GO_OPERATION_NOT_MIGRATED is gone for both names
+// (production_importrun_receipts_linux.go now holds prepare-inspection only).
 //
-// # Premise 1, dead: the owner is now reachable at the binder's own call site
+// # What this file is for
 //
-// The generation owner is created by
+// The pair needs the generation owner, and the owner is a local variable of one
+// block:
 //
 //	production_open_linux.go:591  if owner, ownerErr := newProductionGeneration(open, server, config.Dispatch); ownerErr == nil {
 //
-// and the import-run residual binder - the one that calls this family's receipt
-// seam binder - is installed from INSIDE that block:
+// This pass may not edit that file, so the binder is installed by exactly one
+// line that a pass allowed to edit it must add. Everything else already exists:
+// four sibling families are installed from the same block the same way
+// (newProductionFinalizationServe(owner), newProductionLegacyRosterServe(owner),
+// newProductionAgentGenerationServe(owner), newProductionImportGenerationServe(owner)),
+// and productionImportRunReceiptsServe2 is the fifth. The line, and where it
+// goes, are one value here - productionImportRunReceiptsOwnerWiringLineOf - so the
+// test, this comment and the report cannot drift:
 //
-//	production_open_linux.go:627  if bindErr := newProductionImportRunResiduals(open.durable).Bind(server); bindErr != nil {
-//	production_importrun_residual_linux.go:247  if err := newProductionImportRunReceipts(r.durable).Bind(server); err != nil {
+//	inside the owner block, directly after
+//	  production_open_linux.go:720  if bindErr := newProductionImportGenerationServe(owner).Bind(server); bindErr != nil {
+//	(the `}` that closes that statement is line 723) and before the block's closing
+//	  production_open_linux.go:724  } else {
+//	the line is
+//	  if bindErr := newProductionImportRunReceiptsServe2(owner).Bind(server); bindErr != nil {
+//	      _ = open.Close()
+//	      return nil, nil, bindErr
+//	  }
 //
-// So the earlier wording ("the owner is a local variable this adapter is not
-// given") was right about the argument and wrong about the reach: `owner` is a
-// bound identifier at :627. The binder does NOT have to move into the owner
-// block - it is already there - it has to be HANDED the owner: exactly one
-// extra argument at :627, then one more at :247, and
-// production_importrun_receipts_owner_linux_test.go's ordering pin has to be
-// re-argued. The model-profile loader it needs is the closure built at
-// production_generation_begin_linux.go:133 over config.ListPrivateModels, and
-// both the registry and that loader hang off the returned *productionGeneration
-// (production_generation_begin_linux.go:42-45) through its syntheticGeneration
-// (cmd/novel-server/synthetic_generation_linux.go:37-43).
+// With it the served count moves 274 -> 276. Without it the two names stay at
+// GO_OPERATION_NOT_MIGRATED and the served count stays 274, because
+// productionImportRunReceiptsServe2.Bind installs nothing for a lane with no
+// owner: no handler that can only refuse is ever published.
 //
-// That one line is in a file this pass may not edit, and an owner-bound binder
-// that no lane constructs is dead code of exactly the kind
-// production_importrun_residual_linux.go:239-247 refuses to publish. So the
-// pair cannot be served from the shipped lane in this pass, and this pass does
-// not pretend otherwise.
+// # Why the owner and not just the durable open
 //
-// # Premise 2, dead: an import-bound generation run can exist
+// The proof's fourth step is generationowner.ReproduceBinding
+// (internal/generationowner/binding.go:63), and the lease record it resolves is
+// process memory minted by the begin (internal/generationowner/lease.go:164). A
+// registry cannot be rebuilt from `open.durable`, so a binder constructed with the
+// durable alone could only answer with a refusal. That is the whole difference
+// this file records.
 //
-// The generation ledger now admits the three import manifest members for the two
-// operations that own them (internal/store/generation_ledger.go, the
-// "importSlot", "importSlotKey", "importContext" case of
-// glFamilyManifestAllowed), generation:begin admits an importSlot selection and
-// freezes it (production_import_generation_serve_linux.go:288-368
-// productionImportGenerationSelect and :429-487 productionImportGenerationFreeze),
-// and production_import_generation_serve_linux_test.go freezes one through the
-// real HTTP transport for each stage. The old claim that no such run can exist,
-// and the probe that used to pin the ledger's refusal, are both gone.
-// TestProductionImportRunReceiptsOwnerRunIsPromptOnly below begins such a run
-// through the frozen session and reads its frozen manifest back.
+// # Why the callback cannot do the read itself, one more time
 //
-// # What actually blocks, named
+// The assert runs inside the receipt's BEGIN IMMEDIATE
+// (internal/store/importrun.go:948 importRunImmediate reserves one connection;
+// internal/projectfs/author_linux.go:121 opens the author pool with
+// db.SetMaxOpenConns(1)). A prover that opened its own handle to read the
+// generation run waited for that connection and ended in
+// context.DeadlineExceeded - measured, not argued, by the previous pass. The
+// store now performs that read on the connection it already holds and hands the
+// run over as data (internal/store/importrun_receipts.go:130,
+// internal/store/importrun_receipts_generation.go), so the prover reads no
+// database at all: a prompt-only import selection means even the reproduction is
+// pure (production_importrun_receipts_serve2_linux.go
+// productionImportRunReceiptsServe2Sources).
 //
-// The reference's assert has three steps that matter here, and the first one
-// reads state:
+// # What remains outside this family
 //
-//	electron/services/main-generation-owner.ts:1454  const run = requireRun(handle)
-//	electron/services/main-generation-owner.ts:1462  imports.context(run).slot
-//	electron/services/main-generation-owner.ts:1463  deps.rebuildBinding(run.binding, currentModelReceipt(run.binding))
-//
-// In the desktop that read is legal because the owner is a dispatcher over the
-// one better-sqlite3 connection and the controller refuses the call unless the
-// database is already in a transaction
-// (electron/controllers/generation-controller.ts:74). The Go receipt path has
-// the same convention: the callback is invoked from INSIDE
-// importRunImmediate's BEGIN IMMEDIATE (internal/store/importrun_receipts.go:987
-// and :1005, reserved at internal/store/importrun.go:948). But the author
-// database is opened with exactly one connection
-// (internal/projectfs/author_linux.go:121 db.SetMaxOpenConns(1)), which the store
-// itself names: "it is a deadlock rather than a proof"
-// (internal/store/character_proposal_pending.go:37). A callback that reads the
-// generation run through the borrowed handle therefore waits for the connection
-// the receipt transaction is holding, and the
-// store.ImportRunGenerationSourceAssert signature it is called through
-// (internal/store/importrun_receipts.go:118) carries no connection and no
-// evidence: only (handle, slot).
-//
-// So the assert cannot take its first step today, and no wiring change fixes
-// that. The constructive half: an import run's frozen source selection is
-// PROMPT-ONLY (the two stage selections carry promptKeys and no drafts and no
-// blueprints, production_import_generation_serve_linux.go:133-168), and the
-// prompt reader in syntheticBuildSources is pure
-// (cmd/novel-server/synthetic_generation_linux.go:657-675). ReproduceBinding
-// over those refs therefore needs NO database read at all - only the registry
-// lease record the loader's revision feeds (internal/generationowner/lease.go:164).
-// The single store read the assert needs is the run itself: binding_json, the
-// root's status and the stopped attempts' artifacts. That is one addition to the
-// store's calling convention (read the run on the receipt's own connection and
-// hand it to the prover), and it only becomes useful in the same change that
-// hands the binder the owner at production_open_linux.go:627.
-//
-// # What this pass does not publish, and why each substitute is refused
-//
-//   - a nil proof: prepare would accept a handle without any proof
-//     (internal/store/importrun_receipts.go:983-985) and commit would refuse it
-//     (internal/store/importrun_receipts.go:1000-1004), so the lane could write
-//     receipts it could never commit;
-//   - an assert that reads the borrowed handle BEFORE the transaction: it would
-//     pass the deadlock by giving up the reference's atomicity - the sources and
-//     the run could change between the read and the effect, which is exactly the
-//     window GENERATION_IMPORT_EFFECT_SOURCE_CHANGED exists to close;
-//   - an assert that opens its own connection to the author's database file: the
-//     lane's adapters resolve no path and open no database, and a second handle
-//     would bypass the identity and sidecar checks projectfs performs.
-//
-// The two names therefore keep their 501, the db family's residual table keeps
-// naming them, and the served count stays 273. This file contributes the audit
-// and the executable probe below, both of which the next pass needs and neither
-// of which installs a handler.
+// Two pins outside this pass's scope have to move in the same change as the
+// owner-block line, or CI reports them instead of the lane: the served-count pin
+// (production_served_count_linux_test.go:24, 274 -> 276) and the db family's
+// residual cover assertion, which refuses a name that is both bound and listed
+// (production_db_residual_linux_test.go:62-65). Neither file belongs to this
+// family, and this pass does not edit either.
 
 const (
 	// productionImportRunReceiptsOwnerBlockLine opens the block that owns the
 	// generation registry, its model-profile loader and its source readers.
 	productionImportRunReceiptsOwnerBlockLine = "if owner, ownerErr := newProductionGeneration(open, server, config.Dispatch); ownerErr == nil {"
-	// productionImportRunReceiptsOwnerWiringLine is the literal call that must gain
-	// the owner. It is inside the block above, so the fix is an argument, not a move.
-	productionImportRunReceiptsOwnerWiringLine = "newProductionImportRunResiduals(open.durable).Bind(server)"
-	// productionImportRunReceiptsOwnerWiringFixed is what the line becomes. Its
-	// absence is pinned by the test, because making it is the change that has to
-	// re-argue this refusal instead of silently invalidating it.
-	productionImportRunReceiptsOwnerWiringFixed = "newProductionImportRunResiduals(open.durable, owner).Bind(server)"
-	// productionImportRunReceiptsOwnerBinderLine is the family's own seam binder,
-	// which today receives the durable open alone.
-	productionImportRunReceiptsOwnerBinderLine = "newProductionImportRunReceipts(r.durable).Bind(server)"
 	// productionImportRunReceiptsOwnerLateOwnerLine is an owner-bound binder that is
-	// already installed from the same block. The ordering pin uses it so a move of
-	// the receipt binder out of the block fails the test.
+	// already installed from the same block. The new line goes immediately after it,
+	// so the ordering the test checks has one stable anchor on both sides.
 	productionImportRunReceiptsOwnerLateOwnerLine = "newProductionImportGenerationServe(owner).Bind(server)"
-	// productionImportRunReceiptsOwnerAssertSignature is the callback the store
-	// hands no connection and no evidence to.
-	productionImportRunReceiptsOwnerAssertSignature = "type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot) error"
-	// productionImportRunReceiptsOwnerScopeLine is the registry look-up
-	// ReproduceBinding performs: a lease record, not the current model profile.
-	productionImportRunReceiptsOwnerScopeLine = "if !ok||scope!=record.scope||purpose!=record.purpose{"
+	// productionImportRunReceiptsOwnerServe2Binder is the binder this pass adds and
+	// the argument it needs. It is the literal call the owner-block line makes.
+	productionImportRunReceiptsOwnerServe2Binder = "newProductionImportRunReceiptsServe2(owner).Bind(server)"
+	// productionImportRunReceiptsOwnerResidualBinder is the neighbour the new line
+	// sits beside; it stays one-argument on purpose, because this adapter holds no
+	// owner and must not be handed a fake one.
+	productionImportRunReceiptsOwnerResidualBinder = "newProductionImportRunResiduals(open.durable).Bind(server)"
+	// productionImportRunReceiptsOwnerBinderInstall is how the new line must be
+	// guarded: the same bindErr idiom every sibling uses, so a failed bind closes
+	// the lane instead of serving a half-installed family.
+	productionImportRunReceiptsOwnerBinderInstall = "if bindErr := newProductionImportRunReceiptsServe2(owner).Bind(server); bindErr != nil {"
+	// productionImportRunReceiptsOwnerAssertSignature is the widened callback: it
+	// now carries the run the store read on its own connection, which is what made
+	// the deadlock go away.
+	productionImportRunReceiptsOwnerAssertSignature = "type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot, run ImportRunGenerationEvidence) error"
+	// productionImportRunReceiptsOwnerEvidenceRead is the store's own read, on the
+	// transaction's connection.
+	productionImportRunReceiptsOwnerEvidenceRead = "func importRunGenerationEvidenceRead(ctx context.Context, q importRunQueryer, runID string) (ImportRunGenerationEvidence, error)"
+	// productionImportRunReceiptsOwnerBindingColumn is the column the evidence is
+	// built from, and the one requireRun's row read returns.
+	productionImportRunReceiptsOwnerBindingColumn = "SELECT run_id, root_action_id, binding_json FROM generation_runs WHERE run_id = ?"
 	// productionImportRunReceiptsOwnerPoolLine is the one connection the receipt
 	// transaction holds while the assert runs.
 	productionImportRunReceiptsOwnerPoolLine = "db.SetMaxOpenConns(1)"
 	// productionImportRunReceiptsOwnerDeadlockLine is how the store already
 	// describes a prover that takes a second connection.
 	productionImportRunReceiptsOwnerDeadlockLine = "which is a deadlock rather than a proof"
+	// productionImportRunReceiptsOwnerImmediateLine is the reservation the assert
+	// runs inside.
+	productionImportRunReceiptsOwnerImmediateLine = "func (r *ImportRuns) importRunImmediate(ctx context.Context, fn func(*sql.Conn) error) (retErr error)"
+	// productionImportRunReceiptsOwnerReproduceLine is the reproduction the proof
+	// performs.
+	productionImportRunReceiptsOwnerReproduceLine = "func (r *Registry) ReproduceBinding("
+	// productionImportRunReceiptsOwnerAssertLine is the reference's requireRun call,
+	// the first step the old callback could not take.
+	productionImportRunReceiptsOwnerAssertLine = "const run = requireRun(handle)"
+	// productionImportRunReceiptsOwnerCommitWiring is the commit half of the
+	// reference's own wiring, whose disjunction with prepare is why the served
+	// handlers install one proof on both legs.
+	productionImportRunReceiptsOwnerCommitWiring = "(handle, slot) => assertImportGenerationSourcesCurrent(handle, slot, true)"
 )
 
-// The three refusals this file's probe can answer. The first two are the
-// reference's own codes (main-generation-owner.ts:156-167); the third is the
-// slot comparison's (:1462). None of them is reachable through the lane today,
-// because the read that decides them never returns.
-var (
-	productionImportRunReceiptsOwnerRunMissing  = errors.New("GENERATION_RUN_NOT_FOUND")
-	productionImportRunReceiptsOwnerIdentity    = errors.New("GENERATION_RUN_IDENTITY_MISMATCH")
-	productionImportRunReceiptsOwnerSlotChanged = errors.New("GENERATION_IMPORT_EFFECT_SLOT_CHANGED")
-)
-
-// productionImportRunReceiptsOwnerRun is the store's own view of one generation
-// run: the row identity plus the frozen binding the reproduction re-fingerprints.
-type productionImportRunReceiptsOwnerRun struct {
-	RunID        string
-	RootActionID string
-	ProjectID    string
-	Epoch        string
-	BindingJSON  []byte
+// productionImportRunReceiptsOwnerWiring is the one edit this family still needs,
+// as text: the file, the anchor it goes after, and the literal line. It is a value
+// rather than a comment so the report and the test read the same string.
+type productionImportRunReceiptsOwnerWiring struct {
+	Path   string
+	Anchor string
+	Line   string
 }
 
-// productionImportRunReceiptsOwnerReadRun is requireRun's read
-// (main-generation-owner.ts:156-167) written the only way this lane can write
-// it inside the receipt transaction: against the handle the borrow returned. It
-// is the exact call that cannot get a connection, and it is kept executable so
-// the deadlock is measured by the test rather than asserted in prose.
-func productionImportRunReceiptsOwnerReadRun(ctx context.Context, db *sql.DB, runID string) (productionImportRunReceiptsOwnerRun, error) {
-	if db == nil || runID == "" {
-		return productionImportRunReceiptsOwnerRun{}, productionImportRunReceiptsOwnerRunMissing
+// productionImportRunReceiptsOwnerWiringLineOf is the wiring, spelled once.
+func productionImportRunReceiptsOwnerWiringLineOf() productionImportRunReceiptsOwnerWiring {
+	return productionImportRunReceiptsOwnerWiring{
+		Path:   "production_open_linux.go",
+		Anchor: productionImportRunReceiptsOwnerLateOwnerLine,
+		Line:   productionImportRunReceiptsOwnerServe2Binder,
 	}
-	var rootActionID, bindingJSON string
-	err := db.QueryRowContext(ctx, `SELECT root_action_id, binding_json FROM generation_runs WHERE run_id = ?`,
-		runID).Scan(&rootActionID, &bindingJSON)
-	if errors.Is(err, sql.ErrNoRows) {
-		return productionImportRunReceiptsOwnerRun{}, productionImportRunReceiptsOwnerRunMissing
-	}
+}
+
+// productionImportRunReceiptsOwnerInstalled reports whether the shipped lane
+// already installs the binder. It reads the source tree and is only called from
+// the test: the production binary's working directory is not the repository, and a
+// startup that read the tree would fail for a reason unrelated to the author's
+// database.
+func productionImportRunReceiptsOwnerInstalled() bool {
+	raw, err := os.ReadFile(productionImportRunReceiptsOwnerWiringLineOf().Path)
 	if err != nil {
-		return productionImportRunReceiptsOwnerRun{}, err
+		return false
 	}
-	run := productionImportRunReceiptsOwnerRun{
-		RunID: runID, RootActionID: rootActionID, BindingJSON: []byte(bindingJSON),
-	}
-	var binding struct {
-		ProjectID string `json:"projectId"`
-		Epoch     string `json:"epoch"`
-	}
-	if err := json.Unmarshal([]byte(bindingJSON), &binding); err != nil {
-		return productionImportRunReceiptsOwnerRun{}, productionImportRunReceiptsOwnerIdentity
-	}
-	run.ProjectID = binding.ProjectID
-	run.Epoch = binding.Epoch
-	return run, nil
-}
-
-// productionImportRunReceiptsOwnerAssert is the store.ImportRunGenerationSourceAssert
-// a served handler would have to install: requireRun's identity, then the frozen
-// import slot. It stops at step 4 of the reference's assert - the fingerprint
-// reproduction - because reproducing it needs the owner's registry, which no
-// argument of this closure can carry. Its purpose here is the first step: called
-// from inside the receipt's transaction it must block, and the test pins that.
-func productionImportRunReceiptsOwnerAssert(ctx context.Context, db *sql.DB) store.ImportRunGenerationSourceAssert {
-	return func(handle any, slot store.ImportRunGenerationSlot) error {
-		if ctx == nil || db == nil {
-			return productionImportRunReceiptsOwnerRunMissing
-		}
-		object := syntheticMap(handle)
-		if object == nil {
-			return productionImportRunReceiptsOwnerIdentity
-		}
-		runID := syntheticString(object["runId"])
-		if runID == "" {
-			return productionImportRunReceiptsOwnerIdentity
-		}
-		run, err := productionImportRunReceiptsOwnerReadRun(ctx, db, runID)
-		if err != nil {
-			return err
-		}
-		// :158-166 the handle is the run's own identity, on both the row side and
-		// the frozen binding side.
-		if run.RunID != runID || run.RootActionID != syntheticString(object["rootActionId"]) ||
-			run.ProjectID != syntheticString(object["projectId"]) ||
-			run.Epoch != syntheticString(object["epoch"]) {
-			return productionImportRunReceiptsOwnerIdentity
-		}
-		// :1462 the frozen import slot must name exactly the requested one.
-		var binding struct {
-			SourceManifest struct {
-				ImportSlot struct {
-					RunID   string `json:"runId"`
-					Stage   string `json:"stage"`
-					BatchID string `json:"batchId"`
-				} `json:"importSlot"`
-			} `json:"sourceManifest"`
-		}
-		if err := json.Unmarshal(run.BindingJSON, &binding); err != nil {
-			return productionImportRunReceiptsOwnerIdentity
-		}
-		frozen := binding.SourceManifest.ImportSlot
-		if frozen.RunID != slot.RunID || frozen.Stage != slot.Stage || frozen.BatchID != slot.BatchID {
-			return productionImportRunReceiptsOwnerSlotChanged
-		}
-		return nil
-	}
+	return productionSeamContains(string(raw), productionImportRunReceiptsOwnerServe2Binder)
 }
 
 // productionImportRunReceiptsOwnerFact is one declaration the audit above quotes,
@@ -267,28 +167,37 @@ type productionImportRunReceiptsOwnerFact struct {
 	Marker string
 }
 
-// productionImportRunReceiptsOwnerFacts is the audit, as a list. Every row is
-// one sentence of the header: the owner's call site and the argument it does not
-// pass, the store's callback that carries no connection, the one connection the
-// receipt transaction holds, the store's own verdict on a second connection, and
-// the reference's three steps.
+// productionImportRunReceiptsOwnerFacts is the audit, as a list: the owner block,
+// the anchor the new line goes after, the widened callback, the store's own read,
+// the one connection the receipt transaction holds, the store's own verdict on a
+// second connection, and the reference's assert.
 func productionImportRunReceiptsOwnerFacts() []productionImportRunReceiptsOwnerFact {
 	return []productionImportRunReceiptsOwnerFact{
 		{"production_open_linux.go", 591, productionImportRunReceiptsOwnerBlockLine},
-		{"production_open_linux.go", 627, productionImportRunReceiptsOwnerWiringLine},
-		{"production_importrun_residual_linux.go", 247, productionImportRunReceiptsOwnerBinderLine},
 		{"production_open_linux.go", 720, productionImportRunReceiptsOwnerLateOwnerLine},
-		{"production_generation_begin_linux.go", 133, "func(_ context.Context, modelID string) (generationowner.Profile, bool, error)"},
-		{"../../internal/store/importrun_receipts.go", 118, productionImportRunReceiptsOwnerAssertSignature},
-		{"../../internal/store/importrun_receipts.go", 987, "return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID})"},
-		{"../../internal/store/importrun_receipts.go", 1005, "return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID})"},
-		{"../../internal/store/importrun.go", 948, "func (r *ImportRuns) importRunImmediate(ctx context.Context, fn func(*sql.Conn) error) (retErr error)"},
+		{"production_open_linux.go", 627, productionImportRunReceiptsOwnerResidualBinder},
+		{"../../internal/store/importrun_receipts.go", 130, productionImportRunReceiptsOwnerAssertSignature},
+		{"../../internal/store/importrun_receipts_generation.go", 71, "type ImportRunGenerationEvidence struct {"},
+		{"../../internal/store/importrun_receipts_generation.go", 148, productionImportRunReceiptsOwnerEvidenceRead},
+		{"../../internal/store/importrun_receipts_generation.go", 171, productionImportRunReceiptsOwnerBindingColumn},
+		{"../../internal/store/importrun_receipts_generation.go", 205, "SELECT json_extract(action_json,'$.status') FROM generation_roots WHERE root_action_id = ?"},
+		{"../../internal/store/importrun_receipts_generation.go", 232, "SELECT attempt_id, usage_receipt_json FROM generation_attempts WHERE run_id = ? ORDER BY rowid"},
+		{"../../internal/store/importrun_receipts_generation.go", 259, "SELECT artifact_id, status, artifact_json FROM generation_artifacts WHERE attempt_id = ?"},
+		{"../../internal/store/importrun.go", 948, productionImportRunReceiptsOwnerImmediateLine},
 		{"../../internal/projectfs/author_linux.go", 121, productionImportRunReceiptsOwnerPoolLine},
 		{"../../internal/store/character_proposal_pending.go", 37, productionImportRunReceiptsOwnerDeadlockLine},
-		{"../../internal/generationowner/binding.go", 63, "func (r *Registry) ReproduceBinding("},
-		{"../../internal/generationowner/lease.go", 164, productionImportRunReceiptsOwnerScopeLine},
-		{"../../../electron/controllers/generation-controller.ts", 74, "if (!entry || !database?.inTransaction) throw new Error('GENERATION_OWNER_REQUIRED')"},
-		{"../../../electron/services/main-generation-owner.ts", 1454, "const run = requireRun(handle)"},
-		{"../../../electron/services/main-generation-owner.ts", 1462, "if (!slot || !isDeepStrictEqual(imports.context(run).slot, slot)) throw new Error('GENERATION_IMPORT_EFFECT_SLOT_CHANGED')"},
+		{"../../internal/generationowner/binding.go", 63, productionImportRunReceiptsOwnerReproduceLine},
+		{"../../../electron/services/main-generation-owner.ts", 1454, productionImportRunReceiptsOwnerAssertLine},
+		{"../../../electron/services/main-generation-owner.ts", 1462, "imports.context(run).slot"},
+		{"../../../electron/services/main-generation-owner.ts", 1471, "GENERATION_IMPORT_EFFECT_SOURCE_CHANGED"},
+		{"../../../electron/controllers/db-controller.ts", 437, productionImportRunReceiptsOwnerCommitWiring},
+		{"production_importrun_receipts_serve2_linux.go", 0, "func newProductionImportRunReceiptsServe2(owner *productionGeneration) *productionImportRunReceiptsServe2 {"},
 	}
+}
+
+// productionImportRunReceiptsOwnerReport is the one-line wiring report, in the
+// form the pass's own summary uses: file, anchor, literal line.
+func productionImportRunReceiptsOwnerReport() string {
+	wiring := productionImportRunReceiptsOwnerWiringLineOf()
+	return wiring.Path + ": after " + wiring.Anchor + " -> " + wiring.Line
 }

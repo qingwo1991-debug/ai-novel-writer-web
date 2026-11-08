@@ -115,7 +115,19 @@ type ImportRunGenerationSlot struct {
 // decides whether a handle is required. The controller always supplies the proof
 // (electron/controllers/db-controller.ts:425), so a binder that passes nil makes
 // the handle requirement weaker than the original's, never stronger.
-type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot) error
+//
+// The third argument is the run the handle names, READ BY THE STORE on the
+// receipt transaction's own connection, inside the same BEGIN IMMEDIATE
+// (importRunGenerationEvidenceRead, importrun_receipts_generation.go). It is
+// passed as data for one measured reason: the author database is opened with a
+// single connection (internal/projectfs/author_linux.go:121
+// SetMaxOpenConns(1)), so a proof that borrowed a second handle to read the run
+// waited for the connection this transaction holds and ended in
+// context.DeadlineExceeded. The store reads; the prover decides. Every refusal -
+// a run that is absent, foreign, frozen for another slot, or whose sources no
+// longer reproduce - still happens inside the prover, exactly as it does in the
+// reference.
+type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot, run ImportRunGenerationEvidence) error
 
 // ErrImportRunReceiptKindUnbound is this port's own refusal and has no
 // counterpart in the reference, which implements all four effect kinds. It is a
@@ -968,6 +980,12 @@ func importRunReceiptGenerationBound(ctx context.Context, q importRunQueryer, ru
 // importRunReceiptAssertPreparedGeneration is prepareEffectReceipt's generation
 // block (:2374-2384). A truthy handle is any non-null value, because JavaScript
 // truthiness is what the original tests; nothing is decoded here.
+//
+// The run is read here, on the connection this transaction reserved, and only on
+// the branch that really calls the proof: a nil proof still makes the handle
+// optional exactly as before (importrun_receipts.go:983-985 of the previous
+// shape), and a run whose table does not exist reads as no run at all rather
+// than as a driver error.
 func importRunReceiptAssertPreparedGeneration(ctx context.Context, q importRunQueryer,
 	assertSources ImportRunGenerationSourceAssert, runID, stage, batchID string, payload map[string]any) error {
 	switch stage {
@@ -983,17 +1001,25 @@ func importRunReceiptAssertPreparedGeneration(ctx context.Context, q importRunQu
 	if (assertSources != nil || bound) && handle == nil {
 		return errors.New("GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED")
 	}
-	if assertSources != nil && handle != nil {
-		return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID})
+	if assertSources == nil || handle == nil {
+		return nil
 	}
-	return nil
+	run, err := importRunGenerationEvidenceRead(ctx, q, importRunGenerationHandleRunID(handle))
+	if err != nil {
+		return err
+	}
+	return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID}, run)
 }
 
 // importRunReceiptAssertCommitGeneration is commitEffectReceipt's generation
 // guard (:2445-2449). Unlike prepare, it only runs when the payload carries a
 // handle, and a handle without an available proof is its own refusal.
-func importRunReceiptAssertCommitGeneration(assertSources ImportRunGenerationSourceAssert,
-	runID, stage, batchID string, payload map[string]any) error {
+//
+// Like the prepare half it reads the run on the receipt's own connection, so the
+// proof never borrows a handle the transaction is holding. The handle's own shape
+// is already validated by importRunReceiptAssertPayloadSchema at this point.
+func importRunReceiptAssertCommitGeneration(ctx context.Context, q importRunQueryer,
+	assertSources ImportRunGenerationSourceAssert, runID, stage, batchID string, payload map[string]any) error {
 	handle := payload["generationRunHandle"]
 	if handle == nil {
 		return nil
@@ -1002,7 +1028,11 @@ func importRunReceiptAssertCommitGeneration(assertSources ImportRunGenerationSou
 	if assertSources == nil || !receiptStage {
 		return errors.New("GENERATION_GUARD_REQUIRED")
 	}
-	return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID})
+	run, err := importRunGenerationEvidenceRead(ctx, q, importRunGenerationHandleRunID(handle))
+	if err != nil {
+		return err
+	}
+	return assertSources(handle, ImportRunGenerationSlot{RunID: runID, Stage: stage, BatchID: batchID}, run)
 }
 
 // importRunReceiptWritingStyle reads the one column the author's project states,
@@ -1303,7 +1333,7 @@ func (r *ImportRuns) CommitEffectReceipt(ctx context.Context, runID, stage, batc
 		if err := importRunAssertCheckpointCanApply(ctx, conn, row, stage, batchID, "receipt"); err != nil {
 			return err
 		}
-		if err := importRunReceiptAssertCommitGeneration(assertSources, runID, stage, batchID, receipt.Payload); err != nil {
+		if err := importRunReceiptAssertCommitGeneration(ctx, conn, assertSources, runID, stage, batchID, receipt.Payload); err != nil {
 			return err
 		}
 		fillMode := "replace"

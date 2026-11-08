@@ -16,11 +16,11 @@ import (
 
 // productionDBResidualServed is the db slice this lane actually installs, as
 // measured by reading every binder production_open_linux.go calls and every
-// table those binders iterate: 100 of the 103 inventoried `db:*` names, leaving
-// the three in production_db_residual_linux.go. Both halves are pinned below
+// table those binders iterate: 102 of the 103 inventoried `db:*` names, leaving
+// the one in production_db_residual_linux.go. Both halves are pinned below
 // against the finished lane rather than against hand counting, so a batch that
-// binds one of the three has to move this number and delete the row.
-const productionDBResidualServed = 100
+// binds the last one has to move this number and delete the row.
+const productionDBResidualServed = 102
 
 // The execution lease every request below names. The blueprint sync family used
 // to share this block with its own operation id; that name is served now, so its
@@ -96,8 +96,8 @@ func TestProductionLaneDBResidualIsTheUnservedSlice(t *testing.T) {
 	t.Logf("db slice: %d served, %d refused, %d inventoried", len(served), len(residual), len(inventory))
 }
 
-// TestProductionLaneRefusesDBResidual pins the three names where this lane
-// leaves them: unbound, answering the fail-closed 501
+// TestProductionLaneRefusesDBResidual pins the one name where this lane leaves
+// it: unbound, answering the fail-closed 501
 // GO_OPERATION_NOT_MIGRATED, under the live lease, a stale lease and no lease at
 // all. One subtest per name, so a failure names the channel that moved.
 //
@@ -109,8 +109,8 @@ func TestProductionLaneDBResidualIsTheUnservedSlice(t *testing.T) {
 // that way when the handler is finally installed.
 //
 // The database is byte-compared over the whole file after every request of the
-// family: none of these names may mutate the author's data, and the ones that
-// would (the receipt writes) are exactly the ones this batch refused.
+// family: the refused name may not mutate the author's data. The receipt writes
+// moved to their own serve file once the source-currency proof landed.
 func TestProductionLaneRefusesDBResidual(t *testing.T) {
 	root, projectPath, database, contract := productionGraphReadsRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
