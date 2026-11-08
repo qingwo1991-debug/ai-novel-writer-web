@@ -781,11 +781,13 @@ func (a *productionAgentGenerationServe) round(ctx context.Context, ledger *stor
 		projected.Agent = round
 		return projected, nil
 	}
-	// The stored action state, when a build that can write one left it behind.
-	// This lane cannot write agentActions (claim and finish stay refused), but a
-	// read of a run that carries it must report it rather than pretend the action
-	// is still pending.
-	usage := syntheticMap(syntheticMap(receipt["result"])["usage"])
+	// The stored action state lives on the top-level usage receipt (agentActions),
+	// not inside result.usage; read it back so a settled claim/finish/register is
+	// reported rather than pretended to be still pending.
+	usage, err := productionAgentGenerationStoredUsage(ctx, db, attempts[0])
+	if err != nil {
+		return projected, err
+	}
 	actions := make([]map[string]any, 0, len(round.Actions))
 	for index, action := range round.Actions {
 		toolCallID := productionAgentGenerationActionIDPrefix + attempts[0] + ":" + strconv.Itoa(index)
@@ -806,6 +808,11 @@ func (a *productionAgentGenerationServe) round(ctx context.Context, ledger *stor
 		}
 		if observation := syntheticString(state["observation"]); observation != "" {
 			wire["observation"] = observation
+			round.Actions[index].Observation = observation
+		}
+		if workflow := syntheticMap(state["workflow"]); workflow != nil {
+			wire["workflow"] = workflow
+			round.Actions[index].Registration = productionAgentGenerationRegistration(workflow)
 		}
 		round.Actions[index].Status = status
 		actions = append(actions, wire)

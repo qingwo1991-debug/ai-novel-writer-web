@@ -469,6 +469,31 @@ type productionAgentGenerationTool struct {
 	State      map[string]any
 }
 
+// productionAgentGenerationStoredUsage reads one attempt's full usage receipt
+// (the top-level object, where agentActions, agentAuthorSelections and
+// agentControlEpoch live) over the lane's own connection. The receipt projection
+// does not surface those top-level agent keys, so the tool names read them here.
+func productionAgentGenerationStoredUsage(ctx context.Context, db *sql.DB, attemptID string) (map[string]any, error) {
+	if db == nil {
+		return nil, errors.New(agentgen.CodeToolIdentityMismatch)
+	}
+	var raw sql.NullString
+	if err := db.QueryRowContext(ctx, "SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=?", attemptID).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New(agentgen.CodeToolIdentityMismatch)
+		}
+		return nil, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return nil, nil
+	}
+	var usage map[string]any
+	if err := json.Unmarshal([]byte(raw.String), &usage); err != nil {
+		return nil, errors.New(agentgen.CodeToolIdentityMismatch)
+	}
+	return usage, nil
+}
+
 // toolAction resolves a tool reference against the named run's completed round
 // and merges the stored action-map state into the action the decisions take.
 func (a *productionAgentGenerationServe) toolAction(ctx context.Context, scope generationowner.Scope, ledger *store.GenerationLedger, db *sql.DB, refValue any) (*productionAgentGenerationTool, error) {
@@ -506,12 +531,10 @@ func (a *productionAgentGenerationServe) toolAction(ctx context.Context, scope g
 	if !found {
 		return nil, errors.New(agentgen.CodeToolIdentityMismatch)
 	}
-	receiptValue, err := syntheticCall(ctx, ledger, "receipt", attemptID)
+	usage, err := productionAgentGenerationStoredUsage(ctx, db, attemptID)
 	if err != nil {
 		return nil, err
 	}
-	receipt := syntheticMap(receiptValue)
-	usage := syntheticMap(syntheticMap(receipt["result"])["usage"])
 	state := productionAgentGenerationActionState(usage, toolCallID)
 	if state != nil {
 		if status := syntheticString(state["status"]); status != "" {
