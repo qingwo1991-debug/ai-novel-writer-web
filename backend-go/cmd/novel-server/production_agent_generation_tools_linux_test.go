@@ -461,9 +461,9 @@ func TestProductionAgentGenerationToolOpsServed(t *testing.T) {
 	// decided by the handler's own parse, so each name's foreign payload must be
 	// the reference's full envelope (src/shared/agent-generation.ts:96-101) with
 	// only the handle's projectId swapped to the foreign project.
-	payload := func(h map[string]any) map[string]any {
+	payload := func(op string, h map[string]any) map[string]any {
 		ref := map[string]any{"handle": h, "attemptId": attemptID, "toolCallId": workflowTool}
-		switch operation {
+		switch op {
 		case productionAgentGenerationClaimTool:
 			return map[string]any{"ref": ref, "confirmed": true}
 		case productionAgentGenerationFinishTool:
@@ -477,7 +477,7 @@ func TestProductionAgentGenerationToolOpsServed(t *testing.T) {
 	}
 	for _, operation := range []string{productionAgentGenerationClaimTool, productionAgentGenerationFinishTool,
 		productionAgentGenerationRegister, productionAgentGenerationCommitDomain, productionAgentGenerationResume} {
-		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(handle), stale})
+		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(operation, handle), stale})
 		if status != readStatus || body != readBody {
 			t.Fatalf("%v answered a stale lease differently than read: %v %v vs %v %v", operation, status, body, readStatus, readBody)
 		}
