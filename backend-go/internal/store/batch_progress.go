@@ -1130,6 +1130,24 @@ func bpDirectoryProof(ctx context.Context, conn *sql.Conn, run *bpRun, usageValu
 
 // bpRangeObject requires both ends to be safe integers, mirroring
 // Number.isSafeInteger on each field.
+
+// bpFromToRange reads a {from,to} range object, the shape the reference writes
+// for a blueprint author-edit receipt's requestedRange/committedRange
+// (main-generation-owner.ts:895), unlike the {startChapter,endChapter} shape of
+// the directory commit receipt.
+func bpFromToRange(value any) (BatchChapterRange, bool) {
+	object := glMap(value)
+	if object == nil || len(object) != 2 {
+		return BatchChapterRange{}, false
+	}
+	start, startOK := rrInteger(object["from"], -9007199254740991)
+	end, endOK := rrInteger(object["to"], -9007199254740991)
+	if !startOK || !endOK {
+		return BatchChapterRange{}, false
+	}
+	return BatchChapterRange{StartChapter: start, EndChapter: end}, true
+}
+
 func bpRangeObject(value any) (BatchChapterRange, bool) {
 	object := glMap(value)
 	if object == nil {
@@ -1232,7 +1250,7 @@ func bpAuthorEditCode(ctx context.Context, conn *sql.Conn, run *bpRun) string {
 	}
 	sourceHandle, handleOK := bpCompleteHandle(receipt["sourceHandle"])
 	payloadHash, payloadOK := receipt["payloadHash"].(string)
-	committed, committedOK := bpRangeObject(receipt["committedRange"])
+	committed, committedOK := bpFromToRange(receipt["committedRange"])
 	requestedObject := glMap(receipt["requestedRange"])
 	if !handleOK || sourceHandle.RunID != run.runID || sourceHandle.RootActionID != run.rootID ||
 		sourceHandle.ProjectID != glText(run.binding["projectId"]) ||

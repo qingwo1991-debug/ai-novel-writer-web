@@ -107,18 +107,13 @@ func TestProductionGenerationRecoveryServeRefusesSeededRecovery(t *testing.T) {
 	// blueprint run is missing from a served catalog today.
 	var catalog productionRecoveryCatalogView
 	lane.client.decode(t, productionGenerationRecoveryDirectory, []any{lane.frozen}, &catalog)
-	if len(catalog.Progress) != 2 {
-		t.Fatalf("the served catalog reported %d readable directory receipts; only the resumable and settled runs carry a receipt it accepts: %v",
+	if len(catalog.Progress) != 3 {
+		t.Fatalf("the served catalog reported %d readable directory receipts; the resumable, settled and author-saved runs all carry receipts the store accepts: %v",
 			len(catalog.Progress), catalog.Progress)
 	}
-	if len(catalog.Diagnostics) != 1 {
-		t.Fatalf("the served catalog reported %d diagnostics; the author-saved run must be accounted for exactly once",
+	if len(catalog.Diagnostics) != 0 {
+		t.Fatalf("the served catalog reported %d diagnostics; every seeded receipt is the reference's own shape",
 			len(catalog.Diagnostics))
-	}
-	if diagnostic := catalog.Diagnostics[0]; diagnostic.RunID != productionRecoveryServeSavedRun ||
-		diagnostic.Kind != "invalid" || diagnostic.Code != "GENERATION_BLUEPRINT_AUTHOR_RECEIPT_INVALID" {
-		t.Fatalf("the served catalog diagnosed %v; the seeded author-edit receipt is the reference's own shape",
-			diagnostic)
 	}
 	byOperation := make(map[string]productionRecoveryProgressView, len(catalog.Progress))
 	for _, item := range catalog.Progress {
@@ -143,13 +138,17 @@ func TestProductionGenerationRecoveryServeRefusesSeededRecovery(t *testing.T) {
 		t.Fatalf("the settled run reported remainingRange %v; it has nothing left to write",
 			productionRecoveryRangeText(settled.RemainingRange))
 	}
-	// And the author-saved run is NOT listed, which is the defect. The receipt the
-	// fixture stamps is the one recordBlueprintAuthorEdit writes and the reference
-	// accepts (generation-run-repository.ts:194-214). When the accessor is fixed
-	// this fails on purpose: move readBlueprintAuthorEdit to VALIDATED in
-	// production_generation_recovery_serve_linux.go and expect progress here.
-	if _, found := byOperation[productionRecoveryServeSavedOperation]; found {
-		t.Fatal("the author-saved run is listed as progress at last: bpAuthorEditCode accepts the {from,to} receipt now, so the REFUTED verdict and this expectation must change together")
+	// The author-saved run is listed as progress at last: bpAuthorEditCode reads
+	// the receipt's committedRange with the {from,to} accessor the reference
+	// writes, so the reference's own receipt shape is accepted, not diagnosed.
+	saved, found := byOperation[productionRecoveryServeSavedOperation]
+	if !found {
+		t.Fatalf("the author-saved operation %v is not in the served catalog: %v",
+			productionRecoveryServeSavedOperation, catalog.Progress)
+	}
+	if saved.RemainingRange != nil {
+		t.Fatalf("the author-saved run reported remainingRange %v; it wrote through its committed end",
+			productionRecoveryRangeText(saved.RemainingRange))
 	}
 
 	// The three frozen contexts are all well formed and all name state this
