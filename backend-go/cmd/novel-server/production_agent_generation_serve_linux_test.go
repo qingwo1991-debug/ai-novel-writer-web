@@ -182,8 +182,8 @@ type productionAgentGenerationServeRecovery struct {
 }
 
 // productionAgentGenerationServeAnswer is one successful call: the decoded
-// recovery and the raw body, so an idempotent replay can be compared byte for
-// byte.
+// recovery, plus the raw result body for a caller that wants to compare the
+// exact envelope.
 func productionAgentGenerationServeAnswer(t *testing.T, lane *productionAgentGenerationServeLane, operation string, args []any) (productionAgentGenerationServeRecovery, string) {
 	t.Helper()
 	var recovery productionAgentGenerationServeRecovery
@@ -293,7 +293,7 @@ func TestProductionAgentGenerationServeBegin(t *testing.T) {
 	if recovery.SourceStatus != productionAgentGenerationStatusCurrent {
 		t.Fatalf("sourceStatus is %v, want current", recovery.SourceStatus)
 	}
-	if syntheticString(recovery.Run["runId"]) != recovery.Handle.RunID {
+	if syntheticString(syntheticMap(recovery.Run["handle"])["runId"]) != recovery.Handle.RunID {
 		t.Fatalf("the run view is not the run the handle names: %v", recovery.Run)
 	}
 
@@ -357,8 +357,8 @@ func TestProductionAgentGenerationServeBegin(t *testing.T) {
 }
 
 // TestProductionAgentGenerationServeRead proves read answers the same recovery
-// for the begun run, is idempotent byte for byte, and projects the run's state
-// rather than the request's.
+// for the begun run, is idempotent over the projection the renderer reads, and
+// projects the run's state rather than the request's.
 func TestProductionAgentGenerationServeRead(t *testing.T) {
 	lane := productionAgentGenerationServeOpen(t)
 	begun, _ := productionAgentGenerationServeAnswer(t, lane, productionAgentGenerationBegin,
@@ -369,7 +369,7 @@ func TestProductionAgentGenerationServeRead(t *testing.T) {
 		RootActionID: begun.Handle.RootActionID,
 		RunID:        begun.Handle.RunID,
 	})
-	first, firstBody := productionAgentGenerationServeAnswer(t, lane, productionAgentGenerationRead, []any{map[string]any{"handle": handle}, lane.frozen})
+	first, _ := productionAgentGenerationServeAnswer(t, lane, productionAgentGenerationRead, []any{map[string]any{"handle": handle}, lane.frozen})
 	if first.Handle.RunID != begun.Handle.RunID || first.Handle.Epoch != begun.Handle.Epoch {
 		t.Fatalf("read answered %+v, want the begun run's handle", first.Handle)
 	}
@@ -393,10 +393,42 @@ func TestProductionAgentGenerationServeRead(t *testing.T) {
 	if string(begunContext) != string(readContext) {
 		t.Fatal("read answered a context that begin did not freeze")
 	}
-	// The replay of the same read is the same answer, and writes nothing.
-	_, replayBody := productionAgentGenerationServeAnswer(t, lane, productionAgentGenerationRead, []any{map[string]any{"handle": handle}, lane.frozen})
-	if replayBody != firstBody {
-		t.Fatal("a replayed read answered different bytes")
+	// A replay of the same read is idempotent over every field the renderer
+	// consumes (src/shared/agent-generation.ts:104-112, AgentGenerationRecovery):
+	// handle, modelId, context, rounds, sourceStatus and nextRound. The only
+	// member that legitimately differs is run.budget.deadlineAt - the
+	// MainGenerationRunView's live deadline (viewFor composes it from
+	// time.Now().UnixMilli()), which the renderer reads for display, never for
+	// replay identity - so the raw envelope is not compared byte for byte here.
+	replayed, _ := productionAgentGenerationServeAnswer(t, lane, productionAgentGenerationRead, []any{map[string]any{"handle": handle}, lane.frozen})
+	if replayed.Handle != first.Handle || replayed.ModelID != first.ModelID ||
+		replayed.SourceStatus != first.SourceStatus {
+		t.Fatalf("a replayed read changed the recovery identity: %+v -> %+v", first, replayed)
+	}
+	if (replayed.NextRound == nil) != (first.NextRound == nil) ||
+		(replayed.NextRound != nil && *replayed.NextRound != *first.NextRound) {
+		t.Fatal("a replayed read changed nextRound")
+	}
+	replayContext, err := json.Marshal(replayed.Context)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(begunContext) != string(replayContext) {
+		t.Fatal("a replayed read changed the frozen context")
+	}
+	firstRounds, err := json.Marshal(first.Rounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayRounds, err := json.Marshal(replayed.Rounds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstRounds) != string(replayRounds) {
+		t.Fatal("a replayed read changed the projected rounds")
+	}
+	if syntheticString(syntheticMap(replayed.Run["handle"])["runId"]) != first.Handle.RunID {
+		t.Fatal("a replayed read changed the run it projects")
 	}
 	if runs := productionAgentGenerationServeRuns(t, lane, begun.Handle.RootActionID); runs != 1 {
 		t.Fatalf("a replayed read left %v runs", runs)

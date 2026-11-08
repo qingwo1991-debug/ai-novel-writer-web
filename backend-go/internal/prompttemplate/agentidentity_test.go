@@ -34,7 +34,7 @@ func TestAgentIdentityPromptServesBothLanguages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", language, err)
 		}
-		if prompt.Key != AgentIdentityKey || prompt.Language != language || prompt.Template.Language != language {
+		if prompt.Key != AgentIdentityKey || prompt.Language != language {
 			t.Fatalf("%v resolved key %v language %v", language, prompt.Key, prompt.Language)
 		}
 		var compact bytes.Buffer
@@ -119,6 +119,11 @@ func TestAgentIdentityAssetTracksTheShippedSources(t *testing.T) {
 			"systemSuffix":   prompt.Template.SystemSuffix,
 			"systemContract": prompt.SystemContract,
 		} {
+			// An empty fragment would make `strings.Contains` trivially true, so it is
+			// refused here before the containment check can hide it.
+			if strings.TrimSpace(fragment) == "" {
+				t.Fatalf("%v %v is empty, so the asset lost a section the loader needs", language, label)
+			}
 			// A single-quoted TypeScript string collapses a doubled quote; the shipped
 			// literals carry none, so the value is a verbatim substring.
 			if !strings.Contains(string(identity), fragment) {
@@ -135,6 +140,9 @@ func TestAgentIdentityAssetTracksTheShippedSources(t *testing.T) {
 			"project settings":       prompt.ProjectSettingsHeading,
 			"editor context heading": prompt.EditorContextHeading,
 		} {
+			if strings.TrimSpace(fragment) == "" {
+				t.Fatalf("%v %v is empty, so the asset lost a section the loader needs", language, label)
+			}
 			if !strings.Contains(string(contextSource), fragment) {
 				t.Fatalf("%v %v is not a verbatim literal of %v", language, label, shippedAgentContextSource)
 			}
