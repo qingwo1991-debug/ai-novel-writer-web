@@ -145,12 +145,16 @@ func TestFinalizationAssetsTrackTheShippedSources(t *testing.T) {
 
 // finalizationSourceContains checks that a decoded prose fragment still appears
 // in its shipped source. The output contract is a single-quoted JavaScript
-// string, so its apostrophes are stored escaped (\') in the source while the
-// asset's decoded value carries the literal character; both spellings are
-// checked so a source that switched quote style is not a false drift.
+// string, so its apostrophes are stored escaped (\') in the source, and a
+// template-literal body stores its backticks escaped (\`); the asset's decoded
+// value carries the literal characters. Both spellings are checked so a source
+// that switched quote style is not a false drift.
 func finalizationSourceContains(source, value string) bool {
 	if strings.Contains(source, value) {
 		return true
 	}
-	return strings.Contains(source, strings.ReplaceAll(value, "'", "\\'"))
+	if strings.Contains(source, strings.ReplaceAll(value, "'", "\\'")) {
+		return true
+	}
+	return strings.Contains(source, strings.ReplaceAll(value, "`", "\\`"))
 }
