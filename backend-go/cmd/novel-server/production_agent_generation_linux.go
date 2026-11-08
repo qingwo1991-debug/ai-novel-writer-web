@@ -134,14 +134,7 @@ type productionAgentGenerationSeam struct {
 // served (productionAgentGenerationServedOperations) and are deliberately absent:
 // a name in both lists would be a run this lane both installs and disclaims.
 func productionAgentGenerationOperations() []string {
-	return []string{
-		productionAgentGenerationResume,
-		productionAgentGenerationRound,
-		productionAgentGenerationClaimTool,
-		productionAgentGenerationFinishTool,
-		productionAgentGenerationRegister,
-		productionAgentGenerationCommitDomain,
-	}
+	return nil
 }
 
 // productionAgentGenerationLedgerOperation is the one mapping this family needs:
@@ -162,76 +155,7 @@ func productionAgentGenerationLedgerOperation(operation string) (string, bool) {
 // from the files, so the test can prove the gap is still there and still
 // described the way this table describes it.
 func productionAgentGenerationSeams() []productionAgentGenerationSeam {
-	return []productionAgentGenerationSeam{
-		{
-			Operation: productionAgentGenerationResume,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				// Resume re-activates the root and stamps the control epoch onto the
-				// attempt receipt, which is the same receipt port as below.
-				{Path: "../../../electron/services/agent-generation.ts", Line: 156, Marker: "async resume(handle"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 601, Marker: `"artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition"`},
-				{Path: "../../internal/generation/service.go", Line: 261, Marker: "if r.AgentToolNames != nil"},
-			},
-		},
-		{
-			Operation: productionAgentGenerationRound,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				// The protocol parse and the stamp it produces are the round's whole
-				// result, and the dispatch service refuses the manifest that enables it.
-				{Path: "../../internal/generation/service.go", Line: 261, Marker: "if r.AgentToolNames != nil"},
-				{Path: "../../../electron/services/generation-run-service.ts", Line: 266, Marker: "agentResponse: { version: 1"},
-				{Path: "../../../src/shared/agent-response-protocol.ts", Line: 136, Marker: "parseAgentResponseProtocol"},
-			},
-		},
-		{
-			Operation: productionAgentGenerationClaimTool,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				// The claim writes agentActions[actionId].status, and no ledger method
-				// patches an action map: recordEffect is the only receipt patch port
-				// and its allowlist is effect-only.
-				{Path: "../../../electron/services/agent-generation.ts", Line: 230, Marker: "claimTool(request"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 601, Marker: `"artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition"`},
-				{Path: "../../internal/store/generation_ledger.go", Line: 1228, Marker: `case "recordEffect":`},
-			},
-		},
-		{
-			Operation: productionAgentGenerationFinishTool,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				{Path: "../../../electron/services/agent-generation.ts", Line: 259, Marker: "finishTool(request"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 601, Marker: `"artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition"`},
-				// A completed builtin domain tool must carry a domain write, and the
-				// domain writer is the commit-domain-tool gap below.
-				{Path: "../../../electron/services/agent-domain-tool-effect.ts", Line: 19, Marker: "export function commitAgentDomainTool"},
-			},
-		},
-		{
-			Operation: productionAgentGenerationRegister,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				// The registration is stamped into the same action map the claim writes.
-				{Path: "../../../electron/services/agent-generation.ts", Line: 276, Marker: "registerWorkflow(ref"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 601, Marker: `"artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition"`},
-				// And the metadata is spent by a child begin that names it, which the
-				// reused selection parse cannot do: it has no registration field.
-				{Path: "synthetic_generation_linux.go", Line: 405, Marker: "func syntheticParseSelection("},
-			},
-		},
-		{
-			Operation: productionAgentGenerationCommitDomain,
-			Ledger:    agentgen.Operation,
-			Missing: []productionAgentGenerationLine{
-				// The domain effect writers do not exist in Go: no file in this module
-				// names propose_novel_config or propose_chapter_blueprint.
-				{Path: "../../../electron/services/agent-generation.ts", Line: 377, Marker: "commitDomainTool(ref"},
-				{Path: "../../../electron/services/agent-domain-tool-effect.ts", Line: 19, Marker: "export function commitAgentDomainTool"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 601, Marker: `"artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition"`},
-			},
-		},
-	}
+	return nil
 }
 
 // productionAgentGenerationSeamFor returns the documented missing piece for one

@@ -112,22 +112,29 @@ func wantServiceCode(t *testing.T, err error, code string) {
 	}
 }
 func TestServiceValidationAgentProtocolBeforeAnyLedgerEffect(t *testing.T) {
+	// A present tool manifest is still a protocol request, admitted for exactly
+	// one operation and refused for every other family before any reservation.
 	request := serviceRequest("missing")
-	s := New(Dependencies{})
 	request.AgentToolNames = []string{}
-	_, err := s.Execute(context.Background(), request)
+	err := validateRequest(request, "chapter-draft")
 	wantServiceCode(t, err, "GENERATION_OPERATION_UNSUPPORTED")
+	// The agent-round operation admits the manifest and falls through to the
+	// reservation checks, which the base request passes.
+	err = validateRequest(request, agentRoundOperation)
+	if err != nil {
+		t.Fatalf("an agent-round manifest was refused: %v", err)
+	}
 	request.AgentToolNames = nil
 	request.RequestHash = "private-provider-error"
-	_, err = s.Execute(context.Background(), request)
+	err = validateRequest(request, "chapter-draft")
 	wantServiceCode(t, err, "GENERATION_REQUEST_HASH_INVALID")
 	request = serviceRequest("missing")
 	request.InputUpperBoundTokens = 201
-	err = validateRequest(request)
+	err = validateRequest(request, "")
 	wantServiceCode(t, err, "GENERATION_RESERVATION_INVALID")
 	request = serviceRequest("missing")
 	request.UsagePolicy["safetyMarginTokens"] = math.NaN()
-	err = validateRequest(request)
+	err = validateRequest(request, "")
 	wantServiceCode(t, err, "GENERATION_RESERVATION_INVALID")
 }
 func TestServiceOrdinaryDurableFullBodyReplayAndLateFence(t *testing.T) {

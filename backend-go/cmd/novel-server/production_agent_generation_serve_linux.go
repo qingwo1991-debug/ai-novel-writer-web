@@ -131,7 +131,16 @@ const (
 // the two lists are disjoint by construction: Bind refuses to run if a served
 // name is still in the refusal table.
 func productionAgentGenerationServedOperations() []string {
-	return []string{productionAgentGenerationBegin, productionAgentGenerationRead}
+	return []string{
+		productionAgentGenerationBegin,
+		productionAgentGenerationRead,
+		productionAgentGenerationRound,
+		productionAgentGenerationClaimTool,
+		productionAgentGenerationFinishTool,
+		productionAgentGenerationRegister,
+		productionAgentGenerationCommitDomain,
+		productionAgentGenerationResume,
+	}
 }
 
 // productionAgentGenerationServe serves begin and read over the one generation
@@ -165,15 +174,17 @@ func (a *productionAgentGenerationServe) Bind(server *transport.Server) error {
 	if !a.ready() {
 		return nil
 	}
-	for _, operation := range productionAgentGenerationServedOperations() {
-		if _, refused := productionAgentGenerationSeamFor(operation); refused {
+	for _, name := range productionAgentGenerationServedOperations() {
+		if _, refused := productionAgentGenerationSeamFor(name); refused {
 			return errors.New("PRODUCTION_AGENT_GENERATION_SEAM_DOUBLE_BOUND")
 		}
 	}
-	if err := server.Bind(productionAgentGenerationBegin, productionFinalizationServeChannel(a.begin)); err != nil {
-		return err
+	for _, name := range productionAgentGenerationServedOperations() {
+		if err := server.Bind(name, productionFinalizationServeChannel(a.operation(name))); err != nil {
+			return err
+		}
 	}
-	return server.Bind(productionAgentGenerationRead, productionFinalizationServeChannel(a.read))
+	return nil
 }
 
 // productionAgentGenerationBeginRequest validates the reference's begin envelope

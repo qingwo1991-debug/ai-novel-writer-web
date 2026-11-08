@@ -229,6 +229,19 @@ func (s *Service) cleanupCall(method string, args ...any) (any, error) {
 	return s.call(ctx, method, args...)
 }
 
+// agentRoundOperation is the one ledger operation a tool-manifest dispatch may
+// freeze. It must match agentgen.Operation verbatim; the string is kept here so
+// the trusted ordinary service stays free of a dependency on the agent package.
+const agentRoundOperation = "agent-round"
+
+// agentOperation reads the operation a ledger run froze, or the empty string
+// when the run carries none. The empty string never matches agent-round, so a
+// run without an operation keeps the tool manifest refused.
+func agentOperation(runValue any) string {
+	binding := smap(smap(runValue)["binding"])
+	return stext(smap(binding["sourceManifest"])["operation"])
+}
+
 var requestHashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var visibleThinkPattern = regexp.MustCompile(`(?i)</?think\b`)
 
@@ -253,12 +266,15 @@ func serviceTruthy(v any) bool {
 		return true
 	}
 }
-func validateRequest(r Request) error {
+func validateRequest(r Request, operation string) error {
 	if !requestHashPattern.MatchString(r.RequestHash) {
 		return serviceError("GENERATION_REQUEST_HASH_INVALID")
 	}
-	// A present empty Agent tool manifest is still a protocol request, not ordinary text.
-	if r.AgentToolNames != nil {
+	// A present empty Agent tool manifest is still a protocol request, not
+	// ordinary text. It is admitted for exactly one operation - agent-round -
+	// and every other family keeps the refusal, so opening this field never
+	// exposes the agent protocol behind an ordinary generation run.
+	if r.AgentToolNames != nil && operation != agentRoundOperation {
 		return serviceError("GENERATION_OPERATION_UNSUPPORTED")
 	}
 	p := r.UsagePolicy
@@ -286,9 +302,9 @@ func (s *Service) Execute(ctx context.Context, request Request) (map[string]any,
 	if !requestHashPattern.MatchString(request.RequestHash) {
 		return nil, serviceError("GENERATION_REQUEST_HASH_INVALID")
 	}
-	if request.AgentToolNames != nil {
-		return nil, serviceError("GENERATION_OPERATION_UNSUPPORTED")
-	}
+	// The tool-manifest gate lives in execute, where the run's operation is
+	// available: a replay must answer its prior receipt before the gate, and a
+	// non-agent operation keeps its refusal there.
 	keyBytes, _ := json.Marshal([]string{request.RunID, request.InvocationNonce})
 	key := string(keyBytes)
 	s.mu.Lock()
@@ -340,6 +356,7 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 		return nil, err
 	}
 	rootID := stext(smap(runValue)["rootActionId"])
+	operation := agentOperation(runValue)
 	s.mu.Lock()
 	failed := s.failedRoots[rootID]
 	s.mu.Unlock()
@@ -347,7 +364,7 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 		s.gate.Unlock()
 		return nil, serviceError("GENERATION_STORAGE_FAILED")
 	}
-	if err := validateRequest(r); err != nil {
+	if err := validateRequest(r, operation); err != nil {
 		s.gate.Unlock()
 		return nil, err
 	}
@@ -508,6 +525,21 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 	}
 	var usage any = SettleProviderUsage(out.result.Usage, r.UsagePolicy)
 	var finish any = safeFinish(out.result.FinishReason)
+	// An agent round's settled response carries its parsed agentResponse
+	// (visibleText plus toolCalls) inside the provider usage.
+	// SettleProviderUsage rebuilds the receipt and drops unknown keys, so the
+	// response is re-attached here, gated to the same tool-manifest presence
+	// that validated the dispatch above and only for a completed stop.
+	if r.AgentToolNames != nil && finish == "stop" {
+		if response := smap(out.result.Usage)["agentResponse"]; response != nil {
+			settled := smap(usage)
+			if settled == nil {
+				settled = map[string]any{}
+			}
+			settled["agentResponse"] = response
+			usage = settled
+		}
+	}
 	// Catch-path receipts use null usage, never a fabricated trusted receipt.
 	if out.err != nil || x.streamFailed || x.stopped || x.timedOut {
 		usage = nil

@@ -265,7 +265,7 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	args = normalized.([]any)
 	// Unknown workflows are errors, never successful no-ops.
 	read := method == "get" || method == "budget" || method == "attemptCount" || method == "hasInFlight" || method == "hasNonCancelledAttempt" || method == "findInvocation" || method == "receipt"
-	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect"
+	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect" || method == "recordAgentReceipt"
 	if !read && !write {
 		return nil, glError("GENERATION_OPERATION_UNSUPPORTED")
 	}
@@ -561,6 +561,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		return err
 	}
 	effectKeys := map[string]bool{}
+	agentEffects := false
 	for _, run := range runs {
 		if g.frozen != nil && g.frozen("generation_runs", glText(run["run_id"])) {
 			return glError("PORTABLE_RUNTIME_FROZEN")
@@ -572,8 +573,12 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		if err := glOrdinaryBinding(binding); err != nil {
 			return err
 		}
+		operation := glText(glMap(binding["sourceManifest"])["operation"])
+		if operation == "agent-round" {
+			agentEffects = true
+		}
 		for _, key := range []string{"graphEffects", "finalizationEffect", "reviewRevisionEffect"} {
-			if glEffectKeyAllowed(key, glText(glMap(binding["sourceManifest"])["operation"])) {
+			if glEffectKeyAllowed(key, operation) {
 				effectKeys[key] = true
 			}
 		}
@@ -599,6 +604,13 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 			// so admitting the keys here does not let an attempt claim an effect
 			// the store did not perform.
 			case "requestHash", "usagePolicy", "purpose", "replayTask", "budgetDecision", "reconciliationInjected", "artifactIdentity", "result", "draftCommit", "directoryProgress", "visibleComposition":
+			case "agentActions", "agentAuthorSelections", "agentSourceTransition", "agentControlEpoch":
+				// The agent action map and control epoch are legal only on a run
+				// whose operation is agent-round; an ordinary attempt cannot
+				// carry them (generation_ledger_agent.go writes them gated).
+				if !agentEffects {
+					return glError("GENERATION_EFFECT_UNSUPPORTED")
+				}
 			case "graphEffects", "finalizationEffect", "reviewRevisionEffect":
 				if !effectKeys[key] {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")
@@ -1267,6 +1279,24 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 		}
 		// receipt takes an attempt id; the project id in text(0) would never match.
 		return g.receipt(ctx, conn, text(1), nil)
+	// RecordAgentReceipt is the agent tool protocol's receipt writer: it patches
+	// the closed agent action-map vocabulary on one attempt's usage receipt,
+	// gated to operation agent-round (generation_ledger_agent.go). The fourth
+	// argument is the patch object and the fifth the append order for new keys.
+	case "recordAgentReceipt":
+		patch := glMap(arg(2))
+		if patch == nil {
+			return nil, glError("GENERATION_INPUT_INVALID")
+		}
+		var order []string
+		if values, ok := plotArray(arg(3)); ok {
+			for _, raw := range values {
+				if key, ok := raw.(string); ok {
+					order = append(order, key)
+				}
+			}
+		}
+		return g.recordAgentReceipt(ctx, conn, text(0), text(1), patch, order)
 	case "replaceUnstartedBinding", "resume":
 		// replace validates the next frozen binding before reading the run in
 		// the original; preserve that error precedence even for missing runs.
