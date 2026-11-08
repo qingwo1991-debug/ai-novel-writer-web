@@ -277,7 +277,8 @@ func TestProductionGenerationRecoveryServeDecisionTable(t *testing.T) {
 			t.Fatalf("%v is recorded as served; this pass serves neither name", decision.Operation)
 		}
 		if decision.Reason != productionRecoveryServeReasonWriteState &&
-			decision.Reason != productionRecoveryServeReasonBuckets {
+			decision.Reason != productionRecoveryServeReasonBuckets &&
+			decision.Reason != productionRecoveryServeReasonUnwired {
 			t.Fatalf("%v is refused with the non-symbolic reason %v", decision.Operation, decision.Reason)
 		}
 		if _, found := productionGenerationRecoverySeamFor(decision.Operation); !found {

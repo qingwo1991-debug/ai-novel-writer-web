@@ -121,13 +121,14 @@ import (
 //
 // # Wiring
 //
-// This file installs nothing, so the served count stays 271
+// This file installs nothing, so the served count stays 279
 // (production_served_count_linux_test.go:24). Serving either name would need a
 // binder that holds the owner or the durable handle, and the recovery binder is
-// wired with the server only (production_open_linux.go:754, after the owner block
-// closes at :717) while the one owner is created as a local variable inside that
-// block (:591). That call site is where a future wiring has to change; it is
-// deliberately not changed here.
+// wired with the server only (production_open_linux.go:784, after the owner block
+// closes at :749) while the one owner is created as a local variable inside that
+// block (:595). That call site is where a future wiring has to change; it is
+// deliberately not changed here. See production_generation_recovery_serve2_linux.go
+// for what the null/empty question settles (it does not settle the call site).
 
 // productionRecoveryServeDecision is one name's verdict: the operation, whether
 // this lane installs a handler for it, and the symbolic code naming why not. As
@@ -148,20 +149,29 @@ const (
 	// productionRecoveryServeReasonWriteState is find-blueprint-recovery: the
 	// returned BlueprintRecovery needs leaseEpoch, draft and writeState from the
 	// live owner, writeState's `current` question is the rebuildBinding one, and
-	// its `saved` field rests on the receipt reader this file records as REFUTED.
+	// its `saved` field rests on the receipt reader this file records as VALIDATED.
 	productionRecoveryServeReasonWriteState = "PRODUCTION_GENERATION_RECOVERY_WRITESTATE_UNOWNED"
-	// productionRecoveryServeReasonBuckets is list-recovery: its planning bucket
-	// is the same context, and the drafts and reviews buckets keep their own
-	// missing ports.
+	// productionRecoveryServeReasonBuckets is list-recovery's bucket gap on its own:
+	// the planning bucket is the same context, and the drafts and reviews buckets
+	// keep their missing ports.
 	productionRecoveryServeReasonBuckets = "PRODUCTION_GENERATION_RECOVERY_BUCKETS_UNBUILDABLE"
+	// productionRecoveryServeReasonUnwired is the reason both names carry now: the
+	// binder this family is wired with receives the server alone
+	// (production_open_linux.go:784), so it can reach neither the admitted author
+	// database the batches bucket reads nor the owner the editors bucket projects
+	// through. Every bucket is blocked by that, the two served ones included, and no
+	// reader of the planner receipt would change it. See
+	// production_generation_recovery_serve2_linux.go for the answer that made the
+	// null/empty half of the refusal obsolete.
+	productionRecoveryServeReasonUnwired = "PRODUCTION_GENERATION_RECOVERY_UNWIRED"
 )
 
 // productionRecoveryServeDecisions is the whole verdict of this file, spelled
 // once so the binder and the test cannot drift.
 func productionRecoveryServeDecisions() []productionRecoveryServeDecision {
 	return []productionRecoveryServeDecision{
-		{Operation: productionGenerationRecoveryFind, Served: false, Reason: productionRecoveryServeReasonWriteState},
-		{Operation: productionGenerationRecoveryList, Served: false, Reason: productionRecoveryServeReasonBuckets},
+		{Operation: productionGenerationRecoveryFind, Served: false, Reason: productionRecoveryServeReasonUnwired},
+		{Operation: productionGenerationRecoveryList, Served: false, Reason: productionRecoveryServeReasonUnwired},
 	}
 }
 
@@ -404,7 +414,8 @@ func productionRecoveryServeAgrees(decisions []productionRecoveryServeDecision,
 			return errors.New("PRODUCTION_GENERATION_RECOVERY_SERVE_DECISION_SERVED_REASON")
 		}
 		if !decision.Served && decision.Reason != productionRecoveryServeReasonWriteState &&
-			decision.Reason != productionRecoveryServeReasonBuckets {
+			decision.Reason != productionRecoveryServeReasonBuckets &&
+			decision.Reason != productionRecoveryServeReasonUnwired {
 			return errors.New("PRODUCTION_GENERATION_RECOVERY_SERVE_DECISION_REASON_INVALID")
 		}
 	}

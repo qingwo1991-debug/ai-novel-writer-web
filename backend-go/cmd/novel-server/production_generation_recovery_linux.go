@@ -113,8 +113,20 @@ import (
 // ledger's own gate (internal/store/generation_ledger.go:719-720,
 // GENERATION_OPERATION_UNSUPPORTED for every glPlanning operation, :504), so a
 // writeState derived in this lane would describe rows this lane can read but can
-// never have written. Serving a null instead would tell the blueprint page there
-// is nothing to recover.
+// never have written.
+//
+// One sentence of the paragraph above was this lane's inference rather than the
+// reference's behavior, and it is corrected here: "serving a null instead would
+// tell the blueprint page there is nothing to recover" is not what a null means.
+// The reference answers null itself when no chapter-blueprint-directory run
+// qualifies, and it answers an empty bucket as `[]`, never as null and never as a
+// thrown call (production_generation_recovery_serve2_linux.go quotes both). What
+// keeps this name refused is therefore not the null: it is membership. A run
+// belongs to the answer only when its continuation state is not 'complete'
+// (main-generation-owner.ts:1070), and 'complete' is decided after a source
+// comparison this lane cannot make (:810, :806). Returning null for a project that
+// HAS a blueprint run is the part that would mislead, and returning a state derived
+// from the substitute would mislead in both directions.
 //
 // # generation:retry-draft-short-outline: served elsewhere
 //
@@ -152,8 +164,13 @@ import (
 // served or refused, so the two names stay 501 at GO_OPERATION_NOT_MIGRATED for a
 // reason that is still true. Serving either one needs a binder that holds the
 // owner, and this binder is wired with only the server
-// (production_open_linux.go:754), outside the block that creates the owner
-// (:591-717).
+// (production_open_linux.go:784), outside the block that creates the owner
+// (:595-746). It also needs the admitted author database for the batches bucket,
+// which the neighbouring closure passes and this one does not (:779). Neither the
+// null/empty question nor a reader of the planner receipt changes that: the two
+// names would be served by a call-site change in production_open_linux.go, which
+// this pass does not make, so the count stays 279
+// (production_served_count_linux_test.go:24).
 
 const (
 	productionGenerationRecoveryList      = "generation:list-recovery"
@@ -251,6 +268,11 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				{Path: "production_draft_context_linux.go", Line: 720, Marker: "!= productionDraftContextOperation"},
 				// The reviews bucket's only port is unbound in this lane.
 				{Path: "production_review_revision_linux.go", Line: 32, Marker: "review-revision:read-recovery    NOT bound (see below)"},
+				// And none of the five buckets can be filled from here: the family's
+				// binder receives the server alone, so it reaches neither the author
+				// database nor the owner. The two buckets that HAVE a port are
+				// blocked by this line, not by a missing reader.
+				{Path: "production_open_linux.go", Line: 784, Marker: "bindProductionGenerationRecovery(server)"},
 			},
 		},
 		{
@@ -270,6 +292,14 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// And the ledger refuses to open the operation this name reads, so no
 				// such run can be created here either.
 				{Path: "../../internal/store/generation_ledger.go", Line: 719, Marker: `if glPlanning(glText(request["operation"])) {`},
+				// The selection itself: a run is returned only when its state is not
+				// complete, and complete is the end of the state chain below -
+				// decided AFTER the currency comparison, so a null answer cannot be
+				// told apart from a projected one without that comparison.
+				{Path: "../../../electron/services/main-generation-owner.ts", Line: 810, Marker: "if (!remainingRange) return { ...base, state: 'complete' }"},
+				// And the same call site as list-recovery's: the binder holds no
+				// author database, so it could not even enumerate the runs.
+				{Path: "production_open_linux.go", Line: 784, Marker: "bindProductionGenerationRecovery(server)"},
 			},
 		},
 	}
@@ -351,6 +381,12 @@ func bindProductionGenerationRecovery(server *transport.Server) error {
 	// is bound - or as served while it is not
 	// (production_generation_recovery_serve_linux.go).
 	if err := bindProductionGenerationRecoveryServe(server); err != nil {
+		return err
+	}
+	// The answer to the null/empty question, and the call site that keeps it from
+	// becoming a handler, are recorded beside this binder so the two cannot drift
+	// (production_generation_recovery_serve2_linux.go).
+	if err := bindProductionGenerationRecoveryServe2(server); err != nil {
 		return err
 	}
 	// Nothing is bound: the two refused names keep failing closed at
