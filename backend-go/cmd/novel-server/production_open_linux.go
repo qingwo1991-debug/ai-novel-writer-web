@@ -701,6 +701,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// legacy-roster:begin/read/cancel open and answer the run's own state; the
+		// roster context is frozen from the shipped LEGACY_ROSTER_SYSTEM_PROMPT and
+		// CHARACTER_ROSTER_JSON_CONTRACT assets (production_legacy_roster_serve_linux.go).
+		if bindErr := newProductionLegacyRosterServe(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}

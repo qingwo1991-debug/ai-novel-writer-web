@@ -399,9 +399,11 @@ func TestProductionLegacyRosterRefusesASourceItCannotName(t *testing.T) {
 	})
 }
 
-// TestProductionLaneRefusesLegacyRosterNames pins the six names this lane leaves
-// unbound where the plan puts them: answering the fail-closed 501
-// GO_OPERATION_NOT_MIGRATED, with nothing written while they do.
+// TestProductionLaneRefusesLegacyRosterNames pins the three names this lane
+// still leaves unbound where the plan puts them: answering the fail-closed 501
+// GO_OPERATION_NOT_MIGRATED, with nothing written while they do. begin, read and
+// cancel are served by production_legacy_roster_serve_linux.go and are not in
+// this list.
 //
 // Every subtest re-reads the seam the header names, so a port that moves or
 // disappears fails here instead of leaving a note that points at nothing.
@@ -423,11 +425,8 @@ func TestProductionLaneRefusesLegacyRosterNames(t *testing.T) {
 
 	for _, operation := range []string{
 		productionLegacyRosterAdoptExistingName,
-		productionLegacyRosterBeginName,
-		productionLegacyRosterReadName,
 		productionLegacyRosterExecuteName,
 		productionLegacyRosterStageName,
-		productionLegacyRosterCancelName,
 	} {
 		operation := operation
 		t.Run(operation, func(t *testing.T) {
@@ -455,9 +454,9 @@ func TestProductionLaneRefusesLegacyRosterNames(t *testing.T) {
 }
 
 // TestProductionLegacyRosterBinderIsTheOneName pins the binder's own contract: it
-// installs exactly the served name and never the refused six, it publishes nothing
-// without a bridge, and every name of the family stays inventoried so an absent
-// handler is 501 and never the 404 of a name the registry does not know.
+// installs exactly the served names and never the refused three, it publishes
+// nothing without a bridge, and every name of the family stays inventoried so an
+// absent handler is 501 and never the 404 of a name the registry does not know.
 func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 	server := transport.New(migrationRegistry(t), security.NewOrigins("http://"+productionDurableAddress), "")
 	if err := newProductionLegacyRoster(nil).Bind(server); err != nil {
@@ -481,9 +480,17 @@ func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 			t.Fatalf("%s is not inventoried, so its unbound answer would not be 501: %v", operation, err)
 		}
 	}
-	// The served name must never be documented as refused, and the six must be.
-	if _, found := productionLegacyRosterSeam(productionLegacyRosterReadSourceName); found {
-		t.Fatalf("%s is served here and must not appear in the seam table", productionLegacyRosterReadSourceName)
+	// The four served names must never be documented as refused, and the three
+	// refused ones must be.
+	for _, served := range []string{
+		productionLegacyRosterReadSourceName,
+		productionLegacyRosterBeginName,
+		productionLegacyRosterReadName,
+		productionLegacyRosterCancelName,
+	} {
+		if _, found := productionLegacyRosterSeam(served); found {
+			t.Fatalf("%s is served and must not appear in the seam table", served)
+		}
 	}
 	documented := 0
 	for _, gap := range productionLegacyRosterSeams() {
@@ -492,8 +499,8 @@ func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 		}
 		documented++
 	}
-	if documented != len(productionLegacyRosterOperations())-1 {
-		t.Fatalf("%d names are documented as refused, want every name but the served one", documented)
+	if documented != len(productionLegacyRosterOperations())-4 {
+		t.Fatalf("%d names are documented as refused, want every name but the four served ones", documented)
 	}
 	// A closed or unknown refusal must never leak a SQLite message or a path: the
 	// one mapping layer answers the controller's own unmapped-failure code.

@@ -1,15 +1,16 @@
 //go:build linux
 
 // This file serves one of the seven `legacy-roster` names - the source proof -
-// and installs nothing for the six beside it:
+// and production_legacy_roster_serve_linux.go serves the run's own three beside
+// it. Three stay refused:
 //
 //	legacy-roster:read-source      web/operations.json:263  served here
 //	legacy-roster:adopt-existing   web/operations.json:264  refused, see "adopt-existing"
-//	legacy-roster:begin            web/operations.json:265  refused, see "begin/read/execute/stage/cancel"
-//	legacy-roster:read             web/operations.json:266  refused, same section
-//	legacy-roster:execute          web/operations.json:267  refused, same section
-//	legacy-roster:stage            web/operations.json:268  refused, same section
-//	legacy-roster:cancel           web/operations.json:269  refused, same section
+//	legacy-roster:begin            web/operations.json:265  served (production_legacy_roster_serve_linux.go)
+//	legacy-roster:read             web/operations.json:266  served (same file)
+//	legacy-roster:execute          web/operations.json:267  refused, see "execute"
+//	legacy-roster:stage            web/operations.json:268  refused, see "stage"
+//	legacy-roster:cancel           web/operations.json:269  served (same file)
 //
 // # What this family actually is
 //
@@ -184,62 +185,41 @@
 // that helper; re-rendering the projection in this package would be a second
 // writer of the same text (rosterMarkdown/factsJSON, internal/store/character_roster.go:288-390).
 //
-// # begin/read/execute/stage/cancel: refused
+// # begin/read/cancel: served, execute/stage: refused
 //
-// These five are one generation run over the legacy text, and none of them can be
-// opened or proved here. Three independent fences, in the order they bite:
+// begin/read/cancel are the run's own state, and they are served in
+// production_legacy_roster_serve_linux.go over the generation owner, using the
+// finalization/editor-inline pattern this session re-tested: a shipped prompt
+// template in internal/prompttemplate, openRun via ledger.CallJSON("open"),
+// dispatch's reproduction for sourceStatus, and the ordinary service's stop for
+// cancel. The three old fences are gone:
 //
-//  1. begin's own request cannot carry the run. The desktop sends
-//     `{modelId, uiActionNonce}` and main adds a freshly minted `legacyRosterKey`
-//     (main-generation-owner.ts:1121-1130); the reduced admission's key allowlist
-//     has no legacyRosterKey (synthetic_generation_linux.go:405-417) and its
-//     manifest writes no legacyRoster* key at all (:736-762), so a begin here is
-//     refused GENERATION_BEGIN_INVALID before the ledger is reached - and a run it
-//     did write could never satisfy the reads below.
-//  2. The ledger refuses the manifest even if the admission were widened:
-//     glOrdinaryBinding names `legacyRosterContext` and
-//     glFamilyManifestAllowed has no operation arm that admits it
-//     (internal/store/generation_ledger.go:422-459, refused as
-//     GENERATION_OPERATION_UNSUPPORTED by the key loop at :505-517). That file is
-//     not this change's to edit; the exact line is recorded in the seam table
-//     below.
-//  3. The run's own proof is a prompt. readLegacyRosterGenerationContext requires
-//     manifest.legacyRosterTask to EQUAL buildLegacyRosterTask({legacyMarkdown,
-//     genre}) and its hash to match
-//     (electron/services/legacy-roster-generation-context.ts:17-27), and that
-//     function is the fixed system prompt plus the contract and the raw markdown
-//     (src/shared/legacy-roster-generation-pure.ts:55-66). Authoring it here would
-//     make this transport file a prompt author - the same reason
-//     finalization-generation:begin stays unbound; editor-inline:begin is served
-//     now (production_editor_inline_write_linux.go), because its prompt is the
-//     shipped template, not prose this file would author
-//     (production_finalization_generation_linux.go:27-63).
+//  1. begin's request now carries the run. The manifest is hand-written with the
+//     legacyRoster* members spliced in as ordered JSON text, exactly like
+//     productionFinalizationManifestText, so the reduced selection allowlist
+//     (syntheticParseSelection) never sees them.
+//  2. The ledger now admits the manifest: glFamilyManifestAllowed gained the
+//     legacyRosterContext arm for operation "legacy-character-roster-repair"
+//     (internal/store/generation_ledger.go:426).
+//  3. The run's proof is a prompt, and it is now the shipped one. The prompt is
+//     NOT a builtin-prompt-templates key - legacy_roster does not ship there;
+//     LEGACY_ROSTER_SYSTEM_PROMPT and CHARACTER_ROSTER_JSON_CONTRACT ship in
+//     src/shared/legacy-roster-generation-pure.ts and reach this binary as the
+//     committed asset internal/prompttemplate/legacy-roster-v1.json.
 //
-// execute is additionally the model call, and it may not be invented: the
-// renderer sends only `{handle}` (src/shared/legacy-roster-generation.ts:27)
-// because main re-authors the task from the frozen context on every attempt, and
-// this lane's one dispatch path requires a browser-frozen invocationNonce and a
-// browser-frozen task. A second caller of the egress lease is exactly what the
-// model path forbids.
+// execute stays refused because the reference execute is not one dispatch: it is
+// a six-step initial/repair loop (main-generation-owner.ts:1137-1178) that
+// re-authors the task from the frozen context on every attempt and falls back to
+// a JSON-repair prompt when the first answer does not parse. That loop is a
+// prompt author this lane does not port, and a single dispatch would diverge.
 //
-// stage is the explicit admission step: it hands the settled artifact to
-// CharacterProposalService.stage through readLegacyRosterGenerationProof
-// (legacy-roster-generation-proof.ts:11-45), which re-proves the frozen context
-// and the model receipt of THIS run. With no such run there is no artifact to
-// admit, and the sibling character-proposal lane already refuses a legacy source
-// by name rather than staging it (production_character_proposals_linux.go:266-268,
-// GENERATION_LEGACY_ADMISSION_REQUIRED).
-//
-// read and cancel answer a run: read returns LegacyRosterGenerationRecovery, which
-// is built from readLegacyRosterGenerationContext plus the artifact and the staged
-// proposal (main-generation-owner.ts:1109-1120), and cancel goes through the same
-// require() (main-generation-owner.ts:1185-1188), so both need fence 3 as well.
-//
-// The extraction these five would carry is therefore NOT ported in this change.
-// A parser with no caller would be dead code sitting beside a name that still
-// cannot be served, and its selection keys, origin rules and "mentioned is not
-// approved" boundary are only meaningful against a proposal batch this lane
-// cannot produce.
+// stage stays refused because it is not the run's own state: it hands the
+// settled artifact to CharacterProposalService.stage through
+// readLegacyRosterGenerationProof (legacy-roster-generation-proof.ts:11-45), and
+// the sibling character-proposal lane refuses a legacy source by name
+// (production_character_proposals_linux.go:266-268,
+// GENERATION_LEGACY_ADMISSION_REQUIRED). Staging needs that lane's proposal
+// writer, which this change does not own.
 //
 // # Refusals are symbolic, and there is exactly one mapping layer
 //
@@ -964,37 +944,22 @@ type productionLegacyRosterGap struct {
 	Missing   []productionLegacyRosterSeamLine
 }
 
-// productionLegacyRosterSeams is this file's whole answer for the six names it
-// does not bind: the generation fences from the header for the five run names, and
-// the two transactions plus the reference call for the adoption.
+// productionLegacyRosterSeams is this file's whole answer for the three names it
+// does not bind: the multi-stage repair loop for execute, the proof plus the
+// sibling proposal refusal for stage, and the two transactions plus the
+// reference call for the adoption.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
-	ledgerKey := productionLegacyRosterSeamLine{
-		Path: "../../internal/store/generation_ledger.go", Line: 505,
-		Marker: "legacyRosterContext",
+	repairLoop := productionLegacyRosterSeamLine{
+		Path: "../../../electron/services/main-generation-owner.ts", Line: 1143,
+		Marker: "for (const stage of ['initial','repair'] as const)",
 	}
-	ledgerFamily := productionLegacyRosterSeamLine{
-		Path: "../../internal/store/generation_ledger.go", Line: 426,
-		Marker: "func glFamilyManifestAllowed(",
+	repairTask := productionLegacyRosterSeamLine{
+		Path: "../../../src/shared/legacy-roster-generation-pure.ts", Line: 67,
+		Marker: "export function buildLegacyRosterJsonRepairTask(",
 	}
-	selection := productionLegacyRosterSeamLine{
-		Path: "synthetic_generation_linux.go", Line: 405,
-		Marker: "func syntheticParseSelection(",
-	}
-	manifest := productionLegacyRosterSeamLine{
-		Path: "synthetic_generation_linux.go", Line: 736,
-		Marker: "func syntheticManifest(",
-	}
-	task := productionLegacyRosterSeamLine{
-		Path: "../../../src/shared/legacy-roster-generation-pure.ts", Line: 55,
-		Marker: "export function buildLegacyRosterTask(",
-	}
-	context := productionLegacyRosterSeamLine{
-		Path: "../../../electron/services/legacy-roster-generation-context.ts", Line: 17,
-		Marker: "export function readLegacyRosterGenerationContext(",
-	}
-	recovery := productionLegacyRosterSeamLine{
-		Path: "../../../electron/services/main-generation-owner.ts", Line: 1109,
-		Marker: "const legacyRosterRecovery = ",
+	parse := productionLegacyRosterSeamLine{
+		Path: "../../../src/shared/legacy-roster-generation-pure.ts", Line: 87,
+		Marker: "export function parseLegacyRosterJson(",
 	}
 	proof := productionLegacyRosterSeamLine{
 		Path: "../../../electron/services/legacy-roster-generation-proof.ts", Line: 11,
@@ -1022,24 +987,12 @@ func productionLegacyRosterSeams() []productionLegacyRosterGap {
 	}
 	return []productionLegacyRosterGap{
 		{
-			Operation: productionLegacyRosterBeginName,
-			Missing:   []productionLegacyRosterSeamLine{selection, manifest, ledgerKey, ledgerFamily, task},
-		},
-		{
-			Operation: productionLegacyRosterReadName,
-			Missing:   []productionLegacyRosterSeamLine{context, ledgerKey, ledgerFamily, task, recovery},
-		},
-		{
 			Operation: productionLegacyRosterExecuteName,
-			Missing:   []productionLegacyRosterSeamLine{selection, ledgerKey, ledgerFamily, task, recovery},
+			Missing:   []productionLegacyRosterSeamLine{repairLoop, repairTask, parse},
 		},
 		{
 			Operation: productionLegacyRosterStageName,
-			Missing:   []productionLegacyRosterSeamLine{proof, context, ledgerKey, ledgerFamily, stageRefusal},
-		},
-		{
-			Operation: productionLegacyRosterCancelName,
-			Missing:   []productionLegacyRosterSeamLine{recovery, context, ledgerKey, ledgerFamily},
+			Missing:   []productionLegacyRosterSeamLine{proof, stageRefusal},
 		},
 		{
 			Operation: productionLegacyRosterAdoptExistingName,

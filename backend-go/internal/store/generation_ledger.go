@@ -452,6 +452,12 @@ func glFamilyManifestAllowed(key, operation string) bool {
 			"narrative-thread-event-candidate":
 			return true
 		}
+	case "legacyRosterContext":
+		// The legacy roster context is the frozen source proof a legacy-roster run
+		// re-reads before answering a recovery. It is readable only for the one
+		// operation that freezes it, so an ordinary generation run cannot smuggle
+		// a roster context into a binding it does not own.
+		return operation == "legacy-character-roster-repair"
 	}
 	return false
 }

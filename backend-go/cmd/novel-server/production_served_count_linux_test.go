@@ -21,7 +21,7 @@ import (
 // adds an operation has to move this number in the same change. -1 means "not
 // measured yet", which fails on purpose and prints both the real count and the
 // served names.
-const productionServedOperations = 258
+const productionServedOperations = 261
 
 // TestProductionLaneServedOperationCount measures that number. The fixture is
 // the editor-read root: it skips without GO_SQLITE_CONTRACT exactly like its
