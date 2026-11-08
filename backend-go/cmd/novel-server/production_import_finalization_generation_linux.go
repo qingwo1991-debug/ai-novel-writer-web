@@ -245,33 +245,19 @@ func productionImportGenerationGap(operation string) (productionModelExecutingNa
 	return productionModelExecutingName{}, false
 }
 
-// productionModelExecutingOperations is the four names this change answers: the
-// import family's model-executing half plus the finalization family's, in the
-// order the desktop controller registers them
-// (electron/controllers/generation-controller.ts:225-226, :246-247).
+// productionModelExecutingOperations is the two import-family names this change
+// answers. The finalization family's three names are served now by
+// production_finalization_generation_serve_linux.go, so they are not in this table
+// anymore.
 func productionModelExecutingOperations() []string {
-	return []string{productionImportGenerationRead, productionImportGenerationExecute,
-		productionFinalizationExecute, productionFinalizationCommit}
+	return []string{productionImportGenerationRead, productionImportGenerationExecute}
 }
 
-// productionModelExecutingGaps is the lane-wide seam table. The two finalization
-// entries are lent from productionFinalizationGenerationSeams rather than copied,
-// so the family file stays the one place that says what its names need and this
-// file cannot drift from it.
+// productionModelExecutingGaps is the import family's seam table. The finalization
+// family moved to production_finalization_generation_serve_linux.go, which binds its
+// three names, so this table no longer lends their rows.
 func productionModelExecutingGaps() []productionModelExecutingName {
-	gaps := productionImportGenerationGaps()
-	for _, operation := range productionModelExecutingOperations() {
-		seam, found := productionFinalizationGenerationSeam(operation)
-		if !found {
-			continue
-		}
-		entry := productionModelExecutingName{Operation: operation, Code: productionModelExecutingRefusalCode}
-		for _, line := range seam.Missing {
-			entry.Missing = append(entry.Missing, productionModelExecutingLine{Path: line.Path, Line: line.Line, Marker: line.Marker})
-		}
-		gaps = append(gaps, entry)
-	}
-	return gaps
+	return productionImportGenerationGaps()
 }
 
 // productionModelExecutingRefusal returns the documented missing piece for one of

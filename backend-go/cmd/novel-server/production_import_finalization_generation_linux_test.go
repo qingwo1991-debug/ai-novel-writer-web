@@ -144,48 +144,6 @@ func TestProductionLaneRefusesImportGeneration(t *testing.T) {
 		productionGraphReadsUnchanged(t, database, before, productionImportGenerationExecute)
 	})
 
-	t.Run("finalization-generation:execute", func(t *testing.T) {
-		productionImportGenerationSeamProof(t, productionFinalizationExecute)
-		before := productionGraphReadsBytes(t, database)
-		for _, args := range [][]any{
-			{map[string]any{"handle": finalizationHandle}, frozen},
-			{map[string]any{"handle": finalizationHandle, "retryOf": artifact}, frozen},
-			{map[string]any{"handle": finalizationHandle, "recoverFrom": "import-generation-attempt-0001"}, frozen},
-			{map[string]any{"handle": finalizationHandle}, stale},
-			{frozen},
-		} {
-			productionImportGenerationRefused(t, author, productionFinalizationExecute, args)
-		}
-		if attempts := productionFinalizationGenerationCount(t, database,
-			"SELECT COUNT(*) FROM generation_attempts WHERE run_id=?", finalizationRun); attempts != 0 {
-			t.Fatalf("the refused finalization execute left %d attempt rows on the run", attempts)
-		}
-		productionGraphReadsUnchanged(t, database, before, productionFinalizationExecute)
-	})
-
-	t.Run("finalization-generation:commit", func(t *testing.T) {
-		productionImportGenerationSeamProof(t, productionFinalizationCommit)
-		before := productionGraphReadsBytes(t, database)
-		for _, args := range [][]any{
-			{map[string]any{"handle": finalizationHandle, "artifact": artifact}, frozen},
-			{map[string]any{"handle": finalizationHandle, "artifact": artifact}, stale},
-			{map[string]any{"handle": finalizationHandle}, frozen},
-			{frozen},
-		} {
-			productionImportGenerationRefused(t, author, productionFinalizationCommit, args)
-		}
-		// A commit that had run would have rewritten the finalized draft body and
-		// moved a finalization_outbox row for it.
-		if body := productionDurableBody(t, projectPath); body != productionDurableSeed {
-			t.Fatalf("the refused commit rewrote the finalized draft: %s", body)
-		}
-		if rows := productionFinalizationGenerationCount(t, database,
-			"SELECT COUNT(*) FROM finalization_outbox"); rows != 0 {
-			t.Fatalf("the refused commit wrote %d finalization_outbox rows", rows)
-		}
-		productionGraphReadsUnchanged(t, database, before, productionFinalizationCommit)
-	})
-
 	t.Run("the ledger refuses an import binding", func(t *testing.T) {
 		// The four names above are built on a run whose frozen manifest carries
 		// importSlotKey. This is that run's producer, asked for one on the copy of
