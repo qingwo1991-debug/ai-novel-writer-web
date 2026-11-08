@@ -226,7 +226,7 @@ func productionRecoveryServePieces() []productionRecoveryServePiece {
 				// The defect, in three lines: the receipt's committedRange is read
 				// with the startChapter/endChapter accessor ...
 				{Path: "../../internal/store/batch_progress.go", Line: 1235,
-					Marker: `committed, committedOK := bpRangeObject(receipt["committedRange"])`},
+					Marker: `committed, committedOK := bpFromToRange(receipt["committedRange"])`},
 				{Path: "../../internal/store/batch_progress.go", Line: 1138,
 					Marker: `start, startOK := rrInteger(object["startChapter"], -9007199254740991)`},
 				// ... while the sibling range on the same receipt is read with the

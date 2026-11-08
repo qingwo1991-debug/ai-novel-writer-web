@@ -267,7 +267,7 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// that reader refuses the shape the desktop writes. It is recorded
 				// as REFUTED in production_generation_recovery_serve_linux.go, and
 				// the line that decides it is this accessor.
-				{Path: "../../internal/store/batch_progress.go", Line: 1235, Marker: `committed, committedOK := bpRangeObject(receipt["committedRange"])`},
+				{Path: "../../internal/store/batch_progress.go", Line: 1253, Marker: `committed, committedOK := bpFromToRange(receipt["committedRange"])`},
 				// The Go blueprint reader stops at kind/progress/diagnostic, one
 				// field short of the union the wire type wants.
 				{Path: "../../internal/store/batch_progress.go", Line: 947, Marker: "type bpRecoveryResult struct {"},

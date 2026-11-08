@@ -146,8 +146,8 @@ func TestProductionGenerationRecoveryServeRefusesSeededRecovery(t *testing.T) {
 		t.Fatalf("the author-saved operation %v is not in the served catalog: %v",
 			productionRecoveryServeSavedOperation, catalog.Progress)
 	}
-	if saved.RemainingRange != nil {
-		t.Fatalf("the author-saved run reported remainingRange %v; it wrote through its committed end",
+	if saved.RemainingRange == nil || *saved.RemainingRange != (productionRecoveryRangeView{StartChapter: 3, EndChapter: 3}) {
+		t.Fatalf("the author-saved run reported remainingRange %v; chapter 3 is still unwritten",
 			productionRecoveryRangeText(saved.RemainingRange))
 	}
 
