@@ -390,6 +390,18 @@ type productionLegacyRosterQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+// productionLegacyRosterSourceFacts is the pre-snapshot half of a source proof:
+// every CAS field derived from the raw rows, before the roster snapshot is read.
+type productionLegacyRosterSourceFacts struct {
+	RawLegacy        string
+	LegacyHash       string
+	IdentityRevision int64
+	ActiveIDs        []string
+	FactsHash        string
+	Genre            any
+	WritingLanguage  string
+}
+
 // productionLegacyRosterReadSource is readLegacyRosterSource
 // (legacy-roster-source.ts:45-61) over an already admitted database. It is split
 // out of the handler so the source proof can be exercised without an HTTP round
@@ -399,23 +411,39 @@ type productionLegacyRosterQuerier interface {
 // which refusal it was.
 //
 // The statement order is the reference's (:48-61) because it decides which code a
-// project that fails twice answers with.
+// project that fails twice answers with: the source guards and the raw-row facts
+// hash come first, and the roster snapshot is read last.
 func productionLegacyRosterReadSource(ctx context.Context, db *sql.DB) (*productionLegacyRosterSource, error) {
 	if db == nil {
 		return nil, store.ErrProjectNotOpen
 	}
+	facts, err := productionLegacyRosterSourceFactsOn(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	// :59 the snapshot is the last read, exactly as in the reference's object
+	// literal: an unreadable roster therefore answers the store's own refusal, not
+	// a partial source.
 	snapshot, err := store.NewCharacters(db).ReadRoster(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return productionLegacyRosterReadSourceOn(ctx, db, snapshot)
+	return &productionLegacyRosterSource{
+		Snapshot:         snapshot,
+		RawLegacy:        facts.RawLegacy,
+		LegacyHash:       facts.LegacyHash,
+		IdentityRevision: facts.IdentityRevision,
+		ActiveIDs:        facts.ActiveIDs,
+		FactsHash:        facts.FactsHash,
+		Genre:            facts.Genre,
+		WritingLanguage:  facts.WritingLanguage,
+	}, nil
 }
 
-// productionLegacyRosterReadSourceOn is the same source proof over a caller's
-// query surface, with the snapshot already read. The adoption runs it on the
-// reserved connection inside its transaction, so the CAS tokens and the writes
-// observe one state.
-func productionLegacyRosterReadSourceOn(ctx context.Context, q productionLegacyRosterQuerier, snapshot map[string]any) (*productionLegacyRosterSource, error) {
+// productionLegacyRosterSourceFactsOn is the pre-snapshot half over a caller's
+// query surface, so the adoption runs the same guards and the same raw-row facts
+// hash on its reserved connection without a second pool read.
+func productionLegacyRosterSourceFactsOn(ctx context.Context, q productionLegacyRosterQuerier) (*productionLegacyRosterSourceFacts, error) {
 	// :49 hasCharacterIdentitySchema
 	present, err := productionLegacyRosterIdentitySchema(ctx, q)
 	if err != nil {
@@ -489,11 +517,7 @@ func productionLegacyRosterReadSourceOn(ctx context.Context, q productionLegacyR
 	if err != nil {
 		return nil, err
 	}
-	// :59 the snapshot is the last read, exactly as in the reference's object
-	// literal: an unreadable roster therefore answers the store's own refusal, not
-	// a partial source. It is supplied by the caller.
-	return &productionLegacyRosterSource{
-		Snapshot:         snapshot,
+	return &productionLegacyRosterSourceFacts{
 		RawLegacy:        *rawLegacy,
 		LegacyHash:       productionLegacyRosterTextHash(*rawLegacy),
 		IdentityRevision: identityRevision,

@@ -70,7 +70,7 @@ type LegacyRosterAdoptionReceipt struct {
 // decoded; `source` proves the source inside the same transaction, over the
 // reserved connection, so the CAS tokens and the writes observe one state. It
 // returns the receipt the browser receives, or one of the ErrLegacyRoster* codes.
-func (r *Characters) AdoptLegacyRoster(ctx context.Context, raw map[string]any, source func(context.Context, *sql.Conn, map[string]any) (LegacyRosterAdoptionSource, error)) (LegacyRosterAdoptionReceipt, error) {
+func (r *Characters) AdoptLegacyRoster(ctx context.Context, raw map[string]any, source func(context.Context, *sql.Conn) (LegacyRosterAdoptionSource, error)) (LegacyRosterAdoptionReceipt, error) {
 	if r == nil || r.db == nil {
 		return LegacyRosterAdoptionReceipt{}, ErrProjectNotOpen
 	}
@@ -93,14 +93,14 @@ func (r *Characters) AdoptLegacyRoster(ctx context.Context, raw map[string]any, 
 		if len(prior) > 0 {
 			return legacyRosterAdoptionReplay(request, requestHash, prior[0], &receipt)
 		}
-		// :91 the source, re-proved on this connection. The snapshot is read here
-		// so the CAS revision and the cards guard describe the same state the
-		// projection refresh will rewrite.
-		snapshot, err := charactersRoster(ctx, conn)
+		// :91 the source, re-proved on this connection: the source guards and the
+		// raw-row facts hash come first, so a broken source answers the legacy
+		// codes before the store's own roster read.
+		src, err := source(ctx, conn)
 		if err != nil {
 			return err
 		}
-		src, err := source(ctx, conn, snapshot)
+		snapshot, err := charactersRoster(ctx, conn)
 		if err != nil {
 			return err
 		}

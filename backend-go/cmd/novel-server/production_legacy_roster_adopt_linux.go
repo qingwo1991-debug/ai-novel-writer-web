@@ -72,19 +72,19 @@ func (l *productionLegacyRoster) adoptExisting(ctx context.Context, caller trans
 
 // productionLegacyRosterAdoptSource is the source proof the adoption runs inside
 // the store's transaction: the same readLegacyRosterSource guards and the same
-// raw-row facts hash, over the caller's reserved connection. The snapshot is read
-// by the store and passed in, so nothing here re-reads it or opens a second pool
-// connection.
-func productionLegacyRosterAdoptSource(ctx context.Context, conn *sql.Conn, snapshot map[string]any) (store.LegacyRosterAdoptionSource, error) {
-	source, err := productionLegacyRosterReadSourceOn(ctx, conn, snapshot)
+// raw-row facts hash, over the caller's reserved connection. The roster snapshot
+// is read by the store afterwards, so this half never re-reads it or opens a
+// second pool connection.
+func productionLegacyRosterAdoptSource(ctx context.Context, conn *sql.Conn) (store.LegacyRosterAdoptionSource, error) {
+	facts, err := productionLegacyRosterSourceFactsOn(ctx, conn)
 	if err != nil {
 		return store.LegacyRosterAdoptionSource{}, err
 	}
 	return store.LegacyRosterAdoptionSource{
-		RawLegacy:        source.RawLegacy,
-		LegacyHash:       source.LegacyHash,
-		IdentityRevision: source.IdentityRevision,
-		ActiveIDs:        source.ActiveIDs,
-		FactsHash:        source.FactsHash,
+		RawLegacy:        facts.RawLegacy,
+		LegacyHash:       facts.LegacyHash,
+		IdentityRevision: facts.IdentityRevision,
+		ActiveIDs:        facts.ActiveIDs,
+		FactsHash:        facts.FactsHash,
 	}, nil
 }
