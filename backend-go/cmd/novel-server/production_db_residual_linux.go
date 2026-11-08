@@ -8,23 +8,35 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the db family's residual: the three inventoried `db:*` names this
-// lane still answers at the fail-closed 501 GO_OPERATION_NOT_MIGRATED
-// (internal/transport/server.go:116) instead of serving, and the exact code that
-// has to move before any of them can be installed as a handler.
+// This file is the db family's residual, and it is now empty: every inventoried
+// `db:*` name is served by a binder the lane installs. The table stays, with no
+// rows, because the complement it asserts is what proves the family complete - and
+// because a future row is where a name that loses its port would be recorded rather
+// than silently published.
 //
-// # What this file measured
+// # What this file measured, and what closed the last row
 //
 // The inventory is 281 names (web/operations.json), 103 of them `db:*`. Reading
 // every binder the lane really calls - the `for _, bind := range []func() error{`
-// lists (production_open_linux.go:528, :544, :698) and the named binders between
-// them, plus each table those binders iterate - leaves these three unserved:
+// lists and the named binders between them, plus each table those binders iterate -
+// once left these three unserved:
 //
 //	db:import-run-effect-receipt-commit
 //	db:import-run-effect-receipt-prepare
 //	db:import-run-prepare-inspection
 //
-// Five names left this table when they were served, and their rows are worth
+// The receipt pair is served by production_importrun_receipts_serve2_linux.go once
+// the generation owner is wired beside it. The last row,
+// db:import-run-prepare-inspection, closed with three changes recorded in
+// production_importrun_prepare_inspection_linux.go: the picker's importsource.Store
+// is hoisted out of its wiring closure and shared, db:import-run-author-preview
+// resolves the reference's inspection id through that store, and
+// ImportRunRepository.prepare's author half is
+// store.ImportRuns.PrepareAuthor (internal/store/importrun_author_prepare.go). The
+// preview CAS was never the gap: it is a server-side handoff
+// (internal/importsource/inspection.go:158-179).
+//
+// Five more names left this table when they were served, and their rows are worth
 // remembering because the reason they were refused was wrong:
 //
 //   - db:blueprint-character-sync-get and -list-pending were refused because
@@ -62,48 +74,26 @@ import (
 // The complement is asserted, not assumed: TestProductionLaneDBResidualIsTheUnservedSlice
 // takes the bound set from the finished lane (transport.Server.BoundOperations),
 // takes the `db:` names from the registry the same lane loaded, and requires
-// bound+residual to cover the slice exactly, in both directions.
+// bound+residual to cover the slice exactly, in both directions. A name that loses
+// its binder fails that test instead of disappearing from both halves.
 //
-// # Why none of the three is bound here
+// # Why nothing is bound here
 //
-// None of them is a reference refusal this lane could publish as its own. Two
-// names of that kind do exist and are served elsewhere rather than here:
-// db:blueprint-update-notes and db:plot-tree-save are the original controller's
-// own deliberate refusals (electron/controllers/db-controller.ts:636, :886), so
-// serving them would be a divergence, not a migration
+// None of the rows this file ever carried was a reference refusal this lane could
+// publish as its own. Two names of that kind do exist and are served elsewhere
+// rather than here: db:blueprint-update-notes and db:plot-tree-save are the
+// original controller's own deliberate refusals (electron/controllers/db-controller.ts:636,
+// :886), so serving them would be a divergence, not a migration
 // (production_reference_refusals_linux.go).
-//
-// The three names below each have a narrower reason of its own:
-//
-//   - db:import-run-effect-receipt-prepare and -commit: store.ImportRuns
-//     .PrepareEffectReceipt and .CommitEffectReceipt exist
-//     (internal/store/importrun_receipts.go:1152, :1259) and both take an
-//     ImportRunGenerationSourceAssert (:118). The controller always supplies one
-//     and it proves the handle against live in-process runs
-//     (electron/controllers/db-controller.ts:425, :437); this repository has no
-//     such proof, and the two store guards disagree about a nil one - prepare
-//     makes the handle optional (:984) while commit refuses it outright
-//     (:1003, GENERATION_GUARD_REQUIRED). A nil proof would write receipts this
-//     lane could never commit; a non-nil proof that fails closed refuses every
-//     real request twice over.
-//   - db:import-run-prepare-inspection: the inspection store is unreachable from
-//     any binder but the picker's own closure, the renderer's preceding
-//     author-preview step still refuses the id form, and the author prepare has
-//     no store method. The preview CAS is NOT the gap: it is a server-side
-//     handoff the store itself can prove (see
-//     production_importrun_prepare_inspection_linux.go).
 //
 // # Binder
 //
-// bindProductionDBResidual installs nothing, so wiring it moves no count. It is
-// wired next to the other seam binders, and what that buys is the seam check
-// running inside the real lane instead of only inside this test:
-//
-//	func() error { return bindProductionDBResidual(server) },
-//
-// When a port above lands, the handler is installed with server.Bind on the
-// name's own row, with the arity and path index this table already records, so
-// the wire shape cannot drift from the renderer's call site.
+// bindProductionDBResidual installs nothing, so wiring it moves no count. What it
+// keeps is the seam check: a row without a port, without the wire shape the renderer
+// sends, or with a path index inside the frozen context would be a note that points
+// at nothing, and a duplicate name would be a table that lies about its size. With
+// no rows it still refuses a nil server, and the empty table is the assertion that
+// the family is complete.
 
 // The names, spelled once each so the binder, the seam table and the
 // test cannot disagree with the controller that registers them.
@@ -155,28 +145,21 @@ func productionDBResidualLineOf(path string, line int, marker string) production
 	return productionDBResidualLine{Path: path, Line: line, Marker: marker}
 }
 
-// productionDBResidualSeams is the whole answer of this file. Every row names a
-// port that does not exist (or a store function that cannot be used as it is),
-// never a handler this lane could install today.
+// productionDBResidualSeams is the whole answer of this file: no rows. Every
+// `db:*` name the lane inventories has a binder, and the last row left here -
+// db:import-run-prepare-inspection - moved to
+// production_importrun_prepare_inspection_serve_linux.go. The table is kept, and
+// kept empty, so the completeness test can prove the slice is covered rather than
+// simply short.
 func productionDBResidualSeams() []productionDBResidualSeam {
-	return []productionDBResidualSeam{
-		{
-			Operation: productionDBResidualPrepareInspection,
-			Arity:     productionImportRunPrepareInspectionArity,
-			PathIndex: productionImportRunPrepareInspectionPathIndex,
-			Gate:      productionImportRunPrepareInspectionGate,
-			Port:      productionImportRunPrepareInspectionPort,
-			Missing:   productionImportRunPrepareInspectionResidualMissing(),
-		},
-	}
+	return nil
 }
 
-// productionDBResidualOperations is the family's three residual names in the order
-// the seam table lists them, so the binder and the test walk one list.
+// productionDBResidualOperations is the family's residual names in the order the
+// seam table lists them, so the binder and the test walk one list. It is empty for
+// the reason above: what this slice used to refuse is served elsewhere.
 func productionDBResidualOperations() []string {
-	return []string{
-		productionDBResidualPrepareInspection,
-	}
+	return nil
 }
 
 // productionDBResidualSeamFor returns the row for one name. A name the table does

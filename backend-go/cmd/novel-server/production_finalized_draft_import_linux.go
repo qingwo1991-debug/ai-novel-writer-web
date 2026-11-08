@@ -129,30 +129,27 @@ import (
 // borrow's own refusals are published through the identical mapper, so no path in
 // this file dereferences a handle it did not prove.
 //
-// # The argument db:import-run-author-preview cannot resolve here, and what it does instead
+// # The two forms of db:import-run-author-preview
 //
-// The reference's first argument is an inspection id, not chapters. It is resolved
-// by the main process's in-memory author-manuscript inspection store
-// (db-controller.ts:373-377), which freezes the parsed bodies of one file
-// selection for one tab and hands them back only to that tab. This lane has no
-// such owner: internal/importsource/inspection.go implements the store
-// (:100-179) but nothing in this server constructs it - its only binder
-// (internal/transport/import_selection.go:48-128) has no production caller - so no
-// inspection id can be minted here at all, Peek returns metadata only and never a
-// body (:158-169), and Consume demands the preview CAS this lane deliberately keeps
-// off the wire (:171-179, import_selection.go:110-116). The chapter bodies of an
-// inspection exist in no table: no DDL in internal/admission owns an inspection.
+// The reference's first argument is an inspection id, not chapters
+// (db-controller.ts:367-377). It is resolved by the main process's in-memory
+// author-manuscript inspection store, which freezes the parsed bodies of one file
+// selection for one tab. That owner now exists in this lane: the picker's
+// importsource.Store is hoisted out of its wiring closure and reaches this file as
+// productionImportRunPrepareInspectionServe (production_importrun_prepare_inspection_serve_linux.go),
+// so the id form is served here - resolved through that store under the same
+// caller/generation binding the picker minted it with, then previewed by the same
+// store read the chapters form uses.
 //
-// The store's preview needs none of that. FinalizedImportPreview is a pure read
-// over the chapters the caller hands it (:811-821), so this binder accepts those
-// chapters - the same array, in the same argument position, under the same key the
-// batch uses - and refuses the reference's own string form with
-// 501 IMPORT_INSPECTION_OWNER_UNAVAILABLE: the status the name answered before it
-// was bound, now naming what is missing instead of GO_OPERATION_NOT_MIGRATED. A
-// caller that cannot produce the chapters it is previewing gets a refusal, never a
-// guess, and the id it holds is never read as a path, a run or authority. The
-// operation this file therefore serves is the store's capability, and it says
-// plainly which half of the reference's contract is absent.
+// The chapters form is unchanged and still the one a caller that already holds the
+// bodies uses: FinalizedImportPreview is a pure read over whatever chapters it is
+// handed (:811-821). A lane that was built without the picker - production_open's
+// staging route can fail without stopping the server - keeps the chapters form and
+// answers the id form with 501 IMPORT_INSPECTION_OWNER_UNAVAILABLE, which is now a
+// statement about that lane and not about the backend.
+//
+// The id is never read as a path, a run or authority: it is compared with the
+// receipt the store minted, and the store decides.
 //
 // # The refusals
 //
@@ -176,14 +173,15 @@ import (
 // mistake, not a server failure; the store raises the same two codes for the parts
 // only it can check, and a code is the contract either way.
 //
-// # The 501s this file does not touch
+// # The names this file does not touch
 //
-// db:import-run-prepare-inspection, db:import-run-effect-receipt-prepare and
-// db:import-run-effect-receipt-commit stay unbound, exactly as
-// production_importrun_residual_linux.go:26-90 documents them: the first needs the
-// same inspection owner and an author-purpose prepare(), the other two need a
-// generation-source proof this repository does not have. This file binds two names
-// and opens nothing else.
+// db:import-run-prepare-inspection is served by
+// production_importrun_prepare_inspection_serve_linux.go (it needs this file's
+// preview and the picker's receipt owner, both of which it borrows from here).
+// db:import-run-effect-receipt-prepare and db:import-run-effect-receipt-commit need
+// a generation-source proof this repository does not have, exactly as
+// production_importrun_residual_linux.go:26-90 documents them. This file binds two
+// names and opens nothing else.
 //
 // # Wiring
 //
@@ -219,8 +217,8 @@ const (
 	// never reaches the browser.
 	productionFinalizedDraftImportFailedCode = "REQUEST_FAILED"
 	// productionFinalizedDraftImportInspectionCode is the reference's own argument
-	// form for the preview, refused because this lane has no inspection owner. See
-	// this file's header for the exact gap.
+	// form for the preview, answered when this lane has no receipt owner injected
+	// (Bind installs the preview either way; only the id form needs the owner).
 	productionFinalizedDraftImportInspectionCode = "IMPORT_INSPECTION_OWNER_UNAVAILABLE"
 	// productionFinalizedDraftImportMinSafeInteger is -Number.MAX_SAFE_INTEGER, the
 	// bound productionImportRunWriteSafeInteger accepts.
@@ -262,15 +260,25 @@ var productionFinalizedDraftImportRefusals = [...]struct {
 }
 
 // productionFinalizedDraftImports serves both names over the one durable lane.
+// inspections is the picker's receipt owner, injected when the lane has one; a lane
+// without it keeps the chapters form and refuses the id form with
+// IMPORT_INSPECTION_OWNER_UNAVAILABLE.
 type productionFinalizedDraftImports struct {
-	durable *productionDurableOpen
+	durable     *productionDurableOpen
+	inspections *productionImportRunPrepareInspectionServe
 }
 
 // newProductionFinalizedDraftImports wraps the lane's durable bridge, the only
 // object that can name the author database. It resolves nothing and opens nothing
-// at construction time.
-func newProductionFinalizedDraftImports(durable *productionDurableOpen) *productionFinalizedDraftImports {
-	return &productionFinalizedDraftImports{durable: durable}
+// at construction time. The receipt owner is optional so the chapters form of the
+// preview keeps working in a lane that never built the import picker.
+func newProductionFinalizedDraftImports(durable *productionDurableOpen,
+	inspections ...*productionImportRunPrepareInspectionServe) *productionFinalizedDraftImports {
+	imports := &productionFinalizedDraftImports{durable: durable}
+	if len(inspections) > 0 {
+		imports.inspections = inspections[0]
+	}
+	return imports
 }
 
 // Bind installs the two names, one server.Bind per name. A nil adapter or a nil
@@ -287,13 +295,11 @@ func (r *productionFinalizedDraftImports) Bind(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
-	// Both names are installed, and the preview is the one bound name in this lane
-	// that answers by refusing: the reference call site hands it an inspection id
-	// minted by db:import-run-prepare-inspection (db-controller.ts:367-384), which
-	// peeks an in-process store this backend does not own, so the id form reaches
-	// IMPORT_INSPECTION_OWNER_UNAVAILABLE. It is bound rather than left at
-	// GO_OPERATION_NOT_MIGRATED so that the gap is named on the wire; a caller that
-	// passes the chapters directly gets a real preview.
+	// Both names are installed. The preview answers both of its argument forms: the
+	// chapters a caller already holds, and the reference's inspection id resolved
+	// through the picker's receipt owner when the lane injected one. Without that
+	// owner the id form reaches IMPORT_INSPECTION_OWNER_UNAVAILABLE, which names the
+	// absent capability instead of the name's old GO_OPERATION_NOT_MIGRATED.
 	handlers := [...]struct {
 		name    string
 		handler transport.Operation
@@ -350,6 +356,19 @@ func (r *productionFinalizedDraftImports) preview(ctx context.Context, caller tr
 	expected, err := productionFinalizedDraftImportAdmit(args)
 	if err != nil {
 		return nil, err
+	}
+	// The reference's argument is an inspection id (db-controller.ts:367-377). It is
+	// resolved by the shared receipt owner and previewed by the same store read the
+	// chapters form below uses, so the two forms cannot disagree about a
+	// classification, a gap or a fingerprint.
+	if inspectionID, isInspection := args[0].(string); isInspection {
+		if r.inspections == nil {
+			// A lane built without the picker: the chapters form still works, and the
+			// id form names the absent owner instead of pretending the id is wrong.
+			return nil, security.NewHTTPError(http.StatusNotImplemented,
+				productionFinalizedDraftImportInspectionCode)
+		}
+		return r.inspections.previewFromInspection(ctx, caller, expected, inspectionID)
 	}
 	chapters, err := productionFinalizedDraftImportPreviewChapters(args[0])
 	if err != nil {
@@ -414,14 +433,10 @@ func productionFinalizedDraftImportGuard(code string) error {
 	return security.NewHTTPError(http.StatusBadRequest, code)
 }
 
-// productionFinalizedDraftImportPreviewChapters is the preview's payload: the
-// frozen chapters the caller already holds, or the reference's own inspection id.
+// productionFinalizedDraftImportPreviewChapters is the preview's chapters form: the
+// frozen chapters the caller already holds. The reference's string form is resolved
+// before this point (preview), so a value that reaches here is never an id.
 func productionFinalizedDraftImportPreviewChapters(value any) ([]store.FinalizedDraftImportChapter, error) {
-	if _, isInspection := value.(string); isInspection {
-		// The reference's argument. No inspection owner exists in this lane (see
-		// this file's header), so it stays closed with a code that says why.
-		return nil, security.NewHTTPError(http.StatusNotImplemented, productionFinalizedDraftImportInspectionCode)
-	}
 	object, ok := value.(map[string]any)
 	if !ok {
 		// An author-manuscript payload is an object with a chapters array; anything

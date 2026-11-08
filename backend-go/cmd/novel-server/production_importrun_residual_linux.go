@@ -23,37 +23,25 @@ import (
 //	db:import-run-fail                    store.ImportRuns.Fail             internal/store/importrun_lifecycle.go:1619
 //	db:import-run-effect-receipt-get      store.ImportRuns.GetEffectReceipt internal/store/importrun_receipts.go:1106
 //
-// # Refused, with the capability that does not exist
+// # Refused here, served elsewhere
 //
-// Two names stay at GO_OPERATION_NOT_MIGRATED. Each one is a capability gap, not
-// deferred work, and the gap is named here so it can be closed deliberately.
+// The two names this slice used to refuse are both served now, and neither by this
+// adapter, because both need an owner this adapter does not hold:
 //
-//	db:import-run-author-preview           needs FinalizedDraftImportRepository.preview, the
-//	                                       finalized-draft preview/validation path the store
-//	                                       deliberately left out
-//	                                       (internal/store/importrun_lifecycle.go:26-34), plus the
-//	                                       tab-bound inspection owner below.
-//	db:import-run-prepare-inspection       needs a server-side handle-to-inspection handoff
-//	                                       that hands back the parsed chapter bodies for one
-//	                                       inspection id. importsource.Store.Peek returns
-//	                                       metadata only and Consume demands the preview CAS
-//	                                       (internal/importsource/inspection.go:158-169), and
-//	                                       this lane deliberately never puts that CAS on the
-//	                                       wire (internal/transport/import_selection.go:110-116),
-//	                                       so a request carrying only inspectionId/runId
-//	                                       (src/shared/import-run.ts:296-310) cannot reach the
-//	                                       chapters BeginParsing/CommitParsedSource require.
-//	                                       The reference's whole handler is consume ->
-//	                                       resolveEncodedSources -> beginParsing ->
-//	                                       commitParsedSource per source -> finalizeParsing
-//	                                       (electron/controllers/db-controller.ts:284-355), and
-//	                                       its first two steps have no counterpart bound in this
-//	                                       lane at all: consume needs the tab-scoped CAS, and
-//	                                       ImportSourceIdentityRepository.resolveEncodedSources
-//	                                       needs the application import-source secret.
-//	                                       The author purpose would additionally need the
-//	                                       unported prepare() (:26-34), because BeginParsing
-//	                                       refuses every purpose but 'reference' (:801-802).
+//	db:import-run-author-preview     served by production_finalized_draft_import_linux.go,
+//	                                 which answers the reference's inspection id
+//	                                 through the picker's own receipt store and the
+//	                                 chapters form through the same read.
+//	db:import-run-prepare-inspection served by
+//	                                 production_importrun_prepare_inspection_serve_linux.go:
+//	                                 the picker's store is shared instead of
+//	                                 closure-local, the author prepare is
+//	                                 store.ImportRuns.PrepareAuthor
+//	                                 (internal/store/importrun_author_prepare.go), and
+//	                                 the preview that produces the two fingerprints is
+//	                                 the same served read. The preview CAS is NOT a
+//	                                 gap: it is a server-side handoff the store
+//	                                 itself proves (internal/importsource/inspection.go:158-179).
 //
 // # The two receipt writes, served elsewhere
 //
@@ -200,23 +188,16 @@ func (r *productionImportRunResiduals) Bind(server *transport.Server) error {
 			return err
 		}
 	}
-	// The one name this family still refuses has its own seam file. Its binder
-	// installs nothing on the wire, but it validates the seam at startup and
-	// refuses a name that a sibling has already bound, so the refusal cannot
-	// silently become a stale note. The receipt pair is NOT here: it is served by
-	// the owner-bound productionImportRunReceiptsServe2, which this adapter cannot
-	// build because it holds no generation owner.
+	// The receipt pair is NOT here: it is served by the owner-bound
+	// productionImportRunReceiptsServe2, which this adapter cannot build because it
+	// holds no generation owner.
 	if err := newProductionImportRunReceipts(r.durable).Bind(server); err != nil {
 		return err
 	}
-	// db:import-run-prepare-inspection has its own corrected seam: the preview CAS
-	// is a server-side handoff, but the picker's store is closure-local, the
-	// renderer's author-preview step still refuses the id form and the author
-	// prepare has no store method. The binder installs nothing and only validates
-	// that record, so it cannot move the served count.
-	if err := newProductionImportRunPrepareInspection(r.durable).Bind(server); err != nil {
-		return err
-	}
+	// db:import-run-prepare-inspection is not refused any more: it is served by
+	// production_importrun_prepare_inspection_serve_linux.go from the picker's
+	// shared receipt store, which this adapter does not hold. Nothing is installed
+	// for it here, so this slice cannot collide with that binder.
 	return nil
 }
 

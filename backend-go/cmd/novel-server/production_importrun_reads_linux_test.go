@@ -410,14 +410,6 @@ func TestProductionImportRunReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		unchanged(t, "db:import-run-list-chapters")
 	})
 
-	// db:import-run-prepare-inspection: refused. Run creation; it needs the
-	// tab-bound in-memory inspection owner this lane does not own.
-	t.Run("db:import-run-prepare-inspection", func(t *testing.T) {
-		productionImportRunStaysUnbound(t, author, "db:import-run-prepare-inspection",
-			[]any{map[string]any{}, projectPath, frozen})
-		unchanged(t, "db:import-run-prepare-inspection")
-	})
-
 	// The two effect-receipt names are served now (their source proof reads the run
 	// on the receipt's own connection), so this file no longer pins them unbound.
 }

@@ -16,11 +16,11 @@ import (
 
 // productionDBResidualServed is the db slice this lane actually installs, as
 // measured by reading every binder production_open_linux.go calls and every
-// table those binders iterate: 102 of the 103 inventoried `db:*` names, leaving
-// the one in production_db_residual_linux.go. Both halves are pinned below
-// against the finished lane rather than against hand counting, so a batch that
-// binds the last one has to move this number and delete the row.
-const productionDBResidualServed = 102
+// table those binders iterate: all 103 inventoried `db:*` names. The residual
+// table in production_db_residual_linux.go is empty, and both halves are pinned
+// below against the finished lane rather than against hand counting, so a name that
+// loses its binder fails here instead of leaving the slice short.
+const productionDBResidualServed = 103
 
 // The execution lease every request below names. The blueprint sync family used
 // to share this block with its own operation id; that name is served now, so its

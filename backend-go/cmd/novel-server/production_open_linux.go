@@ -544,6 +544,10 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// the single full-body CAS save, and the three self-contained author
 	// mutations (create, update-status, delete). Nothing here overlaps the
 	// lifecycle names above, so no operation is ever double-bound.
+	// The import selection store is hoisted so the picker, the finalized-draft
+	// preview and prepare-inspection resolve the SAME ids the picker mints.
+	importSelection, importSelectionErr := newProductionImportSelection(open, uploads)
+	importPrepareInspection := newProductionImportRunPrepareInspectionServe(open.durable, importSelection)
 	for _, bind := range []func() error{
 		func() error { return server.BindDraftLiveReads(open.durable) },
 		func() error { return server.BindDraftLiveWrites(open.durable) },
@@ -816,7 +820,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// existing manuscript in as finalized chapters. It runs the store's single
 		// BEGIN IMMEDIATE over its own reserved connection on a detached context, so a
 		// tab that navigates away mid-batch cannot roll back chapters already written.
-		func() error { return newProductionFinalizedDraftImports(open.durable).Bind(server) },
+		func() error { return newProductionFinalizedDraftImports(open.durable, importPrepareInspection).Bind(server) },
 		func() error { return newProductionFSReads(open).Bind(server) },
 		// fs:grant-read-file / write-file / mkdir are the browser's answer to the
 		// desktop's native picker: a server-issued token over a path resolved inside
@@ -901,13 +905,15 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// the caller actually staged, instead of the desktop's native file dialog
 		// (production_import_selection_linux.go).
 		func() error {
-			selection, selectionErr := newProductionImportSelection(open, uploads)
-			if selectionErr != nil {
-				log.Printf("novel-server: import selection unavailable (%v); dialog:select-novel-files will refuse", selectionErr)
+			if importSelectionErr != nil {
+				log.Printf("novel-server: import selection unavailable (%v); dialog:select-novel-files will refuse", importSelectionErr)
 				return nil
 			}
-			return selection.Bind(server)
+			return importSelection.Bind(server)
 		},
+		// db:import-run-prepare-inspection resolves the picker's inspection id and runs
+		// the author prepare half (production_importrun_prepare_inspection_serve_linux.go).
+		func() error { return importPrepareInspection.Bind(server) },
 		// The db family is inventoried in full here: the nine names bound above cover
 		// ninety of its hundred and three, and this table records the thirteen that have
 		// no port in this lane, with the reference gate and the missing symbol for each
