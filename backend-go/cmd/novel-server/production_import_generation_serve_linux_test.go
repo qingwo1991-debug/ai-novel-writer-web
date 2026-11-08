@@ -530,23 +530,25 @@ func TestProductionImportGenerationRefusalsAreByteIdentical(t *testing.T) {
 		}
 	}
 
-	// The execute half: the same stale lease and the same foreign-project handle
-	// answer exactly what generation:execute answers.
+	// The execute half: the same stale lease and the same foreign session answer
+	// exactly what generation:execute answers, because both names share admit. A
+	// handle's projectId is not the lane's foreign-project fence: syntheticRequireRun
+	// checks the run's rootActionId/runId and binding against the session, so a
+	// foreign projectId in the handle is ignored by generation:execute itself, and
+	// the served import execute reuses that exact fence. The frozen session is the
+	// one gate that really distinguishes a project this lane did not open.
 	for _, shape := range []struct {
-		label     string
-		handle    map[string]any
-		expected  map[string]any
+		label    string
+		expected map[string]any
 	}{
-		{"stale lease", handle, stale},
-		{"foreign project handle", map[string]any{"projectId": productionFinalizationGenerationWriteForeignProject,
-			"epoch": lane.leaseID, "rootActionId": syntheticString(handle["rootActionId"]),
-			"runId": syntheticString(handle["runId"])}, lane.frozen},
+		{"stale lease", stale},
+		{"foreign session", foreign},
 	} {
 		importCode, importBody := productionImportGenerationRefusal(t, lane, productionImportGenerationExecute,
-			[]any{productionImportGenerationExecuteRequest(shape.handle, "visible-text", 0), shape.expected})
+			[]any{productionImportGenerationExecuteRequest(handle, "visible-text", 0), shape.expected})
 		generationCode, generationBody := productionImportGenerationRefusal(t, lane, "generation:execute",
 			[]any{map[string]any{
-				"handle":          shape.handle,
+				"handle":          handle,
 				"invocationNonce": "import-generation-identity",
 				"task":            map[string]any{"purpose": productionImportWritingStyleOperation, "output": "visible-text", "messages": []any{map[string]any{"role": "user", "content": "推演参考小说"}}},
 			}, shape.expected})
