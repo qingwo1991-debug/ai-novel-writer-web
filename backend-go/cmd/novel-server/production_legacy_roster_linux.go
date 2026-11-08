@@ -208,19 +208,26 @@
 //     src/shared/legacy-roster-generation-pure.ts and reach this binary as the
 //     committed asset internal/prompttemplate/legacy-roster-v1.json.
 //
-// execute stays refused because the reference execute is not one dispatch: it is
-// a six-step initial/repair loop (main-generation-owner.ts:1137-1178) that
-// re-authors the task from the frozen context on every attempt and falls back to
-// a JSON-repair prompt when the first answer does not parse. That loop is a
-// prompt author this lane does not port, and a single dispatch would diverge.
+// execute stays refused, and the re-test narrowed the reason to prose that does
+// not ship. The loop shape is buildable here: its first task is the shipped
+// buildLegacyRosterTask (frozen at begin by productionLegacyRosterTaskText), its
+// dispatch/readback is production_retry_draft_outline_linux.go's pattern, and its
+// parse is a parser. What does not exist is the prose its two non-happy branches
+// compose - CHARACTER_ROSTER_JSON_REPAIR_SYSTEM (legacy-roster-generation-pure.ts:
+// 38-39) and buildStructuredReplacementPrompt (structured-replacement-prompt.ts:
+// 3-41) - and internal/prompttemplate/legacy-roster-v1.json carries only
+// systemPrompt and contract. production_legacy_roster_execute_linux.go names those
+// fragments and derives the gap from the shipped asset.
 //
-// stage stays refused because it is not the run's own state: it hands the
-// settled artifact to CharacterProposalService.stage through
-// readLegacyRosterGenerationProof (legacy-roster-generation-proof.ts:11-45), and
-// the sibling character-proposal lane refuses a legacy source by name
-// (production_character_proposals_linux.go:266-268,
-// GENERATION_LEGACY_ADMISSION_REQUIRED). Staging needs that lane's proposal
-// writer, which this change does not own.
+// stage stays refused, and the adoption that landed this session does not change
+// that. stage hands the settled artifact to CharacterProposalService.stage
+// (legacy-roster-generation.ts:52-68) through readLegacyRosterGenerationProof
+// (legacy-roster-generation-proof.ts:11-45), which proves a generation_artifacts
+// row, a settled attempt and the run's own modelReceipt.modelRevision - none of
+// which the adoption projection (AdoptLegacyRoster, an identity projection plus a
+// character_identity_approvals receipt) carries. The legacy arm of the proposal
+// writer, and the legacyRosterProposal effect key the ledger's allowlist refuses,
+// are still missing; production_legacy_roster_execute_linux.go lists every term.
 //
 // # Refusals are symbolic, and there is exactly one mapping layer
 //
@@ -989,37 +996,20 @@ type productionLegacyRosterGap struct {
 }
 
 // productionLegacyRosterSeams is this file's whole answer for the two names it
-// does not bind: the multi-stage repair loop for execute, and the proof plus the
-// sibling proposal refusal for stage.
+// does not bind: every term the serve would be composed from, in the order the
+// reference authorises it. The terms themselves are spelled in
+// production_legacy_roster_execute_linux.go, together with the derivation that
+// decides execute (the loop's prompt fragments that do not ship) and the reason
+// the adoption projection does not satisfy stage.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
-	repairLoop := productionLegacyRosterSeamLine{
-		Path: "../../../electron/services/main-generation-owner.ts", Line: 1143,
-		Marker: "for (const stage of ['initial','repair'] as const)",
-	}
-	repairTask := productionLegacyRosterSeamLine{
-		Path: "../../../src/shared/legacy-roster-generation-pure.ts", Line: 67,
-		Marker: "export function buildLegacyRosterJsonRepairTask(",
-	}
-	parse := productionLegacyRosterSeamLine{
-		Path: "../../../src/shared/legacy-roster-generation-pure.ts", Line: 87,
-		Marker: "export function parseLegacyRosterJson(",
-	}
-	proof := productionLegacyRosterSeamLine{
-		Path: "../../../electron/services/legacy-roster-generation-proof.ts", Line: 11,
-		Marker: "export function readLegacyRosterGenerationProof(",
-	}
-	stageRefusal := productionLegacyRosterSeamLine{
-		Path: "production_character_proposals_linux.go", Line: 268,
-		Marker: "GENERATION_LEGACY_ADMISSION_REQUIRED",
-	}
 	return []productionLegacyRosterGap{
 		{
 			Operation: productionLegacyRosterExecuteName,
-			Missing:   []productionLegacyRosterSeamLine{repairLoop, repairTask, parse},
+			Missing:   productionLegacyRosterFragmentSeams(productionLegacyRosterExecuteFragments()),
 		},
 		{
 			Operation: productionLegacyRosterStageName,
-			Missing:   []productionLegacyRosterSeamLine{proof, stageRefusal},
+			Missing:   productionLegacyRosterFragmentSeams(productionLegacyRosterStageFragments()),
 		},
 	}
 }
