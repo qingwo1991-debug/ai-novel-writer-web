@@ -2,13 +2,14 @@
 
 // This file serves two of the seven `legacy-roster` names - the source proof
 // and the adoption - and production_legacy_roster_serve_linux.go serves the
-// run's own three beside it. Two stay refused:
+// run's begin/read/cancel beside it, production_legacy_roster_execute_serve_linux.go
+// serves execute, and stage alone stays refused:
 //
 //	legacy-roster:read-source      web/operations.json:263  served here
 //	legacy-roster:adopt-existing   web/operations.json:264  served (production_legacy_roster_adopt_linux.go)
 //	legacy-roster:begin            web/operations.json:265  served (production_legacy_roster_serve_linux.go)
 //	legacy-roster:read             web/operations.json:266  served (same file)
-//	legacy-roster:execute          web/operations.json:267  refused, see "execute"
+//	legacy-roster:execute          web/operations.json:267  served (production_legacy_roster_execute_serve_linux.go)
 //	legacy-roster:stage            web/operations.json:268  refused, see "stage"
 //	legacy-roster:cancel           web/operations.json:269  served (same file)
 //
@@ -186,7 +187,7 @@
 // in this package. The raw-row facts hash stays here (productionLegacyRosterJSON)
 // and is passed back in through the `source` callback.
 //
-// # begin/read/cancel: served, execute/stage: refused
+// # begin/read/cancel/execute: served, stage: refused
 //
 // begin/read/cancel are the run's own state, and they are served in
 // production_legacy_roster_serve_linux.go over the generation owner, using the
@@ -208,16 +209,17 @@
 //     src/shared/legacy-roster-generation-pure.ts and reach this binary as the
 //     committed asset internal/prompttemplate/legacy-roster-v1.json.
 //
-// execute stays refused, and the re-test narrowed the reason to prose that does
-// not ship. The loop shape is buildable here: its first task is the shipped
-// buildLegacyRosterTask (frozen at begin by productionLegacyRosterTaskText), its
-// dispatch/readback is production_retry_draft_outline_linux.go's pattern, and its
-// parse is a parser. What does not exist is the prose its two non-happy branches
-// compose - CHARACTER_ROSTER_JSON_REPAIR_SYSTEM (legacy-roster-generation-pure.ts:
-// 38-39) and buildStructuredReplacementPrompt (structured-replacement-prompt.ts:
-// 3-41) - and internal/prompttemplate/legacy-roster-v1.json carries only
-// systemPrompt and contract. production_legacy_roster_execute_linux.go names those
-// fragments and derives the gap from the shipped asset.
+// execute is served too, in production_legacy_roster_execute_serve_linux.go. The
+// loop's first task is the shipped buildLegacyRosterTask (frozen at begin by
+// productionLegacyRosterTaskText), its dispatch/readback is
+// production_retry_draft_outline_linux.go's pattern, and its two non-happy
+// branches - the length-stop replacement prompt
+// (structured-replacement-prompt.ts:3-41) and the JSON-repair prompt
+// (legacy-roster-generation-pure.ts:38-39, :50-52) - now ship as the committed
+// asset internal/prompttemplate/legacy-roster-loop-v1.json. The run's own
+// candidate gate is parseLegacyRosterJson plus the candidate closure
+// validateLegacyRosterCandidate applies; production_legacy_roster_execute_serve_linux.go
+// records that divergence and the attempt-count accounting.
 //
 // stage stays refused, and the adoption that landed this session does not change
 // that. stage hands the settled artifact to CharacterProposalService.stage
@@ -264,9 +266,11 @@ const (
 	// only name this file binds.
 	productionLegacyRosterReadSourceName = "legacy-roster:read-source"
 
-	// The six names web/operations.json:264-269 inventories beside it. None is
-	// bound; each one is documented in productionLegacyRosterSeams below with the
-	// port it is waiting for.
+	// The six names web/operations.json:264-269 inventories beside it. Five are
+	// bound by the family's other files - adopt-existing here, begin/read/cancel in
+	// production_legacy_roster_serve_linux.go and execute in
+	// production_legacy_roster_execute_serve_linux.go. Only stage is still refused,
+	// and productionLegacyRosterSeams documents the port it is waiting for.
 	productionLegacyRosterAdoptExistingName = "legacy-roster:adopt-existing"
 	productionLegacyRosterBeginName         = "legacy-roster:begin"
 	productionLegacyRosterReadName          = "legacy-roster:read"
@@ -995,18 +999,13 @@ type productionLegacyRosterGap struct {
 	Missing   []productionLegacyRosterSeamLine
 }
 
-// productionLegacyRosterSeams is this file's whole answer for the two names it
-// does not bind: every term the serve would be composed from, in the order the
+// productionLegacyRosterSeams is this file's whole answer for the one name it
+// does not bind: every term stage would be composed from, in the order the
 // reference authorises it. The terms themselves are spelled in
-// production_legacy_roster_execute_linux.go, together with the derivation that
-// decides execute (the loop's prompt fragments that do not ship) and the reason
-// the adoption projection does not satisfy stage.
+// production_legacy_roster_execute_linux.go, together with the reason the
+// adoption projection does not satisfy stage.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
 	return []productionLegacyRosterGap{
-		{
-			Operation: productionLegacyRosterExecuteName,
-			Missing:   productionLegacyRosterFragmentSeams(productionLegacyRosterExecuteFragments()),
-		},
 		{
 			Operation: productionLegacyRosterStageName,
 			Missing:   productionLegacyRosterFragmentSeams(productionLegacyRosterStageFragments()),

@@ -4,11 +4,9 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -16,94 +14,19 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
-// This file is the re-test of the two legacy-roster names the family still
-// refuses. It does three things:
+// This file is the re-test of the one legacy-roster name the family still
+// refuses. It does two things:
 //
-//  1. execute: proves the term still missing is prose (the repair and replacement
-//     prompts), by pinning the committed prompt asset's key set and deriving the
-//     unshipped fragments from the loader. When that prose lands, the asset pin
-//     fails first, which is the signal to serve execute instead of refusing it;
-//  2. stage: proves the adoption projection is not the proof - the adoption writes
+//  1. stage: proves the adoption projection is not the proof - the adoption writes
 //     no proposal row, no store file knows the legacy proposal kind, and the
 //     manifest this lane freezes carries no modelReceipt for the proof's last step;
-//  3. both: the names stay at the fail-closed 501, byte-identically for the
+//  2. stage: the name stays at the fail-closed 501, byte-identically for the
 //     in-project request, a stale lease, a foreign project, no arguments and a
 //     non-object, and the admitted database is untouched.
-
-const (
-	// productionLegacyRosterPromptAssetPath is the committed asset the loader embeds
-	// (internal/prompttemplate/legacyroster.go:36).
-	productionLegacyRosterPromptAssetPath = "../../internal/prompttemplate/legacy-roster-v1.json"
-	// productionLegacyRosterPromptAssetKeys is that asset's whole key set, sorted.
-	// Two of the five are the shipped prose fragments; a sixth key is a prompt the
-	// six-step loop needs, which is why the pin fails rather than shrugs.
-	productionLegacyRosterPromptAssetKeys = "contract,formatVersion,key,kind,systemPrompt"
-	// productionLegacyRosterRetryPattern is the worked dispatch/readback this lane
-	// would build execute on (production_retry_draft_outline_linux.go:145).
-	productionLegacyRosterRetryPattern = "service.Execute(ctx, frozen, handle.RunID,"
-)
-
-// TestProductionLegacyRosterExecuteSeamIsTheUnshippedPrompts pins execute's refusal
-// to the one thing that is actually missing: the repair and replacement prompts.
-func TestProductionLegacyRosterExecuteSeamIsTheUnshippedPrompts(t *testing.T) {
-	// Every term the seam table names is still authored at the line it claims.
-	productionLegacyRosterSeamProof(t, productionLegacyRosterExecuteName)
-
-	// The dispatch/readback the loop would reuse still exists, so "buildable" in the
-	// refusal is a fact about this module and not a hope.
-	pattern, err := os.ReadFile("production_retry_draft_outline_linux.go")
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	if !productionSeamContains(string(pattern), productionLegacyRosterRetryPattern) {
-		t.Fatal("the frozen-task dispatch pattern the execute refusal cites is gone; the refusal needs a new dispatch term")
-	}
-
-	// What the loader answers: the two shipped fragments, in the asset's order.
-	shipped, err := productionLegacyRosterShippedPrompts()
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	if joined := strings.Join(shipped, ","); joined != productionLegacyRosterSystemFragment+","+productionLegacyRosterContractFragment {
-		t.Fatalf("the loader answers %s, want the two shipped roster fragments only", joined)
-	}
-
-	// What the committed asset carries: the authority the loader cannot widen
-	// without this test moving with it.
-	raw, err := os.ReadFile(productionLegacyRosterPromptAssetPath)
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(raw, &document); err != nil {
-		t.Fatalf("%v", err)
-	}
-	keys := make([]string, 0, len(document))
-	for key := range document {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	if joined := strings.Join(keys, ","); joined != productionLegacyRosterPromptAssetKeys {
-		t.Fatalf("the legacy roster prompt asset now carries %s; a prompt fragment the six-step loop composes may have landed, so execute must be served instead of refused", joined)
-	}
-
-	// And the derivation the refusal is written from agrees.
-	unshipped := productionLegacyRosterUnshippedPrompts()
-	if len(unshipped) != 3 {
-		t.Fatalf("execute derives %d unshipped prompt fragments, want the repair system prompt, its wrapper and the replacement prompt", len(unshipped))
-	}
-	for _, name := range productionLegacyRosterLoopPromptFragments() {
-		found := false
-		for _, candidate := range unshipped {
-			if candidate == name {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("%s is a prompt fragment execute needs and the derivation lost it", name)
-		}
-	}
-}
+//
+// execute is no longer in this list: it is served by
+// production_legacy_roster_execute_serve_linux.go and its real-HTTP success,
+// repair, replacement, replay and refusal tests live beside it.
 
 // TestProductionLegacyRosterStageSeamIsNotTheAdoptionProjection pins stage's refusal
 // to the artifact proof, not to the roster projection the adoption landed.
@@ -146,11 +69,11 @@ func TestProductionLegacyRosterStageSeamIsNotTheAdoptionProjection(t *testing.T)
 	}
 }
 
-// TestProductionLegacyRosterExecuteAndStageStayUnbound drives both names through the
-// real transport on a frozen session. Neither is installed, so every argument shape
+// TestProductionLegacyRosterStageStaysUnbound drives the refused name through the
+// real transport on a frozen session. It is not installed, so every argument shape
 // - including a stale lease and a foreign project - must answer the same fail-closed
 // 501, byte for byte, and leave the admitted database as it was.
-func TestProductionLegacyRosterExecuteAndStageStayUnbound(t *testing.T) {
+func TestProductionLegacyRosterStageStaysUnbound(t *testing.T) {
 	root, projectPath := productionDurableDataRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
 		productionConfig{Schema: productionDurableContract(t), MaxDatabaseBytes: productionMaxDatabaseBytes})
@@ -174,6 +97,7 @@ func TestProductionLegacyRosterExecuteAndStageStayUnbound(t *testing.T) {
 		"revision":   int64(0),
 		"textHash":   strings.Repeat("a", 64),
 	}
+	request := map[string]any{"handle": handle, "artifact": artifact}
 	// The three contexts a bound name would have to refuse separately: the real one,
 	// a lease this session never held, and a project that is not the one admitted.
 	stale := map[string]any{"projectId": productionDurableProjectID, "projectPath": projectPath,
@@ -181,37 +105,30 @@ func TestProductionLegacyRosterExecuteAndStageStayUnbound(t *testing.T) {
 	foreign := map[string]any{"projectId": "legacy-roster-foreign-project", "projectPath": projectPath,
 		"leaseId": syntheticString(frozen["leaseId"])}
 
-	requests := map[string]any{
-		productionLegacyRosterExecuteName: map[string]any{"handle": handle},
-		productionLegacyRosterStageName:   map[string]any{"handle": handle, "artifact": artifact},
+	operation := productionLegacyRosterStageName
+	bodies := make([][]byte, 0, 5)
+	for _, args := range [][]any{
+		{request, frozen},
+		{request, stale},
+		{request, foreign},
+		{},
+		{"not-an-object", frozen},
+	} {
+		response := author.call(t, operation, args)
+		if response.Code != http.StatusNotImplemented {
+			t.Fatalf("%s answered %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
+		}
+		if !bytes.Contains(response.Body.Bytes(), []byte("GO_OPERATION_NOT_MIGRATED")) {
+			t.Fatalf("%s answered %d %s without GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
+		}
+		bodies = append(bodies, append([]byte(nil), response.Body.Bytes()...))
 	}
-	for operation, request := range requests {
-		t.Run(operation, func(t *testing.T) {
-			bodies := make([][]byte, 0, 5)
-			for _, args := range [][]any{
-				{request, frozen},
-				{request, stale},
-				{request, foreign},
-				{},
-				{"not-an-object", frozen},
-			} {
-				response := author.call(t, operation, args)
-				if response.Code != http.StatusNotImplemented {
-					t.Fatalf("%s answered %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
-				}
-				if !bytes.Contains(response.Body.Bytes(), []byte("GO_OPERATION_NOT_MIGRATED")) {
-					t.Fatalf("%s answered %d %s without GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
-				}
-				bodies = append(bodies, append([]byte(nil), response.Body.Bytes()...))
-			}
-			for index := 1; index < len(bodies); index++ {
-				if !bytes.Equal(bodies[0], bodies[index]) {
-					t.Fatalf("%s answered a different body for argument shape %d; an uninstalled name answers one 501 for every shape", operation, index)
-				}
-			}
-			productionGraphReadsUnchanged(t, database, before, operation)
-		})
+	for index := 1; index < len(bodies); index++ {
+		if !bytes.Equal(bodies[0], bodies[index]) {
+			t.Fatalf("%s answered a different body for argument shape %d; an uninstalled name answers one 501 for every shape", operation, index)
+		}
 	}
+	productionGraphReadsUnchanged(t, database, before, operation)
 }
 
 // productionLegacyRosterStoreLegacyKind reports the first file in internal/store that
