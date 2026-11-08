@@ -1000,8 +1000,9 @@ func productionAgentGenerationDomainEffect(action agentgen.Action, toolCallID, f
 }
 
 // resume answers agent-generation:resume (agent-generation.ts:156-174): it
-// re-admits the paused run through the ordinary resume and, when the last round
-// already completed, patches the control epoch onto the receipt.
+// re-admits the paused run through the root-only activate port (never the
+// ordinary binding-rewriting resume) and, when the last round already
+// completed, patches the control epoch onto the receipt.
 func (a *productionAgentGenerationServe) resume(ctx context.Context, caller transport.Caller, expected map[string]any, request map[string]any) (any, error) {
 	if !a.ready() {
 		return nil, errProductionGenerationUnavailable
@@ -1012,16 +1013,12 @@ func (a *productionAgentGenerationServe) resume(ctx context.Context, caller tran
 	if a.owner.inner.executor == nil {
 		return nil, errProductionGenerationExecuteUnavailable
 	}
-	contextValue, scope, ledger, db, done, err := a.owner.inner.admit(ctx, caller, expected)
+	_, scope, ledger, db, done, err := a.owner.inner.admit(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
 	handle, err := productionAgentGenerationHandleRequest(request)
-	if err != nil {
-		return nil, err
-	}
-	selected, err := a.resolve(ctx, scope, ledger, db, handle)
 	if err != nil {
 		return nil, err
 	}
@@ -1044,20 +1041,13 @@ func (a *productionAgentGenerationServe) resume(ctx context.Context, caller tran
 	}
 	// A finished response resumes control without rewriting its historical input
 	// binding (agent-generation.ts:160-170); an unfinished round resumes only a
-	// paused run.
+	// paused run. Both re-admit through the root-only port: the ordinary resume
+	// re-encodes the binding_json and would break the frozen agent context digest.
 	if !lastCompleted && runStatus != "paused" {
 		return nil, errors.New("GENERATION_RESUME_UNAVAILABLE")
 	}
 	if runStatus == "paused" {
-		nextRaw, err := json.Marshal(syntheticMap(selected.Run["binding"]))
-		if err != nil {
-			return nil, errors.New("GENERATION_RECOVERY_UNAUTHORIZED")
-		}
-		service, err := a.owner.inner.newService(ctx, caller, contextValue, ledger, db, scope, handle)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := service.Resume(ctx, handle.RunID, nextRaw); err != nil {
+		if _, err := syntheticCall(ctx, ledger, "activateRoot", handle.RootActionID); err != nil {
 			return nil, err
 		}
 	}

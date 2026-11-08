@@ -458,19 +458,21 @@ func TestProductionAgentGenerationToolOpsServed(t *testing.T) {
 		Epoch: recovery.Handle.Epoch, RootActionID: recovery.Handle.RootActionID, RunID: recovery.Handle.RunID})
 	for _, operation := range []string{productionAgentGenerationClaimTool, productionAgentGenerationFinishTool,
 		productionAgentGenerationRegister, productionAgentGenerationCommitDomain, productionAgentGenerationResume} {
-		var args []any
-		switch operation {
-		case productionAgentGenerationResume:
-			args = []any{map[string]any{"handle": handle}, stale}
-		default:
-			args = []any{map[string]any{"ref": map[string]any{"handle": foreignHandle, "attemptId": attemptID, "toolCallId": workflowTool}}, stale}
+		// The reference resume envelope is `{ handle }`, the four tool names `{ ref }`
+		// (src/shared/agent-generation.ts:96-101); the stale refusal is decided by
+		// the session fence before either shape is read, but the foreign shape must
+		// be the one the handler actually parses.
+		stalePayload := map[string]any{"ref": map[string]any{"handle": handle, "attemptId": attemptID, "toolCallId": workflowTool}}
+		foreignPayload := map[string]any{"ref": map[string]any{"handle": foreignHandle, "attemptId": attemptID, "toolCallId": workflowTool}}
+		if operation == productionAgentGenerationResume {
+			stalePayload = map[string]any{"handle": handle}
+			foreignPayload = map[string]any{"handle": foreignHandle}
 		}
-		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, args)
+		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, []any{stalePayload, stale})
 		if status != readStatus || body != readBody {
 			t.Fatalf("%v answered a stale lease differently than read: %v %v vs %v %v", operation, status, body, readStatus, readBody)
 		}
-		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation,
-			[]any{map[string]any{"ref": map[string]any{"handle": foreignHandle, "attemptId": attemptID, "toolCallId": workflowTool}}, lane.frozen})
+		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation, []any{foreignPayload, lane.frozen})
 		if foreignStatus != http.StatusInternalServerError || !strings.Contains(foreignBody, agentgen.CodeIdentityMismatch) {
 			t.Fatalf("%v answered a foreign project %v %v", operation, foreignStatus, foreignBody)
 		}

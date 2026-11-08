@@ -265,7 +265,7 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	args = normalized.([]any)
 	// Unknown workflows are errors, never successful no-ops.
 	read := method == "get" || method == "budget" || method == "attemptCount" || method == "hasInFlight" || method == "hasNonCancelledAttempt" || method == "findInvocation" || method == "receipt"
-	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect" || method == "recordAgentReceipt"
+	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect" || method == "recordAgentReceipt" || method == "activateRoot"
 	if !read && !write {
 		return nil, glError("GENERATION_OPERATION_UNSUPPORTED")
 	}
@@ -1297,6 +1297,10 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 			}
 		}
 		return g.recordAgentReceipt(ctx, conn, text(0), text(1), patch, order)
+	// ActivateRoot re-activates a paused root and its runs without rewriting any
+	// binding, for the agent round's completed-round resume (generation_ledger_agent.go).
+	case "activateRoot":
+		return nil, g.activateRoot(ctx, conn, text(0))
 	case "replaceUnstartedBinding", "resume":
 		// replace validates the next frozen binding before reading the run in
 		// the original; preserve that error precedence even for missing runs.

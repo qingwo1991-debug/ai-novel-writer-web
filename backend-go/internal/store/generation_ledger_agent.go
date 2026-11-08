@@ -132,3 +132,29 @@ func (g *GenerationLedger) recordAgentReceipt(ctx context.Context, conn *sql.Con
 	}
 	return g.receipt(ctx, conn, attemptID, nil)
 }
+
+// activateRoot re-activates a paused root and its runs without rewriting any
+// binding. This is the completed-round resume's re-admission
+// (electron/services/agent-generation.ts:163-168): only the control state moves
+// back to active, so the frozen agent context and its digest stay byte-for-byte
+// untouched. The ordinary resume port cannot be used here because it re-encodes
+// the binding_json, which would reorder or re-escape the frozen agentContext
+// and break the digest the next read re-proves.
+func (g *GenerationLedger) activateRoot(ctx context.Context, conn *sql.Conn, rootID string) error {
+	if err := g.mutableRoot(ctx, conn, rootID); err != nil {
+		return err
+	}
+	row, err := glOne(ctx, conn, "SELECT action_json FROM generation_roots WHERE root_action_id=?", "GENERATION_ROOT_MISSING", rootID)
+	if err != nil {
+		return err
+	}
+	encoded, err := glPatch(row["action_json"], map[string]any{"status": "active"})
+	if err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE generation_roots SET action_json=?,active_since_ms=NULL WHERE root_action_id=?", encoded, rootID); err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, "UPDATE generation_runs SET status='running' WHERE root_action_id=?", rootID)
+	return err
+}
