@@ -55,14 +55,20 @@ import (
 //
 //  1. planning: readContext for a planning run needs blueprintRecovery and
 //     plotOutlineRecovery, and the writeState inside them needs planningContinuation
-//     (:767). None of the three has a Go builder. The run rows themselves CAN exist
-//     in an author database written by the desktop app - bpRecovery
-//     (internal/store/batch_progress.go:961) reads them for the directory catalog -
-//     so the gap is the projection, not the population: bpRecoveryResult
-//     (:947-951) carries kind, progress and diagnostic and drops the authorEdit and
-//     predecessor that a BlueprintRecovery needs, readBlueprintAuthorEdit has no Go
-//     reader at all (generation-run-repository.ts:194), and
-//     readPlanningContinuation (:179) has none either.
+//     (:767), whose `current` step is a rebuildBinding comparison this lane cannot
+//     make. The run rows themselves CAN exist in an author database written by the
+//     desktop app - bpRecovery (internal/store/batch_progress.go:961) reads them
+//     for the directory catalog - so the gap is the projection, not the population:
+//     bpRecoveryResult (:947-951) carries kind, progress and diagnostic and drops
+//     the authorEdit and predecessor that a BlueprintRecovery needs, and
+//     readPlanningContinuation (:179) has no Go reader at all. The author-edit
+//     receipt (:194) does have one, and it refuses the reference's own shape:
+//     bpAuthorEditCode (internal/store/batch_progress.go:1194) parses the
+//     receipt's committedRange with the startChapter/endChapter accessor (:1235)
+//     while the desktop writes {from,to} (:205-206), so a real author-saved run is
+//     diagnosed instead of listed. The piece table in
+//     production_generation_recovery_serve_linux.go re-tested every one of them
+//     and records that reader as REFUTED.
 //  2. drafts: the bucket is readContext over chapter-draft runs plus
 //     draftEffects.readRecovery (:1028-1035), and it explicitly lists the
 //     short-outline retry state (:1037). This lane's own generation:read-context
@@ -94,15 +100,21 @@ import (
 // That union is the missing symbol. Everything the catalog needs lives in
 // bpRecovery's Go port; what it does not carry is precisely writeState:
 // state is derived from planningContinuation (:767), which reads
-// readPlanningContinuation (generation-run-repository.ts:179),
-// readBlueprintAuthorEdit (:194), the committed blueprint rows against
-// blueprints, and a source-binding rebuild (deps.rebuildBinding). None of those
-// four has a Go reader, and the retry-window question - can a planner run still be
-// opened here at all - is answered no by the ledger's own gate
-// (internal/store/generation_ledger.go:694, GENERATION_OPERATION_UNSUPPORTED for
-// every glPlanning operation at :492-494), so a writeState derived in this lane
-// would describe rows this lane can read but can never have written. Serving a
-// null instead would tell the blueprint page there is nothing to recover.
+// readPlanningContinuation (generation-run-repository.ts:179), the committed
+// blueprint rows against blueprints, and a source-binding rebuild
+// (deps.rebuildBinding). Two of those have a Go answer and neither one closes the
+// gap: the blueprint rows are store.Blueprints.All
+// (internal/store/blueprints.go:69), and the author-edit receipt has a reader that
+// refuses the desktop's shape (bpAuthorEditCode, :1235). The rebuild is only
+// substituted by generationowner.ReproduceBinding - a single digest over the Go
+// owner's own source selection, not the nine-field fingerprint the comparison
+// needs - and readPlanningContinuation still has no reader. The retry-window
+// question - can a planner run still be opened here at all - is answered no by the
+// ledger's own gate (internal/store/generation_ledger.go:719-720,
+// GENERATION_OPERATION_UNSUPPORTED for every glPlanning operation, :504), so a
+// writeState derived in this lane would describe rows this lane can read but can
+// never have written. Serving a null instead would tell the blueprint page there
+// is nothing to recover.
 //
 // # generation:retry-draft-short-outline: served elsewhere
 //
@@ -113,18 +125,35 @@ import (
 // (production_retry_draft_outline_linux.go). This file keeps only the two names
 // that still have no port: list-recovery and find-blueprint-recovery.
 //
-// # Re-check after the graph/ledger work (this session)
+// # Re-check against the current code (this pass)
 //
-// graph-generation:execute/:confirm, generation:compose-visible and the ledger
-// effect writer (recordEffect) landed after the refusal above. None of them
-// ports readPlanningContinuation, readBlueprintAuthorEdit or rebuildBinding, so
-// find-blueprint-recovery's writeState and list-recovery's planning/drafts
-// buckets are still unbuildable. The editors and batches buckets are served by
-// sibling names, but the recovery binder is wired with only the server
-// (production_open_linux.go:733) and cannot reach the owner those buckets need;
-// the bucket table in production_generation_recovery_reads_linux.go pins each
-// bucket, served or refused, so the two names stay 501 for a reason that is
-// still true.
+// production_generation_recovery_serve_linux.go re-tested every piece named
+// above against the code that has landed since, and recorded one row per piece
+// with the declarations that decide it. Three things are now known that the
+// refusal above did not say:
+//
+//   - readBlueprintAuthorEdit is not a missing port: it is a refuted one.
+//     bpAuthorEditCode (internal/store/batch_progress.go:1194) reads the receipt
+//     and refuses every real one, because it parses committedRange with the
+//     startChapter/endChapter accessor (:1235) while the desktop writes {from,to}
+//     (:205). The seam row now names that line instead of claiming nobody reads
+//     the receipt at all.
+//   - ReproduceBinding is not the answer to it, and it is not the answer to
+//     rebuildBinding either: it asks "do the current sources reproduce THIS
+//     process's digest", not "does the frozen nine-field fingerprint still
+//     match".
+//   - The blueprint rows reader (store.Blueprints.All) and the short-outline
+//     retry readback (production_retry_draft_outline_linux.go) move neither
+//     name: the planning bucket is the whole GenerationRecoveryContext, and the
+//     drafts bucket is readContext's draftShortOutline, not the frozen task.
+//
+// The editors and batches buckets stay served by sibling names, and the bucket
+// table in production_generation_recovery_reads_linux.go still pins each bucket,
+// served or refused, so the two names stay 501 at GO_OPERATION_NOT_MIGRATED for a
+// reason that is still true. Serving either one needs a binder that holds the
+// owner, and this binder is wired with only the server
+// (production_open_linux.go:754), outside the block that creates the owner
+// (:591-717).
 
 const (
 	productionGenerationRecoveryList      = "generation:list-recovery"
@@ -231,17 +260,21 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// returns the first one whose blueprint draft is not finished.
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1065, Marker: "const findBlueprintRecovery = (): GenerationRecoveryContext | null"},
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 1070, Marker: "recovery.blueprintRecovery.writeState !== 'complete'"},
-				// writeState is derived from the continuation receipt, which has no
-				// Go reader at all.
+				// writeState is derived from the continuation receipt, which still
+				// has no Go reader.
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 179, Marker: "readPlanningContinuation(runId: string): PlanningContinuationReceipt | null"},
-				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 194, Marker: "readBlueprintAuthorEdit(runId: string): BlueprintAuthorEditReceipt | null"},
+				// The author-edit receipt the seam called unread HAS a reader, and
+				// that reader refuses the shape the desktop writes. It is recorded
+				// as REFUTED in production_generation_recovery_serve_linux.go, and
+				// the line that decides it is this accessor.
+				{Path: "../../internal/store/batch_progress.go", Line: 1235, Marker: `committed, committedOK := bpRangeObject(receipt["committedRange"])`},
 				// The Go blueprint reader stops at kind/progress/diagnostic, one
 				// field short of the union the wire type wants.
 				{Path: "../../internal/store/batch_progress.go", Line: 947, Marker: "type bpRecoveryResult struct {"},
 				{Path: "../../internal/store/batch_progress.go", Line: 1025, Marker: `return bpRecoveryResult{kind: "available", progress: progress}, nil`},
 				// And the ledger refuses to open the operation this name reads, so no
 				// such run can be created here either.
-				{Path: "../../internal/store/generation_ledger.go", Line: 694, Marker: `if glPlanning(glText(request["operation"])) {`},
+				{Path: "../../internal/store/generation_ledger.go", Line: 719, Marker: `if glPlanning(glText(request["operation"])) {`},
 			},
 		},
 	}
@@ -316,6 +349,13 @@ func bindProductionGenerationRecovery(server *transport.Server) error {
 	// two served buckets stay served by their sibling names and the two refused
 	// names stay unbound (production_generation_recovery_reads_linux.go).
 	if err := bindProductionGenerationRecoveryReads(server); err != nil {
+		return err
+	}
+	// The per-name verdict and the piece table that supports it are checked
+	// against this same lane, so a name can never be recorded as refused while it
+	// is bound - or as served while it is not
+	// (production_generation_recovery_serve_linux.go).
+	if err := bindProductionGenerationRecoveryServe(server); err != nil {
 		return err
 	}
 	// Nothing is bound: the two refused names keep failing closed at
