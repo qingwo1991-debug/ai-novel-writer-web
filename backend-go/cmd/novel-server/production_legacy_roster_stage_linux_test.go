@@ -102,13 +102,20 @@ func TestProductionLegacyRosterStageRefusesTheExecutedRun(t *testing.T) {
 
 	db := productionBatchWriteReadOnly(t, lane.database)
 
-	// The settled attempt: settled, a stop finish, and no failure code.
-	var status, usageJSON string
-	if err := db.QueryRow(`SELECT status, usage_receipt_json FROM generation_attempts WHERE run_id=?`, lane.runID).Scan(&status, &usageJSON); err != nil {
+	// The settled attempt: attempt_json carries the status ("settled"), and
+	// usage_receipt_json carries the settle's result (finish/failure).
+	var attemptJSON, usageJSON string
+	if err := db.QueryRow(`SELECT attempt_json, usage_receipt_json FROM generation_attempts WHERE run_id=?`, lane.runID).Scan(&attemptJSON, &usageJSON); err != nil {
 		t.Fatalf("read the settled attempt: %v", err)
 	}
-	if status != "settled" {
-		t.Fatalf("the executed attempt is %s, want settled", status)
+	var attempt struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(attemptJSON), &attempt); err != nil {
+		t.Fatalf("decode the attempt status: %v", err)
+	}
+	if attempt.Status != "settled" {
+		t.Fatalf("the executed attempt is %s, want settled", attempt.Status)
 	}
 	var usage struct {
 		Result struct {
