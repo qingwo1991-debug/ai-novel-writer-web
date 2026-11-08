@@ -263,11 +263,6 @@ func productionGenerationRecoverySeams() []productionGenerationRecoverySeam {
 				// writeState is derived from the continuation receipt, which still
 				// has no Go reader.
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 179, Marker: "readPlanningContinuation(runId: string): PlanningContinuationReceipt | null"},
-				// The author-edit receipt the seam called unread HAS a reader, and
-				// that reader refuses the shape the desktop writes. It is recorded
-				// as REFUTED in production_generation_recovery_serve_linux.go, and
-				// the line that decides it is this accessor.
-				{Path: "../../internal/store/batch_progress.go", Line: 1253, Marker: `committed, committedOK := bpFromToRange(receipt["committedRange"])`},
 				// The Go blueprint reader stops at kind/progress/diagnostic, one
 				// field short of the union the wire type wants.
 				{Path: "../../internal/store/batch_progress.go", Line: 947, Marker: "type bpRecoveryResult struct {"},

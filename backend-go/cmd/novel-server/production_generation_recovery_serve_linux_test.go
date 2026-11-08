@@ -322,28 +322,21 @@ func TestProductionGenerationRecoveryServeDecisionTable(t *testing.T) {
 		t.Fatalf("the serve binder accepted a nil server: %v", err)
 	}
 
-	// The correction this pass makes: the find seam keeps the author-edit receipt,
-	// but now by the Go accessor that refuses it rather than by a reference
-	// declaration standing in for a reader that does not exist - and it still names
-	// the planner continuation, which keeps the name refused either way.
+	// The author-edit receipt reader is VALIDATED now, so the find seam must NOT
+	// cite it; the name stays refused by the planner continuation (no Go reader)
+	// and the blueprint result union being one field short.
 	seam, found := productionGenerationRecoverySeamFor(productionGenerationRecoveryFind)
 	if !found {
 		t.Fatal("the find seam disappeared")
 	}
-	accessor, continuation := false, false
+	continuation := false
 	for _, line := range seam.Missing {
-		if strings.Contains(line.Marker, "bpRangeObject(receipt") {
-			accessor = true
-		}
-		if strings.Contains(line.Marker, "readBlueprintAuthorEdit(runId: string)") {
-			t.Fatalf("the find seam still cites the reference declaration as though Go had no reader for the receipt; cite the accessor that refuses it instead")
+		if strings.Contains(line.Marker, "readBlueprintAuthorEdit") || strings.Contains(line.Marker, "bpFromToRange") {
+			t.Fatalf("the find seam still cites the author-edit receipt, which is VALIDATED now")
 		}
 		if strings.Contains(line.Marker, "readPlanningContinuation") {
 			continuation = true
 		}
-	}
-	if !accessor {
-		t.Fatal("the find seam no longer names the author-edit accessor that refuses the desktop's receipt")
 	}
 	if !continuation {
 		t.Fatal("the find seam no longer names the planner continuation that keeps it refused")
