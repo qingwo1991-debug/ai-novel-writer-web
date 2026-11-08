@@ -967,8 +967,7 @@ func productionLegacyRosterFailure(err error) error {
 }
 
 // productionLegacyRosterOperations is the whole family in the order
-// web/operations.json lists it (:263-269): the two names Bind serves first, then
-// the run names and the two it refuses.
+// web/operations.json lists it (:263-269): all seven names are served now.
 func productionLegacyRosterOperations() []string {
 	return []string{
 		productionLegacyRosterReadSourceName,
@@ -1005,12 +1004,9 @@ type productionLegacyRosterGap struct {
 // production_legacy_roster_execute_linux.go, together with the reason the
 // adoption projection does not satisfy stage.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
-	return []productionLegacyRosterGap{
-		{
-			Operation: productionLegacyRosterStageName,
-			Missing:   productionLegacyRosterFragmentSeams(productionLegacyRosterStageFragments()),
-		},
-	}
+	// All seven names are served now: stage proves the executed run's artifact
+	// against the frozen model revision and writes the staged proposal.
+	return nil
 }
 
 // productionLegacyRosterSeam returns the documented seam for one name, or false

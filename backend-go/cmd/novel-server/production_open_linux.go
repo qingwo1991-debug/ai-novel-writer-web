@@ -714,6 +714,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// legacy-roster:stage proves the executed run's artifact against the frozen
+		// model revision and writes the staged proposal (production_legacy_roster_stage_serve_linux.go).
+		if bindErr := newProductionLegacyRosterStageServe(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// agent-generation:begin/read open and project the agent session from the
 		// shipped identity prompt and the composed context (production_agent_generation_serve_linux.go).
 		if bindErr := newProductionAgentGenerationServe(owner).Bind(server); bindErr != nil {

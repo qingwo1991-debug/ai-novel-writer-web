@@ -424,13 +424,16 @@ func productionLegacyRosterGenre(value any) string {
 }
 
 // productionLegacyRosterManifestText is the frozen source manifest: the reduced
-// lane's members in syntheticManifest order, then the six legacyRoster members
-// the reference freezes.
-func productionLegacyRosterManifestText(selection syntheticSelection, scope generationowner.Scope, leaseID, fingerprint, key, originEpoch, contextText, taskText string) string {
+// lane's members in syntheticManifest order, then the model receipt the proof's
+// last step reads and the six legacyRoster members the reference freezes.
+func productionLegacyRosterManifestText(selection syntheticSelection, scope generationowner.Scope, leaseID, fingerprint, modelRevision, key, originEpoch, contextText, taskText string) string {
 	return productionEditorInlineObject(
 		productionEditorInlineField{"operation", productionEditorInlineQuote(selection.Operation)},
 		productionEditorInlineField{"modelId", productionEditorInlineQuote(selection.ModelID)},
 		productionEditorInlineField{"modelLeaseId", productionEditorInlineQuote(leaseID)},
+		productionEditorInlineField{"modelReceipt", productionEditorInlineObject(
+			productionEditorInlineField{"modelRevision", productionEditorInlineQuote(modelRevision)},
+		)},
 		productionEditorInlineField{"goOwnerSourceFingerprint", productionEditorInlineQuote(fingerprint)},
 		productionEditorInlineField{"purpose", productionEditorInlineQuote(syntheticPurpose(selection.Operation))},
 		productionEditorInlineField{"output", productionEditorInlineQuote(selection.Output)},
@@ -546,7 +549,7 @@ func (l *productionLegacyRosterServe) openLegacyRosterRun(ctx context.Context, s
 		return nil, errors.New(productionLegacyRosterRequestInvalid)
 	}
 	manifest := productionLegacyRosterManifestText(selection, scope, receipt.LeaseID, binding.Fingerprint(),
-		key, scope.Epoch, contextText, taskText)
+		binding.ModelRevision(), key, scope.Epoch, contextText, taskText)
 	request := productionEditorInlineObject(
 		productionEditorInlineField{"projectId", productionEditorInlineQuote(scope.Project)},
 		productionEditorInlineField{"epoch", productionEditorInlineQuote(scope.Epoch)},

@@ -75,6 +75,12 @@ func (r *Registry) BindSources(ctx context.Context,scope Scope,leaseID string,so
 }
 func(b *Binding) Refs()[]Ref{if b==nil{return nil};out:=make([]Ref,len(b.materials));for i,m:=range b.materials{out[i]=m.ref};return out}
 func(b *Binding) Fingerprint()string{if b==nil{return ""};return b.digest}
+// ModelRevision is the frozen model revision this binding's digest folds in
+// (BindSources/ReproduceBinding fill it from the lease receipt). It is the only
+// way a proof can read the value the run froze: the legacy-roster stage freezes
+// it into the manifest's modelReceipt and every generated provenance must name
+// it, never a value the caller guesses.
+func(b *Binding) ModelRevision()string{if b==nil{return ""};return b.modelRevision}
 func(b *Binding) validate(ctx context.Context)error{
  if b==nil||b.registry==nil{return failure("GENERATION_BINDING_INVALID")};if b.registry.options.Current(ctx,b.scope)!=nil{return failure("GENERATION_EPOCH_STALE")};for _,m:=range b.materials{value,err:=m.read(ctx,b.scope,m.key);if err!=nil{return failure("GENERATION_SOURCE_UNAVAILABLE")};if value.Revision!=m.ref.Revision||value.Text!=m.text{return failure("GENERATION_SOURCE_CHANGED")}};return nil
 }

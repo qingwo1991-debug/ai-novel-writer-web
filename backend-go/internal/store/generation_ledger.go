@@ -512,6 +512,13 @@ func glEffectKeyAllowed(key, operation string) bool {
 		// The visible composition receipt belongs to the attempt that composed it
 		// from that run's own artifacts, so any non-empty operation may carry it.
 		return operation != ""
+	case "legacyRosterProposal":
+		// The legacy roster stage stamps this on the attempt whose settled artifact
+		// it staged as one character_identity_proposals row
+		// (electron/services/legacy-roster-generation.ts:64-65). It is legal only on
+		// the run whose operation froze the roster context, so an ordinary attempt
+		// cannot present a proposal effect with no domain write behind it.
+		return operation == "legacy-character-roster-repair"
 	}
 	return false
 }
@@ -595,7 +602,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 		if operation == "agent-round" {
 			agentEffects = true
 		}
-		for _, key := range []string{"graphEffects", "finalizationEffect", "reviewRevisionEffect"} {
+		for _, key := range []string{"graphEffects", "finalizationEffect", "reviewRevisionEffect", "legacyRosterProposal"} {
 			if glEffectKeyAllowed(key, operation) {
 				effectKeys[key] = true
 			}
@@ -629,7 +636,7 @@ func (g *GenerationLedger) mutableRoot(ctx context.Context, conn *sql.Conn, root
 				if !agentEffects {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")
 				}
-			case "graphEffects", "finalizationEffect", "reviewRevisionEffect":
+			case "graphEffects", "finalizationEffect", "reviewRevisionEffect", "legacyRosterProposal":
 				if !effectKeys[key] {
 					return glError("GENERATION_EFFECT_UNSUPPORTED")
 				}

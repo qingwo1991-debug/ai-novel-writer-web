@@ -408,46 +408,13 @@ func TestProductionLegacyRosterRefusesASourceItCannotName(t *testing.T) {
 // The subtest re-reads the seam the header names, so a port that moves or
 // disappears fails here instead of leaving a note that points at nothing.
 func TestProductionLaneRefusesLegacyRosterNames(t *testing.T) {
-	root, projectPath := productionDurableDataRoot(t)
-	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
-		productionConfig{Schema: productionDurableContract(t), MaxDatabaseBytes: productionMaxDatabaseBytes})
-	if err != nil {
-		t.Fatal(err)
+	// All seven names are served now, so this file documents no refused name. The
+	// stage handler proves its own run, and the refusal test lives with it.
+	if names := productionLegacyRosterOperations(); len(names) != 7 {
+		t.Fatalf("the family inventoried %d names, want all seven served", len(names))
 	}
-	defer cleanup()
-	author := newProductionDurableClient(t, handler, productionDurableTab)
-	frozen := productionLegacyRosterOpen(t, author, projectPath)
-	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
-	stale := map[string]any{"projectId": productionDurableProjectID, "projectPath": projectPath,
-		"leaseId": productionLegacyRosterStaleLease}
-	handle := map[string]any{"projectId": productionDurableProjectID, "epoch": productionLegacyRosterStaleLease,
-		"rootActionId": "legacy-roster-missing-root", "runId": "legacy-roster-missing-run"}
-
-	for _, operation := range []string{
-		productionLegacyRosterStageName,
-	} {
-		operation := operation
-		t.Run(operation, func(t *testing.T) {
-			productionLegacyRosterSeamProof(t, operation)
-			before := productionGraphReadsBytes(t, database)
-			// The reference request, the same request under a stale lease, a request
-			// with nothing in it and a request that is not an object: all four get the
-			// same answer, because the name is not installed and the transport never
-			// reaches the envelope, the lease or the request shape.
-			adoption := map[string]any{"operationId": "legacy-roster-adoption-1", "expectedRevision": 9,
-				"expectedLegacyHash": strings.Repeat("a", 64), "expectedIdentityRevision": 3,
-				"expectedFactsHash": strings.Repeat("b", 64)}
-			for _, args := range [][]any{
-				{adoption, frozen},
-				{map[string]any{"handle": handle}, frozen},
-				{map[string]any{"handle": handle}, stale},
-				{frozen},
-				{"not-an-object", frozen},
-			} {
-				productionLegacyRosterUnbound(t, author, operation, args)
-			}
-			productionGraphReadsUnchanged(t, database, before, operation)
-		})
+	if seams := len(productionLegacyRosterSeams()); seams != 0 {
+		t.Fatalf("%d names are documented as refused, want none", seams)
 	}
 }
 
@@ -479,28 +446,22 @@ func TestProductionLegacyRosterBinderIsTheOneName(t *testing.T) {
 			t.Fatalf("%s is not inventoried, so its unbound answer would not be 501: %v", operation, err)
 		}
 	}
-	// The six served names must never be documented as refused, and stage must be.
+	// The seven served names must never be documented as refused.
 	for _, served := range []string{
 		productionLegacyRosterReadSourceName,
 		productionLegacyRosterAdoptExistingName,
 		productionLegacyRosterBeginName,
 		productionLegacyRosterReadName,
 		productionLegacyRosterExecuteName,
+		productionLegacyRosterStageName,
 		productionLegacyRosterCancelName,
 	} {
 		if _, found := productionLegacyRosterSeam(served); found {
 			t.Fatalf("%s is served and must not appear in the seam table", served)
 		}
 	}
-	documented := 0
-	for _, gap := range productionLegacyRosterSeams() {
-		if len(gap.Missing) == 0 {
-			t.Fatalf("%s documents no missing piece", gap.Operation)
-		}
-		documented++
-	}
-	if documented != len(productionLegacyRosterOperations())-6 {
-		t.Fatalf("%d names are documented as refused, want every name but the six served ones", documented)
+	if documented := len(productionLegacyRosterSeams()); documented != 0 {
+		t.Fatalf("%d names are documented as refused, want none: every name is served", documented)
 	}
 	// A closed or unknown refusal must never leak a SQLite message or a path: the
 	// one mapping layer answers the controller's own unmapped-failure code.
