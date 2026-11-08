@@ -264,7 +264,7 @@ func TestProductionAgentGenerationRoundServed(t *testing.T) {
 		t.Fatalf("round 0 answered %+v", recovery.Rounds[0])
 	}
 	usage := productionAgentGenerationToolsUsage(t, lane, attemptID)
-	response := syntheticMap(syntheticMap(usage["result"])["usage"]["agentResponse"])
+	response := syntheticMap(syntheticMap(syntheticMap(usage["result"])["usage"])["agentResponse"])
 	if syntheticNumber(response["version"]) != 1 || syntheticString(response["visibleText"]) != productionAgentGenerationToolsMessage {
 		t.Fatalf("the settled usage lost the agent response: %v", usage)
 	}
