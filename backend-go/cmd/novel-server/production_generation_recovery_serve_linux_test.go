@@ -369,27 +369,26 @@ func TestProductionGenerationRecoveryServePieceEvidence(t *testing.T) {
 	}
 
 	author, found := productionRecoveryServePieceFor(productionRecoveryServePieceAuthorEdit)
-	if !found || author.Verdict != productionRecoveryServeRefuted {
-		t.Fatalf("the blueprint author edit is recorded as %v; a Go reader exists and refuses the reference's own receipt", author.Verdict)
+	if !found || author.Verdict != productionRecoveryServeValidated {
+		t.Fatalf("the blueprint author edit is recorded as %v; the Go reader accepts the reference's own receipt now", author.Verdict)
 	}
-	// The refuted verdict has to rest on all three halves of the mismatch: the Go
-	// reader, the accessor that rejects the receipt, and the reference's own
-	// .from/.to read of it.
-	ported, mismatch, reference := false, false, false
+	// The validated verdict has to rest on all three halves: the Go reader, the
+	// {from,to} accessor both sides use, and the reference's own .from/.to read.
+	ported, accessor, reference := false, false, false
 	for _, line := range author.Evidence {
 		if strings.Contains(line.Marker, "func bpAuthorEditCode(") {
 			ported = true
 		}
-		if strings.Contains(line.Marker, "bpRangeObject(receipt") {
-			mismatch = true
+		if strings.Contains(line.Marker, "bpFromToRange(receipt") {
+			accessor = true
 		}
 		if strings.Contains(line.Marker, "receipt.committedRange.from") {
 			reference = true
 		}
 	}
-	if !ported || !mismatch || !reference {
-		t.Fatalf("the refuted verdict is not grounded: reader %v, accessor %v, reference %v",
-			ported, mismatch, reference)
+	if !ported || !accessor || !reference {
+		t.Fatalf("the validated verdict is not grounded: reader %v, accessor %v, reference %v",
+			ported, accessor, reference)
 	}
 	rebuild, found := productionRecoveryServePieceFor(productionRecoveryServePieceRebuild)
 	if !found || rebuild.Verdict != productionRecoveryServeSubstituted {

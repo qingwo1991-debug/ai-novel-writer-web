@@ -205,34 +205,30 @@ func productionRecoveryServePieces() []productionRecoveryServePiece {
 	return []productionRecoveryServePiece{
 		{
 			// The receipt the seam said had "no Go reader at all". It has one, and
-			// that reader refuses every receipt the reference writes: the commit
-			// range is parsed with the blueprint-progress accessor rather than the
-			// {from,to} the receipt carries.
+			// after the {from,to} accessor fix it accepts the receipt the reference
+			// writes: the committedRange is read with the from/to accessor both sides
+			// use.
 			Name:    productionRecoveryServePieceAuthorEdit,
-			Verdict: productionRecoveryServeRefuted,
+			Verdict: productionRecoveryServeValidated,
 			Evidence: []productionGenerationRecoveryLine{
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 194,
 					Marker: "readBlueprintAuthorEdit(runId: string): BlueprintAuthorEditReceipt | null"},
 				// The recovery reader that makes it an input of the projection.
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 564,
 					Marker: "const authorEdit = this.readBlueprintAuthorEdit(runId);"},
-				// The Go port, and the comment that says the receipt is dropped.
+				// The Go port, and the comment that says the receipt is validated.
 				{Path: "../../internal/store/batch_progress.go", Line: 1194,
 					Marker: "func bpAuthorEditCode(ctx context.Context, conn *sql.Conn, run *bpRun) string {"},
 				{Path: "../../internal/store/batch_progress.go", Line: 1192,
 					Marker: "The receipt itself is not part of the catalog; it is validated"},
 				{Path: "../../internal/store/batch_progress.go", Line: 1200,
 					Marker: `value, present := effects["blueprintAuthorEdit"]`},
-				// The defect, in three lines: the receipt's committedRange is read
-				// with the startChapter/endChapter accessor ...
-				{Path: "../../internal/store/batch_progress.go", Line: 1235,
+				// The {from,to} accessor on the receipt's committedRange, which is the
+				// same shape the reference reads for both ranges.
+				{Path: "../../internal/store/batch_progress.go", Line: 1253,
 					Marker: `committed, committedOK := bpFromToRange(receipt["committedRange"])`},
 				{Path: "../../internal/store/batch_progress.go", Line: 1138,
-					Marker: `start, startOK := rrInteger(object["startChapter"], -9007199254740991)`},
-				// ... while the sibling range on the same receipt is read with the
-				// from/to accessor, which is the one the reference uses for both.
-				{Path: "../../internal/store/batch_progress.go", Line: 1241,
-					Marker: `requested.StartChapter != bpFirstInt(requestedObject, "from", -1) ||`},
+					Marker: `start, startOK := rrInteger(object["from"], -9007199254740991)`},
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 205,
 					Marker: "|| !receipt.committedRange || !Number.isSafeInteger(receipt.committedRange.from) || !Number.isSafeInteger(receipt.committedRange.to)"},
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 211,
