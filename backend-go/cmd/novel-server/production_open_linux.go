@@ -708,6 +708,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// agent-generation:begin/read open and project the agent session from the
+		// shipped identity prompt and the composed context (production_agent_generation_serve_linux.go).
+		if bindErr := newProductionAgentGenerationServe(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}

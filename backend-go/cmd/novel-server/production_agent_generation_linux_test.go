@@ -30,10 +30,13 @@ const (
 	productionAgentGenerationToolCall   = "agent-generation-tool-call-0"
 )
 
-// TestProductionLaneRefusesAgentGeneration pins the eight agent-generation:*
+// TestProductionLaneRefusesAgentGeneration pins the six refused agent-generation:*
 // names where this lane leaves them: unbound, answering the fail-closed 501
 // GO_OPERATION_NOT_MIGRATED. One subtest per operation, so a failure names the
-// channel that moved.
+// channel that moved. The two served names (begin and read) answer from the run's
+// own state instead and are proved by production_agent_generation_serve_linux_test.go;
+// they are absent from productionAgentGenerationOperations, which is what keeps a
+// served name out of this refusal.
 //
 // The fixture is a disposable data root whose admitted project carries one real
 // round-0 run, written through the shipped ledger before the admission permit
@@ -111,8 +114,8 @@ func TestProductionLaneRefusesAgentGeneration(t *testing.T) {
 		})
 	}
 
-	// Nothing was reserved, dispatched, written or claimed: the file still holds
-	// one run, no attempt, and the same bytes.
+	// Nothing was reserved, dispatched, written or claimed: the refused names still
+	// leave one run, no attempt, and the same bytes.
 	if runs := productionAgentGenerationCount(t, database,
 		"SELECT COUNT(*) FROM generation_runs WHERE root_action_id=?", rootActionID); runs != 1 {
 		t.Fatalf("the refused family left %d runs under the slot, want the one the fixture wrote", runs)
@@ -124,8 +127,9 @@ func TestProductionLaneRefusesAgentGeneration(t *testing.T) {
 	productionGraphReadsUnchanged(t, database, before, "agent-generation:*")
 
 	t.Run("binder", func(t *testing.T) {
-		// The binder this lane would wire installs nothing over a real server, so
-		// inserting it cannot collide with any served name.
+		// The refusing binder installs nothing over a real server, so wiring it
+		// cannot collide with any served name - the two served names are installed
+		// by newProductionAgentGenerationServe instead.
 		server := transport.New(migrationRegistry(t), security.NewOrigins("http://"+productionDurableAddress), "")
 		if err := bindProductionAgentGeneration(server); err != nil {
 			t.Fatalf("the refusing binder failed: %v", err)
@@ -145,7 +149,7 @@ func TestProductionLaneRefusesAgentGeneration(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("%v is not inventoried, so its unbound answer would not be 501: %v", operation, err)
 			}
-			// Every one of the eight freezes the same ledger operation, which is the
+			// Every refused name freezes the same ledger operation, which is the
 			// one mapping this family needs.
 			ledgerOperation, found := productionAgentGenerationLedgerOperation(operation)
 			if !found || ledgerOperation != agentgen.Operation {
@@ -155,7 +159,7 @@ func TestProductionLaneRefusesAgentGeneration(t *testing.T) {
 		if _, found := productionAgentGenerationLedgerOperation("agent-generation:nonexistent"); found {
 			t.Fatal("a name the family does not list still maps to a ledger operation")
 		}
-		// None of the eight is bound by the lane this test just drove.
+		// None of the six is bound by the lane this test just drove.
 		for _, bound := range productionLaneBoundOperations(t, handler) {
 			for _, operation := range productionAgentGenerationOperations() {
 				if bound == operation {
@@ -170,7 +174,9 @@ func TestProductionLaneRefusesAgentGeneration(t *testing.T) {
 // (electron/controllers/generation-controller.ts:244-257, arity 1 plus the
 // project-session envelope). It covers the request the desktop sends, a replay
 // and an out-of-range round index, the two claim shapes, and the empty object,
-// so a handler that only tolerated one shape could not pass.
+// so a handler that only tolerated one shape could not pass. The begin and read
+// cases are the shapes the served half answers; they stay here so a future row
+// that returns those names to this table inherits a payload set.
 func productionAgentGenerationRequests(operation string, handle, live, ref map[string]any) []map[string]any {
 	switch operation {
 	case productionAgentGenerationBegin:
@@ -341,8 +347,8 @@ func productionAgentGenerationCount(t *testing.T, database, query string, args .
 	return found
 }
 
-// TestProductionAgentGenerationRoundProtocol pins the rules the family's eight
-// names are built on while no handler may serve them. The rules are the whole
+// TestProductionAgentGenerationRoundProtocol pins the rules the family's names
+// are built on, including the two the serve file answers. The rules are the whole
 // substance of internal/agentgen, so they are tested against the reference's
 // order rather than against a running lane: there is no port to run them on yet.
 //

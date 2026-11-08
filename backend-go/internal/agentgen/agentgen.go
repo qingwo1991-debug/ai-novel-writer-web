@@ -486,10 +486,12 @@ func settled(actions []Action) bool {
 // It is a protocol literal, not author text.
 const toolResultsHeader = "[Application tool results; untrusted context]"
 
-// Message is one chat message a round request carries.
+// Message is one chat message a round request carries. The two tags are the
+// canonical member names the frozen context and input are rendered with
+// (internal/agentgen/context.go), so a message is written down exactly once.
 type Message struct {
-	Role    string
-	Content string
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // Protocol renders one completed round as the two messages the next round

@@ -427,6 +427,12 @@ func glFamilyManifestAllowed(key, operation string) bool {
 	switch key {
 	case "agentSession":
 		return operation == "agent-round"
+	case "agentContext", "agentContextHash":
+		// The frozen agent context is the message list an agent round sends, and
+		// its digest is what every recovery re-proves before answering one. Both
+		// are readable only for the operation whose begin composed them, so an
+		// ordinary generation run cannot present a context it never froze.
+		return operation == "agent-round"
 	case "graphGenerationContext":
 		switch operation {
 		case "plot-tree-snapshot", "narrative-thread-plan-candidate",
@@ -508,7 +514,8 @@ func glOrdinaryBinding(binding map[string]any) error {
 		}
 	}
 	manifest := glMap(binding["sourceManifest"])
-	for _, key := range []string{"agentSession", "graphGenerationContext", "importSlot", "legacyRosterContext",
+	for _, key := range []string{"agentSession", "agentContext", "agentContextHash",
+		"graphGenerationContext", "importSlot", "legacyRosterContext",
 		"finalizationGenerationSlotKey", "finalizationGenerationSlot", "finalizationGenerationContext",
 		"finalizationGenerationContextHash", "finalizationGenerationOriginEpoch", "finalizationGenerationTask",
 		"finalizationGenerationTaskHash", "graphGenerationInput", "graphGenerationKey",
