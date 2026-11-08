@@ -456,23 +456,32 @@ func TestProductionAgentGenerationToolOpsServed(t *testing.T) {
 		[]any{map[string]any{"handle": handle}, stale})
 	foreignHandle := productionAgentGenerationWireHandle(syntheticHandle{ProjectID: productionAgentGenerationToolsForeign,
 		Epoch: recovery.Handle.Epoch, RootActionID: recovery.Handle.RootActionID, RunID: recovery.Handle.RunID})
+	// The stale refusal is decided by the session fence before the request shape
+	// is read, so its payload only needs to be well-formed; the foreign refusal is
+	// decided by the handler's own parse, so each name's foreign payload must be
+	// the reference's full envelope (src/shared/agent-generation.ts:96-101) with
+	// only the handle's projectId swapped to the foreign project.
+	payload := func(h map[string]any) map[string]any {
+		ref := map[string]any{"handle": h, "attemptId": attemptID, "toolCallId": workflowTool}
+		switch operation {
+		case productionAgentGenerationClaimTool:
+			return map[string]any{"ref": ref, "confirmed": true}
+		case productionAgentGenerationFinishTool:
+			return map[string]any{"ref": ref, "status": agentgen.ActionCompleted, "observation": "草稿工作流已登记"}
+		case productionAgentGenerationRegister, productionAgentGenerationCommitDomain:
+			return map[string]any{"ref": ref}
+		case productionAgentGenerationResume:
+			return map[string]any{"handle": h}
+		}
+		return nil
+	}
 	for _, operation := range []string{productionAgentGenerationClaimTool, productionAgentGenerationFinishTool,
 		productionAgentGenerationRegister, productionAgentGenerationCommitDomain, productionAgentGenerationResume} {
-		// The reference resume envelope is `{ handle }`, the four tool names `{ ref }`
-		// (src/shared/agent-generation.ts:96-101); the stale refusal is decided by
-		// the session fence before either shape is read, but the foreign shape must
-		// be the one the handler actually parses.
-		stalePayload := map[string]any{"ref": map[string]any{"handle": handle, "attemptId": attemptID, "toolCallId": workflowTool}}
-		foreignPayload := map[string]any{"ref": map[string]any{"handle": foreignHandle, "attemptId": attemptID, "toolCallId": workflowTool}}
-		if operation == productionAgentGenerationResume {
-			stalePayload = map[string]any{"handle": handle}
-			foreignPayload = map[string]any{"handle": foreignHandle}
-		}
-		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, []any{stalePayload, stale})
+		status, body := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(handle), stale})
 		if status != readStatus || body != readBody {
 			t.Fatalf("%v answered a stale lease differently than read: %v %v vs %v %v", operation, status, body, readStatus, readBody)
 		}
-		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation, []any{foreignPayload, lane.frozen})
+		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(foreignHandle), lane.frozen})
 		if foreignStatus != http.StatusInternalServerError || !strings.Contains(foreignBody, agentgen.CodeIdentityMismatch) {
 			t.Fatalf("%v answered a foreign project %v %v", operation, foreignStatus, foreignBody)
 		}
