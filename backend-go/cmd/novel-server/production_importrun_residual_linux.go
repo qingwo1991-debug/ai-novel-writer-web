@@ -209,6 +209,14 @@ func (r *productionImportRunResiduals) Bind(server *transport.Server) error {
 	if err := newProductionImportRunReceipts(r.durable).Bind(server); err != nil {
 		return err
 	}
+	// db:import-run-prepare-inspection has its own corrected seam: the preview CAS
+	// is a server-side handoff, but the picker's store is closure-local, the
+	// renderer's author-preview step still refuses the id form and the author
+	// prepare has no store method. The binder installs nothing and only validates
+	// that record, so it cannot move the served count.
+	if err := newProductionImportRunPrepareInspection(r.durable).Bind(server); err != nil {
+		return err
+	}
 	return nil
 }
 

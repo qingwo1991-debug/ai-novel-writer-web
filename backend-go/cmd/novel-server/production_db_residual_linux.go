@@ -86,9 +86,12 @@ import (
 //     (:1003, GENERATION_GUARD_REQUIRED). A nil proof would write receipts this
 //     lane could never commit; a non-nil proof that fails closed refuses every
 //     real request twice over.
-//   - db:import-run-prepare-inspection: the inspection CAS never appears on the
-//     wire (internal/importsource/inspection.go:165), so an id minted by this
-//     lane could never reach BeginParsing.
+//   - db:import-run-prepare-inspection: the inspection store is unreachable from
+//     any binder but the picker's own closure, the renderer's preceding
+//     author-preview step still refuses the id form, and the author prepare has
+//     no store method. The preview CAS is NOT the gap: it is a server-side
+//     handoff the store itself can prove (see
+//     production_importrun_prepare_inspection_linux.go).
 //
 // # Binder
 //
@@ -159,19 +162,11 @@ func productionDBResidualSeams() []productionDBResidualSeam {
 	return []productionDBResidualSeam{
 		{
 			Operation: productionDBResidualPrepareInspection,
-			Arity:     3,
-			PathIndex: 1,
-			Gate:      "IMPORT_INSPECTION_OWNER_UNAVAILABLE",
-			Port:      "no inspection owner: the inspected store's consume CAS is never put on the wire",
-			Missing:   []productionDBResidualLine{
-				productionDBResidualLineOf("../../../electron/controllers/db-controller.ts", 262, "operations.handle('db:import-run-prepare-inspection', async ("),
-				productionDBResidualLineOf("../../internal/importsource/inspection.go", 165, "func (s *Store) Consume(receipt,expectedPreviewCAS string,binding Binding)"),
-				productionDBResidualLineOf("../../internal/store/importrun_lifecycle.go", 796, "func (r *ImportRuns) BeginParsing(ctx context.Context, candidate ImportRunBeginParsingRequest)"),
-				productionDBResidualLineOf("../../internal/store/importrun_lifecycle.go", 1048, "func (r *ImportRuns) CommitParsedSource(ctx context.Context, runID, sourceID string, chapters []ImportRunChapterInput)"),
-				// The only place this lane mints an inspection id, and the id it never
-				// publishes back to a later prepare.
-				productionDBResidualLineOf("../../internal/transport/import_selection.go", 112, `"inspectionId": summary.InspectionID`),
-			},
+			Arity:     productionImportRunPrepareInspectionArity,
+			PathIndex: productionImportRunPrepareInspectionPathIndex,
+			Gate:      productionImportRunPrepareInspectionGate,
+			Port:      productionImportRunPrepareInspectionPort,
+			Missing:   productionImportRunPrepareInspectionResidualMissing(),
 		},
 	}
 }
