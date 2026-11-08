@@ -161,45 +161,61 @@ func (e *productionLegacyRosterExecuteServe) execute(ctx context.Context, caller
 	if _, err := e.owner.open.ModelEgress(); err != nil {
 		return nil, err
 	}
-	contextValue, scope, ledger, db, done, err := e.owner.inner.admit(ctx, caller, expected)
+	// The proof phase proves the run, the frozen task and the reproduced binding
+	// once; none of them changes across the loop's dispatches. The admission is
+	// released before the loop so each dispatch re-admits with a committed view.
+	_, scope, ledger, db, done, err := e.owner.inner.admit(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
-	defer done()
 	resolved, err := e.roster.resolve(ctx, scope, ledger, db, handle)
 	if err != nil {
+		done()
 		return nil, err
 	}
 	taskText, err := productionLegacyRosterStoredMember(ctx, db, handle.RunID, "legacyRosterTask")
 	if err != nil {
+		done()
 		return nil, err
 	}
 	initial, err := generationowner.ParseTask(taskText)
 	if err != nil {
+		done()
 		return nil, errors.New(productionLegacyRosterTaskInvalid)
 	}
 	loop, err := prompttemplate.LegacyRosterLoopTemplate()
 	if err != nil {
+		done()
 		return nil, errors.New(productionLegacyRosterTaskInvalid)
 	}
 	language := productionLegacyRosterWritingLanguage(syntheticMap(resolved.Context["source"])["writingLanguage"])
-	// The begin-time binding is re-derived, not trusted: a run whose frozen sources
-	// no longer reproduce must not dispatch, exactly like the sibling executes.
-	binding, fingerprint, err := e.roster.reproduce(ctx, scope, db, resolved)
+	// The run's own frozen scope, not the caller's live session lease. The first
+	// dispatch writes a ledger row, so a later dispatch that re-checked the live
+	// session would answer GENERATION_EPOCH_STALE. ReproduceBinding re-derives the
+	// binding under this frozen epoch without the live-lease currency check, and
+	// Prepare/Execute must use the same frozen scope so the binding matches.
+	runScope := scope
+	if bindingMap := syntheticMap(resolved.Run["binding"]); bindingMap != nil {
+		runScope.Project = syntheticString(bindingMap["projectId"])
+		runScope.Epoch = syntheticString(bindingMap["epoch"])
+	}
+	binding, fingerprint, err := e.roster.reproduce(ctx, runScope, db, resolved)
 	if err != nil {
+		done()
 		return nil, err
 	}
 	if fingerprint != syntheticString(resolved.Manifest["goOwnerSourceFingerprint"]) {
+		done()
 		return nil, errors.New(productionLegacyRosterSourceChanged)
 	}
 	leaseID := syntheticString(resolved.Manifest["modelLeaseId"])
 	if leaseID == "" {
+		done()
 		return nil, errors.New(productionEditorInlineLeaseMissing)
 	}
-	service, err := e.owner.inner.newService(ctx, caller, contextValue, ledger, db, scope, handle)
-	if err != nil {
-		return nil, err
-	}
+	runBinding := syntheticMap(resolved.Run["binding"])
+	done()
+
 	stageTask := initial
 	var repairTask generationowner.Task
 	hasRepair := false
@@ -230,48 +246,12 @@ func (e *productionLegacyRosterExecuteServe) execute(ctx context.Context, caller
 				task = rendered
 			}
 			nonce := productionLegacyRosterInvocationNonce(stage, ordinal)
-			frozen, err := e.owner.inner.executor.Prepare(ctx, scope, leaseID, task, syntheticRootOutputTokens, binding)
-			if err != nil {
-				return nil, err
-			}
-			requestHash, err := productionLegacyRosterRequestHash(handle.RunID, nonce, leaseID, fingerprint, task, frozen.Plan())
-			if err != nil {
-				return nil, err
-			}
-			prior, err := syntheticCall(ctx, ledger, "findInvocation", handle.RunID, nonce, requestHash)
-			if err != nil {
-				return nil, err
-			}
-			if prior == nil {
-				// Only a fresh attempt is sealed-guarded and counted; a replayed
-				// ordinal already owns its attempt row.
-				if err := productionLegacyRosterAssertMutable(ctx, db, handle.RunID); err != nil {
-					return nil, err
-				}
-				attempts, err := syntheticCall(ctx, ledger, "attemptCount", handle.RunID)
-				if err != nil {
-					return nil, err
-				}
-				used, ok := syntheticFloat64(attempts)
-				if !ok || int(used) != iterations {
-					return nil, errors.New(productionLegacyRosterAttemptConflict)
-				}
-			}
-			receiptValue, err := service.Execute(ctx, frozen, handle.RunID, nonce)
+			answer, outcome, snapshot, eligible, err := e.dispatchAttempt(ctx, caller, expected, handle,
+				runScope, leaseID, fingerprint, binding, task, nonce, runBinding, iterations)
 			if err != nil {
 				return nil, err
 			}
 			iterations++
-			receipt := syntheticMap(receiptValue)
-			if receipt == nil {
-				return nil, errors.New(productionLegacyRosterArtifactInvalid)
-			}
-			outcome := syntheticOutcome(receipt)
-			answer, err := e.answer(ctx, ledger, db, receipt)
-			if err != nil {
-				return nil, err
-			}
-			snapshot, eligible := e.owner.inner.snapshotOf(ctx, db, receipt, syntheticMap(resolved.Run["binding"]))
 			if !eligible {
 				return answer, nil
 			}
@@ -307,6 +287,65 @@ func (e *productionLegacyRosterExecuteServe) execute(ctx context.Context, caller
 		}
 	}
 	return nil, errors.New(productionLegacyRosterAttemptConflict)
+}
+
+// dispatchAttempt is one dispatch of the loop. It re-admits the request under the
+// run's own frozen scope (not the caller's live session), so the permit the
+// admission verifies sees the committed state the previous dispatch wrote instead
+// of refusing the live lease as GENERATION_EPOCH_STALE. The admission is always
+// released - and its permit refreshed - before the helper returns.
+func (e *productionLegacyRosterExecuteServe) dispatchAttempt(ctx context.Context, caller transport.Caller, expected map[string]any, handle syntheticHandle, runScope generationowner.Scope, leaseID, fingerprint string, binding *generationowner.Binding, task generationowner.Task, nonce string, runBinding map[string]any, iterations int) (any, map[string]any, map[string]any, bool, error) {
+	contextValue, _, ledger, db, done, err := e.owner.inner.admit(ctx, caller, expected)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	defer done()
+	frozen, err := e.owner.inner.executor.Prepare(ctx, runScope, leaseID, task, syntheticRootOutputTokens, binding)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	requestHash, err := productionLegacyRosterRequestHash(handle.RunID, nonce, leaseID, fingerprint, task, frozen.Plan())
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	prior, err := syntheticCall(ctx, ledger, "findInvocation", handle.RunID, nonce, requestHash)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	if prior == nil {
+		// Only a fresh attempt is sealed-guarded and counted; a replayed ordinal
+		// already owns its attempt row.
+		if err := productionLegacyRosterAssertMutable(ctx, db, handle.RunID); err != nil {
+			return nil, nil, nil, false, err
+		}
+		attempts, err := syntheticCall(ctx, ledger, "attemptCount", handle.RunID)
+		if err != nil {
+			return nil, nil, nil, false, err
+		}
+		used, ok := syntheticFloat64(attempts)
+		if !ok || int(used) != iterations {
+			return nil, nil, nil, false, errors.New(productionLegacyRosterAttemptConflict)
+		}
+	}
+	service, err := e.owner.inner.newService(ctx, caller, contextValue, ledger, db, runScope, handle)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	receiptValue, err := service.Execute(ctx, frozen, handle.RunID, nonce)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	receipt := syntheticMap(receiptValue)
+	if receipt == nil {
+		return nil, nil, nil, false, errors.New(productionLegacyRosterArtifactInvalid)
+	}
+	outcome := syntheticOutcome(receipt)
+	answer, err := e.answer(ctx, ledger, db, receipt)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	snapshot, eligible := e.owner.inner.snapshotOf(ctx, db, receipt, runBinding)
+	return answer, outcome, snapshot, eligible, nil
 }
 
 // answer projects one settled attempt into the browser's
