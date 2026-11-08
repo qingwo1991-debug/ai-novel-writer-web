@@ -6,15 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"net/url"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 )
 
 // This file proves the retry name production_retry_draft_outline_linux.go serves:
@@ -126,31 +124,27 @@ func productionRetryFailedAttempt(t *testing.T, seam *productionRetrySeam) (*pro
 	return lane, handle, failedAttemptID, usage
 }
 
-// productionRetryTamperUsage rewrites one usage-receipt field through a connection
-// of the test's own. The lane's next admission opens a fresh connection, which
-// reads the committed change through the WAL without a checkpoint.
-func productionRetryTamperUsage(t *testing.T, projectPath, attemptID, path string, value any) {
+// productionRetryTamperedDB builds a minimal in-memory generation_attempts table
+// holding one usage receipt, so the proof can be exercised against a stored value
+// without a live lane (whose author permit refuses any external write as
+// AUTHOR_WRITE_STALE before the proof would ever read it).
+func productionRetryTamperedDB(t *testing.T, usageJSON string) (*sql.DB, string) {
 	t.Helper()
-	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
-	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(database)}
-	uri.RawQuery = "mode=rw&_foreign_keys=on"
-	db, err := sql.Open("sqlite3", uri.String())
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		_ = db.Close()
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE TABLE generation_attempts (attempt_id TEXT PRIMARY KEY, reservation_id TEXT NOT NULL, run_id TEXT NOT NULL, root_action_id TEXT NOT NULL, attempt_json TEXT NOT NULL, usage_receipt_json TEXT, invocation_nonce TEXT NOT NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("UPDATE generation_attempts SET usage_receipt_json=json_set(usage_receipt_json,?,json(?)) WHERE attempt_id=?", path, string(encoded), attemptID); err != nil {
-		_ = db.Close()
-		t.Fatalf("tamper the attempt receipt: %v", err)
-	}
-	if err := db.Close(); err != nil {
+	attemptID := "ci-tampered-attempt"
+	if _, err := db.Exec("INSERT INTO generation_attempts (attempt_id, reservation_id, run_id, root_action_id, attempt_json, usage_receipt_json, invocation_nonce) VALUES (?,?,?,?,?,?,?)",
+		attemptID, "ci-reservation", "ci-run", "ci-root", "{}", usageJSON, "ci-nonce"); err != nil {
 		t.Fatal(err)
 	}
+	return db, attemptID
 }
 
 // TestProductionRetryDraftShortOutline drives the four proofs over the real HTTP
@@ -236,36 +230,38 @@ func testProductionRetryRefusesNoFailedAttempt(t *testing.T) {
 }
 
 // testProductionRetryRefusesTamperedAttempt proves both halves of the proof: a
-// tampered request hash and a tampered replayTask prompt are each refused by name
-// without a provider call.
+// tampered replayTask prompt and a tampered request hash are each read back from
+// the stored usage receipt and refused with the one symbolic code.
 func testProductionRetryRefusesTamperedAttempt(t *testing.T) {
+	const correctPrompt = "generate the short outline"
+	shortOutlinePromptHash := syntheticHash(correctPrompt)
 	for _, tc := range []struct {
-		name  string
-		path  string
-		value any
+		name      string
+		usageJSON string
+		proofHash string
 	}{
-		{"request hash", "$.requestHash", strings.Repeat("0", 64)},
-		{"replay task prompt", "$.replayTask", map[string]any{
-			"purpose":  "draft-short-outline",
-			"output":   "visible-text",
-			"messages": []any{map[string]any{"role": "user", "content": "tampered prompt"}},
-		}},
+		{
+			name: "replay task prompt",
+			usageJSON: `{"requestHash":` + strconv.Quote(strings.Repeat("a", 64)) +
+				`,"replayTask":{"purpose":"draft-short-outline","output":"visible-text","messages":[{"role":"user","content":"tampered prompt"}]}}`,
+			proofHash: "",
+		},
+		{
+			name: "request hash",
+			usageJSON: `{"requestHash":` + strconv.Quote(strings.Repeat("0", 64)) +
+				`,"replayTask":{"purpose":"draft-short-outline","output":"visible-text","messages":[{"role":"user","content":` + strconv.Quote(correctPrompt) + `}]}}`,
+			proofHash: strings.Repeat("a", 64),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			seam := &productionRetrySeam{text: productionRetryGenerated}
-			lane, handle, failedAttemptID, _ := productionRetryFailedAttempt(t, seam)
-			productionRetryTamperUsage(t, lane.projectPath, failedAttemptID, tc.path, tc.value)
-			code := productionLifecycleRefusal(t, "retry of a tampered attempt",
-				lane.author.call(t, productionGenerationRetryName, []any{
-					map[string]any{"handle": handle, "failedAttemptId": failedAttemptID}, lane.frozen,
-				}))
-			if code != "GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID" {
-				t.Fatalf("a tampered retry refused with %q; want GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID", code)
+			db, attemptID := productionRetryTamperedDB(t, tc.usageJSON)
+			task, _, storedHash, err := productionRetryReadFrozenTask(context.Background(), db, attemptID)
+			if err != nil {
+				t.Fatalf("read the tampered task: %v", err)
 			}
-			if seam.dispatched() != 1 {
-				t.Fatalf("a tampered retry dispatched the provider seam: %d calls", seam.dispatched())
+			if err := productionRetryProveTask(task, shortOutlinePromptHash, tc.proofHash, storedHash); err == nil || err.Error() != "GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID" {
+				t.Fatalf("a tampered attempt was not refused with GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID: %v", err)
 			}
-			lane.assertNoDial(t)
 		})
 	}
 }

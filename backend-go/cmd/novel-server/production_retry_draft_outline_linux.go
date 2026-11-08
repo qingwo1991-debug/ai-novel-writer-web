@@ -102,18 +102,6 @@ func productionRetryDraftShortOutline(ctx context.Context, s *syntheticGeneratio
 	if err != nil {
 		return nil, err
 	}
-	if task.Purpose != syntheticRetryPurpose || task.Output != "visible-text" {
-		return nil, errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
-	}
-	var userPrompts []string
-	for _, message := range task.Messages {
-		if message.Role == "user" {
-			userPrompts = append(userPrompts, message.Content)
-		}
-	}
-	if len(userPrompts) != 1 || syntheticHash(userPrompts[0]) != syntheticString(decision["shortOutlinePromptHash"]) {
-		return nil, errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
-	}
 	leaseID := syntheticString(manifest["modelLeaseId"])
 	if leaseID == "" {
 		return nil, errors.New("GENERATION_LEASE_MISSING")
@@ -147,8 +135,8 @@ func productionRetryDraftShortOutline(ctx context.Context, s *syntheticGeneratio
 		Task    generationowner.Task `json:"task"`
 		Plan    generationowner.Plan `json:"plan"`
 	}{handle.RunID, nonce, leaseID, bindingValue.Fingerprint(), task, frozen.Plan()})
-	if proofHash == "" || proofHash != storedHash {
-		return nil, errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
+	if err := productionRetryProveTask(task, syntheticString(decision["shortOutlinePromptHash"]), proofHash, storedHash); err != nil {
+		return nil, err
 	}
 	service, err := s.newService(ctx, caller, contextValue, ledger, db, scope, handle)
 	if err != nil {
@@ -194,4 +182,29 @@ func productionRetryReadFrozenTask(ctx context.Context, db *sql.DB, attemptID st
 		return generationowner.Task{}, "", "", errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
 	}
 	return task, nonce, syntheticString(usage["requestHash"]), nil
+}
+
+// productionRetryProveTask is the reference's readFailedShortOutlineTask proof
+// (main-generation-owner.ts:193-196), factored out so a tampered stored task is
+// refused with the one symbolic code. It checks the purpose and output contract,
+// the single user prompt against the material decision's short-outline hash, and
+// the stored request hash against the re-derived one - in that order, so either a
+// tampered replayTask or a tampered requestHash refuses here.
+func productionRetryProveTask(task generationowner.Task, shortOutlinePromptHash, proofHash, storedHash string) error {
+	if task.Purpose != syntheticRetryPurpose || task.Output != "visible-text" {
+		return errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
+	}
+	var userPrompts []string
+	for _, message := range task.Messages {
+		if message.Role == "user" {
+			userPrompts = append(userPrompts, message.Content)
+		}
+	}
+	if len(userPrompts) != 1 || syntheticHash(userPrompts[0]) != shortOutlinePromptHash {
+		return errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
+	}
+	if proofHash == "" || proofHash != storedHash {
+		return errors.New("GENERATION_DRAFT_SHORT_OUTLINE_TASK_INVALID")
+	}
+	return nil
 }
