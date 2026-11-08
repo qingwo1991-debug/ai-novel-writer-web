@@ -481,7 +481,7 @@ func TestProductionAgentGenerationToolOpsServed(t *testing.T) {
 		if status != readStatus || body != readBody {
 			t.Fatalf("%v answered a stale lease differently than read: %v %v vs %v %v", operation, status, body, readStatus, readBody)
 		}
-		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(foreignHandle), lane.frozen})
+		foreignStatus, foreignBody := productionAgentGenerationToolsRefusal(t, lane, operation, []any{payload(operation, foreignHandle), lane.frozen})
 		if foreignStatus != http.StatusInternalServerError || !strings.Contains(foreignBody, agentgen.CodeIdentityMismatch) {
 			t.Fatalf("%v answered a foreign project %v %v", operation, foreignStatus, foreignBody)
 		}
