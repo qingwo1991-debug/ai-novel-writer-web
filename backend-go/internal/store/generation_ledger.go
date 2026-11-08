@@ -464,6 +464,21 @@ func glFamilyManifestAllowed(key, operation string) bool {
 		// operation that freezes it, so an ordinary generation run cannot smuggle
 		// a roster context into a binding it does not own.
 		return operation == "legacy-character-roster-repair"
+	case "importSlot", "importSlotKey", "importContext":
+		// The import slot, its key and the frozen import context are what the
+		// import-generation read matches a run on and hands back as the author's
+		// recovery (electron/services/import-generation.ts:14-23,
+		// electron/services/generation-source-binding.ts:599); they are also the
+		// members the import-run receipt path already reads out of a frozen
+		// binding (internal/store/importrun_receipts.go:954-960). They are
+		// readable only for the two stage operations this lane can freeze. The
+		// blueprint stage is deliberately absent: its operation name contains
+		// "blueprint", so glPlanning refuses it as GENERATION_OPERATION_UNSUPPORTED
+		// with or without these keys, and naming it here would only move that
+		// refusal one check later. Every other operation - chapter-draft,
+		// agent-round, a blueprint directory name - keeps the refusal it answered
+		// before this case.
+		return operation == "import-global-facts" || operation == "analyze-writing-style"
 	}
 	return false
 }
@@ -514,8 +529,11 @@ func glOrdinaryBinding(binding map[string]any) error {
 		}
 	}
 	manifest := glMap(binding["sourceManifest"])
+	// importSlotKey and importContext join the closed list with importSlot: the
+	// three are the import family's own binding, so a manifest that carries any of
+	// them is refused unless the operation that froze it is the import one.
 	for _, key := range []string{"agentSession", "agentContext", "agentContextHash",
-		"graphGenerationContext", "importSlot", "legacyRosterContext",
+		"graphGenerationContext", "importSlot", "importSlotKey", "importContext", "legacyRosterContext",
 		"finalizationGenerationSlotKey", "finalizationGenerationSlot", "finalizationGenerationContext",
 		"finalizationGenerationContextHash", "finalizationGenerationOriginEpoch", "finalizationGenerationTask",
 		"finalizationGenerationTaskHash", "graphGenerationInput", "graphGenerationKey",

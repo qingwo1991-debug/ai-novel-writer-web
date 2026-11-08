@@ -400,6 +400,17 @@ type syntheticSelection struct {
 	MaterialDecision          map[string]any
 	ParentRootActionID        string
 	ReviewRevisionContextID   string
+	// ImportSlot and ImportExecution are the two fields an import begin sends
+	// (src/shared/generation-owner-contract.ts:266-268); productionImportGenerationSelect
+	// fills them only for the stage operation that owns the slot, so no other
+	// operation can carry either. ImportSlotKey and ImportContext are minted by
+	// this lane when it freezes the slot, never taken from the renderer, exactly
+	// like the reference's own source binding
+	// (electron/services/generation-source-binding.ts:599).
+	ImportSlot      map[string]any
+	ImportExecution map[string]any
+	ImportSlotKey   string
+	ImportContext   map[string]any
 }
 
 func syntheticParseSelection(value any) (syntheticSelection, error) {
@@ -412,7 +423,7 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 		"selectedDraftIds": true, "selectedFinalizedDraftIds": true, "selectedBlueprintChapterNumbers": true,
 		"promptKeys": true, "skillStages": true, "authorInputs": true, "output": true,
 		"outputOverrides": true, "parentRootActionId": true, "preparationId": true, "materialDecision": true,
-		"reviewRevisionContextId": true,
+		"reviewRevisionContextId": true, "importSlot": true, "importExecution": true,
 	}
 	for key := range object {
 		if !allowed[key] {
@@ -433,6 +444,15 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 	}
 	if selection.Output != "visible-text" && selection.Output != "structured-data" {
 		return syntheticSelection{}, errors.New("GENERATION_BEGIN_INVALID")
+	}
+	// An import selection is admitted only for the stage operation that owns the
+	// slot and only in the reference's own stage shape. It is read here, after
+	// the planning refusal above, so import-blueprints and every other planning
+	// name keeps answering exactly what it answered before this widening; any
+	// other request that carries an import key keeps the begin-shape refusal
+	// that key has always answered.
+	if err := productionImportGenerationSelect(&selection, object); err != nil {
+		return syntheticSelection{}, err
 	}
 	if value, present := object["chapterNumber"]; present {
 		chapter := syntheticNumber(value)
@@ -754,6 +774,15 @@ func syntheticManifest(selection syntheticSelection, scope generationowner.Scope
 	if selection.MaterialDecision != nil {
 		manifest["materialDecision"] = selection.MaterialDecision
 	}
+	if selection.ImportSlotKey != "" {
+		// The three members the reference freezes for an import run
+		// (electron/services/generation-source-binding.ts:599), written together
+		// or not at all: a frozen run can never carry a slot without the key the
+		// read matches it on and the context it hands back.
+		manifest["importSlot"] = selection.ImportSlot
+		manifest["importSlotKey"] = selection.ImportSlotKey
+		manifest["importContext"] = selection.ImportContext
+	}
 	return manifest
 }
 
@@ -855,6 +884,17 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 		return nil, err
 	}
 	defer done()
+	// An import begin joins the run its slot already owns instead of opening a
+	// second one: the reference's admit answers the existing run before any new
+	// root and refuses a changed model beside it
+	// (electron/services/import-generation.ts:33-44). Opening a second run for one
+	// slot would make the read answer GENERATION_IMPORT_SLOT_AMBIGUOUS for a slot
+	// the author only resumed.
+	if existing, err := productionImportGenerationExisting(ctx, db, ledger, scope.Project, selection); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return s.viewOf(ctx, ledger, db, existing)
+	}
 	// The review/revise half of admission runs after the lease and before the
 	// model lease: it resolves the prepared context, re-proves it against the
 	// database, rewrites the selection's one author input and returns the manifest
@@ -862,6 +902,14 @@ func (s *syntheticGeneration) Begin(ctx context.Context, caller transport.Caller
 	// exactly the path it always took.
 	extra, err := productionReviewRevisionFreeze(ctx, caller, db, scope, &selection)
 	if err != nil {
+		return nil, err
+	}
+	// An import selection freezes the durable import material beside the slot
+	// before the ledger sees the manifest, so the read hands back exactly the
+	// context the stage was admitted on. It also rewrites the action nonce to the
+	// slot's own, which is what makes the ledger reuse one root per slot; an
+	// ordinary begin freezes nothing here and takes the path it always took.
+	if err := productionImportGenerationFreeze(ctx, db, &selection); err != nil {
 		return nil, err
 	}
 	runValue, err := s.openRun(ctx, ledger, db, scope, selection, extra)
@@ -1316,6 +1364,17 @@ func (s *syntheticGeneration) Execute(ctx context.Context, caller transport.Call
 	if err != nil {
 		return nil, err
 	}
+	return s.syntheticDispatchFrozenRun(ctx, caller, contextValue, ledger, db, scope, handle, manifest, nonce, request["task"])
+}
+
+// syntheticDispatchFrozenRun is the half generation:execute shares with the
+// import family: it re-resolves the begin-time lease, rebuilds and re-verifies
+// the frozen sources, parses the browser task, prepares the plan, settles one
+// attempt under the given invocation nonce and projects the receipt. handle and
+// manifest are the run the caller already proved - generation:execute through
+// syntheticRequireRun, the import family through that same call plus the import
+// context proof - so this helper never widens which run may dispatch.
+func (s *syntheticGeneration) syntheticDispatchFrozenRun(ctx context.Context, caller transport.Caller, contextValue projectsession.Context, ledger *store.GenerationLedger, db *sql.DB, scope generationowner.Scope, handle syntheticHandle, manifest map[string]any, invocationNonce string, taskValue any) (any, error) {
 	leaseID := syntheticString(manifest["modelLeaseId"])
 	if leaseID == "" {
 		return nil, errors.New("GENERATION_LEASE_MISSING")
@@ -1334,7 +1393,7 @@ func (s *syntheticGeneration) Execute(ctx context.Context, caller transport.Call
 	if bindingValue.Fingerprint() != syntheticString(manifest["goOwnerSourceFingerprint"]) {
 		return nil, errors.New("GENERATION_SOURCE_CHANGED")
 	}
-	taskRaw, err := json.Marshal(request["task"])
+	taskRaw, err := json.Marshal(taskValue)
 	if err != nil {
 		return nil, errors.New("GENERATION_SEMANTIC_TASK_INVALID")
 	}
@@ -1350,7 +1409,7 @@ func (s *syntheticGeneration) Execute(ctx context.Context, caller transport.Call
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, nonce)
+	receipt, err := service.Execute(ctx, frozen, handle.RunID, invocationNonce)
 	if err != nil {
 		return nil, err
 	}
@@ -1768,8 +1827,19 @@ func (s *syntheticGeneration) Restart(ctx context.Context, caller transport.Call
 	return nextValue, nil
 }
 
-// begin is the shared begin implementation used by Begin and Restart.
+// begin is the restart path's begin: Restart reopens the selection and then
+// cancels the old root.
 func (s *syntheticGeneration) begin(ctx context.Context, caller transport.Caller, expected map[string]any, scope generationowner.Scope, ledger *store.GenerationLedger, db *sql.DB, selection syntheticSelection) (any, error) {
+	if selection.ImportSlot != nil {
+		// A restart does not freeze import material, so an import selection keeps
+		// the begin-shape refusal it answered before the admission widened: an
+		// import run is joined through generation:begin, which answers the slot's
+		// existing run instead of opening a second root
+		// (electron/services/import-generation.ts:33-40). Restarting the old root
+		// while opening a slotless run of the same operation would leave a run no
+		// slot owns.
+		return nil, errors.New("GENERATION_BEGIN_INVALID")
+	}
 	receipt, err := s.registry.Begin(ctx, scope, selection.ModelID, syntheticGenerationPurpose)
 	if err != nil {
 		return nil, err

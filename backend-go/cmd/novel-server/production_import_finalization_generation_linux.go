@@ -8,21 +8,24 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the lane's answer for the four model-executing generation names
-// the browser still needs for the two author journeys it cannot finish - the
-// 40-chapter import and the daily-finalization step - and the answer is the
-// fail-closed 501 for all four: GO_OPERATION_NOT_MIGRATED
-// (internal/transport/server.go:116). The members of those two families this
-// lane does serve are bound elsewhere and are not touched here:
+// This file used to record the lane's fail-closed 501 answer for four
+// model-executing generation names. All four are served now, and what is left
+// here is the record of that change plus the binder that refuses a lane whose
+// record disagrees with it:
 //
-//	finalization-generation:read     production_graph_reads_linux.go:70
-//	finalization-generation:cancel   production_generation_write_linux.go:153
+//	finalization-generation:begin/execute/commit  production_finalization_generation_serve_linux.go
+//	import-generation:read/execute                production_import_generation_serve_linux.go
 //
-// Nothing is bound, imported or written by this file. Each refusal is recorded
-// as a seam - the declarations that have to move before the name can be served,
-// with the file and the line they live on - so the next change starts from the
-// code that has to change instead of from a guess, and so a moved declaration
-// fails this lane's own test instead of leaving a note that points at nothing.
+// The import half is the newest: the reference opens an import run through
+// generation:begin with an importSlot selection and has no begin of its own
+// (electron/services/import-generation.ts:37, src/shared/import-generation.ts:28-29,
+// src/shared/generation-owner-contract.ts:266-268), so serving its read and
+// execute meant admitting that selection, freezing its three manifest members and
+// widening the ledger's family allowlist - all of which landed beside this note
+// rather than in it. The seam table below stays as the place a future refusal
+// has to declare itself; it is empty today, and both binders below assert that.
+//
+// Nothing is bound, imported or written by this file.
 //
 // # The one legal model call, and where the prompt text comes from
 //
@@ -44,11 +47,10 @@ import (
 // generation:execute already dispatches), and for the finalization family the
 // task is frozen at begin beside the context it was rendered from
 // (electron/services/generation-source-binding.ts:587-591, read back by
-// electron/services/finalization-generation.ts:46-49). In neither case would a
-// Go handler have to hold a prompt - and in neither case can it: the freeze
-// itself, and the run under it, are the pieces that do not exist here.
+// electron/services/finalization-generation.ts:46-49). In neither case does a Go
+// handler have to hold a prompt - and neither family's served half does.
 //
-// # import-generation:read - refused
+// # import-generation:read - served
 //
 // The renderer sends {slot: {runId, stage, batchId}} and reads back an
 // ImportGenerationRecovery or JSON null (src/shared/import-generation.ts:28).
@@ -57,61 +59,42 @@ import (
 // ImportGenerationContext (electron/services/import-generation.ts:22 throws
 // GENERATION_IMPORT_CONTEXT_REQUIRED without it).
 //
-// No row this lane can write carries that key, so a bound read could only ever
-// answer null:
+// The three pieces this file said were missing now exist:
 //
-//   - The reduced admission has no import slot at all: syntheticSelection
-//     (synthetic_generation_linux.go:386) has no field for it and its key
-//     allowlist (:410) rejects it, so generation:begin refuses an import
-//     selection with GENERATION_BEGIN_INVALID before a root exists.
-//   - The ledger refuses the manifest key for every operation: glFamilyManifestAllowed
-//     (internal/store/generation_ledger.go:426) admits agentSession, the graph
-//     keys and the finalization keys and nothing else, and glOrdinaryBinding
-//     refuses any other family key as GENERATION_OPERATION_UNSUPPORTED (:518).
-//   - The context the read projects has no Go producer: captureImportGenerationContext
-//     (electron/services/import-generation-source.ts:20) binds the run's slot to
-//     the import_run_chapters projection and the project core, and this module
-//     has no counterpart.
+//   - The reduced admission carries the import selection: syntheticSelection has
+//     importSlot/importExecution, its key allowlist accepts them and
+//     productionImportGenerationSelect admits them only for the stage operation
+//     that owns the slot.
+//   - The ledger admits the three manifest members for exactly those two
+//     operations (glFamilyManifestAllowed, internal/store/generation_ledger.go),
+//     and keeps refusing the same keys for every other operation.
+//   - The context has a Go producer: productionImportGenerationFreeze reads the
+//     import_runs row and the import_run_chapters projection and verifies each
+//     chapter against its stored fingerprint, which is what the read hands back.
 //
-// A null here is not inert either. The renderer reads null as "nothing to
-// resume" and falls through to generation:begin with the same importSlot
-// selection (src/services/workflows/workflow-main-generation.ts:125), which this
-// lane answers GENERATION_BEGIN_INVALID - a request-shape refusal that reads as
-// the author's mistake. And a read that returned null could not carry the begin
-// even if begin accepted it: the very next step re-reads the slot and requires
-// the begun run back, or refuses the journey itself (:135-136). The honest
-// answer to the whole journey stays the 501 that says this server cannot do it
-// yet.
-//
-// # import-generation:execute - refused
+// # import-generation:execute - served
 //
 // The renderer sends {handle, ordinal, task, execution?} and reads back a
-// MainGenerationExecuteReceipt (src/shared/import-generation.ts:29). It is the
-// only one of the four whose prompt is already the browser's, so the dispatch
-// half is portable; the run it dispatches is not.
+// MainGenerationExecuteReceipt (src/shared/import-generation.ts:29), and the
+// dispatch is generation:execute's own path over the run's frozen lease. The
+// reference's guards are kept: the nonce is import:<ordinal>, a gap is
+// GENERATION_IMPORT_ORDINAL_GAP, a prior attempt that did not stop is
+// GENERATION_IMPORT_PREVIOUS_ATTEMPT_INCOMPLETE, a sealed stage is
+// GENERATION_IMPORT_EFFECT_SEALED and an execution authority the import run no
+// longer holds is IMPORT_RUN_EXECUTION_STALE (electron/services/main-generation-owner.ts:1473-1496,
+// electron/services/import-generation.ts:25-38).
 //
-// The reference derives the invocation nonce as import:<ordinal>, refuses a gap
-// (GENERATION_IMPORT_ORDINAL_GAP), refuses a run whose prior attempt did not
-// stop, refuses a sealed effect and refuses an execution authority the import
-// run no longer holds (electron/services/main-generation-owner.ts:1473-1496,
-// electron/services/import-generation.ts:25-38). Every one of those guards
-// reads a run whose operation is one of three names this lane cannot open:
+// One stage stays refused, and deliberately: import-blueprints contains
+// "blueprint", so both the admission (syntheticPlanning,
+// synthetic_generation_linux.go:90, applied at :431) and the ledger (glPlanning,
+// internal/store/generation_ledger.go:492, applied at :518) refuse it as
+// GENERATION_OPERATION_UNSUPPORTED. Neither planning gate is widened here.
 //
-//   - import-blueprints contains "blueprint", so both the admission
-//     (syntheticPlanning, synthetic_generation_linux.go:90, applied at :431) and
-//     the ledger (glPlanning, internal/store/generation_ledger.go:492, applied at
-//     :518) refuse it as GENERATION_OPERATION_UNSUPPORTED.
-//   - import-global-facts and analyze-writing-style are refused by the missing
-//     importSlot key (synthetic_generation_linux.go:410,
-//     internal/store/generation_ledger.go:426), exactly like the read above.
-//
-// The import run's own stage transitions are not the gap: they are served as
-// their own names (db:import-run-advance-stage,
-// production_importrun_write_linux.go:168; db:import-run-effect-receipt-prepare
-// and -commit, production_importrun_residual_linux.go:163-164). What is missing
-// is the generation run that would consume them - and a handler installed over
-// a run that cannot exist would answer a business refusal for every request
-// instead of the one code that says the server cannot serve this name.
+// The import run's own stage transitions are served as their own names
+// (db:import-run-advance-stage, production_importrun_write_linux.go:168;
+// db:import-run-effect-receipt-prepare and -commit,
+// production_importrun_residual_linux.go:163-164), and the generation run that
+// consumes them is now the one generation:begin can open.
 //
 // # finalization-generation:execute - refused, and the previous reason was wrong
 //
@@ -171,21 +154,22 @@ const (
 	// the import family's model-executing half, registered with arity 1
 	// (electron/controllers/generation-controller.ts:246-247). The family has no
 	// begin of its own: an import run is opened by generation:begin with an
-	// importSlot selection, which is the admission this lane does not have.
+	// importSlot selection, which is the admission
+	// production_import_generation_serve_linux.go now freezes.
 	productionImportGenerationRead    = "import-generation:read"
 	productionImportGenerationExecute = "import-generation:execute"
 	// productionModelExecutingRefusalCode is the one answer the transport gives
-	// an inventoried name nobody bound (internal/transport/server.go:116). The
-	// seam table below is pinned against it rather than against a handler that
-	// could only refuse.
+	// an inventoried name nobody bound (internal/transport/server.go:116). It is
+	// what the two names answered while this file refused them, and the binder
+	// test still pins it so a future refusal cannot quietly change the code.
 	productionModelExecutingRefusalCode = "GO_OPERATION_NOT_MIGRATED"
 )
 
 // productionModelExecutingLine is one declaration that has to move before a name
 // can be served: the Go file, the line inside it, and a marker that must appear
-// somewhere on that file. TestProductionLaneRefusesImportGeneration re-reads
-// every one of them, so a deleted seam fails this lane's test instead of leaving
-// a note that points at nothing.
+// somewhere on that file. The table it belongs to is empty now; a future refusal
+// re-populates it, and TestProductionImportGenerationBinderRecord re-reads the
+// table rather than a hand-kept list.
 type productionModelExecutingLine struct {
 	Path   string
 	Line   int
@@ -207,31 +191,15 @@ func productionImportGenerationOperations() []string {
 	return []string{productionImportGenerationRead, productionImportGenerationExecute}
 }
 
-// productionImportGenerationGaps is the whole answer of this file's import half:
-// for each refused name, the exact code that has to move first.
+// productionImportGenerationGaps is the whole answer of this file's import half.
+// It is empty now: both names are served by
+// production_import_generation_serve_linux.go, which binds them beside the same
+// generation owner, so there is no declaration left that has to move first. The
+// table is kept (and asserted empty by the binder) so a name that slipped back to
+// refused without its binder would fail this lane's own test instead of
+// disappearing from the record.
 func productionImportGenerationGaps() []productionModelExecutingName {
-	return []productionModelExecutingName{
-		{
-			Operation: productionImportGenerationRead,
-			Code:      productionModelExecutingRefusalCode,
-			Missing: []productionModelExecutingLine{
-				{Path: "synthetic_generation_linux.go", Line: 386, Marker: "type syntheticSelection struct {"},
-				{Path: "synthetic_generation_linux.go", Line: 410, Marker: "allowed := map[string]bool{"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 426, Marker: "func glFamilyManifestAllowed(key, operation string) bool {"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 518, Marker: `if glPlanning(glText(manifest["operation"])) {`},
-			},
-		},
-		{
-			Operation: productionImportGenerationExecute,
-			Code:      productionModelExecutingRefusalCode,
-			Missing: []productionModelExecutingLine{
-				{Path: "synthetic_generation_linux.go", Line: 90, Marker: "func syntheticPlanning(operation string) bool {"},
-				{Path: "synthetic_generation_linux.go", Line: 431, Marker: "if syntheticPlanning(selection.Operation) {"},
-				{Path: "../../internal/store/generation_ledger.go", Line: 492, Marker: "func glPlanning(operation string) bool {"},
-				{Path: "synthetic_generation_linux.go", Line: 410, Marker: "allowed := map[string]bool{"},
-			},
-		},
-	}
+	return nil
 }
 
 // productionImportGenerationGap returns the documented missing piece for one
@@ -245,59 +213,33 @@ func productionImportGenerationGap(operation string) (productionModelExecutingNa
 	return productionModelExecutingName{}, false
 }
 
-// productionModelExecutingOperations is the two import-family names this change
-// answers. The finalization family's three names are served now by
-// production_finalization_generation_serve_linux.go, so they are not in this table
-// anymore.
-func productionModelExecutingOperations() []string {
-	return []string{productionImportGenerationRead, productionImportGenerationExecute}
-}
+// productionModelExecutingOperations and productionModelExecutingRefusal are gone
+// with the refusal they served: both import names are installed by
+// production_import_generation_serve_linux.go, and productionImportGenerationGaps
+// is the one table that still has to stay empty for this file to be honest.
 
-// productionModelExecutingGaps is the import family's seam table. The finalization
-// family moved to production_finalization_generation_serve_linux.go, which binds its
-// three names, so this table no longer lends their rows.
-func productionModelExecutingGaps() []productionModelExecutingName {
-	return productionImportGenerationGaps()
-}
-
-// productionModelExecutingRefusal returns the documented missing piece for one of
-// the four names, or false when the name is not one of them.
-func productionModelExecutingRefusal(operation string) (productionModelExecutingName, bool) {
-	for _, gap := range productionModelExecutingGaps() {
-		if gap.Operation == operation {
-			return gap, true
-		}
-	}
-	return productionModelExecutingName{}, false
-}
-
-// bindProductionImportGeneration installs the import family's model-executing
-// half. It installs nothing, and it refuses to start a lane whose refusal is
-// undocumented: both names must carry the fail-closed code and at least one
-// named missing piece, so the day one of them gains a body the table has to
-// change with it instead of silently becoming a lie.
+// bindProductionImportGeneration is the import family's entry point beside the
+// finalization binder. It installs nothing - the two names are installed by
+// production_import_generation_serve_linux.go's own binder, which needs the
+// generation owner this server-only binder does not hold - and it refuses to
+// start a lane whose record disagrees with that: the seam table must be empty and
+// every name it used to refuse must be absent from it.
 //
 // The nil-server refusal is the same one every other binder in this package
 // answers, so wiring it into production_open_linux.go cannot mask a construction
 // bug. It is reached from bindProductionFinalizationGeneration, the binder the
-// lane already calls (production_open_linux.go:702), because the four names are
-// one answer and a second unwired binder would be a note nobody runs.
+// lane already calls (production_open_linux.go:702).
 func bindProductionImportGeneration(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
+	if gaps := productionImportGenerationGaps(); len(gaps) != 0 {
+		return errors.New("PRODUCTION_IMPORT_GENERATION_SEAM_STALE")
+	}
 	for _, operation := range productionImportGenerationOperations() {
-		gap, found := productionImportGenerationGap(operation)
-		if !found || len(gap.Missing) == 0 {
+		if _, refused := productionImportGenerationGap(operation); refused {
 			return errors.New("PRODUCTION_IMPORT_GENERATION_SEAM_INCOMPLETE")
 		}
-		if gap.Code != productionModelExecutingRefusalCode {
-			return errors.New("PRODUCTION_IMPORT_GENERATION_REFUSAL_CHANGED")
-		}
 	}
-	// Nothing is bound: both names keep failing closed at
-	// GO_OPERATION_NOT_MIGRATED, exactly the answer the desktop-mirroring tests
-	// already pin for the synthetic lane
-	// (synthetic_generation_http_linux_test.go:475-479).
 	return nil
 }

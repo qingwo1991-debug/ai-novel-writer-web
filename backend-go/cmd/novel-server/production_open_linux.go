@@ -714,6 +714,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// import-generation:read/execute read and dispatch the import run opened by
+		// generation:begin with an importSlot selection, gated to the two import
+		// stages (production_import_generation_serve_linux.go).
+		if bindErr := newProductionImportGenerationServe(owner).Bind(server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 	} else {
 		log.Printf("novel-server: production generation owner unavailable (%v); generation:begin and generation:execute stay unbound", ownerErr)
 	}
