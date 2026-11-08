@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
