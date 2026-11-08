@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,30 +464,5 @@ func TestProductionKnowledgeClearAllRemovesStoreAndCopies(t *testing.T) {
 		[]any{projectPath, frozen})
 	if again["success"] != true {
 		t.Fatalf("kb:clear-all refused an already empty store: %v", again)
-	}
-}
-
-// TestProductionKnowledgeUnservedNamesStayRefused pins the one knowledge name this
-// lane still refuses. The three picker-grant imports it used to pin are served by
-// production_knowledge_uploads_linux.go now, so their absence here is the change,
-// not a regression: what remains refused is the vector backfill, because this store
-// holds no vectors to backfill and a success would be a lie.
-func TestProductionKnowledgeUnservedNamesStayRefused(t *testing.T) {
-	client, projectPath, frozen, baseline := productionKnowledgeLane(t)
-	response := client.call(t, "kb:backfill-vectors", []any{projectPath, frozen})
-	if response.Code != http.StatusNotImplemented ||
-		!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("kb:backfill-vectors answered HTTP %d %s instead of a refusal naming the missing port",
-			response.Code, response.Body.String())
-	}
-	if _, err := os.Lstat(productionKnowledgeQueryIndexPath(projectPath)); !os.IsNotExist(err) {
-		t.Fatalf("kb:backfill-vectors wrote the knowledge store: %v", err)
-	}
-	after, err := os.ReadFile(filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(after, baseline) {
-		t.Fatal("kb:backfill-vectors wrote the author database")
 	}
 }

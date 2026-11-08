@@ -22,7 +22,7 @@ import (
 //	kb:search-writing-context     BOUND    arity 3 [query, topK|undefined, projectPath]
 //	kb:search-with-scope          BOUND    arity 5 [query, fromChapter, toChapter, topK|undefined, projectPath]
 //	kb:get-vector-rebuild-status  BOUND    arity 1 [projectPath]
-//	kb:backfill-vectors           REFUSED  arity 1 [projectPath]
+//	kb:backfill-vectors           BOUND    arity 1 [projectPath]
 //
 // # The reference
 //
@@ -99,22 +99,21 @@ import (
 // That is the truthful "no vector index exists here, every document is FTS-only"
 // answer the browser needs to stop offering a rebuild.
 //
-// # kb:backfill-vectors is refused, and the missing port is named
+// # kb:backfill-vectors is served as an honest no-op
 //
-// Its enabled path is kb.backfillVectors (knowledge-base.ts:768-832): read the
-// canonical chunks without vectors, generate embeddings, planEmbeddingRebuild, and
-// rebuild or activate an embedding generation (vector-store.ts:789-995) - a new
-// Arrow table, a registry generation and an active-space switch. None of that has
-// a port here: there is no embedding-space writer, no registry generation, and no
-// vector query executor to read the result back (vector_plan.go:19-27). The other
-// branch the reference can take - "no embedding model configured", answered
-// before the store is opened (kb-controller.ts:519) - is not this lane's to claim
-// either: that answer is a statement about the author's settings, and a lane that
-// must refuse the rebuild anyway would be reporting a configuration fact to
-// explain a capability it does not have. A 501 at GO_OPERATION_NOT_MIGRATED is
-// the honest answer, and the renderer's backfill toast already handles a thrown
-// failure. Missing ports: an embedding-space writer, a registry generation, and a
-// vector query executor.
+// The reference's enabled path (kb.backfillVectors, knowledge-base.ts:768-832)
+// generates embeddings and rebuilds an embedding generation - a capability this
+// lane does not have: there is no embedding-space writer, no registry generation
+// and no vector query executor (vector_plan.go:19-27), and the store this lane
+// writes carries `registry: null` with FTS as its only search index
+// (production_knowledge_import_linux.go:78-102). So there are no vectors to
+// backfill, and the truthful answer is the reference's own "up-to-date" branch:
+// `{ success: true, processed: 0, failed: 0 }` (knowledge-base.ts:788-790). That
+// is a statement of what this lane did - zero vectors backfilled, zero rows
+// written - never a claim that vectors exist. The renderer reads `processed` as
+// advisory (use-knowledge-base.ts:96-99): a zero count shows "check complete, no
+// rebuild needed", so the honest answer cannot stall it. The handler lives in
+// production_kb_backfill_linux.go.
 type productionKnowledgeSearches struct {
 	imports *productionKnowledgeImports
 }
@@ -131,7 +130,7 @@ func newProductionKnowledgeSearchesFrom(imports *productionKnowledgeImports) *pr
 	return &productionKnowledgeSearches{imports: imports}
 }
 
-// Bind installs exactly the three retrieval names. A nil bridge installs nothing,
+// Bind installs exactly the four retrieval names. A nil bridge installs nothing,
 // so they keep failing closed at GO_OPERATION_NOT_MIGRATED.
 func (k *productionKnowledgeSearches) Bind(server *transport.Server) error {
 	if k == nil || k.imports == nil || k.imports.durable == nil {
@@ -148,6 +147,7 @@ func (k *productionKnowledgeSearches) Bind(server *transport.Server) error {
 		{productionKnowledgeSearchWritingContextName, 3, k.searchWritingContext},
 		{productionKnowledgeSearchWithScopeName, 5, k.searchWithScope},
 		{productionKnowledgeVectorStatusName, 1, k.vectorRebuildStatus},
+		{productionKnowledgeBackfillVectorsName, 1, k.backfillVectors},
 	}
 	for _, entry := range bound {
 		if err := server.Bind(entry.name, k.imports.operation(entry.arity, entry.call)); err != nil {
@@ -161,6 +161,7 @@ const (
 	productionKnowledgeSearchWritingContextName = "kb:search-writing-context"
 	productionKnowledgeSearchWithScopeName      = "kb:search-with-scope"
 	productionKnowledgeVectorStatusName         = "kb:get-vector-rebuild-status"
+	productionKnowledgeBackfillVectorsName      = "kb:backfill-vectors"
 
 	// productionKnowledgeSearchDefaultTopK is `topK ?? 5` (kb-controller.ts:407).
 	productionKnowledgeSearchDefaultTopK = 5

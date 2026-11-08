@@ -19,8 +19,8 @@ import (
 // With production_knowledge_import_linux.go (two served),
 // production_knowledge_uploads_linux.go (three served),
 // production_knowledge_documents_linux.go (five served) and
-// production_knowledge_search_linux.go (three served, one refused) it accounts
-// for every inventoried name in that family:
+// production_knowledge_search_linux.go (four served) it accounts for every
+// inventoried name in that family:
 //
 //	kb:list-documents        BOUND here  arity 1 [projectPath]
 //	kb:stats                 BOUND here  arity 1 [projectPath]
@@ -30,8 +30,7 @@ import (
 //
 // Until this file the author could put material into the knowledge base and then
 // had no served way to see it, read it back or search it: the five import-side
-// names served, kb:backfill-vectors was refused on purpose
-// (production_knowledge_search_linux.go:12-20), and all five read names here
+// names and the four search-side names were served, and all five read names here
 // answered 501 GO_OPERATION_NOT_MIGRATED.
 //
 // # The reference

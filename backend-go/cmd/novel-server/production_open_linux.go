@@ -867,8 +867,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// The three upload-shaped knowledge names. The desktop read a directory; a
 		// browser can only hand over bytes, so these consume a staged upload and write
 		// through the same import writer as kb:import-text, which keeps the snapshot the
-		// served readers already decode. kb:backfill-vectors stays unbound: there is no
-		// vector store to backfill (production_knowledge_uploads_linux.go).
+		// served readers already decode. kb:backfill-vectors is served as an honest
+		// no-op: this lane indexes by SQLite FTS and stores no vectors, so it answers
+		// processed:0 without claiming any (production_kb_backfill_linux.go).
 		func() error { return newProductionKnowledgeUploadsFrom(knowledge, uploads).Bind(server) },
 		// An avatar chosen in a browser arrives as an upload and is validated by magic
 		// bytes, never by its name or declared type

@@ -25,12 +25,11 @@ import (
 )
 
 // This file serves the three knowledge-base IMPORTS a browser can honestly
-// perform, and refuses to pretend the fourth one works.
+// perform. kb:backfill-vectors lives in production_knowledge_search_linux.go.
 //
 //	kb:import-document        arity 2  [uploadId, projectPath]
 //	kb:import-folder          arity 2  [uploadId, projectPath]
 //	kb:import-reference-text  arity 2  [uploadId, stableKey]
-//	kb:backfill-vectors       NOT BOUND - no port exists in this lane
 //
 // # Why these three were refused before, and what changed
 //
@@ -96,10 +95,6 @@ const (
 	productionKnowledgeImportFolderName   = "kb:import-folder"
 	productionKnowledgeUploadReferenceName = "kb:import-reference-text"
 
-	// productionKnowledgeBackfillVectorsName is deliberately NOT bound. It is
-	// named here so the silence in Bind is a decision with a name attached.
-	productionKnowledgeBackfillVectorsName = "kb:backfill-vectors"
-
 	// productionKnowledgeUploadFolderFiles is the reference's own file cap
 	// (MAX_SECURE_KNOWLEDGE_IMPORT_FILES, 16_384) reduced to the upload owner's
 	// bound, since a folder upload cannot carry more than that anyway.
@@ -164,9 +159,7 @@ func newProductionKnowledgeUploads(imports *productionKnowledgeImports,
 	return &productionKnowledgeUploads{imports: imports, uploads: uploads}
 }
 
-// Bind installs exactly the three names that can be honoured. kb:backfill-vectors
-// is absent on purpose: see this file's header and
-// production_knowledge_search_linux.go:12-20.
+// Bind installs exactly the three names that can be honoured.
 func (k *productionKnowledgeUploads) Bind(server *transport.Server) error {
 	if k == nil || k.imports == nil {
 		return nil

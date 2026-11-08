@@ -11,15 +11,15 @@ import (
 	"testing"
 )
 
-// This file proves the three retrieval names
+// This file proves the four retrieval names
 // production_knowledge_search_linux.go binds, over the real HTTP adapter and the
-// real frozen project session, and proves kb:backfill-vectors is still refused
-// with the store byte-identical:
+// real frozen project session:
 //
 //	kb:search-writing-context     FTS over the canonical store, reference corpus excluded
 //	kb:search-with-scope          the same retrieval restricted to a chapter range
 //	kb:get-vector-rebuild-status  a truthful "this store has no vector index" answer
-//	kb:backfill-vectors           refused: no embedding-space writer or vector executor
+//	kb:backfill-vectors           the honest zero-vector no-op, proved in
+//	                              production_kb_backfill_linux_test.go
 //
 // The exclusion arm is the one that separates this port from a naive one: the
 // store is seeded with a reference-corpus document that holds the same query term
@@ -285,7 +285,8 @@ func TestProductionKnowledgeSearchRefusesArgsOutOfContract(t *testing.T) {
 // TestProductionKnowledgeVectorStatusReportsFTSOnly proves the status answer is
 // about this store rather than a fixed refusal: an empty project answers zeros, an
 // imported store answers its real chunk count, and every chunk it holds is
-// vectorless because no vector index exists. kb:backfill-vectors stays refused.
+// vectorless because no vector index exists. kb:backfill-vectors answers the
+// honest zero-vector no-op beside it.
 func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 	client, projectPath, frozen, _ := productionKnowledgeLane(t)
 	assertStatus := func(label string, answer map[string]any, chunks int64) {
@@ -315,16 +316,18 @@ func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 	}
 	status := productionKnowledgeCall(t, client, productionKnowledgeVectorStatusName, []any{projectPath, frozen})
 	assertStatus("imported store", status, 2)
-	// The rebuild is refused, and the refusal spends nothing.
+	// The honest backfill is a zero-vector no-op, and it spends nothing.
 	indexPath := productionKnowledgeQueryIndexPath(projectPath)
 	before := productionKnowledgeQueryFileBytes(t, indexPath)
-	response := client.call(t, "kb:backfill-vectors", []any{projectPath, frozen})
-	if response.Code != http.StatusNotImplemented ||
-		!strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("kb:backfill-vectors answered HTTP %d %s instead of a refusal naming the missing port",
-			response.Code, response.Body.String())
+	backfilled := productionKnowledgeCall(t, client, productionKnowledgeBackfillVectorsName,
+		[]any{projectPath, frozen})
+	if backfilled["success"] != true {
+		t.Fatalf("kb:backfill-vectors refused instead of answering the honest no-op: %v", backfilled)
+	}
+	if processed := productionKnowledgeCount(t, backfilled["processed"]); processed != 0 {
+		t.Fatalf("kb:backfill-vectors claimed %d vectors backfilled in an FTS-only store", processed)
 	}
 	if after := productionKnowledgeQueryFileBytes(t, indexPath); !bytes.Equal(after, before) {
-		t.Fatal("a refused rebuild wrote the canonical snapshot")
+		t.Fatal("a backfill wrote the canonical snapshot")
 	}
 }

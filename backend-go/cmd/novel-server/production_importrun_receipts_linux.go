@@ -16,8 +16,8 @@ import (
 // (production_importrun_receipts_serve_linux.go), so the real lane runs the check
 // at startup instead of leaving a note that points at nothing.
 //
-//	db:import-run-effect-receipt-prepare   refused, the source proof has no owner here
-//	db:import-run-effect-receipt-commit    refused, the same proof
+//	db:import-run-effect-receipt-prepare   refused, the proof has no connection inside the receipt
+//	db:import-run-effect-receipt-commit    refused, the same proof and the same connection
 //	db:import-run-prepare-inspection       refused, the inspection store is unreachable
 //
 // # What the receipt assert actually checks
@@ -58,66 +58,73 @@ import (
 //
 // The batch asked whether steps 2 to 5 can now be built from the store's own read
 // plus generationowner.ReproduceBinding, so that prepare and commit could be
-// served. They cannot. Two of the previous refusal's claims are nevertheless false
-// and are corrected here:
+// served. They still cannot, but not for the reasons this file used to give. Both
+// premises the earlier refusal rested on are dead:
 //
-//   - Step 4's reproduction is NO LONGER missing as an implementation.
-//     internal/generationowner/binding.go:63 ReproduceBinding rebuilds a binding
-//     from the CURRENT sources under the run's own scope and epoch, and
-//     internal/generationowner/lease.go:159 ("resolveReproduce is resolve minus
-//     the live-session currency check") is the record read it uses. The
-//     source-currency half now has a Go implementation, and the live-epoch
-//     objection to it is gone.
-//   - Step 2 is NO LONGER missing as a capability either.
+//   - Step 4's reproduction exists. internal/generationowner/binding.go:63
+//     ReproduceBinding rebuilds the binding from the CURRENT sources under the
+//     run's own scope and epoch, and internal/generationowner/lease.go:164
+//     resolves its record without the live-session currency check, so the
+//     source-currency half has a Go implementation.
+//   - Step 2 is no longer a capability gap either.
 //     internal/store/character_proposal_pending.go:545 already reads
 //     "FROM generation_runs WHERE run_id=?" for a generationRunHandle taken out of
 //     an import_run_receipts payload, and :546-575 compares projectId,
 //     rootActionId, the operation and the whole {runId,stage,batchId} importSlot
-//     against that row. That is steps 2 and 3, in this package, today. The old
-//     wording - "none reads generation_runs, binding_json or an importSlot" - was
-//     only ever true of internal/store/importrun.go and
+//     against that row. The old wording - "none reads generation_runs, binding_json
+//     or an importSlot" - was only ever true of internal/store/importrun.go and
 //     internal/store/importrun_lifecycle.go.
 //
-// What is still missing is OWNERSHIP of step 4, and it is missing four times over:
+// What still blocks the pair is no longer the reproduction's implementation,
+// its inputs or the existence of a run. It is two things, and the change that
+// serves these names has to do both:
 //
-//	a. ReproduceBinding is a method on *generationowner.Registry and still
-//	   RESOLVES A LEASE RECORD from that registry's memory
-//	   (internal/generationowner/lease.go:162-163: the `r.records[id]` look-up,
-//	   MODEL_EXECUTION_LEASE_INVALID when it is absent). The
-//	   reference's rebuild needs no lease at all: it derives the receipt from the
-//	   current model profile. So ReproduceBinding is close to, but not the same
-//	   as, the reference's step 4: it can only reproduce a run whose lease this
-//	   process minted, and no lane here mints an import run's lease.
-//	b. The registry, the model-profile loader and the frozen-source readers all
-//	   belong to the one owner production_open_linux.go:591 creates as a local
-//	   variable, and that loader closes over the private model list
-//	   (production_generation_begin_linux.go:134). The receipt lane is built at
-//	   production_open_linux.go:627 with `open.durable` alone, so it reaches none
-//	   of them, and there is no second constructor to call.
-//	c. The deadlock objection is now FALSE and is retracted. The assert runs
-//	   inside the receipt's BEGIN IMMEDIATE on the single reserved connection
-//	   (internal/store/importrun_receipts.go:987 and :1005, called from
-//	   importRunImmediate, internal/store/importrun.go:948), so it must be
-//	   store-native - and store-native composition on that very connection is
-//	   proven: internal/store/character_proposal_pending.go:27-37 composes a
-//	   receipt and a projection inside one BEGIN IMMEDIATE on one reserved
-//	   connection. The blocker is not the connection; it is that a store-native
-//	   assert still has to rebuild the binding fingerprint, and that rebuild
-//	   needs the registry's model-profile loader, which is reason b, not a
-//	   second transaction.
-//	d. No import run can exist in this lane in the first place. The generation
-//	   ledger refuses the `importSlot` manifest key for EVERY operation
-//	   (internal/store/generation_ledger.go:505, with glFamilyManifestAllowed
-//	   :426 admitting graph and finalization keys only), and glPlanning (:492)
-//	   refuses an "import-blueprints" operation outright. The probe in
-//	   production_import_finalization_generation_linux_test.go:326-364 pins that
-//	   refusal for all three import operations, so the ledger's widening does NOT
-//	   cover import keys.
+//	a. WIRING. The owner is a bound identifier at the call site: the block opens
+//	   at production_open_linux.go:591 and this family's binder is constructed
+//	   from inside it at :627, with `open.durable` alone. The binder therefore
+//	   does NOT have to move into the owner block - it is already there - it has
+//	   to be HANDED the owner: one argument at :627, then one more at
+//	   production_importrun_residual_linux.go:247. The loader it needs closes
+//	   over the private model list (production_generation_begin_linux.go:133-134)
+//	   and cannot be rebuilt from a durable open. That line is in a file the pass
+//	   that wrote production_importrun_receipts_owner_linux.go may not edit, so
+//	   the shipped lane cannot be served from here - and an owner-bound binder no
+//	   lane constructs is the dead code production_importrun_residual_linux.go
+//	   refuses to publish.
+//	b. THE CONNECTION. The assert runs inside the receipt's BEGIN IMMEDIATE on
+//	   the author database's only connection
+//	   (internal/store/importrun_receipts.go:987 and :1005, from
+//	   importRunImmediate at internal/store/importrun.go:948;
+//	   internal/projectfs/author_linux.go:121 opens the pool with
+//	   SetMaxOpenConns(1)). The reference may read there because its owner is a
+//	   synchronous dispatcher over that same connection, and the controller
+//	   refuses the call unless the database is already in a transaction
+//	   (electron/controllers/generation-controller.ts:74). A Go callback has no
+//	   such access: the type at internal/store/importrun_receipts.go:118 carries
+//	   (handle, slot) and nothing else, so its first read - requireRun's, at
+//	   electron/services/main-generation-owner.ts:1454 - waits for the connection
+//	   the transaction is holding. internal/store/character_proposal_pending.go:37
+//	   already names that shape: a deadlock rather than a proof. Store-native
+//	   composition of a receipt and a projection on that connection is proven
+//	   (:27-37), but a fingerprint reproduction is not a projection: it needs the
+//	   run's binding_json, its root's status and its stopped attempts' artifacts,
+//	   and the store hands none of them to the callback.
 //
-// Step 3's other half is missing for the same reason as step 4:
-// electron/services/import-generation-source.ts:20 captureImportGenerationContext,
-// the only builder of the frozen import context the manifest comparison covers,
-// has no Go counterpart in this module.
+// The third premise - that no import-bound generation run can exist - is dead as
+// well. The ledger admits importSlot, importSlotKey and importContext for the two
+// stage operations (internal/store/generation_ledger.go's glFamilyManifestAllowed
+// import case), generation:begin freezes all three
+// (production_import_generation_serve_linux.go:288 and :429), and the probe at
+// production_import_finalization_generation_linux_test.go:326-364 now asserts that
+// acceptance instead of a refusal.
+// production_importrun_receipts_owner_linux_test.go begins such a run through the
+// frozen session and reads its manifest back.
+//
+// Step 3's other half is not missing either:
+// electron/services/import-generation-source.ts:20 captureImportGenerationContext
+// is productionImportGenerationFreeze
+// (production_import_generation_serve_linux.go:429), which freezes the slot, its
+// key and the context together and refuses a slot the import run no longer owns.
 //
 // # What the store's own live-run read does supply
 //
@@ -142,8 +149,9 @@ import (
 // epoch with a live epoch supplied by a generation owner and checks the root is
 // not cancelled; its own comment says the rebuildBinding comparison is out of
 // scope. It is bound to the draft lane's bpRun, not to an import-effect handle,
-// and this lane has no owner from which to obtain a live epoch. Copying it here
-// would prove less than the reference while pretending to prove the same thing.
+// and this lane is never handed an owner to obtain a live epoch from. Copying it
+// here would prove less than the reference while pretending to prove the same
+// thing.
 //
 // # Why nil, fail-closed and a database-only proof are all wrong answers
 //
@@ -223,9 +231,9 @@ import (
 // or a duplicate/foreign name, and when the table disagrees with the serve
 // decision table (a refused name with no decision, or a name still listed here
 // while the decision says it is served).
-// production_importrun_residual_linux.go:212-224 installs the four served names
+// production_importrun_residual_linux.go:229-249 installs the four served names
 // and then calls this binder, so the check runs inside the real lane. The served
-// count is unchanged at 261 because no name here is bound; the db family's
+// count is unchanged at 273 because no name here is bound; the db family's
 // residual table (production_db_residual_linux.go:153-215) still names the same
 // three, and the count pin (production_served_count_linux_test.go:24) is
 // deliberately untouched.
@@ -286,7 +294,7 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     4,
 			PathIndex: 2,
 			Gate:      "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED",
-			Port:      "the source proof has no owner: the assert runs store-side on the receipt's one reserved BEGIN IMMEDIATE connection (character_proposal_pending.go proves the store composes a receipt and a projection there), but the fingerprint rebuild needs the generation registry's model-profile loader, which this lane is not given",
+			Port:      "the proof has no connection: the assert is invoked inside the receipt's BEGIN IMMEDIATE, which holds the author database's only connection, and the callback type at importrun_receipts.go:118 carries neither a connection nor the run it must read; the owner that would supply the model-profile revision is in scope at the binder's call site but is not passed to it",
 			Missing: []productionImportRunReceiptLine{
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 118, "type ImportRunGenerationSourceAssert func(handle any, slot ImportRunGenerationSlot) error"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 984, "GENERATION_IMPORT_EFFECT_HANDLE_REQUIRED"),
@@ -300,12 +308,9 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 				productionImportRunReceiptLineOf("../../internal/generationowner/binding.go", 63, "func (r *Registry) ReproduceBinding("),
 				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 159, "// resolveReproduce is resolve minus the live-session currency check."),
 				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 163, "MODEL_EXECUTION_LEASE_INVALID"),
-				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 505, `"importSlot"`),
-				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 514, `if !glFamilyManifestAllowed(key, glText(manifest["operation"]))`),
 				productionImportRunReceiptLineOf("production_open_linux.go", 627, "newProductionImportRunResiduals(open.durable).Bind(server)"),
 				productionImportRunReceiptLineOf("production_open_linux.go", 591, "if owner, ownerErr := newProductionGeneration(open, server, config.Dispatch); ownerErr == nil {"),
 				productionImportRunReceiptLineOf("production_generation_begin_linux.go", 134, "records, err := config.ListPrivateModels()"),
-				productionImportRunReceiptLineOf("../../../electron/services/import-generation-source.ts", 20, "captureImportGenerationContext"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 425, "prepareEffectReceipt(request, execution, Date.now(), assertImportGenerationSourcesCurrent)"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/generation-controller.ts", 72, "assertImportGenerationSourcesCurrent(handle: MainGenerationRunHandle"),
 				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1453, "assertImportGenerationSources: (handle: MainGenerationRunHandle"),
@@ -319,7 +324,7 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 			Arity:     6,
 			PathIndex: 4,
 			Gate:      "GENERATION_GUARD_REQUIRED",
-			Port:      "the same unowned proof: a handle-carrying prepared receipt is refused without it, and only an already committed row replays before it",
+			Port:      "the same proof and the same connection: a handle-carrying prepared receipt is refused without it, and only an already committed row replays before it",
 			Missing: []productionImportRunReceiptLine{
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1260, "execution ImportRunExecution, assertSources ImportRunGenerationSourceAssert"),
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1004, "GENERATION_GUARD_REQUIRED"),
@@ -328,7 +333,6 @@ func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
 				productionImportRunReceiptLineOf("../../internal/store/importrun_receipts.go", 1095, "return nil, ErrImportRunReceiptKindUnbound"),
 				productionImportRunReceiptLineOf("../../internal/generationowner/binding.go", 63, "func (r *Registry) ReproduceBinding("),
 				productionImportRunReceiptLineOf("../../internal/generationowner/lease.go", 163, "MODEL_EXECUTION_LEASE_INVALID"),
-				productionImportRunReceiptLineOf("../../internal/store/generation_ledger.go", 505, `"importSlot"`),
 				productionImportRunReceiptLineOf("production_open_linux.go", 627, "newProductionImportRunResiduals(open.durable).Bind(server)"),
 				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 437, "(handle, slot) => assertImportGenerationSourcesCurrent(handle, slot, true)"),
 				productionImportRunReceiptLineOf("../../../electron/services/main-generation-owner.ts", 1471, "GENERATION_IMPORT_EFFECT_SOURCE_CHANGED"),

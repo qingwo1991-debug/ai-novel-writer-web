@@ -75,21 +75,41 @@ import (
 // handle row and its importSlot (internal/store/character_proposal_pending.go:545-575,
 // which then stops at ErrCharacterProposalPendingProofUnavailable), and
 // generationowner.ReproduceBinding (internal/generationowner/binding.go:63) rebuilds
-// a binding from the current sources without the live-session currency check. What
-// this lane does not have is the OWNER those two belong to: the registry that holds
-// the model lease record ReproduceBinding still resolves
-// (internal/generationowner/lease.go:162-163), the private-model loader and the
-// frozen-source readers. All of them live on the one owner
-// production_open_linux.go:591 creates as a local variable, and this adapter is
-// built with open.durable alone (:627). The deadlock objection is now FALSE and
-// retracted: the assert is invoked inside the receipt's own BEGIN IMMEDIATE on
-// the single reserved connection (importrun_receipts.go:987, :1005 ->
-// importrun.go:948), so it must be store-native - and store-native composition on
-// that connection is proven (internal/store/character_proposal_pending.go:27-37
-// composes a receipt and a projection inside one BEGIN IMMEDIATE). The blocker is
-// not the connection; it is that a store-native assert still has to rebuild the
-// binding fingerprint, and that rebuild needs the owner's model-profile loader
-// this adapter is not given. The unexported
+// a binding from the current sources without the live-session currency check. Two
+// things still block the pair, and neither is a capability gap:
+//
+//   - THE WIRING. The owner the reproduction needs - the registry that holds the
+//     model lease record ReproduceBinding resolves
+//     (internal/generationowner/lease.go:164), its private-model loader
+//     (production_generation_begin_linux.go:133-134) and its source readers - is
+//     created at production_open_linux.go:591, and this adapter is constructed
+//     from INSIDE that block (:627). So the binders do not have to move into the
+//     owner block; they have to be HANDED the owner: one argument at :627, then
+//     one at production_importrun_residual_linux.go:247. That line is in a file
+//     the pass that wrote production_importrun_receipts_owner_linux.go may not
+//     edit, which is why the shipped lane still cannot be served from here.
+//   - THE CONNECTION. The assert is invoked inside the receipt's own BEGIN
+//     IMMEDIATE, which holds the author database's only connection
+//     (importrun_receipts.go:987 and :1005 -> importrun.go:948;
+//     internal/projectfs/author_linux.go:121 opens that pool with
+//     SetMaxOpenConns(1)), and the callback type (importrun_receipts.go:118)
+//     carries neither a connection nor the run. The store's own comment calls a
+//     prover that takes a second connection a deadlock rather than a proof
+//     (internal/store/character_proposal_pending.go:37), and the reference's
+//     FIRST step - requireRun's read - is exactly that read
+//     (main-generation-owner.ts:1454). Store-native composition of a receipt and
+//     a projection on that connection is proven (:27-37); a binding reproduction
+//     is not a projection.
+//
+// The earlier version of this paragraph retracted the deadlock objection and
+// blamed the missing loader alone. The retraction was wrong: the deadlock is real
+// for every callback this store calls. What is NOT a problem is the source read
+// itself - an import stage freezes prompt refs only
+// (production_import_generation_serve_linux.go:133-168) and their reader is
+// synthetic (cmd/novel-server/synthetic_generation_linux.go:657), so the
+// reproduction touches no table. The one read it does need is the generation run,
+// and production_importrun_receipts_owner_linux.go records the store change that
+// would hand it over. The unexported
 // dcAssertSources (internal/store/draft_commit_tx.go:272-288) is not a substitute
 // either: it proves a draft-commit epoch and root, not an import-effect handle, and
 // is bound to the draft lane's own run row.

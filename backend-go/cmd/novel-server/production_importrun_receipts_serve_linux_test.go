@@ -13,11 +13,10 @@ import (
 // inspection name, and they prove two things the seam file's own test does not:
 // that the refusal bodies are byte-identical across the live, stale and foreign
 // request shapes (the authority matrix the batch asks for, inverted to the
-// refused answer), and that the claim this pass retested - the deadlock objection
-// is FALSE because the store already composes a receipt and a projection on one
-// reserved BEGIN IMMEDIATE connection - and the surviving claim (the fingerprint
-// rebuild needs the registry's model-profile loader) are real declarations, not
-// prose.
+// refused answer), and that the declarations the decision rests on are real.
+// production_importrun_receipts_owner_linux.go records which of them still
+// decide the answer: the one connection the receipt transaction holds, and the
+// owner argument the binder is still not given.
 //
 // There is deliberately no success subtest and no replay-as-success subtest: no
 // name here is bound, so no request can reach a handler. The reference's own
@@ -124,14 +123,13 @@ func TestProductionImportRunReceiptRefusalsAreByteIdentical(t *testing.T) {
 		"the three byte-identical refusals")
 }
 
-// TestProductionImportRunReceiptServeProofMarkers re-reads the declarations this
-// pass's correction rests on. It does not duplicate the seam table's own marker
-// walk; it pins the new evidence: the store composes a receipt and a projection on
-// one reserved BEGIN IMMEDIATE connection (so the deadlock objection is false),
-// and the surviving reason - the fingerprint rebuild needs the registry's
-// model-profile loader - is still real. It also pins that ReproduceBinding exists
-// but still resolves a registry lease record, the reference's requireRun has no
-// live-epoch check for this assert, and the served picker still drops the preview CAS.
+// TestProductionImportRunReceiptServeProofMarkers re-reads the declarations the
+// serve decision quotes. It does not duplicate the seam table's own marker walk;
+// it pins that the store composes a receipt and a projection on one reserved
+// BEGIN IMMEDIATE connection, that the callback type carries no connection, that
+// the registry lease record ReproduceBinding resolves is still real, that the
+// reference's requireRun has no live-epoch check for this assert, and that the
+// served picker still drops the preview CAS.
 func TestProductionImportRunReceiptServeProofMarkers(t *testing.T) {
 	markers := []struct {
 		path   string

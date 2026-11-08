@@ -29,12 +29,11 @@ import (
 // knowledgedomain and searches it with the same knowledgequery capture a served
 // kb:search builds.
 //
-// The four names under test:
+// The three names under test:
 //
 //	kb:import-document        bound, arity 2
 //	kb:import-folder          bound, arity 2
 //	kb:import-reference-text  bound, arity 2 (the browser's shape)
-//	kb:backfill-vectors       NOT bound, and proved to stay that way
 
 const (
 	// productionKnowledgeUploadNonce opens the one project session these tests use.
@@ -448,7 +447,7 @@ func TestProductionKnowledgeImportUploadRefusalsWriteNothing(t *testing.T) {
 // TestProductionKnowledgeUploadNamesWithoutAnOwner is the honest refusal this
 // process gives while the lane installs no upload route: all three names are
 // served, and each names the port it is missing instead of answering a fake
-// success. kb:backfill-vectors, which has no port at all, is not bound.
+// success.
 func TestProductionKnowledgeUploadNamesWithoutAnOwner(t *testing.T) {
 	lane := newProductionKnowledgeUploadTestLane(t, nil)
 	tree := productionKnowledgeUploadTestTree(t, lane.projectPath)
@@ -465,21 +464,6 @@ func TestProductionKnowledgeUploadNamesWithoutAnOwner(t *testing.T) {
 	}
 	if after := productionKnowledgeUploadTestTree(t, lane.projectPath); string(after) != string(tree) {
 		t.Fatal("an unowned seam changed the project tree")
-	}
-}
-
-// TestProductionKnowledgeBackfillVectorsStaysUnbound proves the fourth name is
-// refused at the transport, never answered with a successful no-op: this lane has
-// no embedding-space writer, no embedding client and no vector executor, so a
-// 200 here would be a lie about the author's store.
-func TestProductionKnowledgeBackfillVectorsStaysUnbound(t *testing.T) {
-	lane := newProductionKnowledgeUploadTestLane(t, newProductionPickerFixtureUploads())
-	response := lane.author.call(t, productionKnowledgeBackfillVectorsName, []any{lane.frozen})
-	if response.Code != http.StatusNotImplemented {
-		t.Fatalf("kb:backfill-vectors answered %d %s", response.Code, response.Body.String())
-	}
-	if !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("kb:backfill-vectors was not refused as unbound: %s", response.Body.String())
 	}
 }
 
