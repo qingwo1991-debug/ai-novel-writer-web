@@ -763,8 +763,7 @@ func productionEditorInlineJSON(value any) (string, error) {
 		return "", err
 	}
 	// json.Encoder.Encode appends a newline that json.Marshal does not.
-	return strings.TrimSuffix(buffer.String(), "
-"), nil
+	return strings.TrimSuffix(buffer.String(), "\n"), nil
 }
 
 // productionEditorInlineStringArray renders a string list in its own order.
