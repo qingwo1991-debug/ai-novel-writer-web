@@ -203,9 +203,8 @@ func productionImportGenerationSeed(t *testing.T, projectPath string) {
 	} {
 		if _, err := db.Exec(`INSERT INTO import_runs (id, purpose, root_run_id, effect_namespace,
  source_fingerprint, manifest_fingerprint, locale, stage, status, execution_owner, execution_epoch,
- lease_expires_at, total_chapters, manifest_chapter_count, manifest_word_count, corpus_kind, state,
- cancel_requested)
- VALUES (?, 'reference', ?, ?, ?, ?, 'zh-CN', ?, 'running', ?, ?, ?, ?, ?, ?, 'reference', 'committed', 0)`,
+ lease_expires_at, total_chapters, manifest_chapter_count, manifest_word_count, cancel_requested)
+ VALUES (?, 'reference', ?, ?, ?, ?, 'zh-CN', ?, 'running', ?, ?, ?, ?, ?, ?, 0)`,
 			run.id, run.id+"-root", "import:"+run.id,
 			strings.Repeat("a", 64), productionImportGenerationManifestFingerprint,
 			run.stage, productionImportGenerationExecutionOwner, productionImportGenerationExecutionEpoch,
