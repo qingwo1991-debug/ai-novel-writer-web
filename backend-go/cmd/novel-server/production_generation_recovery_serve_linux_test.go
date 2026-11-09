@@ -102,16 +102,22 @@ func TestProductionGenerationRecoveryServePieceEvidence(t *testing.T) {
 }
 
 // productionRecoveryServeReadsContinuation reports whether one Go source names
-// both the frozen effect bag and the planner continuation outside a line comment -
-// the shape a reader of that receipt has to have.
+// both the frozen effect bag and the planner continuation in code, not in a line
+// comment. The two tokens need not share a line: the reader reads the effect bag
+// and then the receipt key inside it, so each appears on its own line.
 func productionRecoveryServeReadsContinuation(source string) bool {
+	effectBag := false
+	receipt := false
 	for _, line := range strings.Split(source, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "//") {
 			continue
 		}
-		if strings.Contains(line, "$runEffects") && strings.Contains(line, "planningContinuation") {
-			return true
+		if strings.Contains(line, "$runEffects") {
+			effectBag = true
+		}
+		if strings.Contains(line, "planningContinuation") {
+			receipt = true
 		}
 	}
-	return false
+	return effectBag && receipt
 }

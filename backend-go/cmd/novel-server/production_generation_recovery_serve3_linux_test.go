@@ -14,12 +14,11 @@ import (
 
 // This file proves the two now-served recovery names over real HTTP. The first
 // test seeds an editors run and a batches run so both real buckets are non-empty,
-// pins the three empty buckets and partial=false, and pins find-blueprint-recovery
-// at null even though the project holds a directory run - which is what proves the
-// planner-continuation reader really read the stored binding rather than returning
-// a constant. The second test stamps a valid planning continuation and watches
-// find-blueprint-recovery refuse instead of answering null, so the reader's proof
-// is exercised, not assumed.
+// pins the three empty buckets and partial=false, and pins the reference's
+// writeState:'unavailable' answer for the retired directory run the batch seed
+// writes. The second test pins the honest null answer and the byte-identical
+// refusals, and the third stamps a valid planning continuation to prove the reader
+// really reads the stored binding rather than returning a constant.
 
 // productionRecoveryServe3ListView is GenerationRecoveryList
 // (src/shared/generation-owner-contract.ts:254-262) as the browser reads it.
@@ -86,9 +85,12 @@ func productionRecoveryServe3StampContinuation(t *testing.T, database, sourceRoo
 	productionEditorCheckpoint(t, db, database)
 }
 
-// TestProductionGenerationRecoveryServe3ListAndFind is the served answer for a
-// project that really holds an editors run and a batches run.
-func TestProductionGenerationRecoveryServe3ListAndFind(t *testing.T) {
+// TestProductionGenerationRecoveryServe3ListBucketsAndRetired is the served list
+// answer for a project that really holds an editors run and a batches run. The
+// batch seed also writes a retired chapter-blueprint-directory run, so
+// find-blueprint-recovery answers the reference's writeState:'unavailable' branch
+// (main-generation-owner.ts:935-937) instead of null.
+func TestProductionGenerationRecoveryServe3ListBucketsAndRetired(t *testing.T) {
 	lane := productionRecoveryOpen(t, func(t *testing.T, database string) {
 		seedProductionBatch(t, database)
 		productionRecoveryServe3SeedEditor(t, database)
@@ -113,17 +115,44 @@ func TestProductionGenerationRecoveryServe3ListAndFind(t *testing.T) {
 		t.Fatal("the batches bucket is empty although the project holds a batch root")
 	}
 
-	// find-blueprint-recovery answers null even though the batch seed wrote a
-	// chapter-blueprint-directory run: the reader read its binding and reported
-	// the continuation absent.
+	// The retired directory run the batch seed writes is answered, not skipped:
+	// find returns the unavailable context the reference builds at :935-937.
+	var context map[string]any
+	lane.client.decode(t, productionGenerationRecoveryFind, []any{lane.frozen}, &context)
+	blueprint, _ := context["blueprintRecovery"].(map[string]any)
+	if blueprint == nil || blueprint["writeState"] != "unavailable" {
+		t.Fatalf("find-blueprint-recovery did not answer the retired run as unavailable: %v", context)
+	}
+	diagnostic, _ := blueprint["diagnostic"].(map[string]any)
+	if diagnostic == nil || diagnostic["kind"] != "retired" || diagnostic["code"] != "GENERATION_BLUEPRINTS_CLEARED" {
+		t.Fatalf("the unavailable context carried the wrong diagnostic: %v", blueprint)
+	}
+}
+
+// TestProductionGenerationRecoveryServe3FindNullAndRefusals is the honest null
+// arm: a project with a readable directory run, no planning continuation and no
+// retired run answers null, and both names refuse a foreign project and a stale
+// lease with byte-identical bodies.
+func TestProductionGenerationRecoveryServe3FindNullAndRefusals(t *testing.T) {
+	lane := productionRecoveryOpen(t, func(t *testing.T, database string) {
+		productionRecoverySeedDirectory(t, database, []productionRecoveryDirectorySeed{{
+			RunID:       productionRecoveryResumableRun,
+			RootID:      productionRecoveryResumableRoot,
+			ProjectID:   productionEditorProjectID,
+			OperationID: productionRecoveryResumableOperation,
+			Requested:   productionRecoveryRangeView{StartChapter: 1, EndChapter: 3},
+			Committed:   productionRecoveryRangeView{StartChapter: 1, EndChapter: 2},
+		}})
+	})
+
+	// The reader really read the seeded run's stored binding and reported the
+	// continuation absent, so find answers the reference's own null.
 	var find any
 	lane.client.decode(t, productionGenerationRecoveryFind, []any{lane.frozen}, &find)
 	if find != nil {
 		t.Fatalf("find-blueprint-recovery answered %v, want null", find)
 	}
 
-	// The two names share one fence: a foreign project and a stale lease refuse
-	// with byte-identical bodies across the names.
 	shapes := map[string]map[string]any{
 		"foreign": {"projectId": productionRecoveryForeignProject, "projectPath": lane.projectPath, "leaseId": lane.frozen["leaseId"]},
 		"stale":   {"projectId": lane.frozen["projectId"], "projectPath": lane.projectPath, "leaseId": productionRecoveryServeStaleLease},
