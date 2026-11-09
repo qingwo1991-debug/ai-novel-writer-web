@@ -162,6 +162,12 @@ const (
 	productionProjectCreateRosterInsert = `INSERT INTO character_roster_meta
 		(id, schema_version, revision, migration_state, legacy_markdown, projection_hash, fact_hash)
 		VALUES ('main', 1, 0, 'empty', '', '', '')`
+	// productionProjectCreateContinuityInsert seeds the story-continuity singleton
+	// the desktop's baseline schema seeds in the same statement as its table
+	// (electron/migrations/baseline-schema.ts:614, INSERT OR IGNORE INTO
+	// continuity_projection_meta (id) VALUES ('main')). generation and the stale
+	// watermark stay on their column defaults (0 and NULL).
+	productionProjectCreateContinuityInsert = `INSERT INTO continuity_projection_meta (id) VALUES ('main')`
 	// Refusal and warning codes. Every refusal code the browser already knows is
 	// spelled exactly as the reference throws it
 	// (electron/services/project-access.ts, src/i18n/app-errors.ts:12-52).
@@ -654,6 +660,12 @@ func productionProjectCreateDatabase(ctx context.Context, storage, name string, 
 	// the pinned v7 asset ships the table without the row, and the roster read
 	// refuses a project whose main row is missing.
 	if _, err = tx.ExecContext(ctx, productionProjectCreateRosterInsert); err != nil {
+		return err
+	}
+	// The continuity singleton, for the same reason: the exported v7 asset is DDL
+	// only, and the summary/finalization/character-projection reads join on its
+	// main row.
+	if _, err = tx.ExecContext(ctx, productionProjectCreateContinuityInsert); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
