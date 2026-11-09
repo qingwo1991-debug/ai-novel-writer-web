@@ -402,7 +402,7 @@ export function ModelForm({
           </p>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
             <button type="button" onClick={() => void openModelProviderResource('siliconflow-invite', text)} className="text-[var(--color-accent)] hover:underline">
-              {text('邀请注册链接', 'Invitation registration link')}
+              {text('注册链接', 'Registration link')}
             </button>
             <button type="button" onClick={() => void openModelProviderResource('siliconflow-console', text)} className="text-[var(--color-accent)] hover:underline">
               {text('官方控制台', 'Official console')}

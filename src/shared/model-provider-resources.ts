@@ -1,6 +1,7 @@
 /** Fixed external destinations shown in model-provider settings. */
 export const MODEL_PROVIDER_RESOURCE_URLS = {
-  'siliconflow-invite': 'https://cloud.siliconflow.cn/i/klFgdwZa',
+  // No referral/invitation code: a clean, unaffiliated sign-up destination.
+  'siliconflow-invite': 'https://cloud.siliconflow.cn',
   'siliconflow-console': 'https://cloud.siliconflow.cn',
   'siliconflow-docs': 'https://docs.siliconflow.cn',
 } as const
