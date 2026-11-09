@@ -1,14 +1,12 @@
-# AI Novel Writer — 原生浏览器 Web 重构
+# AI Novel Writer — 浏览器版（Go 后端）
 
-> 本仓库是基于 [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer) 的独立修改版，保留上游 GPL-3.0 许可证与归属。原生版复用完整写作业务与 React/CodeMirror 界面，以纯 Node 网关和项目 worker 运行，**不使用 Electron、VNC 或浏览器远程桌面**。
+> 本仓库是基于 [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer) 的独立修改版，保留上游 GPL-3.0 许可证与归属。浏览器版复用完整写作业务与 React/CodeMirror 界面，后端已迁移为**单个 Go 静态二进制**（`backend-go/`），运行时不启动 Node、Electron、VNC 或远程桌面，用浏览器访问即可写作。
 >
-> - **云端构建 / GHCR 镜像**：[GitHub Actions 指南](docker/README.github.md)、[首次构建发布结果](web/GITHUB-IMAGE-ACCEPTANCE.md)
-> - **服务器部署、认证、备份与回滚**：[原生 Web 运维指南](docker/README.web.md)、[正式切换记录与用户验收](web/PRODUCTION-CUTOVER.md)
-> - **实现与验收边界**：[迁移说明](web/MIGRATION-NOTES.md)、[逐项功能矩阵](web/FEATURE-MATRIX.md)、[浏览器验收证据](web/BROWSER-ACCEPTANCE.md)
+> - **实现状态**：`web/operations.json` 的 **281 个公共操作已全部由 Go 后端提供**（构建断言 `productionServedOperations = 281`，CI 全绿），含写作闭环、40 章导入、审阅修订、定稿、角色提案、Agent 工具循环、知识库、备份/归档、Skills/MCP 等。
+> - **部署**：见下方「[部署（Docker）](#部署docker)」。生产用 nginx 网关做 Basic Auth 并注入 `X-Novel-User`，Go 服务只监听回环，不直接暴露到局域网。
+> - **架构与边界**：[浏览器版计划](web/GO-BROWSER-PLAN.md)、[架构说明](web/ARCHITECTURE.md)、[逐项功能矩阵](web/FEATURE-MATRIX.md)、[浏览器验收证据](web/BROWSER-ACCEPTANCE.md)。
 > - 作品、数据库和模型凭据保存在服务器数据卷中，不进入 Git 或镜像。工作流运行时需保持页面打开；当前为共享作者书库，不是多租户服务。
-> - 原生入口使用 `Dockerfile.web`，旧 `Dockerfile` / 桌面安装包及下方上游说明不代表原生 Web 安装步骤。上游桌面工作流保存在 `.github/upstream-workflows/` 供参考，不自动执行。
->
-> 以下保留上游产品介绍、截图及桌面使用说明；它们不是本修改版的全功能验收声明。
+> - 上游桌面安装包和下方上游产品介绍保留用于溯源，**不代表本修改版的安装步骤或功能全量声明**。
 
 ---
 
@@ -167,32 +165,29 @@ API Key：  可以留空；界面要求时填任意占位值
 
 向量模型也用 `/v1` 地址。不要填 `http://127.0.0.1:11434/api`，那是 Ollama 的原生接口。
 
-## 下载与安装
+## 部署（Docker）
 
-请只从 [GitHub Releases](https://github.com/EthanYoQ/AI-Novel-Writer/releases/latest) 下载正式安装包。
+生产部署由两部分组成，都写在 `docker-compose.yml` 里：
 
-### Windows x64
+| 容器 | 作用 | 端口 |
+| --- | --- | --- |
+| `ai-novel-writer-web` | Go 静态二进制，服务 React 前端 + 281 个操作 | 只发布 `127.0.0.1:6081` |
+| `ai-novel-writer-gateway` | nginx：Basic Auth，注入 `X-Novel-User` | `8093`（HTTP）、`8445`（HTTPS） |
 
-```text
-ai-novel-writer-setup-<版本号>.exe
+Go 服务把身份校验委托给网关：`security.Authenticate` 只认网关写入的 `X-Novel-User`，因此**不要把 6081 直接暴露到局域网**。浏览器访问 `http://<服务器>:8093`（或 `https://<服务器>:8445`），用网关的 Basic Auth 账号登录。
+
+数据卷挂载 `NOVEL_DATA_ROOT`（默认 `/data`），里面是作者书库、全局配置和各个 SQLite 数据库；进程启动时持有独占写租约（flock），同一数据根目录只允许一个服务实例。
+
+```sh
+# 构建镜像（Go 编译 + 前端 Vite + 容器冒烟都在 GitHub Actions 完成）
+docker build --file Dockerfile.go --tag novel-go:migration-ci .
+
+# 启动
+docker compose up -d ai-novel-writer-web ai-novel-writer-gateway
+docker inspect --format '{{.State.Health.Status}}' ai-novel-writer-web   # healthy
 ```
 
-1. 运行安装程序。升级时安装程序只更新应用本身，不会删除作品、角色卡或设置。重要作品仍建议先备份。
-2. 安装后，应用可以在「设置 → 关于与更新」里检查更新。发现新版本时先提示你，你点「下载更新」后才开始下载，下载完再选择立即重启更新或稍后。
-3. 旧版便携 ZIP 不能自动获得更新器，需要手动安装一次正式安装包。
-
-当前安装程序未进行代码签名。Windows 可能提示未知发布者。请确认下载页面是本项目的官方 GitHub Release 后再继续。
-
-### macOS（Apple Silicon 与 Intel）
-
-```text
-ai-novel-writer-mac-arm64-<版本号>-installer.dmg
-ai-novel-writer-mac-x64-<版本号>-installer.dmg
-```
-
-1. `arm64` 适用于 Apple Silicon Mac（M1、M2、M3、M4 等）。`x64` 适用于 Intel Mac。
-2. 把 DMG 里的应用拖进「应用程序」文件夹后启动。应用会提示新版本，但不会在 macOS 上自动下载或替换程序。更新时打开官方 Release 页面，手动下载对应架构的安装包。
-3. 两个安装包均为 ad-hoc 签名，且均未使用 Developer ID 签名或公证。Gatekeeper 阻止打开时，先确认来源是本项目的官方 GitHub Release，再在 Finder 里按住 Control 点按应用并选择「打开」，或在「系统设置 → 隐私与安全性」里允许打开。
+`compose.go.yaml` 是只含 Go 服务的最小 compose；生产可以直接把它并入现有的 `docker-compose.yml`。回滚 = 换回旧镜像 tag 或恢复 compose 备份，作者数据目录不受影响。
 
 ## 数据与隐私
 
@@ -203,8 +198,8 @@ ai-novel-writer-mac-x64-<版本号>-installer.dmg
 | 导入的参考资料 | 留在本地作品里，除非你把它发给云端模型。 |
 | 本地模型请求 | 发给你配置的本机或局域网推理服务。 |
 | 云端模型请求 | 提示词和上下文发给你选择的服务商。 |
-| 模型配置与 API Key | 保存在本机应用数据目录的 `ai-novel-writer` 文件夹里（Windows 为 `%APPDATA%\ai-novel-writer`，macOS 为 `~/Library/Application Support/ai-novel-writer`）。请保护好系统账户，不要分享这个文件夹。 |
-| 应用偏好 | 与模型配置在同一个文件夹里。 |
+| 模型配置与 API Key | 保存在服务器 `NOVEL_DATA_ROOT/config/ai-novel-writer` 的全局配置里，由 Go 服务读取；API Key 以可信后端存储，不进入请求回包。请保护好服务器账户和数据卷。 |
+| 应用偏好 | 与模型配置在同一个全局配置里，由浏览器渲染进程读取。 |
 
 早期版本把配置存在 `~/.vela`。新版本启动时会把它复制到上面的文件夹，原目录不改动。
 
@@ -247,16 +242,19 @@ Windows 安装包未签名，Mac 安装包只有 ad-hoc 签名、没有经过 Ap
 
 ## 从源码构建
 
-需要 Node.js 22.14 以上和仓库指定版本的 pnpm。
+需要 Go 1.26+、Node.js 22.14+ 和仓库指定版本的 pnpm（只用于构建前端）。
 
 ```sh
-git clone https://github.com/EthanYoQ/AI-Novel-Writer.git
-cd AI-Novel-Writer
+git clone https://github.com/qingwo1991-debug/ai-novel-writer-web.git
+cd ai-novel-writer-web
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm run build                         # React 前端 -> dist-web
+cd backend-go
+go build ./cmd/novel-server            # 单个静态二进制
+./novel-server -listen 127.0.0.1:16082 -static-dir ../dist-web -policy ../web/operations.json
 ```
 
-正式安装包由 GitHub Actions 云端构建。Windows x64、macOS Apple Silicon 和 macOS Intel 三个安装包各自通过资格检查后，才进入同一个 GitHub Release。文档权威层级、ADR 和开发规则见 [`docs/README.md`](docs/README.md)。
+正式镜像由 GitHub Actions 云端构建（Go 编译 + 前端 Vite + 容器冒烟测试），本地不需要 Go 工具链也能部署。文档权威层级、ADR 和开发规则见 [`docs/README.md`](docs/README.md)。
 
 ## 参与贡献
 

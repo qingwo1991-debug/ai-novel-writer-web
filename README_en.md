@@ -1,10 +1,12 @@
-# AI Novel Writer — Native Browser Web Derivative
+# AI Novel Writer — Browser Edition (Go backend)
 
-> This is an independent modified version of [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer), retaining upstream attribution and GPL-3.0. The native Web runtime reuses the writing UI/domain and runs a Node gateway with project-isolated workers — **no Electron or VNC at runtime**.
+> This is an independent modified version of [EthanYoQ/AI-Novel-Writer](https://github.com/EthanYoQ/AI-Novel-Writer), retaining upstream attribution and GPL-3.0. The browser edition reuses the writing UI/domain and has moved its backend to a **single Go static binary** (`backend-go/`). No Node, Electron, VNC, or remote desktop runs at runtime — open a browser and write.
 >
-> See the [GitHub Actions/GHCR guide](docker/README.github.md), [native deployment and rollback guide](docker/README.web.md), [production cutover record](web/PRODUCTION-CUTOVER.md), [migration notes](web/MIGRATION-NOTES.md) and [bounded feature acceptance matrix](web/FEATURE-MATRIX.md). Operational guides are currently in Chinese. Author data and model credentials stay on the server; keep the browser tab open during workflows. This is a shared-author workspace, not a multi-tenant service.
->
-> Use `Dockerfile.web` for the native image. The original desktop descriptions and download links below are preserved for upstream provenance, **not** native deployment instructions or a claim of complete acceptance.
+> - **Status**: all **281 public operations** in `web/operations.json` are served by the Go backend (build assertion `productionServedOperations = 281`, CI green), including the writing loop, 40-chapter import, review/revision, finalization, character proposals, the agent tool loop, knowledge base, backup/archive, Skills/MCP and more.
+> - **Deployment**: see [Deploy (Docker)](#deploy-docker) below. Production puts an nginx gateway in front for Basic Auth and the `X-Novel-User` header; the Go service binds loopback only and is never exposed to the LAN directly.
+> - **Architecture and boundaries**: [browser plan](web/GO-BROWSER-PLAN.md), [architecture](web/ARCHITECTURE.md), [feature matrix](web/FEATURE-MATRIX.md), [browser acceptance evidence](web/BROWSER-ACCEPTANCE.md).
+> - Author data and model credentials stay on the server; keep the browser tab open during workflows. This is a shared-author workspace, not a multi-tenant service.
+> - The upstream desktop installers and the upstream product description below are preserved for provenance, **not** as this edition's install steps or a completeness claim.
 
 ---
 
@@ -161,32 +163,29 @@ Model:     your Ollama model name, for example qwen3:14b
 
 Embedding models also use the `/v1` address. Do not use `http://127.0.0.1:11434/api`, which is Ollama's native interface.
 
-## Download and install
+## Deploy (Docker)
 
-Download official installers only from [GitHub Releases](https://github.com/EthanYoQ/AI-Novel-Writer/releases/latest).
+Production is two containers, both defined in `docker-compose.yml`:
 
-### Windows x64
+| Container | Role | Port |
+| --- | --- | --- |
+| `ai-novel-writer-web` | Go static binary serving the React app and all 281 operations | publishes `127.0.0.1:6081` only |
+| `ai-novel-writer-gateway` | nginx: Basic Auth, injects `X-Novel-User` | `8093` (HTTP), `8445` (HTTPS) |
 
-```text
-ai-novel-writer-setup-<version>.exe
+The Go service delegates identity to the gateway: `security.Authenticate` only trusts the `X-Novel-User` header the gateway writes, so **never expose 6081 to the LAN directly**. Open `http://<server>:8093` (or `https://<server>:8445`) and sign in with the gateway's Basic Auth account.
+
+Mount the author data volume at `NOVEL_DATA_ROOT` (default `/data`): the library, global config and SQLite databases live there. At startup the process takes an exclusive writer lease (flock), so one data root serves exactly one instance.
+
+```sh
+# Build the image (Go compile + Vite + container smoke run in GitHub Actions)
+docker build --file Dockerfile.go --tag novel-go:migration-ci .
+
+# Start
+docker compose up -d ai-novel-writer-web ai-novel-writer-gateway
+docker inspect --format '{{.State.Health.Status}}' ai-novel-writer-web   # healthy
 ```
 
-1. Run the installer. An upgrade updates only the application and does not delete books, character cards, or settings. Back up important work first anyway.
-2. After installation, check for updates under "Settings → About & updates". A new version is announced first. It downloads only after you choose "Download update", and when it finishes you choose to restart now or later.
-3. Older portable ZIP builds cannot get the updater automatically. Install an official installer manually once.
-
-The installer is not code-signed at present. Windows may show an unknown-publisher warning. Continue only after confirming that the download page is this repository's official GitHub Release.
-
-### macOS (Apple Silicon and Intel)
-
-```text
-ai-novel-writer-mac-arm64-<version>-installer.dmg
-ai-novel-writer-mac-x64-<version>-installer.dmg
-```
-
-1. `arm64` is for Apple Silicon Macs (M1, M2, M3, M4, and later). `x64` is for Intel Macs.
-2. Drag the app from the DMG to Applications and launch it. The app announces new versions but does not download or replace itself on macOS. Updating opens the official Release page so you can download the installer for your architecture.
-3. Both installers are ad-hoc signed, have no Developer ID signature, and are not notarized. If Gatekeeper blocks the app, confirm that it came from this repository's official GitHub Release, then Control-click the app in Finder and choose "Open", or allow it in "System Settings → Privacy & Security".
+`compose.go.yaml` is a minimal Go-only compose; production can fold it into an existing `docker-compose.yml`. Rollback = switch back to the previous image tag or restore the compose backup; the author data directory is untouched.
 
 ## Data and privacy
 
@@ -197,7 +196,7 @@ ai-novel-writer-mac-x64-<version>-installer.dmg
 | Imported reference material | Stays in the local book unless you send it to a cloud model. |
 | Local model requests | Sent to the local or LAN inference service you configure. |
 | Cloud model requests | Prompts and context go to the provider you choose. |
-| Model settings and API keys | Stored in the `ai-novel-writer` folder of your app data directory (`%APPDATA%\ai-novel-writer` on Windows, `~/Library/Application Support/ai-novel-writer` on macOS). Protect your OS account and do not share this folder. |
+| Model settings and API keys | Stored in the server's `NOVEL_DATA_ROOT/config/ai-novel-writer` global config and read by the Go service; keys never appear in a response body. Protect the server account and data volume. |
 | App preferences | Stored in the same folder as the model settings. |
 
 Earlier versions kept settings in `~/.vela`. The current version copies them to the folder above at startup and leaves the original untouched.
@@ -241,16 +240,19 @@ The Windows installer is unsigned, and the Mac installers are only ad-hoc signed
 
 ## Build from source
 
-You need Node.js 22.14 or later and the pnpm version pinned in the repository.
+You need Go 1.26+, Node.js 22.14+, and the pnpm version pinned in the repository (frontend build only).
 
 ```sh
-git clone https://github.com/EthanYoQ/AI-Novel-Writer.git
-cd AI-Novel-Writer
+git clone https://github.com/qingwo1991-debug/ai-novel-writer-web.git
+cd ai-novel-writer-web
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm run build                          # React -> dist-web
+cd backend-go
+go build ./cmd/novel-server             # one static binary
+./novel-server -listen 127.0.0.1:16082 -static-dir ../dist-web -policy ../web/operations.json
 ```
 
-Official installers are built in GitHub Actions. The Windows x64, macOS Apple Silicon, and macOS Intel installers each pass their own qualification before they are listed in one GitHub Release. See [`docs/README.md`](docs/README.md) for documentation authority, ADRs, and development rules.
+Official images are built in GitHub Actions (Go compile + Vite + a container smoke journey); no local Go toolchain is required to deploy. See [`docs/README.md`](docs/README.md) for documentation authority, ADRs, and development rules.
 
 ## Contributing
 
