@@ -209,7 +209,11 @@ func (l *ReadLifecycle) OpenProjectDurable(ctx context.Context, owner projectses
 	}
 	project := staged
 	if project == nil {
-		// Same-key refresh does not run the staging callback; read the live core.
+		// Same-key refresh does not run the staging callback; re-read the same
+		// canonical open core the admission callback staged, so a refresh returns
+		// the identical `project` DTO (path, sessionLease, novelConfig included).
+		// author.core.Get returns the raw project_core columns, which the browser
+		// open-result would otherwise see missing `path` and treat as a mismatch.
 		admitted, release, beginErr := l.active.Begin(ctx, owner, identity)
 		if beginErr != nil {
 			return ProjectOpenResult{}, beginErr
@@ -220,16 +224,25 @@ func (l *ReadLifecycle) OpenProjectDurable(ctx context.Context, owner projectses
 			return ProjectOpenResult{}, ErrDurableInvalid
 		}
 		author.mu.Lock()
-		if author.closed || author.core == nil {
+		if author.closed || author.handle == nil {
 			author.mu.Unlock()
 			release()
 			return ProjectOpenResult{}, ErrDurableClosed
 		}
-		project, beginErr = author.core.Get(ctx)
+		db := author.handle.DB()
 		author.mu.Unlock()
 		release()
+		tx, txErr := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if txErr != nil {
+			return ProjectOpenResult{}, txErr
+		}
+		project, beginErr = readProjectOpenCore(ctx, tx, identity)
+		rollbackErr := tx.Rollback()
 		if beginErr != nil {
 			return ProjectOpenResult{}, beginErr
+		}
+		if rollbackErr != nil {
+			return ProjectOpenResult{}, errors.Join(ErrChanged, rollbackErr)
 		}
 	}
 	current, present, err := l.Current(ctx, owner)
