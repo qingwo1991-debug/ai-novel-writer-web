@@ -170,8 +170,8 @@ const (
 // once so the binder and the test cannot drift.
 func productionRecoveryServeDecisions() []productionRecoveryServeDecision {
 	return []productionRecoveryServeDecision{
-		{Operation: productionGenerationRecoveryFind, Served: false, Reason: productionRecoveryServeReasonUnwired},
-		{Operation: productionGenerationRecoveryList, Served: false, Reason: productionRecoveryServeReasonUnwired},
+		{Operation: productionGenerationRecoveryFind, Served: true},
+		{Operation: productionGenerationRecoveryList, Served: true},
 	}
 }
 
@@ -252,22 +252,27 @@ func productionRecoveryServePieces() []productionRecoveryServePiece {
 			},
 		},
 		{
-			// The planner continuation receipt. Nothing in this module reads it,
-			// and nothing here can write it either.
+			// The planner continuation receipt. The reader exists now, in a real
+			// SELECT of the stored binding, and reports absent for every run this
+			// lane can read because the ledger refuses to open any glPlanning
+			// operation that could write the effect.
 			Name:    productionRecoveryServePieceContinuation,
-			Verdict: productionRecoveryServeAbsent,
+			Verdict: productionRecoveryServePorted,
 			Evidence: []productionGenerationRecoveryLine{
 				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 179,
 					Marker: "readPlanningContinuation(runId: string): PlanningContinuationReceipt | null"},
 				// The one state it short-circuits.
 				{Path: "../../../electron/services/main-generation-owner.ts", Line: 787,
 					Marker: "if (continued) return { ...base, state: 'continued', nextHandle: continued.nextHandle }"},
+				// The Go reader, and its real SELECT-backed proof.
+				{Path: "../../internal/store/planning_continuation.go", Line: 85,
+					Marker: "func readPlanningContinuation(ctx context.Context, conn *sql.Conn, runID string) (*PlanningContinuationReceipt, error)"},
+				{Path: "../../internal/store/planning_continuation.go", Line: 97,
+					Marker: `effects := glMap(run.binding["$runEffects"])`},
 				// The effect bag it lives in is refused for an ordinary binding, so
 				// no run frozen by this lane can ever carry it.
 				{Path: "../../internal/store/generation_ledger.go", Line: 511,
 					Marker: `for _, k := range []string{"$runEffects", "$blueprintRetirement"} {`},
-				{Path: "../../internal/store/generation_ledger.go", Line: 513,
-					Marker: `return glError("GENERATION_EFFECT_UNSUPPORTED")`},
 				// And the planning operation that would read it cannot be opened.
 				{Path: "../../internal/store/generation_ledger.go", Line: 719,
 					Marker: `if glPlanning(glText(request["operation"])) {`},

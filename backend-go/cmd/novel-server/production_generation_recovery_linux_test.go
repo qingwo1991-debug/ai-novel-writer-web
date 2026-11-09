@@ -373,23 +373,17 @@ func TestProductionGenerationRecoveryServesDirectoryProgress(t *testing.T) {
 			response.Code, response.Body.String())
 	}
 
-	// The binder installs nothing and proves the served name is really served: the
-	// bound set is the same size before and after, and it still contains the name.
-	boundBefore := lane.server.BoundOperations()
-	if err := bindProductionGenerationRecovery(lane.server); err != nil {
-		t.Fatalf("the recovery binder refused the finished lane: %v", err)
-	}
-	boundAfter := lane.server.BoundOperations()
-	if len(boundAfter) != len(boundBefore) {
-		t.Fatalf("the recovery binder installed %d operations", len(boundAfter)-len(boundBefore))
-	}
-	if !productionGenerationRecoveryServedBy(boundAfter) {
-		t.Fatal("the finished lane does not serve generation:list-directory-progress")
+	// The finished lane serves every recovery name: the directory catalog through
+	// the batch/directory slice, and list-recovery plus find-blueprint-recovery
+	// through this family's binder.
+	bound := lane.server.BoundOperations()
+	if !productionGenerationRecoveryServedBy(bound) {
+		t.Fatal("the finished lane does not serve every recovery name")
 	}
 	for _, operation := range productionGenerationRecoveryRefusedOperations() {
-		for _, name := range boundAfter {
+		for _, name := range bound {
 			if name == operation {
-				t.Fatalf("%v is bound in the production lane after all", operation)
+				t.Fatalf("%v is bound in the production lane although it is refused", operation)
 			}
 		}
 	}
@@ -415,134 +409,32 @@ func TestProductionGenerationRecoveryDirectoryProgressEmpty(t *testing.T) {
 	}
 }
 
-// TestProductionLaneRefusesGenerationRecovery pins generation:list-recovery and
-// generation:find-blueprint-recovery at the registry's fail-closed 501 over a
-// session that really holds the states they would project: a run admitted between
-// admission and dispatch, and a run that settled with a stop. The point is that the
-// refusal is not vacuous - there is state to answer about and a live lease to read
-// it under - and that reaching the two names still writes nothing, dispatches
-// nothing and leaves the author database byte-identical.
-func TestProductionLaneRefusesGenerationRecovery(t *testing.T) {
-	seam := &productionGenerationSeam{text: "雨停之前，她把书翻到最后一页。"}
-	lane := productionGenerationWriteOpen(t, seam.dispatch, nil)
-	// The admitted database is not empty: the editor fixture seeds one settled run with
-	// one settled attempt through the shipped ledger before project:open. The row counts
-	// below are therefore a baseline plus a delta, so the sanity check stays about the
-	// two runs this test begins instead of about a database that starts empty.
-	readback := productionStoryStateWriteReadback(t, lane.projectPath)
-	var runsBase, attemptsBase int
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsBase)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attemptsBase)
-	if runsBase != 1 || attemptsBase != 1 {
-		t.Fatalf("the editor fixture no longer seeds one settled run with one attempt (runs %d, attempts %d); the delta below is still sound, but this premise is not",
-			runsBase, attemptsBase)
-	}
-	// The interrupted run: admitted, no attempt, which is the state a crash between
-	// admission and dispatch leaves behind.
-	interrupted := lane.begin(t, productionEditorBeginRequest(productionRecoveryInterruptedNonce))
-	// The completed run: one attempt, settled with a stop.
-	completed := lane.begin(t, productionEditorBeginRequest(productionRecoveryCompletedNonce))
-	receipt := productionExecuteAnswer(t, lane.author,
-		productionExecuteRequest(completed, productionRecoverySettledNonce), lane.frozen)
-	outcome, ok := receipt["outcome"].(map[string]any)
-	if !ok || outcome["status"] != "completed" || outcome["finishReason"] != "stop" {
-		t.Fatalf("the second run did not settle with a stop: %v", receipt)
-	}
-	if seam.dispatched() != 1 {
-		t.Fatalf("admitting and executing one run dispatched %d times, want 1", seam.dispatched())
-	}
-
-	// The two states are proved through the test's own mode=ro connection, not from
-	// anything the lane returned, so the fixture cannot agree with a wrong answer. The
-	// per-run counts are selected by the ids the lane handed back; the totals are the
-	// baseline plus what the two begins mean to add.
-	var interruptedAttempts, completedAttempts, runs, attempts int
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts WHERE run_id=?",
-		[]any{syntheticString(interrupted["runId"])}, &interruptedAttempts)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts WHERE run_id=?",
-		[]any{syntheticString(completed["runId"])}, &completedAttempts)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runs)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attempts)
-	if interruptedAttempts != 0 || completedAttempts != 1 ||
-		runs != runsBase+2 || attempts != attemptsBase+1 {
-		t.Fatalf("the fixture is not the two states under test: attempts %d/%d, runs %d over baseline %d, attempts %d over baseline %d",
-			interruptedAttempts, completedAttempts, runs, runsBase, attempts, attemptsBase)
-	}
-	var settledStatus string
-	productionStoryStateWriteScan(t, readback,
-		"SELECT json_extract(attempt_json,'$.status') FROM generation_attempts WHERE run_id=?",
-		[]any{syntheticString(completed["runId"])}, &settledStatus)
-	// A terminal attempt is either settled (trusted usage) or unknown (the provider
-	// reported no accounting), the two terminal states the ledger's own transition
-	// check accepts (internal/store/generation_ledger.go:1088-1092).
-	if settledStatus != "settled" && settledStatus != "unknown" {
-		t.Fatalf("the completed run's attempt never reached a terminal state: %v", settledStatus)
-	}
-
-	before := productionMCPDatabaseDigest(t, lane.projectPath)
-	productionRecoveryUnbound(t, lane.author, productionGenerationRecoveryList, []any{lane.frozen})
-	productionRecoveryUnbound(t, lane.author, productionGenerationRecoveryFind, []any{lane.frozen})
-	after := productionMCPDatabaseDigest(t, lane.projectPath)
-	if before != after {
-		t.Fatal("a refused recovery moved a byte of the author database")
-	}
-	if seam.dispatched() != 1 {
-		t.Fatalf("a refused recovery dispatched the provider seam: %d calls", seam.dispatched())
-	}
-	var runsAfter, attemptsAfter int
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_runs", nil, &runsAfter)
-	productionStoryStateWriteScan(t, readback, "SELECT COUNT(*) FROM generation_attempts", nil, &attemptsAfter)
-	if runsAfter != runs || attemptsAfter != attempts {
-		t.Fatalf("a refused name added rows: runs %d, attempts %d", runsAfter, attemptsAfter)
-	}
-	lane.assertNoDial(t)
-}
-
-// productionRecoveryUnbound asserts one name still answers the registry's fail-closed
-// 501, which is what an inventoried but unbound operation must do.
-func productionRecoveryUnbound(t *testing.T, client *productionDurableClient, operation string, args []any) {
-	t.Helper()
-	response := client.call(t, operation, args)
-	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "GO_OPERATION_NOT_MIGRATED") {
-		t.Fatalf("%v = %d %s, want 501 GO_OPERATION_NOT_MIGRATED", operation, response.Code, response.Body.String())
-	}
-}
-
-// TestProductionGenerationRecoverySeams re-reads the code every seam and every
-// served-evidence row points at. The marker is searched for across the whole file
-// rather than only at the recorded line: a row that is still documented but has
-// been shifted by an unrelated edit is not a regression, while a row that was
-// deleted is. The recorded line is still reported, so a reader finds it quickly.
-func TestProductionGenerationRecoverySeams(t *testing.T) {
-	refused := make(map[string]bool, 2)
-	for _, operation := range productionGenerationRecoveryRefusedOperations() {
-		if refused[operation] {
-			t.Fatalf("%v is listed twice", operation)
-		}
-		refused[operation] = true
-		seam, found := productionGenerationRecoverySeamFor(operation)
-		if !found || len(seam.Missing) == 0 {
-			t.Fatalf("%v has no documented seam", operation)
-		}
-		productionRecoveryMarkers(t, operation, seam.Missing)
-	}
-	if len(refused) != 2 {
-		t.Fatalf("the refusal list covers %d names, want 2", len(refused))
-	}
-	// The two names this file exists for are refused; the one with a port is not.
+// TestProductionLaneServesGenerationRecovery pins the two previously refused names
+// at the finished lane's bound set: the family binder installs both, so neither
+// falls back to the registry's 501.
+func TestProductionLaneServesGenerationRecovery(t *testing.T) {
+	lane := productionRecoveryOpen(t, nil)
+	bound := lane.server.BoundOperations()
 	for _, operation := range []string{productionGenerationRecoveryList, productionGenerationRecoveryFind} {
-		if !refused[operation] {
-			t.Fatalf("%v is not refuted by this file", operation)
-		}
-		if _, found := productionGenerationRecoverySeamFor(operation); !found {
-			t.Fatalf("%v has no seam", operation)
+		if !productionRecoveryBoundContains(bound, operation) {
+			t.Fatalf("%v is not bound in the finished production lane", operation)
 		}
 	}
-	if refused[productionGenerationRecoveryDirectory] {
-		t.Fatal("this file refuses generation:list-directory-progress, which the lane serves")
+}
+
+// TestProductionGenerationRecoverySeams re-reads every served-evidence row and
+// pins the served/refused tables. Nothing is refused now, so the seam table is
+// empty and the served table covers all three names.
+func TestProductionGenerationRecoverySeams(t *testing.T) {
+	refused := productionGenerationRecoveryRefusedOperations()
+	if len(refused) != 0 {
+		t.Fatalf("the refusal list covers %d names, want none", len(refused))
+	}
+	if len(productionGenerationRecoverySeams()) != 0 {
+		t.Fatal("the seam table is not empty although no name is refused")
 	}
 
-	served := make(map[string]bool, 1)
+	served := make(map[string]bool, 3)
 	for _, operation := range productionGenerationRecoveryServedOperations() {
 		if served[operation] {
 			t.Fatalf("%v is listed twice as served", operation)
@@ -554,23 +446,23 @@ func TestProductionGenerationRecoverySeams(t *testing.T) {
 		}
 		productionRecoveryMarkers(t, operation, record.Evidence)
 	}
-	if len(served) != 1 || !served[productionGenerationRecoveryDirectory] {
-		t.Fatalf("the served list covers %d names, want only generation:list-directory-progress", len(served))
+	if len(served) != 3 || !served[productionGenerationRecoveryDirectory] ||
+		!served[productionGenerationRecoveryList] || !served[productionGenerationRecoveryFind] {
+		t.Fatalf("the served list covers %d names, want the three recovery names", len(served))
 	}
 
-	// The tables are keyed, not positional: a name this file does not refuse must not
-	// come back with someone else's seam, and no name may be both.
+	// The tables are keyed, not positional.
 	if _, found := productionGenerationRecoverySeamFor("generation:read"); found {
 		t.Fatal("the seam table claims a name this file does not refuse")
 	}
-	if _, found := productionGenerationRecoveryServedEvidenceFor(productionGenerationRecoveryList); found {
-		t.Fatal("the served table claims a name this file refuses")
+	if _, found := productionGenerationRecoveryServedEvidenceFor(productionGenerationRecoveryList); !found {
+		t.Fatal("the served table no longer names generation:list-recovery")
 	}
 	if productionGenerationRecoveryServedBy([]string{"generation:list"}) {
-		t.Fatal("the served check accepted a lane that does not serve the directory catalog")
+		t.Fatal("the served check accepted a lane that does not serve every recovery name")
 	}
 	// The binder cannot be wired to a nil server.
-	if err := bindProductionGenerationRecovery(nil); err == nil || err.Error() != "TRANSPORT_SERVER_REQUIRED" {
+	if err := bindProductionGenerationRecovery(nil, nil); err == nil || err.Error() != "TRANSPORT_SERVER_REQUIRED" {
 		t.Fatalf("the binder accepted a nil server: %v", err)
 	}
 }

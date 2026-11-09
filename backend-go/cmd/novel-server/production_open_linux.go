@@ -93,6 +93,11 @@ type productionConfig struct {
 	// feeds a deterministic provider response instead of dialing, which is why it
 	// is wired into the executor in the same place the lane is built.
 	Dispatch generation.Dispatch
+	// AllowedOrigins is the comma-separated browser-origin allowlist. Production
+	// main.go fills it from NOVEL_ALLOWED_ORIGINS (the gateway's origins); tests
+	// leave it empty so the synthetic address is the only origin, exactly as the
+	// migration scaffold behaves.
+	AllowedOrigins string
 }
 
 // productionProject is one library entry whose database was admitted as a
@@ -453,13 +458,13 @@ func (p *productionOpen) Close() error {
 
 // productionHandler is the only startup path main uses. The schema authority is
 // the shipped pinned v7 contract, never a caller-selected file.
-func productionHandler(registry *policy.Registry, address, staticDir, dataRoot string) (http.Handler, func(), error) {
+func productionHandler(registry *policy.Registry, address, staticDir, dataRoot, allowedOrigins string) (http.Handler, func(), error) {
 	contract, err := admission.PinnedSchemaContract()
 	if err != nil {
 		return nil, nil, fmt.Errorf("production schema contract: %w", err)
 	}
 	return productionHandlerWithContract(registry, address, staticDir, dataRoot, productionConfig{
-		Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes,
+		Schema: contract, MaxDatabaseBytes: productionMaxDatabaseBytes, AllowedOrigins: allowedOrigins,
 	})
 }
 
@@ -477,7 +482,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	if err != nil {
 		return nil, nil, err
 	}
-	server := transport.New(registry, security.NewOrigins("http://"+address), "go-production-admitted")
+	origins := config.AllowedOrigins
+	if origins == "" {
+		origins = "http://" + address
+	}
+	server := transport.New(registry, security.NewOrigins(origins), "go-production-admitted")
 	if bindErr := server.BindNavigation(); bindErr != nil {
 		_ = open.Close()
 		return nil, nil, bindErr
@@ -697,6 +706,12 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// list-recovery's editors bucket projects the inline-editor recovery the
+		// owner holds (production_generation_recovery_serve3_linux.go).
+		if bindErr := bindProductionGenerationRecoveryOwner(owner, server); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// finalization-generation:begin/execute/commit: the step's builtin templates
 		// now ship (internal/prompttemplate), so a finalization run can be frozen,
 		// dispatched and settled through the same owner as the inline editor
@@ -781,7 +796,7 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// refused with their buckets named, and this binder verifies that
 		// generation:list-directory-progress really is bound by the batch slice above
 		// rather than claiming it twice (production_generation_recovery_linux.go).
-		func() error { return bindProductionGenerationRecovery(server) },
+		func() error { return bindProductionGenerationRecovery(open.durable, server) },
 		func() error { return bindProductionFinalizationGeneration(server) },
 		// The eight agent-generation names install nothing: each one needs a port this
 		// lane does not have (an agent-context prompt renderer, a tool-manifest dispatch,

@@ -156,7 +156,13 @@ func run() error {
 		// then serve startup/config/library reads plus the project lifecycle and
 		// draft reads/writes over the author's own databases. Every operation this
 		// build does not implement keeps returning GO_OPERATION_NOT_MIGRATED.
-		handler, cleanup, err = productionHandler(registry, *address, *staticDir, dataRoot)
+		// The gateway's browser origins, not the listen address, are the trusted
+		// Origin allowlist; 0.0.0.0 is a bind address, never a browser origin.
+		allowedOrigins := strings.TrimSpace(os.Getenv("NOVEL_ALLOWED_ORIGINS"))
+		if allowedOrigins == "" {
+			allowedOrigins = "http://127.0.0.1:8093,https://127.0.0.1:8445"
+		}
+		handler, cleanup, err = productionHandler(registry, *address, *staticDir, dataRoot, allowedOrigins)
 	} else if *durableDir != "" {
 		handler, cleanup, err = migrationHandlerWithDurable(registry, *address, *staticDir, *durableDir, *durableConfig)
 	} else if *completedGlobalParent != "" {

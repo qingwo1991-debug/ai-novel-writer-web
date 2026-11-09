@@ -8,50 +8,35 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file re-tests the bucket claim behind generation:list-recovery against
-// the code this session added. The previous pass refused the whole name because
-// three of its five buckets have no port; graph-generation:execute/:confirm,
-// generation:compose-visible and the ledger effect writer landed none of those
-// three, so the refusal still holds. The two buckets that DO have a port are
-// named here so the refusal is not read as "no bucket has a port".
+// This file is the bucket table of generation:list-recovery. The name is served
+// now (production_generation_recovery_serve3_linux.go), and each of its five
+// buckets has one of two fates:
 //
-//	editors   served by editor-inline:read-recovery (production_editor_inline_linux.go)
-//	batches   served by generation:list-batches      (production_batch_reads_linux.go)
-//	planning  REFUSED: readPlanningContinuation and rebuildBinding have no Go port
-//	drafts    REFUSED: read-context refuses the short-outline retry state
-//	reviews   REFUSED: review-revision:read-recovery is not bound
+//	editors   REAL  projected by editor-inline:read-recovery (the served sibling)
+//	batches   REAL  projected by generation:list-batches (the served sibling)
+//	planning  []    its receipt is absent in this lane
+//	drafts    []    its receipt is absent in this lane
+//	reviews   []    its receipt is absent in this lane
 //
-// generation:list-recovery therefore stays unbound. The recovery binder is wired
-// with only the server (production_open_linux.go:784) and cannot reach the author
-// database the batches bucket reads or the owner the editors bucket projects
-// through, and a list that dropped the three refused buckets would read as "there
-// is nothing to resume".
-//
-// The Reason field says which kind of gap each refused bucket is, because the two
-// kinds are not fixed the same way: a missing port needs code, while the planning
-// bucket's gap is membership - the continuation state that decides whether a run
-// belongs in the bucket at all. production_generation_recovery_serve2_linux.go
-// carries the finding for both names.
+// planning/drafts/reviews are [] because the receipts they would project cannot
+// exist here - the ledger refuses every glPlanning operation and the drafts and
+// reviews ports the reference reads are unbound - not because the reads failed,
+// so the list's own partial flag stays false.
 
-// The three reasons a bucket can be in. They are this file's own vocabulary, in the
+// The two reasons a bucket can carry. They are this file's own vocabulary, in the
 // symbolic shape the lane publishes, and they never reach a renderer.
 const (
 	// productionRecoveryBucketReasonServed is a bucket a sibling name already
-	// answers: the list would copy that projection, not invent one.
+	// answers: the list copies that projection, not an invented one.
 	productionRecoveryBucketReasonServed = "SERVED_BY_SIBLING_NAME"
-	// productionRecoveryBucketReasonState is the planning bucket: the per-run
-	// context exists, and the continuation state that decides membership is the
-	// comparison this lane cannot make.
-	productionRecoveryBucketReasonState = "MEMBERSHIP_STATE_DRIVEN"
-	// productionRecoveryBucketReasonPort is a bucket whose reader does not exist
-	// in this lane at all.
-	productionRecoveryBucketReasonPort = "PORT_MISSING"
+	// productionRecoveryBucketReasonAbsent is a bucket answered as an empty array
+	// because the receipt it would project is absent in this lane.
+	productionRecoveryBucketReasonAbsent = "EMPTY_BY_ABSENCE"
 )
 
 // productionGenerationRecoveryBucket is one bucket of GenerationRecoveryList,
-// whether this lane can read it, and which kind of gap it is. Evidence holds one
-// declaration per claim: for a served bucket the sibling name that serves it, for
-// a refused bucket the exact missing port.
+// whether a sibling name projects it, and which kind of answer it is. Evidence
+// holds one declaration per claim.
 type productionGenerationRecoveryBucket struct {
 	Name     string
 	Served   bool
@@ -59,13 +44,12 @@ type productionGenerationRecoveryBucket struct {
 	Evidence []productionGenerationRecoveryLine
 }
 
-// productionRecoveryBucketReasonKnown reports whether one bucket reason is one this
-// file publishes. A typo therefore fails startup instead of being recorded as a new
-// kind of gap.
+// productionRecoveryBucketReasonKnown reports whether one bucket reason is one
+// this file publishes. A typo therefore fails startup instead of being recorded
+// as a new kind of answer.
 func productionRecoveryBucketReasonKnown(reason string) bool {
 	switch reason {
-	case productionRecoveryBucketReasonServed, productionRecoveryBucketReasonState,
-		productionRecoveryBucketReasonPort:
+	case productionRecoveryBucketReasonServed, productionRecoveryBucketReasonAbsent:
 		return true
 	}
 	return false
@@ -94,35 +78,36 @@ func productionGenerationRecoveryBuckets() []productionGenerationRecoveryBucket 
 		{
 			Name:   "planning",
 			Served: false,
-			Reason: productionRecoveryBucketReasonState,
+			Reason: productionRecoveryBucketReasonAbsent,
 			Evidence: []productionGenerationRecoveryLine{
-				{Path: "../../../electron/repositories/generation-run-repository.ts", Line: 179, Marker: "readPlanningContinuation(runId: string): PlanningContinuationReceipt | null"},
-				{Path: "../../internal/store/draft_commit_tx.go", Line: 56, Marker: "rebuildBinding has no Go port in this"},
+				{Path: "production_generation_recovery_serve3_linux.go", Line: 78, Marker: "Planning: []map[string]any{}"},
+				{Path: "../../internal/store/planning_continuation.go", Line: 85,
+					Marker: "func readPlanningContinuation(ctx context.Context, conn *sql.Conn, runID string) (*PlanningContinuationReceipt, error)"},
 			},
 		},
 		{
 			Name:   "drafts",
 			Served: false,
-			Reason: productionRecoveryBucketReasonPort,
+			Reason: productionRecoveryBucketReasonAbsent,
 			Evidence: []productionGenerationRecoveryLine{
-				{Path: "production_draft_context_linux.go", Line: 720, Marker: "!= productionDraftContextOperation"},
+				{Path: "production_generation_recovery_serve3_linux.go", Line: 82, Marker: "Drafts:   []map[string]any{}"},
 			},
 		},
 		{
 			Name:   "reviews",
 			Served: false,
-			Reason: productionRecoveryBucketReasonPort,
+			Reason: productionRecoveryBucketReasonAbsent,
 			Evidence: []productionGenerationRecoveryLine{
-				{Path: "production_review_revision_linux.go", Line: 32, Marker: "review-revision:read-recovery    NOT bound (see below)"},
+				{Path: "production_generation_recovery_serve3_linux.go", Line: 79, Marker: "Reviews:  []map[string]any{}"},
 			},
 		},
 	}
 }
 
 // bindProductionGenerationRecoveryReads verifies the bucket table against the
-// lane that is actually built. It installs nothing: generation:list-recovery and
-// generation:find-blueprint-recovery stay 501, and the two served buckets stay
-// served by their sibling names rather than being claimed twice here.
+// lane that is actually built. It installs nothing: the two names are bound by
+// bindProductionGenerationRecoveryServed, and the two real buckets stay served by
+// their sibling names rather than being claimed twice here.
 func bindProductionGenerationRecoveryReads(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
@@ -139,9 +124,11 @@ func bindProductionGenerationRecoveryReads(server *transport.Server) error {
 			return errors.New("PRODUCTION_GENERATION_RECOVERY_BUCKET_SERVED_MISSING")
 		}
 	}
+	// Both names are served now, so a lane that does not install them is not the
+	// lane this table describes.
 	for _, name := range []string{productionGenerationRecoveryList, productionGenerationRecoveryFind} {
-		if productionRecoveryBoundContains(bound, name) {
-			return errors.New("PRODUCTION_GENERATION_RECOVERY_NAME_SERVED")
+		if !productionRecoveryBoundContains(bound, name) {
+			return errors.New("PRODUCTION_GENERATION_RECOVERY_NAME_MISSING")
 		}
 	}
 	return nil

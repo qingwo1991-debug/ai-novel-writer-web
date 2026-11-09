@@ -44,9 +44,10 @@ func TestProductionGenerationRecoveryReadBuckets(t *testing.T) {
 			t.Fatalf("the served %v bucket is not bound in the finished lane", name)
 		}
 	}
+	// Both recovery names are served now; they must be bound, never 501.
 	for _, name := range []string{productionGenerationRecoveryList, productionGenerationRecoveryFind} {
-		if productionRecoveryBoundContains(bound, name) {
-			t.Fatalf("%v is bound in the finished lane after all", name)
+		if !productionRecoveryBoundContains(bound, name) {
+			t.Fatalf("%v is not bound in the finished lane; the recovery reader should serve it", name)
 		}
 	}
 	if err := bindProductionGenerationRecoveryReads(lane.server); err != nil {
