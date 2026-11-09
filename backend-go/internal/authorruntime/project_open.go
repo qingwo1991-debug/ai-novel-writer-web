@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
 
@@ -76,7 +77,7 @@ func (l *ReadLifecycle) OpenProjectReadOnly(ctx context.Context, owner projectse
 		return &admittedRead{reader: reader, context: candidate}, nil
 	})
 	if err != nil {
-		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
+		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen) || errors.Is(err, runtime.ErrOwned)}
 		current, present, currentErr := l.Current(ctx, owner)
 		if currentErr != nil {
 			return ProjectOpenResult{}, currentErr
