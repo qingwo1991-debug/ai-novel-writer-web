@@ -35,17 +35,10 @@ func NewManager(runtime *authorruntime.ReadLifecycle) (*Manager, error) {
 }
 
 func owner(caller transport.Caller) (projectsession.Owner, error) {
-	if caller.Principal == "" {
+	if caller.SessionID == "" || caller.ClientID == "" {
 		return projectsession.Owner{}, ErrInvalid
 	}
-	// The project lease is keyed by the authenticated account, not by the tab or
-	// browser session: a single-author browser workspace lets the same account
-	// open and edit the project from any tab or device (home computer, phone).
-	// Semantic write conflicts are resolved by the per-resource CAS (draft content
-	// baseline, character/roster revisions, finalization commit), never by
-	// refusing a concurrent open. The per-tab ClientID still fences the SSE
-	// stream and the in-flight request counter at the transport layer.
-	return projectsession.Owner{SessionID: caller.Principal, ClientID: "account"}, nil
+	return projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, nil
 }
 
 // OpenProject resolves a server-catalog key (never a caller path) and returns
