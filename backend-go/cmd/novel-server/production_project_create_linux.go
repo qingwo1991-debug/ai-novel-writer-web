@@ -153,6 +153,15 @@ const (
 	// internal/admission/identity.go:23-25 fails every admission whose
 	// character_identity_meta has no 'main' row.
 	productionProjectCreateIdentityInsert = `INSERT INTO character_identity_meta (id, revision, legacy_count) VALUES ('main', 0, 0)`
+	// productionProjectCreateRosterInsert is the character-roster singleton the
+	// desktop's own roster schema seeds on first open (electron/repositories/
+	// character-roster-schema.ts:75-84). A fresh project has zero characters and
+	// no legacy markdown, so migration_state is 'empty' - the same row the older
+	// admitted projects carry. Without it db:character-roster-read refuses a
+	// just-minted project with CHARACTER_ROSTER_META_MISSING.
+	productionProjectCreateRosterInsert = `INSERT INTO character_roster_meta
+		(id, schema_version, revision, migration_state, legacy_markdown, projection_hash, fact_hash)
+		VALUES ('main', 1, 0, 'empty', '', '', '')`
 	// Refusal and warning codes. Every refusal code the browser already knows is
 	// spelled exactly as the reference throws it
 	// (electron/services/project-access.ts, src/i18n/app-errors.ts:12-52).
@@ -639,6 +648,12 @@ func productionProjectCreateDatabase(ctx context.Context, storage, name string, 
 	// `INSERT INTO character_identity_meta VALUES('main',0,0);`). Without this row
 	// this lane would mint a book it refuses to admit at the next startup.
 	if _, err = tx.ExecContext(ctx, productionProjectCreateIdentityInsert); err != nil {
+		return err
+	}
+	// The roster singleton, for the same reason as the identity singleton above:
+	// the pinned v7 asset ships the table without the row, and the roster read
+	// refuses a project whose main row is missing.
+	if _, err = tx.ExecContext(ctx, productionProjectCreateRosterInsert); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
