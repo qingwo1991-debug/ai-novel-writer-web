@@ -57,6 +57,7 @@ services:
       - /root/AI/ai-novel-writer-data:/data
     environment:
       NOVEL_DATA_ROOT: /data
+      NOVEL_ALLOWED_ORIGINS: "${NOVEL_ALLOWED_ORIGINS:-http://192.168.1.15:8093,https://192.168.1.15:8445}"
     restart: unless-stopped
     # The single-writer lease is released on a clean stop; give the process the
     # same grace the Node service had so an in-flight commit is not cut in half.
