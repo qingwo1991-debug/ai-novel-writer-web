@@ -20,16 +20,18 @@ import (
 // This file proves legacy-roster:stage over the real HTTP handler, through the
 // frozen project session, with a real admitted author database, a real model
 // lease, and the model stubbed at the lane's own seam. The lane is built by this
-// file rather than by productionHandlerWithContract because the binder line that
-// installs the name into the product lane lives in production_open_linux.go's
-// owner block and that file does not belong to this change; the binder itself is
-// the one under test. Every success is read back through a mode=ro connection of
-// the test's own, so the staged row is proved by a reader that cannot write it.
+// file rather than by productionHandlerWithContract so the model seam, not the
+// product wiring, is what answers; the binder itself is the one under test, and
+// the product lane's own line beside the execute binder is asserted by
+// TestProductionLaneServedOperationCount. Every success is read back through a
+// mode=ro connection of the test's own, so the staged row is proved by a reader
+// that cannot write it.
 
 // productionLegacyRosterStageServeOpen builds the lane with begin/read/execute
-// and stage all bound. It fails rather than skips when the owner cannot be
-// built: the fixture already skips without the shipped schema oracle.
-func productionLegacyRosterStageServeOpen(t *testing.T, answers []string, nonce string) *productionLegacyRosterExecuteServeLane {
+// and stage all bound. answers and finishes are the model seam's queued texts and
+// finish reasons, in dispatch order. It fails rather than skips when the owner
+// cannot be built: the fixture already skips without the shipped schema oracle.
+func productionLegacyRosterStageServeOpen(t *testing.T, answers, finishes []string, nonce string) *productionLegacyRosterExecuteServeLane {
 	t.Helper()
 	root, projectPath, contract, _, _ := productionEditorReadsRoot(t)
 	database := filepath.Join(projectPath, projectfs.StorageDirectory, projectfs.DatabaseName)
@@ -63,7 +65,7 @@ func productionLegacyRosterStageServeOpen(t *testing.T, answers []string, nonce 
 		_ = open.Close()
 		t.Fatalf("the lane could not bind the project lifecycle: %v", err)
 	}
-	seam := &productionLegacyRosterExecuteSeam{answers: answers, finishes: nil}
+	seam := &productionLegacyRosterExecuteSeam{answers: answers, finishes: finishes}
 	owner, err := newProductionGeneration(open, server, seam.dispatch)
 	if err != nil {
 		_ = open.Close()
@@ -138,7 +140,7 @@ func productionLegacyRosterStageArtifact(t *testing.T, db *sql.DB, runID string)
 // the run's own frozen modelReceipt.modelRevision.
 func TestProductionLegacyRosterStageServesTheExecutedRun(t *testing.T) {
 	lane := productionLegacyRosterStageServeOpen(t,
-		[]string{productionLegacyRosterExecuteRoster}, "legacy-roster-stage-success")
+		[]string{productionLegacyRosterExecuteRoster}, nil, "legacy-roster-stage-success")
 	handle := lane.handle(t)
 	lane.answer(t, handle) // settle one attempt and write its artifact
 
@@ -232,7 +234,7 @@ func TestProductionLegacyRosterStageServesTheExecutedRun(t *testing.T) {
 // that was begun but never executed: the store's artifactFor finds no attempt and
 // refuses by the artifact code, and nothing is staged.
 func TestProductionLegacyRosterStageRefusesARunWithoutASettledAttempt(t *testing.T) {
-	lane := productionLegacyRosterStageServeOpen(t, nil, "legacy-roster-stage-no-attempt")
+	lane := productionLegacyRosterStageServeOpen(t, nil, nil, "legacy-roster-stage-no-attempt")
 	handle := lane.handle(t)
 	artifact := map[string]any{"artifactId": "legacy-roster-stage-no-artifact", "revision": int64(0), "textHash": strings.Repeat("a", 64)}
 	response := lane.author.call(t, productionLegacyRosterStageName,
@@ -258,7 +260,7 @@ func TestProductionLegacyRosterStageRefusesARunWithoutASettledAttempt(t *testing
 // held, and a handle that names another project, answer exactly what the
 // family's served read answers for them - byte for byte - and neither writes.
 func TestProductionLegacyRosterStageRefusesStaleLeaseAndForeignProject(t *testing.T) {
-	lane := productionLegacyRosterStageServeOpen(t, nil, "legacy-roster-stage-refusals")
+	lane := productionLegacyRosterStageServeOpen(t, nil, nil, "legacy-roster-stage-refusals")
 	handle := lane.handle(t)
 	artifact := map[string]any{"artifactId": "legacy-roster-stage-artifact", "revision": int64(0), "textHash": strings.Repeat("a", 64)}
 	stale := map[string]any{"projectId": syntheticString(lane.frozen["projectId"]),
@@ -295,6 +297,130 @@ func TestProductionLegacyRosterStageRefusesStaleLeaseAndForeignProject(t *testin
 				t.Fatalf("a %s answered %s, want %s", refusal.label, stage.Body.String(), refusal.code)
 			}
 		})
+	}
+}
+
+// TestProductionLegacyRosterReadProjectsTheRunState drives the browser's own
+// three steps - read, execute, stage - and asserts that every read answers the
+// optional members the client stages from
+// (src/services/legacy-roster-generation.ts:56-83): no artifact on a fresh run,
+// the proven artifact after execute, and the staged proposal after stage. A
+// served legacy-roster:stage is unreachable without the first of those, because
+// stage() refuses to invoke it while current.artifact is undefined.
+func TestProductionLegacyRosterReadProjectsTheRunState(t *testing.T) {
+	lane := productionLegacyRosterStageServeOpen(t, []string{productionLegacyRosterExecuteRoster}, nil, "legacy-roster-read-projection")
+	handle := lane.handle(t)
+
+	type recoveryWire struct {
+		Artifact map[string]any `json:"artifact"`
+		Proposal map[string]any `json:"proposal"`
+	}
+	readRecovery := func() recoveryWire {
+		t.Helper()
+		var recovery recoveryWire
+		lane.author.decode(t, productionLegacyRosterReadName,
+			[]any{map[string]any{"handle": handle}, lane.frozen}, &recovery)
+		return recovery
+	}
+
+	// A begun run has no settled attempt, so both keys are omitted.
+	if fresh := readRecovery(); fresh.Artifact != nil || fresh.Proposal != nil {
+		t.Fatalf("a fresh run's recovery carries an artifact or a proposal: %+v", fresh)
+	}
+
+	// execute settles one attempt; the artifact it wrote is now the recovery's.
+	lane.answer(t, handle)
+	db := productionBatchWriteReadOnly(t, lane.database)
+	artifact := productionLegacyRosterStageArtifact(t, db, lane.runID)
+	wantRevision, wantRevisionOK := syntheticFloat64(artifact["revision"])
+	settled := readRecovery()
+	gotRevision, gotRevisionOK := syntheticFloat64(settled.Artifact["revision"])
+	if !wantRevisionOK || !gotRevisionOK || gotRevision != wantRevision ||
+		syntheticString(settled.Artifact["artifactId"]) != syntheticString(artifact["artifactId"]) ||
+		syntheticString(settled.Artifact["textHash"]) != syntheticString(artifact["textHash"]) {
+		t.Fatalf("the executed run's recovery artifact is %+v, want %+v", settled.Artifact, artifact)
+	}
+	if settled.Proposal != nil {
+		t.Fatalf("an unstaged run's recovery carries a proposal: %+v", settled.Proposal)
+	}
+
+	// stage writes the proposal; the same read now answers both keys, and the
+	// proposal is the pending batch the stage answered.
+	var stage struct {
+		ProposalBatchID string `json:"proposalBatchId"`
+		Status          string `json:"status"`
+	}
+	lane.author.decode(t, productionLegacyRosterStageName,
+		[]any{map[string]any{"handle": handle, "artifact": artifact}, lane.frozen}, &stage)
+	staged := readRecovery()
+	if syntheticString(staged.Proposal["proposalBatchId"]) != stage.ProposalBatchID ||
+		syntheticString(staged.Proposal["status"]) != productionCharacterProposalStatusPending {
+		t.Fatalf("the staged run's recovery proposal is %+v, want batch %s", staged.Proposal, stage.ProposalBatchID)
+	}
+	if syntheticString(staged.Artifact["artifactId"]) != syntheticString(artifact["artifactId"]) {
+		t.Fatalf("the staged run's recovery artifact is %+v, want %+v", staged.Artifact, artifact)
+	}
+}
+
+// productionLegacyRosterLatestStageArtifact is the artifact of the run's LATEST
+// attempt, which is the reference artifactFor proves
+// (electron/services/legacy-roster-generation.ts:20-22). It orders by the
+// attempt row, because a run that walked the replacement loop has one artifact
+// per attempt and only the last one is artifactFor's subject.
+func productionLegacyRosterLatestStageArtifact(t *testing.T, db *sql.DB, runID string) map[string]any {
+	t.Helper()
+	var artifactID, artifactJSON string
+	if err := db.QueryRow(`SELECT a.artifact_id, a.artifact_json FROM generation_artifacts a
+ JOIN generation_attempts t ON t.attempt_id=a.attempt_id WHERE a.run_id=? ORDER BY t.rowid DESC LIMIT 1`, runID).
+		Scan(&artifactID, &artifactJSON); err != nil {
+		t.Fatalf("read the latest artifact row: %v", err)
+	}
+	var artifact struct {
+		Revision int64  `json:"revision"`
+		TextHash string `json:"textHash"`
+	}
+	if err := json.Unmarshal([]byte(artifactJSON), &artifact); err != nil {
+		t.Fatalf("decode the latest artifact: %v", err)
+	}
+	return map[string]any{"artifactId": artifactID, "revision": artifact.Revision, "textHash": artifact.TextHash}
+}
+
+// TestProductionLegacyRosterUnprovedArtifactIsOmittedAndRefused pins the proof
+// gate that decides both halves at once: a run whose attempts all stopped on
+// 'length' has an artifact row for every attempt, but
+// readLegacyRosterGenerationProof refuses a finish that is not 'stop'
+// (legacy-roster-generation-proof.ts:24-25). So the recovery omits the artifact
+// - the browser then answers NOT_STAGEABLE rather than dialing stage
+// (src/services/legacy-roster-generation.ts:79-82) - and stage itself refuses
+// the same reference with the proof's own GENERATION_LEGACY_ARTIFACT_INVALID.
+func TestProductionLegacyRosterUnprovedArtifactIsOmittedAndRefused(t *testing.T) {
+	lane := productionLegacyRosterStageServeOpen(t,
+		[]string{productionLegacyRosterExecuteRoster, productionLegacyRosterExecuteRoster, productionLegacyRosterExecuteRoster},
+		[]string{"length", "length", "length"}, "legacy-roster-unproved-artifact")
+	handle := lane.handle(t)
+	lane.answer(t, handle)
+
+	var recovery struct {
+		Artifact map[string]any `json:"artifact"`
+		Proposal map[string]any `json:"proposal"`
+	}
+	lane.author.decode(t, productionLegacyRosterReadName,
+		[]any{map[string]any{"handle": handle}, lane.frozen}, &recovery)
+	if recovery.Artifact != nil || recovery.Proposal != nil {
+		t.Fatalf("a length-stopped run's recovery carries an unproved artifact or a proposal: %+v", recovery)
+	}
+
+	// The same reference is refused by stage, with the proof's artifact code.
+	db := productionBatchWriteReadOnly(t, lane.database)
+	artifact := productionLegacyRosterLatestStageArtifact(t, db, lane.runID)
+	response := lane.author.call(t, productionLegacyRosterStageName,
+		[]any{map[string]any{"handle": handle, "artifact": artifact}, lane.frozen})
+	if response.Code == http.StatusOK {
+		t.Fatalf("%s answered 200 for a length-stopped artifact: %s", productionLegacyRosterStageName, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), productionLegacyRosterArtifactInvalid) {
+		t.Fatalf("%s refused with %s, want %s",
+			productionLegacyRosterStageName, response.Body.String(), productionLegacyRosterArtifactInvalid)
 	}
 }
 

@@ -62,18 +62,19 @@ import (
 //     schemaVersion-1 object with non-empty entries, known roles, unique identity
 //     keys, no self-reference, unique relationships and every relationship target
 //     naming another entry. The desktop applies that closure one step later, in
-//     the artifact proof; this lane has no stage yet, so settling a candidate that
-//     could never be proved would answer a run the browser can never advance.
-//     Scalar field normalization (requiredText over every field, normalizeState)
-//     is NOT ported here and remains the stage proof's job;
+//     the artifact proof; applying it here too means a candidate this lane settles
+//     is always one stage's proof can accept, so a run cannot stall between the
+//     two. Scalar field normalization (requiredText over every field,
+//     normalizeState) is NOT ported here and remains the stage proof's job;
 //   - the run is refused with GENERATION_LEGACY_EFFECT_SEALED when any of its
 //     attempts already carries a legacyRosterProposal effect, which is
 //     LegacyRosterGeneration.assertMutable (electron/services/legacy-roster-generation.ts:49-51).
 //     Without it a desktop run that had already been staged could be re-dispatched
 //     by this lane.
 //
-// legacy-roster:stage is untouched and stays refused; the artifact proof and the
-// proposal writer it needs are still missing (production_legacy_roster_execute_linux.go).
+// legacy-roster:stage is served beside this file
+// (production_legacy_roster_stage_serve_linux.go), and its proof and proposal
+// write live in internal/store/legacy_roster_proposal.go.
 
 const (
 	// The reference's two stages and its three attempts per stage

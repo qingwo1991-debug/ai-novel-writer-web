@@ -30,8 +30,8 @@ import (
 //	legacy-roster:begin         served   (productionLegacyRosterServe.begin)
 //	legacy-roster:read          served   (productionLegacyRosterServe.read)
 //	legacy-roster:cancel        served   (productionLegacyRosterServe.cancel)
-//	legacy-roster:execute       refused  (the multi-stage repair loop)
-//	legacy-roster:stage         refused  (the proof + proposal staging)
+//	legacy-roster:execute       served   (production_legacy_roster_execute_serve_linux.go)
+//	legacy-roster:stage         served   (production_legacy_roster_stage_serve_linux.go)
 //	legacy-roster:adopt-existing served   (production_legacy_roster_adopt_linux.go)
 //
 // The seam this session re-tested is the finalization/editor-inline pattern: a
@@ -65,10 +65,11 @@ import (
 // The answer is the reference's LegacyRosterGenerationRecovery
 // (src/shared/legacy-roster-generation.ts:13-21): view, modelId, context,
 // sourceStatus, attemptCount, and - when an artifact or a staged proposal
-// exists - artifact and proposal. This lane's runs are frozen but never
-// dispatched (execute stays refused), so begin/read answer attemptCount 0 with
-// no artifact and no proposal, which is exactly the recovery the reference
-// answers for a freshly begun run.
+// exists - artifact and proposal. The last two are projected by
+// productionLegacyRosterServe.recovery out of the store, so a freshly begun run
+// answers attemptCount 0 with neither, which is exactly the recovery the
+// reference answers for a freshly begun run, while an executed or staged run
+// answers the members src/services/legacy-roster-generation.ts:56-83 stages from.
 //
 // The context is captureLegacyRosterGenerationContext
 // (electron/services/legacy-roster-generation-context.ts:8-13): projectId,
@@ -719,9 +720,12 @@ func productionLegacyRosterDecodeContext(raw []byte) (map[string]any, error) {
 }
 
 // recovery assembles the LegacyRosterGenerationRecovery envelope: attemptCount,
-// view, modelId, context and sourceStatus. This lane's runs are never dispatched
-// (execute stays refused), so artifact and proposal are absent - exactly what
-// the reference answers for a freshly begun run.
+// view, modelId, context, sourceStatus, and the run's own artifact/proposal when
+// it has one. The two optional members are what the browser's stage() reads
+// (src/services/legacy-roster-generation.ts:74-83): without them a served
+// legacy-roster:stage could never be reached, because the client refuses to
+// invoke it without the proven artifact. Both are proved inside the store, whose
+// one transaction reads the artifact, the effect and the envelope together.
 func (l *productionLegacyRosterServe) recovery(ctx context.Context, scope generationowner.Scope, ledger *store.GenerationLedger, db *sql.DB, handle syntheticHandle) (any, error) {
 	resolved, err := l.resolve(ctx, scope, ledger, db, handle)
 	if err != nil {
@@ -736,13 +740,29 @@ func (l *productionLegacyRosterServe) recovery(ctx context.Context, scope genera
 		return nil, err
 	}
 	attempts := syntheticSlice(syntheticMap(budget)["attempts"])
-	return map[string]any{
+	projection, err := store.NewLegacyRosterProposals(db).Recovery(ctx, store.LegacyRosterRecoveryRequest{
+		ProjectID: scope.Project,
+		RunID:     handle.RunID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	answer := map[string]any{
 		"attemptCount": float64(len(attempts)),
 		"view":         view,
 		"modelId":      resolved.ModelID,
 		"context":      resolved.Context,
 		"sourceStatus": l.sourceStatus(ctx, scope, ledger, db, resolved),
-	}, nil
+	}
+	// Omitted, not null: the reference spreads the key in only when it exists
+	// (main-generation-owner.ts:1109-1116).
+	if projection != nil && projection.Artifact != nil {
+		answer["artifact"] = projection.Artifact
+	}
+	if projection != nil && projection.Proposal != nil {
+		answer["proposal"] = projection.Proposal
+	}
+	return answer, nil
 }
 
 // sourceStatus is the reference's currency answer: 'current' only when the root

@@ -74,21 +74,21 @@ import (
 //     whole point: deleting the author's chapter row while leaving the manuscript
 //     on disk is the lie this operation exists to avoid.
 //   - the managed knowledge-base document. `removeKnowledgeDocument`
-//     (:27-35) goes through knowledgeBaseLoader and the native knowledge base,
-//     which this lane has no writer for - internal/knowledgequery is a read-only
-//     View and no package under internal/ removes a document. So the knowledge
-//     projection is LEFT PENDING, not marked completed and not marked failed. A
-//     'failed' verdict would claim a cleaner ran and threw; nothing ran and this
-//     lane structurally cannot run it. 'pending' is the column's own meaning of
-//     "still owed" (finalized_chapter_deletion.go:38-44), it keeps the operation in
-//     list-incomplete-deletions (:380-387) and in the retry affordance the
-//     renderer shows for every non-completed operation
-//     (use-incomplete-deletions.ts:47-62), and it is what lets the lane that does
-//     own the knowledge base finish the job. The cost is stated rather than
-//     hidden: such a delete answers committed:true, success:false and NO error
-//     code, because Refusal() names only 'failed' and the legacy guard
-//     (finalized_chapter_deletion.go:223-234), and the author sees the operation
-//     in the incomplete list with its knowledge projection still pending.
+//     (:27-35) goes through knowledgeBaseLoader and the native knowledge base.
+//     This lane's knowledge store is the canonical snapshot the served kb reads
+//     decode (production_knowledge_import_linux.go:78-102), and the remover this
+//     lane calls is productionKnowledgeRemoveLinkedDocument
+//     (production_knowledge_documents_linux.go), the same code kb:remove-document
+//     serves. So the projection gets a real verdict: the document row and its
+//     chunks leave the snapshot, its reference-format copy is unlinked, and only
+//     then does MarkProjection record 'completed' - or 'failed' with the
+//     symbolic CHAPTER_DELETE_KNOWLEDGE_NOT_REMOVED when the removal threw, which
+//     keeps the operation in list-incomplete-deletions (:380-387) and in the
+//     retry affordance the renderer shows for every non-completed operation
+//     (use-incomplete-deletions.ts:47-62). Removal runs under the same writer
+//     lease, the same operation attempt and the shared per-project knowledge gate
+//     as the manuscript half. A lane opened with no knowledge bridge leaves the
+//     projection 'pending' rather than claiming a removal it cannot perform.
 //
 // # The portable-runtime freeze
 //
@@ -164,6 +164,11 @@ const (
 	// symbolic code because neither the author's database nor the browser may
 	// receive a host path.
 	productionChapterDeletionCodeManuscriptFailed = "MANUSCRIPT_DELETE_FAILED"
+	// productionChapterDeletionCodeKnowledgeNotRemoved is the per-projection
+	// reason recorded on knowledge_error when the knowledge cleaner failed. It is
+	// the reference's own cleaner refusal (chapter-deletion-service.ts:31-34),
+	// stored symbolically for the same reason as the manuscript code above.
+	productionChapterDeletionCodeKnowledgeNotRemoved = "CHAPTER_DELETE_KNOWLEDGE_NOT_REMOVED"
 
 	// productionChapterDeletionTable is the freeze table name of this family
 	// (portable-runtime-freeze.ts:37, chapter-deletion-service.ts:55).
@@ -211,15 +216,25 @@ type productionChapterDeletionRequest struct {
 }
 
 // productionChapterDeletions serves the four names over one durable lane.
+//
+// knowledge is the same bridge the kb binder installed, passed in rather than
+// minted here so the deletion cleaner and every kb mutation share one per-project
+// source gate (productionKnowledgeImports.enter): without that, a delete and an
+// import could interleave two read-modify-writes of one canonical snapshot. A nil
+// bridge is the lane with no knowledge writer, and it leaves the knowledge
+// projection pending exactly as this adapter did before the writer existed.
 type productionChapterDeletions struct {
-	durable *productionDurableOpen
+	durable   *productionDurableOpen
+	knowledge *productionKnowledgeImports
 }
 
-// newProductionChapterDeletions wraps the lane's durable open. A nil open installs
-// nothing, so the four names keep failing closed at 501 GO_OPERATION_NOT_MIGRATED
-// instead of being published as handlers that could only refuse.
-func newProductionChapterDeletions(durable *productionDurableOpen) *productionChapterDeletions {
-	return &productionChapterDeletions{durable: durable}
+// newProductionChapterDeletions wraps the lane's durable open and the shared
+// knowledge bridge. A nil open installs nothing, so the four names keep failing
+// closed at 501 GO_OPERATION_NOT_MIGRATED instead of being published as handlers
+// that could only refuse.
+func newProductionChapterDeletions(durable *productionDurableOpen,
+	knowledge *productionKnowledgeImports) *productionChapterDeletions {
+	return &productionChapterDeletions{durable: durable, knowledge: knowledge}
 }
 
 // Bind installs the four names.
@@ -254,12 +269,12 @@ func (d *productionChapterDeletions) deleteOperation() transport.Operation {
 		if err != nil {
 			return nil, err
 		}
-		db, root, release, err := d.admit(ctx, caller, args, productionChapterDeletionDeleteArity)
+		db, root, projectPath, release, err := d.admit(ctx, caller, args, productionChapterDeletionDeleteArity)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
-		answer, err := d.delete(ctx, db, root, request)
+		answer, err := d.delete(ctx, db, root, projectPath, request)
 		if err != nil {
 			return productionChapterDeletionFailure(err), nil
 		}
@@ -278,12 +293,12 @@ func (d *productionChapterDeletions) retryOperation() transport.Operation {
 		if err != nil {
 			return nil, err
 		}
-		db, root, release, err := d.admit(ctx, caller, args, productionChapterDeletionRetryArity)
+		db, root, projectPath, release, err := d.admit(ctx, caller, args, productionChapterDeletionRetryArity)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
-		answer, err := d.retry(ctx, db, root, operationID)
+		answer, err := d.retry(ctx, db, root, projectPath, operationID)
 		if err != nil {
 			return productionChapterDeletionFailure(err), nil
 		}
@@ -302,12 +317,12 @@ func (d *productionChapterDeletions) confirmOperation() transport.Operation {
 		if err != nil {
 			return nil, err
 		}
-		db, root, release, err := d.admit(ctx, caller, args, productionChapterDeletionConfirmArity)
+		db, root, projectPath, release, err := d.admit(ctx, caller, args, productionChapterDeletionConfirmArity)
 		if err != nil {
 			return nil, err
 		}
 		defer release()
-		answer, err := d.confirm(ctx, db, root, operationID)
+		answer, err := d.confirm(ctx, db, root, projectPath, operationID)
 		if err != nil {
 			return productionChapterDeletionFailure(err), nil
 		}
@@ -319,7 +334,7 @@ func (d *productionChapterDeletions) confirmOperation() transport.Operation {
 // and nothing else (src/shared/ipc-channels.ts:1287-1290).
 func (d *productionChapterDeletions) listOperation() transport.Operation {
 	return func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
-		db, root, release, err := d.admit(ctx, caller, args, productionChapterDeletionListArity)
+		db, root, _, release, err := d.admit(ctx, caller, args, productionChapterDeletionListArity)
 		if err != nil {
 			return nil, err
 		}
@@ -334,31 +349,34 @@ func (d *productionChapterDeletions) listOperation() transport.Operation {
 
 // admit is the shared fence of the four names: arity, the frozen three-key
 // session, the wire's expected project path against the admitted one, the
-// database borrow and the project root. It returns the caller's release, which
-// closes the root and hands the borrow back, so a handler never leaks either.
-func (d *productionChapterDeletions) admit(ctx context.Context, caller transport.Caller, args []any, arity int) (*sql.DB, *os.Root, func(), error) {
+// database borrow and the project root. It returns the admitted project path as
+// well as the root, because the knowledge cleaner opens the storage directory by
+// path (and keys the shared source gate on it), and it returns the caller's
+// release, which closes the root and hands the borrow back, so a handler never
+// leaks either.
+func (d *productionChapterDeletions) admit(ctx context.Context, caller transport.Caller, args []any, arity int) (*sql.DB, *os.Root, string, func(), error) {
 	if d == nil || d.durable == nil {
-		return nil, nil, nil, errors.New("PRODUCTION_CLOSED")
+		return nil, nil, "", nil, errors.New("PRODUCTION_CLOSED")
 	}
 	if len(args) != arity || arity < 2 {
-		return nil, nil, nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+		return nil, nil, "", nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
 	}
 	admitted, err := projectsession.ParseContext(args[arity-1])
 	if err != nil {
-		return nil, nil, nil, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
+		return nil, nil, "", nil, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
 	}
 	if err := productionChapterDeletionExpectedPath(args[arity-2], admitted.ProjectPath); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	if ctx == nil {
-		return nil, nil, nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
+		return nil, nil, "", nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
 	}
 	db, release, err := d.durable.borrowAuthorDatabase(ctx, caller, args[arity-1])
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 	if db == nil || release == nil {
-		return nil, nil, nil, errors.New(productionChapterDeletionCodeRequestFailed)
+		return nil, nil, "", nil, errors.New(productionChapterDeletionCodeRequestFailed)
 	}
 	// The root the lease proves, opened once per request. os.Root confines every
 	// name below to this directory, and the manuscript cleaner still checks that
@@ -366,16 +384,16 @@ func (d *productionChapterDeletions) admit(ctx context.Context, caller transport
 	root, err := os.OpenRoot(admitted.ProjectPath)
 	if err != nil {
 		release()
-		return nil, nil, nil, errors.New(productionChapterDeletionCodeRequestFailed)
+		return nil, nil, "", nil, errors.New(productionChapterDeletionCodeRequestFailed)
 	}
-	return db, root, func() {
+	return db, root, admitted.ProjectPath, func() {
 		_ = root.Close()
 		release()
 	}, nil
 }
 
 // delete is ChapterDeletionService.delete (chapter-deletion-service.ts:68-97).
-func (d *productionChapterDeletions) delete(ctx context.Context, db *sql.DB, root *os.Root, request productionChapterDeletionRequest) (productionChapterDeletionResult, error) {
+func (d *productionChapterDeletions) delete(ctx context.Context, db *sql.DB, root *os.Root, projectPath string, request productionChapterDeletionRequest) (productionChapterDeletionResult, error) {
 	deletions := store.NewChapterDeletions(db, nil)
 	existing, err := deletions.GetByDraftID(ctx, request.DraftID)
 	if err != nil {
@@ -386,7 +404,7 @@ func (d *productionChapterDeletions) delete(ctx context.Context, db *sql.DB, roo
 		if existing.DraftID != request.DraftID || existing.ChapterNumber != request.ChapterNumber {
 			return productionChapterDeletionResult{}, store.ErrChapterDeletionRequestMismatch
 		}
-		return d.resume(ctx, deletions, root, existing.OperationID)
+		return d.resume(ctx, deletions, root, projectPath, existing.OperationID)
 	}
 	// :96 - the guard is computed before Begin, because it is a read.
 	required, err := deletions.RequiresLegacyKnowledgeAuthorization(ctx, request.DraftID, request.ChapterNumber)
@@ -406,19 +424,19 @@ func (d *productionChapterDeletions) delete(ctx context.Context, db *sql.DB, roo
 		// is cleaned; the author has to confirm the legacy state first.
 		return productionChapterDeletionLegacyRequired(begun), nil
 	}
-	return d.resume(ctx, deletions, root, begun.OperationID)
+	return d.resume(ctx, deletions, root, projectPath, begun.OperationID)
 }
 
 // retry is ChapterDeletionService.retry (:107-120). Its own prefix - get, a
 // missing operation is CHAPTER_DELETE_OPERATION_NOT_FOUND, the freeze, the legacy
 // guard - is exactly the prefix resume begins with, so it is not written twice.
-func (d *productionChapterDeletions) retry(ctx context.Context, db *sql.DB, root *os.Root, operationID string) (productionChapterDeletionResult, error) {
-	return d.resume(ctx, store.NewChapterDeletions(db, nil), root, operationID)
+func (d *productionChapterDeletions) retry(ctx context.Context, db *sql.DB, root *os.Root, projectPath string, operationID string) (productionChapterDeletionResult, error) {
+	return d.resume(ctx, store.NewChapterDeletions(db, nil), root, projectPath, operationID)
 }
 
 // confirm is ChapterDeletionService.confirmLegacyKnowledgeAbsent (:99-105): the
 // freeze on the row as it stands, the confirmation, then the ordinary resume.
-func (d *productionChapterDeletions) confirm(ctx context.Context, db *sql.DB, root *os.Root, operationID string) (productionChapterDeletionResult, error) {
+func (d *productionChapterDeletions) confirm(ctx context.Context, db *sql.DB, root *os.Root, projectPath string, operationID string) (productionChapterDeletionResult, error) {
 	deletions := store.NewChapterDeletions(db, nil)
 	existing, err := deletions.Get(ctx, operationID)
 	if err != nil {
@@ -436,13 +454,13 @@ func (d *productionChapterDeletions) confirm(ctx context.Context, db *sql.DB, ro
 	if _, err := deletions.ConfirmLegacyKnowledgeAbsent(ctx, operationID); err != nil {
 		return productionChapterDeletionResult{}, err
 	}
-	return d.resume(ctx, deletions, root, operationID)
+	return d.resume(ctx, deletions, root, projectPath, operationID)
 }
 
 // resume is ChapterDeletionService.resume (:122-159): the freeze and the legacy
 // guard again, the completed replay, one attempt, one verdict per projection of
 // every member, and the settle that aggregates them.
-func (d *productionChapterDeletions) resume(ctx context.Context, deletions *store.ChapterDeletions, root *os.Root, operationID string) (productionChapterDeletionResult, error) {
+func (d *productionChapterDeletions) resume(ctx context.Context, deletions *store.ChapterDeletions, root *os.Root, projectPath string, operationID string) (productionChapterDeletionResult, error) {
 	operation, err := deletions.Get(ctx, operationID)
 	if err != nil {
 		return productionChapterDeletionResult{}, err
@@ -486,7 +504,7 @@ func (d *productionChapterDeletions) resume(ctx context.Context, deletions *stor
 	members = append(members, companions...)
 	members = append(members, *operation)
 	for _, member := range members {
-		if err := productionChapterDeletionClean(ctx, deletions, root, member); err != nil {
+		if err := d.clean(ctx, deletions, root, projectPath, member); err != nil {
 			return productionChapterDeletionResult{}, err
 		}
 	}
@@ -551,14 +569,23 @@ func productionChapterDeletionFrozenAnswer() productionChapterDeletionResult {
 	return productionChapterDeletionResult{Error: productionChapterDeletionCodeFrozen}
 }
 
-// productionChapterDeletionClean is cleanProjections (:161-190) for one member.
+// clean is cleanProjections (:161-190) for one member:
+// one verdict per projection through MarkProjection, in the reference's order -
+// the manuscript first, the knowledge document second.
 //
-// The manuscript gets a verdict. The knowledge document does not: this lane owns
-// no knowledge-base writer, so it is left exactly as Begin set it - 'pending' -
-// and the operation stays in the incomplete list until a lane that can remove it
-// reports through the same MarkProjection. Reporting 'completed' here would be the
-// lie this operation exists to prevent.
-func productionChapterDeletionClean(ctx context.Context, deletions *store.ChapterDeletions, root *os.Root, member store.ChapterDeletionOperation) error {
+// The knowledge half is removeKnowledgeDocument (:27-35) for the store this lane
+// owns. The document named by the frozen receipt is removed from the canonical
+// knowledge snapshot and its reference-format copy is unlinked, both through the
+// shared per-project source gate (productionKnowledgeRemoveLinkedDocument), under
+// the same writer lease and the same operation attempt that removed the
+// manuscript. The verdict is recorded only after the removal happened: a cleanup
+// that fails records 'failed' with the reference's own symbolic code, which keeps
+// the operation in list-incomplete-deletions and makes the retry affordance try
+// again (retry re-cleans a 'failed' projection, :177). Claiming 'completed' for a
+// removal this lane did not perform is the lie the operation exists to prevent,
+// and so is a 'failed' verdict for a cleaner that never ran: a lane opened with no
+// knowledge bridge leaves the projection exactly as Begin set it - 'pending'.
+func (d *productionChapterDeletions) clean(ctx context.Context, deletions *store.ChapterDeletions, root *os.Root, projectPath string, member store.ChapterDeletionOperation) error {
 	if member.ManuscriptStatus == store.ChapterDeletionProjectionPending || member.ManuscriptStatus == store.ChapterDeletionProjectionFailed {
 		verdict, reason := store.ChapterDeletionProjectionCompleted, ""
 		if err := productionChapterDeletionRemoveManuscript(root, member.TargetFileName); err != nil {
@@ -569,7 +596,47 @@ func productionChapterDeletionClean(ctx context.Context, deletions *store.Chapte
 			return err
 		}
 	}
+	if member.KnowledgeStatus != store.ChapterDeletionProjectionPending && member.KnowledgeStatus != store.ChapterDeletionProjectionFailed {
+		return nil
+	}
+	if d == nil || d.knowledge == nil {
+		// No knowledge writer in this lane: nothing ran, so there is no verdict to
+		// record and the projection stays owed.
+		return nil
+	}
+	verdict, reason := store.ChapterDeletionProjectionCompleted, ""
+	if member.KnowledgeDocumentID == "" {
+		// Begin and the companion insert both set knowledge_status to
+		// 'not_required' for a receipt with no document id
+		// (internal/store/finalized_chapter_deletion.go:795-798, :883-886), so a
+		// pending knowledge projection always names one. This arm is unreachable;
+		// it is kept total rather than calling the cleaner with an empty identity,
+		// which the reference answers as a no-op removal
+		// (vector-store.ts:1265-1316 removes no row for an id no document has).
+	} else if err := productionKnowledgeRemoveLinkedDocument(ctx, d.knowledge, projectPath, member.KnowledgeDocumentID); err != nil {
+		verdict = store.ChapterDeletionProjectionFailed
+		reason = productionChapterDeletionKnowledgeReason(err)
+	}
+	if _, err := deletions.MarkProjection(ctx, member.OperationID, store.ChapterDeletionKnowledge, verdict, reason); err != nil {
+		return err
+	}
 	return nil
+}
+
+// productionChapterDeletionKnowledgeReason is the code recorded on
+// knowledge_error when the knowledge cleaner failed. The reference stores the
+// thrown message, which for its default cleaner is
+// CHAPTER_DELETE_KNOWLEDGE_NOT_REMOVED when the native removal answered false and
+// KNOWLEDGE_BASE_NATIVE_UNAVAILABLE when it could not run at all
+// (chapter-deletion-service.ts:27-35). This lane has no native loader - its store
+// is the canonical snapshot the served readers decode - so every failure of the
+// one remover is the first of those codes, kept symbolic so neither the driver's
+// sentence nor a host path can reach the author's database.
+func productionChapterDeletionKnowledgeReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	return productionChapterDeletionCodeKnowledgeNotRemoved
 }
 
 // productionChapterDeletionRemoveManuscript is removePublishedManuscript

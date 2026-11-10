@@ -887,8 +887,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
-		// agent-generation:begin/read open and project the agent session from the
-		// shipped identity prompt and the composed context (production_agent_generation_serve_linux.go).
+		// The eight agent-generation:* names: begin/read open and project the agent
+		// session from the shipped identity prompt and the composed context, and the
+		// six tool names run the round, claim, finish, register, commit and resume
+		// protocol over the run's own ledger receipt
+		// (production_agent_generation_serve_linux.go, production_agent_generation_tools_linux.go).
 		if bindErr := newProductionAgentGenerationServe(owner).Bind(server); bindErr != nil {
 			_ = open.Close()
 			return nil, nil, bindErr
@@ -946,11 +949,11 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// rather than claiming it twice (production_generation_recovery_linux.go).
 		func() error { return bindProductionGenerationRecovery(open.durable, server) },
 		func() error { return bindProductionFinalizationGeneration(server) },
-		// The eight agent-generation names install nothing: each one needs a port this
-		// lane does not have (an agent-context prompt renderer, a tool-manifest dispatch,
-		// a receipt patch outside settle), and the seam table plus its test hold each one
-		// to a named refusal rather than a half-served run
-		// (production_agent_generation_linux.go, internal/agentgen).
+		// The agent-generation refusal lane now installs nothing because it refuses
+		// nothing: all eight names are served by the binder above. This call is kept
+		// as the guard that the two tables cannot drift apart - a name that came back
+		// to the refusal table could not be installed by the serve binder without both
+		// changing (production_agent_generation_linux.go).
 		func() error { return bindProductionAgentGeneration(server) },
 		// graph-generation:read only. To generate a continuity graph a lane has to
 		// derive and qualify the artifact and compose one effect transaction with the
@@ -1038,12 +1041,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// The chapter family's four deletion names. The state machine lives in the
 		// store (internal/store/finalized_chapter_deletion.go); this binder owns the
 		// two halves the store deliberately left to the adapter: the manuscript
-		// verdict, and the portable-runtime freeze. A knowledge-base document can be
-		// written (production_knowledge_import_linux.go) and removed
-		// (production_knowledge_documents_linux.go), but this deletion binder does not
-		// reach for the index: it reports the knowledge projection as still pending
-		// rather than claiming a cleanup it did not perform in its own transaction.
-		func() error { return newProductionChapterDeletions(open.durable).Bind(server) },
+		// verdict, and the portable-runtime freeze. The knowledge half goes through
+		// the same import bridge bound just below - the deletion cleaner removes the
+		// linked document from the canonical snapshot and unlinks its copy through
+		// that bridge's per-project source gate, then records the verdict with
+		// MarkProjection, exactly as the reference's removeKnowledgeDocument does
+		// (production_chapter_deletion_linux.go, production_knowledge_documents_linux.go).
+		func() error { return newProductionChapterDeletions(open.durable, knowledge).Bind(server) },
 		// kb:import-text and kb:import-finalized-text are the two names 终稿 calls
 		// before it can succeed (finalize-chapter.command.ts:130-135). They commit a
 		// canonical FTS-only document into the knowledge copy the served readers

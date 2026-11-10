@@ -17,7 +17,7 @@ package store
 //	  :131-147 listPendingFinalized: page by source_key, prove every row, keep a
 //	           pending row only when its provenance carries a source
 //	  :149-154 readPendingFinalized: read() plus the pending-finalized guard
-//	electron/services/generation-character-proposal-proof.ts:66-105
+//	electron/services/generation-character-proposal-proof.ts:67-103
 //	  the `import` arm of proveCharacterProposal
 //	electron/services/finalized-character-generation-proof.ts:13-64
 //	  proveFinalizedCharacterGeneration
@@ -51,17 +51,22 @@ package store
 //   - the comparison itself is order-insensitive; glSame (:212) is the
 //     package's isDeepStrictEqual.
 //
-// # What is still refused, and why
+// # The generated arm
 //
 // The `generated` arm of the import proof decodes the settled import-inference
 // artifact (decodeImportInferenceJson, import-inference-contract.ts:257) and
 // compares the decoded cards with the receipt's entries
-// (generation-character-proposal-proof.ts:83-88). No Go package owns that
-// decoder, so a row whose import_effect receipt carries a generationRunHandle is
-// refused with CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE instead of being
-// served with a guessed provenance. The lane's own import writer
-// (dbmaintenance.go:671) never records that effect, so every proposal it stages
-// is proven by the `provenance: null` arm and the read serves it.
+// (generation-character-proposal-proof.ts:97-98). That decoder had no Go owner,
+// so a row whose import-effect receipt carried a generationRunHandle used to be
+// refused with CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE instead of served
+// with a guessed provenance. import_inference_decode.go ports the decoder, the
+// two bounded corrections it composes and the artifact reader over it, so the
+// arm now answers what the reference answers: a `generated` provenance when the
+// run's artifact decodes to exactly the receipt's entries, the null provenance
+// when it does not, and CHARACTER_PROPOSAL_SOURCE_INVALID when the artifact, the
+// attempt, its result or its text hash does not hold up. Nothing here refuses a
+// malformed inference by name; the reference catches every contract refusal into
+// the null arm, and so does this port.
 
 import (
 	"context"
@@ -91,8 +96,6 @@ var (
 	ErrCharacterProposalPendingArtifactInvalid = errors.New("CHARACTER_PROPOSAL_ARTIFACT_INVALID")
 	// generation-character-proposal-proof.ts:100
 	ErrCharacterProposalPendingProvenanceRequired = errors.New("CHARACTER_PROPOSAL_PROVENANCE_REQUIRED")
-	// Port-only code: the proof entry point has no Go port (see the header).
-	ErrCharacterProposalPendingProofUnavailable = errors.New("CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE")
 	// character-proposal-service.ts:85-92
 	ErrCharacterProposalPendingApprovalInvalid = errors.New("CHARACTER_PROPOSAL_APPROVAL_INVALID")
 	// character-proposal-service.ts:151-153
@@ -399,11 +402,12 @@ func pendingFinalizedProof(ctx context.Context, conn *sql.Conn, projectID string
 	return nil, ErrCharacterProposalNotPendingFinalized
 }
 
-// pendingFinalizedImportProof is generation-character-proposal-proof.ts:66-105.
-// The item list, the source hash and the null-provenance arm are complete. The
-// `generated` arm is refused at the decoder it needs (see the header).
+// pendingFinalizedImportProof is generation-character-proposal-proof.ts:67-103:
+// the receipt and payload cross-checks, the item list and source hash, the
+// null-provenance arms, and the raised `generated` arm served by the decoder port
+// in import_inference_decode.go.
 func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID string, source plotObject) (plotObject, error) {
-	// :67 only these two keys.
+	// :68 only these two keys.
 	if !pfAllow(source, "kind", "operationId") {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
@@ -411,7 +415,7 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if operationID == "" {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
-	// :68-70 the ledger row.
+	// :69-70 the ledger row.
 	rows, err := rrMaps(ctx, conn, `SELECT payload_hash,receipt_json FROM import_global_fact_operations WHERE operation_id=?`,
 		operationID)
 	if err != nil {
@@ -429,7 +433,7 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if receipt == nil {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
-	// :71-73 the receipt names its own operation and payload, and the source it
+	// :72-73 the receipt names its own operation and payload, and the source it
 	// carries hashes back to that payload.
 	proposalValue, present := pfField(receipt, "proposalSource")
 	proposalSource := pfObject(proposalValue)
@@ -441,7 +445,7 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if err != nil || summaryHash(encodedSource) != payloadHash {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
-	// :74-80 the items, in the reference's destructuring order.
+	// :74-79 the items, in the reference's destructuring order.
 	entries, entriesOK := pfArray(proposalSource, "characterEntries")
 	if !entriesOK {
 		return nil, ErrCharacterProposalPendingSourceInvalid
@@ -498,16 +502,17 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 			{"rawValue", entry},
 		})
 	}
-	// :81 sourceHash = textHash(JSON.stringify([payload_hash, characterEntries])).
+	// :80 sourceHash = textHash(JSON.stringify([payload_hash, characterEntries])).
 	hashInput, err := plotJSON([]any{payloadHash, entries})
 	if err != nil {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
+	sourceHash := summaryHash(hashInput)
 	proof := plotObject{
 		{"items", items},
-		{"sourceHash", summaryHash(hashInput)},
+		{"sourceHash", sourceHash},
 	}
-	// :82-86 exactly one effect row carries the run handle, or there is none.
+	// :81-85 exactly one effect row carries the run handle, or there is none.
 	effects, err := rrMaps(ctx, conn, `SELECT run_id,batch_id,state,payload_json,payload_hash FROM import_run_receipts
  WHERE stage='global' AND kind='project-global-facts' AND json_extract(payload_json,'$.operationId')=?`, operationID)
 	if err != nil {
@@ -526,7 +531,7 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if payload == nil {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
-	// :87-89 the stored payload is its own hash, and it describes the same
+	// :88-89 the stored payload is its own hash, and it describes the same
 	// entries the receipt froze.
 	effectEntries, _ := pfField(payload, "characterEntries")
 	if summaryHash(payloadText) != rosterText(effect["payload_hash"]) || !glSame(effectEntries, entries) {
@@ -536,10 +541,10 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if handleValue, present := pfField(payload, "generationRunHandle"); !present || handleValue == nil {
 		return append(proof, plotField{"provenance", nil}), nil
 	}
-	// :91-104 the generated arm. Its run binding and effect slot are checked, so
-	// the only missing piece is named precisely: the artifact decode.
+	// :91 runs.get: the handle has to name a run, and a run that is not there is
+	// the ledger's own missing-run refusal rather than a source refusal.
 	handle := pfObject(pfValue(payload, "generationRunHandle"))
-	if handle == nil || pfText(handle, "projectId") != projectID {
+	if handle == nil {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
 	runRows, err := rrMaps(ctx, conn, `SELECT run_id,root_action_id,binding_json FROM generation_runs WHERE run_id=?`,
@@ -547,9 +552,13 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 	if err != nil {
 		return nil, err
 	}
+	if len(runRows) == 0 {
+		return nil, glError("GENERATION_RUN_MISSING")
+	}
 	if len(runRows) != 1 {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
+	runID := rosterText(runRows[0]["run_id"])
 	bindingValue, err := glParse(rosterText(runRows[0]["binding_json"]))
 	if err != nil {
 		return nil, ErrCharacterProposalPendingSourceInvalid
@@ -564,13 +573,43 @@ func pendingFinalizedImportProof(ctx context.Context, conn *sql.Conn, projectID 
 		{"stage", "global"},
 		{"batchId", rosterText(effect["batch_id"])},
 	}
-	if pfText(binding, "projectId") != projectID ||
+	// :92-95 the handle and the run it names belong to this project, the run is
+	// this operation's, and the frozen import slot is exactly this effect's.
+	if pfText(handle, "projectId") != projectID || pfText(binding, "projectId") != projectID ||
 		pfText(handle, "rootActionId") != rosterText(runRows[0]["root_action_id"]) ||
 		manifest == nil || pfText(manifest, "operation") != pendingFinalizedImportOperation ||
 		!glSame(pfValue(manifest, "importSlot"), slot) {
 		return nil, ErrCharacterProposalPendingSourceInvalid
 	}
-	return nil, ErrCharacterProposalPendingProofUnavailable
+	// :97-98 the run's own settled import-inference artifact, decoded and
+	// compared with the entries the receipt froze. The decoder port is
+	// import_inference_decode.go; a run that does not decode proves the null
+	// provenance rather than a guessed one.
+	generated, err := pendingFinalizedImportGeneratedEntries(ctx, conn, runID)
+	if err != nil {
+		return nil, err
+	}
+	if generated == nil || !glSame(generated, entries) {
+		return append(proof, plotField{"provenance", nil}), nil
+	}
+	// :99-100 the model the run names, and the digest the provenance carries.
+	model := pfObject(pfValue(manifest, "modelReceipt"))
+	if model == nil || !pfDigest(pfText(model, "modelRevision")) {
+		return nil, ErrCharacterProposalPendingProvenanceRequired
+	}
+	// :101-102 the generated provenance: this operation, at the handle's epoch,
+	// revision 0, over the source hash.
+	return append(proof, plotField{"provenance", plotObject{
+		{"kind", "generated"},
+		{"modelRevision", pfText(model, "modelRevision")},
+		{"source", plotObject{
+			{"projectId", projectID},
+			{"epoch", pfText(handle, "epoch")},
+			{"sourceId", operationID},
+			{"revision", int64(0)},
+			{"contentHash", sourceHash},
+		}},
+	}}), nil
 }
 
 // pendingFinalizedStateProof is

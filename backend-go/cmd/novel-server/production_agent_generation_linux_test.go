@@ -30,13 +30,17 @@ const (
 	productionAgentGenerationToolCall   = "agent-generation-tool-call-0"
 )
 
-// TestProductionLaneRefusesAgentGeneration pins the six refused agent-generation:*
-// names where this lane leaves them: unbound, answering the fail-closed 501
-// GO_OPERATION_NOT_MIGRATED. One subtest per operation, so a failure names the
-// channel that moved. The two served names (begin and read) answer from the run's
-// own state instead and are proved by production_agent_generation_serve_linux_test.go;
-// they are absent from productionAgentGenerationOperations, which is what keeps a
-// served name out of this refusal.
+// TestProductionLaneRefusesAgentGeneration is the refusal lane's residual test.
+// productionAgentGenerationOperations is empty - all eight agent-generation:*
+// names are served - so the refusal subtests below no longer run and the loop over
+// that table is deliberately inert. What the test still proves is the half that
+// did not move: a run whose manifest froze operation agent-round with an
+// agentSession key is admissible in this ledger, the refusing binder installs
+// nothing and refuses a nil server, every name of the served list is inventoried
+// so an absent handler would still be 501 rather than 404, and the run the fixture
+// wrote is left byte-identical. The served behaviour itself is proved by
+// production_agent_generation_serve_linux_test.go and
+// production_agent_generation_tools_linux_test.go.
 //
 // The fixture is a disposable data root whose admitted project carries one real
 // round-0 run, written through the shipped ledger before the admission permit

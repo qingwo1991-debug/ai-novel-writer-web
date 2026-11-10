@@ -3,14 +3,15 @@
 // This file serves two of the seven `legacy-roster` names - the source proof
 // and the adoption - and production_legacy_roster_serve_linux.go serves the
 // run's begin/read/cancel beside it, production_legacy_roster_execute_serve_linux.go
-// serves execute, and stage alone stays refused:
+// serves execute, and production_legacy_roster_stage_serve_linux.go serves stage,
+// so all seven are served:
 //
 //	legacy-roster:read-source      web/operations.json:263  served here
 //	legacy-roster:adopt-existing   web/operations.json:264  served (production_legacy_roster_adopt_linux.go)
 //	legacy-roster:begin            web/operations.json:265  served (production_legacy_roster_serve_linux.go)
 //	legacy-roster:read             web/operations.json:266  served (same file)
 //	legacy-roster:execute          web/operations.json:267  served (production_legacy_roster_execute_serve_linux.go)
-//	legacy-roster:stage            web/operations.json:268  refused, see "stage"
+//	legacy-roster:stage            web/operations.json:268  served (production_legacy_roster_stage_serve_linux.go)
 //	legacy-roster:cancel           web/operations.json:269  served (same file)
 //
 // # What this family actually is
@@ -187,7 +188,7 @@
 // in this package. The raw-row facts hash stays here (productionLegacyRosterJSON)
 // and is passed back in through the `source` callback.
 //
-// # begin/read/cancel/execute: served, stage: refused
+// # begin/read/cancel/execute/stage: all served
 //
 // begin/read/cancel are the run's own state, and they are served in
 // production_legacy_roster_serve_linux.go over the generation owner, using the
@@ -221,15 +222,16 @@
 // validateLegacyRosterCandidate applies; production_legacy_roster_execute_serve_linux.go
 // records that divergence and the attempt-count accounting.
 //
-// stage stays refused, and the adoption that landed this session does not change
-// that. stage hands the settled artifact to CharacterProposalService.stage
-// (legacy-roster-generation.ts:52-68) through readLegacyRosterGenerationProof
-// (legacy-roster-generation-proof.ts:11-45), which proves a generation_artifacts
-// row, a settled attempt and the run's own modelReceipt.modelRevision - none of
-// which the adoption projection (AdoptLegacyRoster, an identity projection plus a
-// character_identity_approvals receipt) carries. The legacy arm of the proposal
-// writer, and the legacyRosterProposal effect key the ledger's allowlist refuses,
-// are still missing; production_legacy_roster_execute_linux.go lists every term.
+// stage is served too, in production_legacy_roster_stage_serve_linux.go. It proves
+// the run and its settled artifact, re-proves the frozen binding, and hands the
+// canonical source to CharacterProposalService.stage's legacy arm
+// (legacy-roster-generation.ts:52-68, the INSERT at character-proposal-service.ts:
+// 191-192) in one transaction that lives in the store because the proof and the
+// projection are one read of the same facts (internal/store/legacy_roster_proposal.go).
+// The proof the earlier refusal note listed as missing is that store file's
+// legacyRosterProposalProof, the writer is its Stage, and the legacyRosterProposal
+// effect key has its arm in the ledger's allowlist; the frozen manifest carries the
+// modelReceipt.modelRevision the proof's last step reads.
 //
 // # Refusals are symbolic, and there is exactly one mapping layer
 //
@@ -266,11 +268,13 @@ const (
 	// only name this file binds.
 	productionLegacyRosterReadSourceName = "legacy-roster:read-source"
 
-	// The six names web/operations.json:264-269 inventories beside it. Five are
+	// The six names web/operations.json:264-269 inventories beside it. All six are
 	// bound by the family's other files - adopt-existing here, begin/read/cancel in
-	// production_legacy_roster_serve_linux.go and execute in
-	// production_legacy_roster_execute_serve_linux.go. Only stage is still refused,
-	// and productionLegacyRosterSeams documents the port it is waiting for.
+	// production_legacy_roster_serve_linux.go, execute in
+	// production_legacy_roster_execute_serve_linux.go and stage in
+	// production_legacy_roster_stage_serve_linux.go - so
+	// productionLegacyRosterSeams publishes nothing and
+	// TestProductionLaneRefusesLegacyRosterNames asserts it.
 	productionLegacyRosterAdoptExistingName = "legacy-roster:adopt-existing"
 	productionLegacyRosterBeginName         = "legacy-roster:begin"
 	productionLegacyRosterReadName          = "legacy-roster:read"
@@ -984,7 +988,8 @@ func productionLegacyRosterOperations() []string {
 // name can be served: the file, the line inside it, and a marker that must appear
 // on it. TestProductionLaneRefusesLegacyRosterNames re-reads every one of them, so
 // a moved or deleted port fails this lane's test instead of leaving a note that
-// points at nothing.
+// points at nothing. No name is refused today, so the table is empty and the
+// reader below is what the test's "served names are not seam rows" half uses.
 type productionLegacyRosterSeamLine struct {
 	Path   string
 	Line   int
@@ -998,14 +1003,12 @@ type productionLegacyRosterGap struct {
 	Missing   []productionLegacyRosterSeamLine
 }
 
-// productionLegacyRosterSeams is this file's whole answer for the one name it
-// does not bind: every term stage would be composed from, in the order the
-// reference authorises it. The terms themselves are spelled in
-// production_legacy_roster_execute_linux.go, together with the reason the
-// adoption projection does not satisfy stage.
+// productionLegacyRosterSeams is this file's whole answer for every name it does
+// not bind. All seven are served now - stage proves the executed run's artifact
+// against the frozen model revision and writes the staged proposal - so the table
+// is empty, and TestProductionLaneRefusesLegacyRosterNames asserts both that it is
+// empty and that none of the seven names appears in it.
 func productionLegacyRosterSeams() []productionLegacyRosterGap {
-	// All seven names are served now: stage proves the executed run's artifact
-	// against the frozen model revision and writes the staged proposal.
 	return nil
 }
 

@@ -469,18 +469,72 @@ func (k *productionKnowledgeDocuments) removeDocument(ctx context.Context, calle
 		return productionKnowledgeImportFailure(err), nil
 	}
 	defer func() { _ = store.Close() }()
-	if next, removed := store.index.without(documentID); removed {
-		if err := productionKnowledgeWriteIndex(ctx, store.storage.storage, next); err != nil {
-			return productionKnowledgeCopyRefusal(productionKnowledgeCodeRemoveFailed), nil
-		}
-	}
-	if err := productionKnowledgeRemoveCopy(store.storage.storage, documentID); err != nil {
-		return productionKnowledgeCopyRefusal(productionKnowledgeCodeRemoveFailed), nil
-	}
-	if err := store.storage.verify(); err != nil {
+	if err := productionKnowledgeRemoveFromStorage(ctx, store.storage, store.index, documentID); err != nil {
 		return productionKnowledgeCopyRefusal(productionKnowledgeCodeRemoveFailed), nil
 	}
 	return map[string]any{"success": true}, nil
+}
+
+// productionKnowledgeRemoveFromStorage is removeDocumentInternal's canonical and
+// copy halves over an already-opened, already-validated store
+// (vector-store.ts:1265-1290): the document row and every chunk of that identity
+// leave the snapshot in one atomic write, a document the store never held writes
+// no snapshot at all, then the reference-format copy file is removed whatever the
+// row set held, and the storage inode is re-proved before the caller is told the
+// removal happened. It is the one implementation of that sequence, shared by
+// kb:remove-document and the finalized-chapter deletion cleaner.
+func productionKnowledgeRemoveFromStorage(ctx context.Context, storage *productionKnowledgeStorage,
+	index productionKnowledgeIndex, documentID string) error {
+	if storage == nil || storage.storage == nil {
+		return errProductionKnowledgeStorageUnsafe
+	}
+	if next, removed := index.without(documentID); removed {
+		if err := productionKnowledgeWriteIndex(ctx, storage.storage, next); err != nil {
+			return err
+		}
+	}
+	if err := productionKnowledgeRemoveCopy(storage.storage, documentID); err != nil {
+		return err
+	}
+	return storage.verify()
+}
+
+// productionKnowledgeRemoveLinkedDocument is the deletion family's
+// removeKnowledgeDocument (electron/services/chapter-deletion-service.ts:27-35)
+// for the store this lane owns: it takes the same per-project source gate every
+// kb mutation takes (productionKnowledgeImports.enter is the
+// withKnowledgeSourceGate of vector-store.ts:1261-1263), refuses an unmigrated
+// legacy vector store with the reference's own blocked code, decodes the
+// canonical snapshot through the readers' validator, and then removes the
+// identity and its copy. An identity the snapshot does not hold is a successful
+// no-op, exactly as removeDocumentInternal's two zero-row checks are. The empty
+// identity is a caller bug and never a removal: no document has that id, and the
+// copy path it would name is not a document's.
+func productionKnowledgeRemoveLinkedDocument(ctx context.Context, imports *productionKnowledgeImports,
+	projectPath, documentID string) error {
+	if imports == nil || projectPath == "" || documentID == "" {
+		return errProductionKnowledgeStorageUnsafe
+	}
+	release, err := imports.enter(projectPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+	storage, err := productionKnowledgeOpenStorage(projectPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = storage.Close() }()
+	// ensureMigration before anything else, in the order kb:remove-document and
+	// the import adapter take it (production_knowledge_documents_linux.go:284-289).
+	if err := storage.refuseLegacyVectors(); err != nil {
+		return err
+	}
+	index, err := productionKnowledgeReadIndex(ctx, storage.storage)
+	if err != nil {
+		return err
+	}
+	return productionKnowledgeRemoveFromStorage(ctx, storage, index, documentID)
 }
 
 // clearAll serves `kb:clear-all`. The copies tree is judged before the snapshot

@@ -18,7 +18,7 @@ package main
 //	  :60-102  readEnvelope         :103-112 resolveItems
 //	electron/services/finalized-character-generation-proof.ts:13-64
 //	  proveFinalizedCharacterGeneration, the `finalized-generation` proof
-//	electron/services/generation-character-proposal-proof.ts:66-105
+//	electron/services/generation-character-proposal-proof.ts:67-103
 //	  the `import` proof
 //
 // The wire declarations are src/shared/character-proposal.ts:77-78: the list
@@ -48,18 +48,20 @@ package main
 // over a typed Go struct's. `byte-exactness` was never the obstacle it was
 // recorded as.
 //
-// # What stays refused inside the served answer
+// # The generated arm inside the served answer
 //
 // The generated arm of the import proof decodes the settled import-inference
 // artifact (decodeImportInferenceJson, import-inference-contract.ts:257) and
 // compares the decoded cards with the receipt entries
-// (generation-character-proposal-proof.ts:83-88). No Go package ports that
-// decoder, so an import proposal whose import_effect receipt carries a
-// generationRunHandle is refused with CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE
-// instead of being served with a guessed provenance. The lane's own import
-// writer (internal/store/dbmaintenance.go:671) records no such effect, so the
-// proposals it stages are proven by the `provenance: null` arm and both names
-// serve them.
+// (generation-character-proposal-proof.ts:97-98). That decoder is now ported
+// (internal/store/import_inference_decode.go), together with the two bounded
+// corrections it composes, so an import proposal whose import_effect receipt
+// carries a generationRunHandle is proved exactly as the reference proves it:
+// the run's artifact either decodes to the receipt's own entries, which is a
+// `generated` provenance naming the run's modelRevision, or it does not, which
+// is the reference's null provenance rather than a guessed one. A malformed
+// inference is never refused by name; the reference catches every contract
+// refusal into the null arm, and so does the port.
 //
 // # The wiring
 //

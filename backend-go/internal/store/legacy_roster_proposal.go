@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -116,10 +117,181 @@ type legacyRosterProposalProofResult struct {
 }
 
 // legacyRosterProposalEffect is the parsed legacyRosterProposal effect of a
-// previously staged attempt.
+// previously staged attempt, together with the attempt row that carried it and
+// the source hash the recovery re-proves it against
+// (electron/services/legacy-roster-generation.ts:44-53).
 type legacyRosterProposalEffect struct {
+	attemptID       string
 	artifact        plotObject
 	proposalBatchID string
+	sourceHash      string
+}
+
+// LegacyRosterRecoveryRequest names the run whose recovery projection is read. It
+// carries no artifact: the reference proves the artifact out of the run's own
+// latest attempt instead of trusting a caller.
+type LegacyRosterRecoveryRequest struct {
+	ProjectID string
+	RunID     string
+}
+
+// LegacyRosterRecoveryProjection is LegacyRosterGenerationRecovery's two optional
+// members (src/shared/legacy-roster-generation.ts:13-21). A nil member is a key
+// the wire object omits, exactly like the reference's conditional spread
+// (electron/services/main-generation-owner.ts:1109-1116).
+type LegacyRosterRecoveryProjection struct {
+	Artifact map[string]any
+	Proposal map[string]any
+}
+
+// Recovery is artifactFor + proposal as the owner's recovery read uses them
+// (electron/services/legacy-roster-generation.ts:20-22, :44): the artifact the
+// run's latest attempt proved, and the batch a settled legacyRosterProposal
+// effect reads back. Both are derived from the database, never from a caller, so
+// a browser that executed or staged a run outside this process still gets the
+// keys its stage() reads (src/services/legacy-roster-generation.ts:74-83).
+//
+// It reads on one reserved connection and opens no transaction: the reference's
+// recovery is a plain read too, and this is the read half of the family, so a
+// legacy-roster:read never takes a write lock.
+func (p *LegacyRosterProposals) Recovery(ctx context.Context, request LegacyRosterRecoveryRequest) (*LegacyRosterRecoveryProjection, error) {
+	if p == nil || p.db == nil {
+		return nil, ErrProjectNotOpen
+	}
+	if summaryTrim(request.ProjectID) == "" || summaryTrim(request.RunID) == "" {
+		return nil, ErrLegacyRosterProposalIdentityMismatch
+	}
+	conn, err := p.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	projection := &LegacyRosterRecoveryProjection{}
+	if err := legacyRosterProposalRecovery(ctx, conn, request, projection); err != nil {
+		return nil, err
+	}
+	return projection, nil
+}
+
+func legacyRosterProposalRecovery(ctx context.Context, conn *sql.Conn, request LegacyRosterRecoveryRequest, projection *LegacyRosterRecoveryProjection) error {
+	run, binding, manifest, err := legacyRosterProposalRun(ctx, conn, LegacyRosterStageRequest{
+		ProjectID: request.ProjectID, RunID: request.RunID,
+	})
+	if err != nil {
+		return err
+	}
+	runID := rosterText(run["run_id"])
+	rootID := rosterText(run["root_action_id"])
+	projectID := pfText(binding, "projectId")
+	originEpoch := pfText(manifest, "legacyRosterOriginEpoch")
+	if request.ProjectID != projectID {
+		return ErrLegacyRosterProposalIdentityMismatch
+	}
+	// artifactFor: the latest attempt's artifact, and only when the full proof
+	// accepts it. The reference swallows that proof's refusal here, so a candidate
+	// that could never be staged answers no artifact instead of an error.
+	attemptID, reference, err := legacyRosterProposalLatestArtifact(ctx, conn, runID)
+	if err != nil {
+		return err
+	}
+	if attemptID != "" {
+		if _, err := legacyRosterProposalProof(ctx, conn, runID, rootID, projectID, originEpoch, manifest, attemptID, reference); err == nil {
+			if plain, ok := glPlain(reference).(map[string]any); ok {
+				projection.Artifact = plain
+			}
+		}
+	}
+	// proposal: the run's own stored effect, re-proved key by key exactly like
+	// LegacyRosterGeneration.saved (:44-53) before its batch is answered.
+	contextHash, err := legacyRosterProposalContextHash(manifest)
+	if err != nil {
+		return err
+	}
+	effect, err := legacyRosterProposalSaved(ctx, conn, runID, contextHash)
+	if err != nil {
+		return err
+	}
+	if effect == nil {
+		return nil
+	}
+	proof, err := legacyRosterProposalProof(ctx, conn, runID, rootID, projectID, originEpoch, manifest, effect.attemptID, effect.artifact)
+	if err != nil {
+		// The reference's saved does not wrap the proof: a reference that no longer
+		// resolves answers the proof's own code, not the effect code.
+		return err
+	}
+	envelope, err := legacyRosterProposalEnvelopeRead(ctx, conn, projectID, effect.proposalBatchID)
+	if err != nil {
+		// Likewise the receipt: proposals.read throws its own code for a corrupt
+		// envelope and saved lets it through.
+		return err
+	}
+	// The three equalities the reference's saved does turn into
+	// GENERATION_LEGACY_EFFECT_INVALID after the proof: the effect's own source
+	// hash is the proof's, the stored envelope's evidence hash is that same one,
+	// and the batch's source is the proof's source.
+	if effect.sourceHash != proof.sourceHash || envelope.proofSourceHash != effect.sourceHash ||
+		!legacyRosterProposalSourceSame(envelope.batchSource, proof.canonical) {
+		return ErrLegacyRosterProposalEffectInvalid
+	}
+	projection.Proposal = envelope.batch
+	return nil
+}
+
+// legacyRosterProposalLatestArtifact is artifactFor (legacy-roster-generation.ts:
+// 20-22): the run's latest attempt with the three-key reference of its receipt
+// artifact, or no attempt at all. Whether the reference is provable is the
+// caller's proof, not this function's decision.
+func legacyRosterProposalLatestArtifact(ctx context.Context, conn *sql.Conn, runID string) (string, plotObject, error) {
+	row, err := glOne(ctx, conn, "SELECT attempt_id FROM generation_attempts WHERE run_id=? ORDER BY rowid DESC LIMIT 1", "", runID)
+	if err != nil {
+		return "", nil, err
+	}
+	if row == nil {
+		return "", nil, nil
+	}
+	attemptID := rosterText(row["attempt_id"])
+	if attemptID == "" {
+		return "", nil, nil
+	}
+	receipt, err := NewGenerationLedger(nil, nil, nil).receipt(ctx, conn, attemptID, nil)
+	if err != nil {
+		return "", nil, nil
+	}
+	artifact := pfObject(pfValue(receipt, "artifact"))
+	if artifact == nil {
+		return "", nil, nil
+	}
+	artifactID := pfText(artifact, "artifactId")
+	revision, revisionOK := pfInteger(artifact, "revision")
+	textHash := pfText(artifact, "textHash")
+	if artifactID == "" || !revisionOK || textHash == "" {
+		return "", nil, nil
+	}
+	return attemptID, plotObject{
+		{"artifactId", artifactID},
+		{"revision", revision},
+		{"textHash", textHash},
+	}, nil
+}
+
+// legacyRosterProposalSourceSame is isDeepStrictEqual(batch.source, proof.source)
+// (legacy-roster-generation.ts:51) without Go's struct identity rules: both sides
+// are decoded JSON, so key order and number representation cannot decide a
+// comparison that the reference makes over values.
+func legacyRosterProposalSourceSame(stored any, canonical plotObject) bool {
+	if stored == nil {
+		return false
+	}
+	expected, err := plotJSON(canonical)
+	if err != nil {
+		return false
+	}
+	parsed, err := glParse(expected)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(stored, parsed)
 }
 
 func legacyRosterProposalStage(ctx context.Context, conn *sql.Conn, request LegacyRosterStageRequest) (map[string]any, error) {
@@ -230,7 +402,7 @@ func legacyRosterProposalContextHash(manifest plotObject) (string, error) {
 }
 
 func legacyRosterProposalSaved(ctx context.Context, conn *sql.Conn, runID, contextHash string) (*legacyRosterProposalEffect, error) {
-	rows, err := rrMaps(ctx, conn, "SELECT usage_receipt_json FROM generation_attempts WHERE run_id=? ORDER BY rowid", runID)
+	rows, err := rrMaps(ctx, conn, "SELECT attempt_id,usage_receipt_json FROM generation_attempts WHERE run_id=? ORDER BY rowid", runID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +432,16 @@ func legacyRosterProposalSaved(ctx context.Context, conn *sql.Conn, runID, conte
 		if found != nil {
 			return nil, ErrLegacyRosterProposalEffectInvalid
 		}
-		found = &legacyRosterProposalEffect{artifact: artifact, proposalBatchID: proposalBatchID}
+		// The attempt and the source hash are not part of this function's refusal
+		// boundary - the stage replay only needs the artifact and the batch - but
+		// the recovery's proof reads them back, so they are captured here rather
+		// than queried again.
+		found = &legacyRosterProposalEffect{
+			attemptID:       rosterText(row["attempt_id"]),
+			artifact:        artifact,
+			proposalBatchID: proposalBatchID,
+			sourceHash:      pfText(effect, "sourceHash"),
+		}
 	}
 	return found, nil
 }
@@ -652,7 +833,17 @@ func legacyRosterProposalStamp(ctx context.Context, conn *sql.Conn, attemptID st
 	return err
 }
 
-func legacyRosterProposalRead(ctx context.Context, conn *sql.Conn, projectID, proposalBatchID string) (map[string]any, error) {
+// legacyRosterProposalStoredEnvelope is one stored envelope read back: the batch
+// the wire answers, its decoded source, and the proof hash the reference's
+// evidence read returns (character-proposal-service.ts:155-157). It is not the
+// builder of the same shape above: this one is what the database holds.
+type legacyRosterProposalStoredEnvelope struct {
+	proofSourceHash string
+	batch           map[string]any
+	batchSource     any
+}
+
+func legacyRosterProposalEnvelopeRead(ctx context.Context, conn *sql.Conn, projectID, proposalBatchID string) (*legacyRosterProposalStoredEnvelope, error) {
 	rows, err := rrMaps(ctx, conn, "SELECT source_key,source_hash,raw_value FROM character_identity_proposals WHERE proposal_id=?", proposalBatchID)
 	if err != nil {
 		return nil, err
@@ -686,5 +877,18 @@ func legacyRosterProposalRead(ctx context.Context, conn *sql.Conn, projectID, pr
 	if !ok {
 		return nil, ErrCharacterProposalPendingReceiptInvalid
 	}
-	return plain, nil
+	return &legacyRosterProposalStoredEnvelope{
+		proofSourceHash: pfText(pfObject(pfValue(envelope, "proof")), "sourceHash"),
+		batch:           plain,
+		batchSource:     pfValue(batch, "source"),
+	}, nil
+}
+
+// legacyRosterProposalRead is the batch alone, for the stage replay path.
+func legacyRosterProposalRead(ctx context.Context, conn *sql.Conn, projectID, proposalBatchID string) (map[string]any, error) {
+	envelope, err := legacyRosterProposalEnvelopeRead(ctx, conn, projectID, proposalBatchID)
+	if err != nil {
+		return nil, err
+	}
+	return envelope.batch, nil
 }

@@ -434,3 +434,71 @@ func TestServiceDiagnosticsFiniteAllowlistAndRecoveryDefaultDeny(t *testing.T) {
 	_, err = s.Resume(context.Background(), runID, next)
 	wantServiceCode(t, err, "GENERATION_RECOVERY_UNAUTHORIZED")
 }
+
+// serviceAgentRun opens one agent-round run on the fixture's ledger, so the
+// dispatch gate sees the only operation that admits an Agent tool manifest. The
+// open payload is serviceFixture's, with the family's own operation and nonce.
+func serviceAgentRun(t *testing.T, ledger *store.GenerationLedger) string {
+	t.Helper()
+	hash := strings.Repeat("a", 64)
+	open := `[{"projectId":"project","epoch":"epoch","operation":"agent-round","uiActionNonce":"service-agent","frozenInputHash":"` + hash + `","fingerprint":{"chapterBriefHash":"` + hash + `","authorGuidanceHash":"` + hash + `","dependencyHash":"` + hash + `","contextSnapshotHash":"` + hash + `","templateHash":"` + hash + `","skillSnapshotHash":"` + hash + `","modelLeaseRevision":"` + hash + `","policyHash":"` + hash + `","outputContractHash":"` + hash + `"},"contextSnapshotId":"context","sourceManifest":{"operation":"agent-round"},"sourceRefs":[],"budget":{"maxPhysicalRequests":8,"maxTokenLiability":1,"maxOutputPerRequest":100,"maxActiveElapsedMs":60000}}]`
+	value, err := ledger.CallJSON(context.Background(), "open", json.RawMessage(open))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stext(smap(value)["runId"])
+}
+
+// TestServiceAgentManifestAdmitsAndStampsTheParsedResponse pins the dispatch half
+// of the agent tool loop where it lives: a present Agent tool manifest is a
+// protocol request, admitted for operation agent-round alone, and the parsed
+// agentResponse that SettleProviderUsage would otherwise drop is re-attached to
+// the settled receipt's result.usage, which is what the next read projects.
+func TestServiceAgentManifestAdmitsAndStampsTheParsedResponse(t *testing.T) {
+	_, ledger, draftRunID := serviceFixture(t)
+	agentRunID := serviceAgentRun(t, ledger)
+	var dispatched int32
+	response := map[string]any{
+		"version":     float64(1),
+		"visibleText": "我先登记一个草稿工作流。",
+		"toolCalls": []any{map[string]any{
+			"name":      "start_workflow",
+			"arguments": map[string]any{"workflow": "draft", "chapter_number": float64(3)},
+		}},
+	}
+	s := New(Dependencies{Ledger: ledger, Dispatch: func(ctx context.Context, request any, callbacks Callbacks) (DispatchResult, error) {
+		atomic.AddInt32(&dispatched, 1)
+		callbacks.OnVisible(VisibleEvent{Kind: "cumulative", Text: "我先登记一个草稿工作流。"})
+		usage := serviceUsage()
+		usage["agentResponse"] = response
+		return DispatchResult{Usage: usage, FinishReason: "stop"}, nil
+	}})
+	request := serviceRequest(agentRunID)
+	request.AgentToolNames = []string{"start_workflow"}
+	want, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := mustServiceExecute(t, s, request)
+	stamped, err := json.Marshal(smap(smap(receipt["result"])["usage"])["agentResponse"])
+	if err != nil || string(stamped) != string(want) {
+		t.Fatalf("the settled receipt carries %s (%v), want %s", stamped, err, want)
+	}
+	// A replay joins the settled attempt and answers the same stamped response
+	// without a second dispatch.
+	replay := mustServiceExecute(t, s, request)
+	again, err := json.Marshal(smap(smap(replay["result"])["usage"])["agentResponse"])
+	if err != nil || string(again) != string(want) || atomic.LoadInt32(&dispatched) != 1 {
+		t.Fatalf("the replay carried %s (%v) with %d dispatches", again, err, dispatched)
+	}
+	// The gate is the run's own operation, not the request: the fixture's
+	// chapter-draft run refuses the same manifest before it reserves anything.
+	ordinary := serviceRequest(draftRunID)
+	ordinary.AgentToolNames = []string{}
+	if _, err := s.Execute(context.Background(), ordinary); err == nil || err.Error() != "GENERATION_OPERATION_UNSUPPORTED" {
+		t.Fatalf("a non-agent run answered %v, want GENERATION_OPERATION_UNSUPPORTED", err)
+	}
+	if atomic.LoadInt32(&dispatched) != 1 {
+		t.Fatalf("the refused manifest dispatched %d times", dispatched)
+	}
+}

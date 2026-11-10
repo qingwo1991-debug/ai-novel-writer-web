@@ -19,9 +19,9 @@ package main
 // store cannot do is the in-memory binding reproduction, which this file runs
 // before the write, exactly like execute does.
 //
-// The binder line that installs this name into the product lane belongs beside
+// The binder line that installs this name into the product lane sits beside
 // newProductionLegacyRosterExecuteServe(owner).Bind(server) in
-// production_open_linux.go's owner block; this batch may not edit that file.
+// production_open_linux.go's owner block (:884-889).
 
 import (
 	"context"

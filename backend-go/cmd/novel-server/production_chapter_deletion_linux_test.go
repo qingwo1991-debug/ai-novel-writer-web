@@ -14,31 +14,36 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgedomain"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 // This file drives the four chapter:* deletion names that
 // production_chapter_deletion_linux.go binds, over the real outbox store: the
-// list on a project with nothing to delete, a delete that completes, a delete the
-// lane honestly leaves pending, the retry that settles it, the retry that only
-// replays a completed one, the delete the legacy guard stops, the confirmation
-// that is consumed exactly once, the refusal of every operation without a live
-// lease, and the portable-runtime freeze guard itself.
+// list on a project with nothing to delete, a delete that completes, a delete
+// that removes the linked knowledge document, a delete whose receipt names a
+// document the store does not hold, the retry that settles a deletion an
+// interruption left pending, the retry that only replays a completed one, the
+// delete the legacy guard stops, the confirmation that is consumed exactly once,
+// the refusal of every operation without a live lease, and the portable-runtime
+// freeze guard itself.
 //
 // # The fixture
 //
 // Every subtest opens its own production lane (productionGenerationWriteOpen,
 // production_generation_write_linux_test.go:129) and seeds one finalized chapter
 // through productionChapterDeletionSeed: a draft of chapter 3, the content it
-// points at, the immutable finalization receipt beside it and, when the arm needs
-// one, the chapter_finalize post-process run the legacy guard reads. Chapter 3 and
-// draft 43 are deliberate: productionEditorReadsRoot seeds draft 1 of chapter 1
-// (production_editor_reads_linux_test.go:124), so no assertion here can be
-// satisfied by a row a sibling fixture owns.
+// points at, the immutable finalization receipt beside it, and - when the arm
+// needs them - the chapter_finalize post-process run the legacy guard reads, the
+// published manuscript, and the canonical knowledge document the receipt links.
+// Chapter 3 and draft 43 are deliberate: productionEditorReadsRoot seeds draft 1
+// of chapter 1 (production_editor_reads_linux_test.go:124), so no assertion here
+// can be satisfied by a row a sibling fixture owns.
 //
 // continuity_projection_meta is seeded with an INSERT and verified by reading the
 // generation back, never with a bare UPDATE: the pinned baseline creates the table
@@ -78,8 +83,9 @@ const (
 	// (electron/services/manuscript-publisher.ts:88-94).
 	productionChapterDeletionTargetFile = "第3章 门.txt"
 
-	// The managed document an interrupted delete leaves pending: this lane owns no
-	// knowledge-base writer, so the operation must stay in the incomplete list.
+	// The managed document a receipt links. The arms that seed it write the row,
+	// its chunk and its reference-format copy into the canonical store, so the
+	// deletion cleaner has a real document to remove rather than an id to trust.
 	productionChapterDeletionKnowledgeID = "kb:ci-chapter-3"
 	// productionChapterDeletionRunID is the chapter_finalize run the legacy guard
 	// reads. Its steps decide the guard: kb_import raises it, no step clears it
@@ -109,8 +115,10 @@ func TestProductionChapterDeletionsServeTheFinalizedChapterOutbox(t *testing.T) 
 		testProductionChapterDeletionListWithoutDeletions)
 	t.Run("chapter:delete-finalized completes a delete and its file is gone",
 		testProductionChapterDeletionDeleteCompletes)
-	t.Run("chapter:delete-finalized leaves an operation pending while a document is owed",
-		testProductionChapterDeletionLeftPendingIsListed)
+	t.Run("chapter:delete-finalized removes the knowledge document its receipt links",
+		testProductionChapterDeletionRemovesKnowledgeDocument)
+	t.Run("chapter:delete-finalized completes when the store holds no such document",
+		testProductionChapterDeletionWithoutStoredDocument)
 	t.Run("chapter:retry-deletion settles a pending deletion",
 		testProductionChapterDeletionRetrySettles)
 	t.Run("chapter:retry-deletion replays a completed deletion without a write",
@@ -130,7 +138,10 @@ func TestProductionChapterDeletionsServeTheFinalizedChapterOutbox(t *testing.T) 
 //
 //	{}                          a finalized chapter nobody has deleted yet
 //	target                      a published chapter with no knowledge document
-//	target+knowledgeDocumentID   a chapter whose document a cleaner still owes
+//	target+knowledgeDocumentID   a chapter whose receipt names a document, with no
+//	                             store behind the id
+//	target+knowledgeDocument     a chapter whose receipt names a document that
+//	                             really exists in the canonical snapshot and copy
 //	target+pending               an interrupted delete: the fact is gone, the
 //	                             operation row is still pending
 //	knowledgeRun                 a finalization that projected knowledge but has
@@ -140,11 +151,15 @@ func TestProductionChapterDeletionsServeTheFinalizedChapterOutbox(t *testing.T) 
 type productionChapterDeletionSeedOptions struct {
 	targetFileName      string
 	knowledgeDocumentID string
-	knowledgeRun        bool
-	plainRun            bool
-	manuscript          bool
-	pending             bool
-	operationID         string
+	// knowledgeDocument writes the document the receipt names into the canonical
+	// snapshot and the reference-format copy beside it, through the lane's own
+	// writer, so the fixture is the store kb:search would decode.
+	knowledgeDocument bool
+	knowledgeRun      bool
+	plainRun          bool
+	manuscript        bool
+	pending           bool
+	operationID       string
 }
 
 // productionChapterDeletionSeed returns the seed hook the lane opener runs before
@@ -210,6 +225,12 @@ func productionChapterDeletionSeed(options productionChapterDeletionSeedOptions)
 				t.Fatal(err)
 			}
 		}
+		if options.knowledgeDocument {
+			if options.knowledgeDocumentID == "" {
+				t.Fatal("a knowledge fixture needs the document id its receipt names")
+			}
+			productionChapterDeletionSeedKnowledge(t, projectPath, options.knowledgeDocumentID)
+		}
 		if options.pending {
 			// An interrupted delete: Begin removes the fact in its own transaction
 			// (internal/store/finalized_chapter_deletion.go:304), then the process
@@ -242,6 +263,96 @@ func productionChapterDeletionWireRequest() map[string]any {
 	return map[string]any{
 		"draftId":       float64(productionChapterDeletionDraft),
 		"chapterNumber": float64(productionChapterDeletionChapter),
+	}
+}
+
+// productionChapterDeletionSeedKnowledge writes the canonical knowledge document
+// the finalized chapter's receipt names: one document row, its single chunk and
+// the reference-format copy beside them - the three artifacts
+// kb:import-finalized-text commits, written through the lane's own writer so the
+// fixture cannot drift from the format the served readers decode.
+func productionChapterDeletionSeedKnowledge(t *testing.T, projectPath, documentID string) {
+	t.Helper()
+	storage, err := productionKnowledgeOpenStorage(projectPath)
+	if err != nil {
+		t.Fatalf("open the knowledge storage the fixture seeds: %v", err)
+	}
+	defer func() { _ = storage.Close() }()
+	chapter := int64(productionChapterDeletionChapter)
+	title := productionChapterDeletionTitle
+	document := productionKnowledgeDocument{
+		ID:         documentID,
+		FileName:   productionChapterDeletionTargetFile,
+		ImportedAt: productionKnowledgeTimestamp(time.Unix(0, 0).UTC()),
+		ChunkCount: 1,
+		FilePath:   productionKnowledgeCopyMarker + documentID,
+		CorpusKind: productionKnowledgeCorpusKind,
+		Content:    productionChapterDeletionBody,
+	}
+	chunk := productionKnowledgeChunk{
+		ID:            "ci-chapter-deletion-chunk-3",
+		DocID:         documentID,
+		FileName:      document.FileName,
+		Text:          productionChapterDeletionBody,
+		ChunkIndex:    0,
+		TotalChunks:   1,
+		ImportedAt:    document.ImportedAt,
+		ChapterNumber: &chapter,
+		ChapterTitle:  &title,
+		CorpusKind:    productionKnowledgeCorpusKind,
+	}
+	if _, err := productionKnowledgeWriteCopy(storage.storage, documentID, document.Content,
+		productionKnowledgeHash(document.Content)); err != nil {
+		t.Fatalf("seed the knowledge copy: %v", err)
+	}
+	if err := productionKnowledgeWriteIndex(context.Background(), storage.storage,
+		productionKnowledgeIndex{
+			Documents: []productionKnowledgeDocument{document},
+			Chunks:    []productionKnowledgeChunk{chunk},
+		}); err != nil {
+		t.Fatalf("seed the canonical knowledge snapshot: %v", err)
+	}
+}
+
+// productionChapterDeletionAssertKnowledgeDocument proves the fixture's document
+// is either wholly present or wholly gone: its row and its chunk in the canonical
+// snapshot, and its reference-format copy. The snapshot is revalidated with the
+// readers' own validator, so a removal that left the file inconsistent fails here
+// rather than at the first kb:search.
+func productionChapterDeletionAssertKnowledgeDocument(t *testing.T, projectPath string, present bool) {
+	t.Helper()
+	snapshot := productionKnowledgeSnapshotOfProject(t, projectPath)
+	if _, err := knowledgedomain.Validate(context.Background(), snapshot,
+		productionKnowledgeDomainBudget()); err != nil {
+		t.Fatalf("the canonical snapshot no longer validates: %v", err)
+	}
+	documents := int64(0)
+	for _, document := range productionKnowledgeRows(t, snapshot, productionKnowledgeTableDocuments) {
+		if document["id"] == productionChapterDeletionKnowledgeID {
+			documents++
+		}
+	}
+	chunks := int64(0)
+	for _, chunk := range productionKnowledgeRows(t, snapshot, productionKnowledgeTableChunks) {
+		if chunk["docId"] == productionChapterDeletionKnowledgeID {
+			chunks++
+		}
+	}
+	copyPath := productionKnowledgeCopyPath(projectPath, productionChapterDeletionKnowledgeID)
+	if present {
+		if documents != 1 || chunks != 1 {
+			t.Fatalf("the fixture document is %v rows and %v chunks, want 1 and 1", documents, chunks)
+		}
+		if _, err := os.Lstat(copyPath); err != nil {
+			t.Fatalf("the fixture's knowledge copy is missing: %v", err)
+		}
+		return
+	}
+	if documents != 0 || chunks != 0 {
+		t.Fatalf("the deleted document left %v rows and %v chunks in the snapshot", documents, chunks)
+	}
+	if _, err := os.Lstat(copyPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the deleted document's knowledge copy survived: %v", err)
 	}
 }
 
@@ -472,74 +583,102 @@ func testProductionChapterDeletionDeleteCompletes(t *testing.T) {
 	}
 }
 
-// testProductionChapterDeletionLeftPendingIsListed is the honest half of the
-// cleaner: this lane removes the manuscript, it cannot remove a managed knowledge
-// document, so the knowledge projection stays pending and the operation stays in
-// the incomplete list for the lane that can finish it.
-func testProductionChapterDeletionLeftPendingIsListed(t *testing.T) {
+// testProductionChapterDeletionRemovesKnowledgeDocument is the knowledge half of
+// the cleaner end to end: a finalized chapter whose receipt names a managed
+// document, the document really present in the canonical snapshot and its copy,
+// and one delete that leaves neither behind while the operation completes.
+func testProductionChapterDeletionRemovesKnowledgeDocument(t *testing.T) {
 	lane := productionGenerationWriteOpen(t, nil, productionChapterDeletionSeed(
 		productionChapterDeletionSeedOptions{
 			targetFileName:      productionChapterDeletionTargetFile,
 			knowledgeDocumentID: productionChapterDeletionKnowledgeID,
+			knowledgeDocument:   true,
 			manuscript:          true,
 		}))
+	// The fixture's document is really there before the delete, so a passing
+	// assertion afterwards cannot be satisfied by a store that was empty all along.
+	productionChapterDeletionAssertKnowledgeDocument(t, lane.projectPath, true)
 	manuscript := filepath.Join(lane.projectPath, productionChapterDeletionTargetFile)
 	answer := productionStoryStateWriteCall(t, lane.author, productionChapterDeletionDeleteName,
 		[]any{productionChapterDeletionWireRequest(), lane.projectPath, lane.frozen})
+	if answer["success"] != true {
+		t.Fatalf("a delete that removed both projections answered %v", answer)
+	}
 	if answer["committed"] != true {
 		t.Fatalf("delete-finalized answered %v without committing the fact", answer)
 	}
-	if answer["success"] != false {
-		t.Fatalf("a deletion whose document is still owed answered success: %v", answer)
-	}
 	if code, present := answer["error"]; present {
-		// Refusal() names only a failed cleanup and the legacy guard
-		// (internal/store/finalized_chapter_deletion.go:223-234). The knowledge
-		// projection is not failed - nothing was attempted - so there is no code to
-		// publish, and inventing one would be a claim about a cleaner that never ran.
-		t.Fatalf("a still-owed knowledge document answered an error %v", code)
+		t.Fatalf("a completed deletion answered an error %v", code)
 	}
 	record := productionChapterDeletionRecord(t, answer)
 	productionChapterDeletionFieldSet(t, record)
-	if status := syntheticString(record["status"]); status != store.ChapterDeletionPending {
-		t.Fatalf("the operation reports status %v, want pending", status)
+	if status := syntheticString(record["status"]); status != store.ChapterDeletionCompleted {
+		t.Fatalf("the operation reports status %v, want completed", status)
 	}
 	if status := syntheticString(record["manuscriptStatus"]); status != store.ChapterDeletionProjectionCompleted {
 		t.Fatalf("the removed manuscript reports %v, want completed", status)
 	}
-	if status := syntheticString(record["knowledgeStatus"]); status != store.ChapterDeletionProjectionPending {
-		t.Fatalf("the knowledge projection reports %v, want the untouched pending", status)
+	if status := syntheticString(record["knowledgeStatus"]); status != store.ChapterDeletionProjectionCompleted {
+		t.Fatalf("the removed knowledge document reports %v, want completed", status)
+	}
+	if message := syntheticString(record["knowledgeError"]); message != "" {
+		t.Fatalf("a completed knowledge projection recorded an error %v", message)
 	}
 	if document := syntheticString(record["knowledgeDocumentId"]); document != productionChapterDeletionKnowledgeID {
 		t.Fatalf("the operation names the document %v", document)
 	}
-	// The manuscript half really happened; the document half is the one left.
+	// Both projections really happened: the manuscript is gone from the project
+	// root and the document is gone from the canonical knowledge store, whose
+	// snapshot still validates and still holds exactly its two tables.
 	if _, err := os.Lstat(manuscript); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("the manuscript survived the projection this lane owns: %v", err)
+		t.Fatalf("the manuscript survived the delete: %v", err)
 	}
+	productionChapterDeletionAssertKnowledgeDocument(t, lane.projectPath, false)
+	// The committed row agrees, and a fully cleaned operation is no longer listed.
 	readOnly := productionStoryStateWriteReadback(t, lane.projectPath)
 	if status := productionChapterDeletionText(t, readOnly,
 		"SELECT knowledge_status FROM chapter_deletion_operations WHERE draft_id=?",
-		productionChapterDeletionDraft); status != store.ChapterDeletionProjectionPending {
-		t.Fatalf("the committed row reports knowledge_status %v, want pending", status)
+		productionChapterDeletionDraft); status != store.ChapterDeletionProjectionCompleted {
+		t.Fatalf("the committed row reports knowledge_status %v, want completed", status)
 	}
-	// And it is listed, with the pending projection intact, so the browser can offer
-	// the retry that a lane with a knowledge-base writer will settle.
 	listed := productionStoryStateWriteCall(t, lane.author, productionChapterDeletionListName,
 		[]any{lane.projectPath, lane.frozen})
-	operations := productionChapterDeletionListed(t, listed)
-	if len(operations) != 1 {
-		t.Fatalf("the incomplete list holds %v operations, want the one left pending", len(operations))
+	if operations := productionChapterDeletionListed(t, listed); len(operations) != 0 {
+		t.Fatalf("a fully cleaned deletion is still listed: %v operations", len(operations))
 	}
-	productionChapterDeletionFieldSet(t, operations[0])
-	if id := syntheticString(operations[0]["operationId"]); id != syntheticString(record["operationId"]) {
-		t.Fatalf("the list answers operation %v, want the one just left pending", id)
+}
+
+// testProductionChapterDeletionWithoutStoredDocument is the reference's own no-op
+// removal (vector-store.ts:1265-1316): a receipt that names a document the store
+// does not hold is not a refusal, the projection settles as completed, and no
+// empty snapshot is written in the document's place.
+func testProductionChapterDeletionWithoutStoredDocument(t *testing.T) {
+	lane := productionGenerationWriteOpen(t, nil, productionChapterDeletionSeed(
+		productionChapterDeletionSeedOptions{
+			targetFileName:      productionChapterDeletionTargetFile,
+			knowledgeDocumentID: productionChapterDeletionKnowledgeID,
+			plainRun:            true,
+		}))
+	indexPath := productionKnowledgeQueryIndexPath(lane.projectPath)
+	if raw := productionKnowledgeQueryFileBytes(t, indexPath); raw != nil {
+		t.Fatalf("the fixture wrote a knowledge snapshot it should not have: %d bytes", len(raw))
 	}
-	if status := syntheticString(operations[0]["status"]); status != store.ChapterDeletionPending {
-		t.Fatalf("the listed operation reports status %v, want pending", status)
+	answer := productionStoryStateWriteCall(t, lane.author, productionChapterDeletionDeleteName,
+		[]any{productionChapterDeletionWireRequest(), lane.projectPath, lane.frozen})
+	if answer["success"] != true {
+		t.Fatalf("a delete whose document the store does not hold answered %v", answer)
 	}
-	if status := syntheticString(operations[0]["knowledgeStatus"]); status != store.ChapterDeletionProjectionPending {
-		t.Fatalf("the listed operation reports knowledge %v, want pending", status)
+	record := productionChapterDeletionRecord(t, answer)
+	productionChapterDeletionFieldSet(t, record)
+	if status := syntheticString(record["status"]); status != store.ChapterDeletionCompleted {
+		t.Fatalf("the operation reports status %v, want completed", status)
+	}
+	if status := syntheticString(record["knowledgeStatus"]); status != store.ChapterDeletionProjectionCompleted {
+		t.Fatalf("the knowledge projection reports %v, want completed", status)
+	}
+	// A removal that removed nothing must not have created the snapshot.
+	if raw := productionKnowledgeQueryFileBytes(t, indexPath); raw != nil {
+		t.Fatalf("a no-op removal wrote a knowledge snapshot: %d bytes", len(raw))
 	}
 }
 

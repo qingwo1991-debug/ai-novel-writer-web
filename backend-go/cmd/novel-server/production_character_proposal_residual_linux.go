@@ -41,11 +41,21 @@ package main
 //     reproduced. Both proof chains (proveFinalizedCharacterGeneration and the
 //     import arm) are ported there.
 //
-// What remains refused is narrow and is not one of these two names: the raised
-// `generated` arm of the import proof needs decodeImportInferenceJson, which no
-// Go package ports, so an import proposal whose effect receipt carries a
-// generationRunHandle answers CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE
-// instead of a guessed provenance.
+// One more refusal used to sit beside them and is now retracted for the same
+// reason: the raised `generated` arm of the import proof needed
+// decodeImportInferenceJson, which no Go package ported, so an import proposal
+// whose effect receipt carried a generationRunHandle answered
+// CHARACTER_PROPOSAL_SOURCE_PROOF_UNAVAILABLE instead of a guessed provenance.
+// internal/store/import_inference_decode.go ports the decoder, the two bounded
+// corrections it composes (structured-syntax-repair.ts:170-183 and
+// import-inference-contract.ts:434-443) and the artifact reader that composes
+// them (generation-character-proposal-proof.ts:16-41), so the arm now answers a
+// `generated` provenance when the run's settled artifact decodes to the
+// receipt's own entries, the reference's null provenance when it does not, and
+// CHARACTER_PROPOSAL_SOURCE_INVALID when the artifact, attempt, result or text
+// hash does not hold up. The lane's own import writer
+// (internal/store/dbmaintenance.go:671) records no such effect, so the proposals
+// it stages keep proving through the `provenance: null` arm.
 //
 // production_character_proposal_pending_linux.go states the reference chain and
 // the wiring line. This file keeps only the retraction evidence, so the family

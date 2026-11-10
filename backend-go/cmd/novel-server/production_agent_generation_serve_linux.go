@@ -20,21 +20,21 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file serves two of the eight agent-generation:* names, and it serves them
-// the way legacy-roster:begin/read are served: the run's own state, frozen from
-// shipped prose, re-proved on every read. The other six stay refused, and the
-// seam table in production_agent_generation_linux.go says why, name by name.
+// This file serves agent-generation:begin and agent-generation:read - the run's
+// own state, frozen from shipped prose and re-proved on every read, the way
+// legacy-roster:begin/read are served. The family's other six names are served by
+// production_agent_generation_tools_linux.go:
 //
-//	agent-generation:begin               served   (productionAgentGenerationServe.begin)
-//	agent-generation:read                served   (productionAgentGenerationServe.read)
-//	agent-generation:resume              refused  (a receipt patch outside settle)
-//	agent-generation:round               refused  (no tool-manifest dispatch)
-//	agent-generation:claim-tool          refused  (a receipt patch outside settle)
-//	agent-generation:finish-tool         refused  (a receipt patch outside settle)
-//	agent-generation:register-workflow   refused  (a receipt patch outside settle)
-//	agent-generation:commit-domain-tool  refused  (a receipt patch outside settle)
+//	agent-generation:begin               served here
+//	agent-generation:read                served here
+//	agent-generation:resume              served (tools file)
+//	agent-generation:round               served (tools file)
+//	agent-generation:claim-tool          served (tools file)
+//	agent-generation:finish-tool         served (tools file)
+//	agent-generation:register-workflow   served (tools file)
+//	agent-generation:commit-domain-tool  served (tools file)
 //
-// # Why begin and read are servable now
+// # Why begin and read are servable
 //
 // The old fence was "no Go file names PromptTemplate or renderPrompt". The
 // identity template `assistant_writing_identity` ships in
@@ -81,27 +81,29 @@ import (
 // only its tool calls become actions. internal/agentgen owns that projection
 // (ClassifyRound, NextRound) and read only feeds it.
 //
-// This lane cannot dispatch a round (see the seam table), so a run begun here
-// reads back as one not-started round with nextRound 0: exactly what the
-// reference answers for a freshly begun session.
+// A run begun here that no round has been dispatched for yet reads back as one
+// not-started round with nextRound 0: exactly what the reference answers for a
+// freshly begun session.
 //
-// # The six refused names
+// # The six tool names
 //
-//   - resume, claim-tool, finish-tool, register-workflow and
-//     commit-domain-tool each write the attempt's usage receipt - agentControlEpoch,
-//     agentActions[actionId], the settled action, the workflow metadata, the
-//     domain effect - and no ledger method patches a receipt key outside settle
-//     (internal/store/generation_ledger.go:601, refused as
-//     GENERATION_EFFECT_UNSUPPORTED; recordEffect's allowlist is effect-only at
-//     :1228).
-//   - round needs the tool-manifest dispatch: internal/generation refuses a
-//     request that carries agentToolNames (internal/generation/service.go:261,
-//     :289) and Go's settlement has no parse to stamp as
-//     result.usage.agentResponse (electron/services/generation-run-service.ts:
-//     263-266). Opening that dispatch in the shared ordinary service would put
-//     the agent protocol behind every family's execute, and with the action map
-//     unwritable no round's action could ever settle - a dispatch the next read
-//     could prove stuck. So it stays refused until the receipt port lands.
+// The six live in production_agent_generation_tools_linux.go. Each re-proves the
+// session run, decides through internal/agentgen and writes its one receipt entry
+// through the store's recordAgentReceipt port
+// (internal/store/generation_ledger_agent.go:76), so the agent protocol never
+// rides on the shared ordinary service's execute:
+//
+//   - resume re-admits a paused or completed run through the root-only activate
+//     port and patches agentControlEpoch; it never rewrites the binding, because
+//     that would re-encode the frozen agentContext and break its digest.
+//   - round dispatches under a present agentToolNames manifest, admitted by
+//     internal/generation for operation agent-round alone
+//     (internal/generation/service.go:277), and the parse it stamps as
+//     result.usage.agentResponse (:533-539) is what the next read projects.
+//   - claim-tool, finish-tool, register-workflow and commit-domain-tool write the
+//     action map, the workflow metadata and the domain effect through the same
+//     receipt port, whose allowlist admits exactly agentActions,
+//     agentAuthorSelections, agentSourceTransition and agentControlEpoch.
 
 const (
 	// productionAgentGenerationVisibleText is the one output a session freezes
@@ -126,10 +128,12 @@ const (
 	productionAgentGenerationRunMissing = "GENERATION_RUN_MISSING"
 )
 
-// productionAgentGenerationServedOperations is the half of the family this file
-// installs. The other six are spelled by productionAgentGenerationOperations, and
-// the two lists are disjoint by construction: Bind refuses to run if a served
-// name is still in the refusal table.
+// productionAgentGenerationServedOperations is the whole family, installed by
+// this file's Bind through the per-name dispatch
+// production_agent_generation_tools_linux.go adds.
+// productionAgentGenerationOperations is now empty; the two lists stay disjoint
+// by construction, because Bind refuses to run if a served name is also in the
+// refusal table.
 func productionAgentGenerationServedOperations() []string {
 	return []string{
 		productionAgentGenerationBegin,
@@ -143,9 +147,10 @@ func productionAgentGenerationServedOperations() []string {
 	}
 }
 
-// productionAgentGenerationServe serves begin and read over the one generation
-// owner, exactly like productionLegacyRosterServe and productionFinalizationServe
-// do for their families.
+// productionAgentGenerationServe serves the eight agent-generation:* names over
+// the one generation owner, exactly like productionLegacyRosterServe and
+// productionFinalizationServe do for their families: begin/read here, and the six
+// tool names in production_agent_generation_tools_linux.go.
 type productionAgentGenerationServe struct {
 	owner *productionGeneration
 }
@@ -158,13 +163,15 @@ func (a *productionAgentGenerationServe) ready() bool {
 	return a != nil && a.owner != nil && a.owner.open != nil && a.owner.inner != nil
 }
 
-// Bind installs the two served names. A nil owner is not an error: the names keep
+// Bind installs all eight served names - begin and read from this file, the six
+// tool names from production_agent_generation_tools_linux.go, through the
+// per-name dispatch that file adds. A nil owner is not an error: the names keep
 // failing closed at GO_OPERATION_NOT_MIGRATED, exactly like the sibling binders,
 // and a nil server is refused like every other binder in this package.
 //
-// It is called from production_open_linux.go's owner block, next to
-// newProductionLegacyRosterServe(owner).Bind(server) (production_open_linux.go:707):
-// begin mints a model lease
+// It is called from production_open_linux.go's owner block
+// (production_open_linux.go:892), next to
+// newProductionLegacyRosterServe(owner).Bind(server): begin mints a model lease
 // and opens a ledger run, so the generation owner is the one port it cannot do
 // without.
 func (a *productionAgentGenerationServe) Bind(server *transport.Server) error {
