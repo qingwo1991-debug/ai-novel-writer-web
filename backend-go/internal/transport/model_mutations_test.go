@@ -54,9 +54,11 @@ func TestModelSaveUsesTrustedEndpointAndPreservesOnlySameEndpointCredential(t *t
 	if added.Code != 200 || !strings.Contains(added.Body.String(), `"success":true`) || strings.Contains(added.Body.String(), "secret-for-writer") {
 		t.Fatal(added.Code, added.Body.String())
 	}
+	// The same profile id is an update, not a second model: it persists the new
+	// endpoint in place and never echoes the credential.
 	private, err = models.ListPrivateModels()
-	if err != nil || len(private) != 2 {
-		t.Fatal("a committed new endpoint did not persist", err, private)
+	if err != nil || len(private) != 1 || private[0]["baseUrl"] != "https://other.example/v1" {
+		t.Fatal("a committed new endpoint did not persist in place", err, private)
 	}
 }
 

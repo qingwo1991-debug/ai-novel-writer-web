@@ -241,8 +241,12 @@ func TestSyntheticGlobalConfigUsesSharedSessionAndSafeProjections(t *testing.T) 
 	if !strings.Contains(listed.Body.String(), `"apiKey":""`) || strings.Contains(listed.Body.String(), "private-model-secret") {
 		t.Fatal("private model credential leaked", listed.Body.String())
 	}
+	// A new endpoint is the author's declaration: it commits, and the dispatch
+	// policy is rebuilt from that commit. The save must not echo the credential.
 	denied := strings.Replace(profile, "https://allowed.example:8443/v1", "https://other.example/v1", 1)
-	check(rpc("llm:save-model", denied), http.StatusForbidden, "ENDPOINT_NOT_ALLOWED")
+	if response := rpc("llm:save-model", denied); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"success":true`) || strings.Contains(response.Body.String(), "private-model-secret") {
+		t.Fatal(response.Code, response.Body.String())
+	}
 	deleted := rpc("llm:delete-model", `{"args":["writer"]}`)
 	check(deleted, http.StatusOK, `"success":true`)
 	check(rpc("llm:list-models", `{"args":[]}`), http.StatusOK, `"result":[]`)

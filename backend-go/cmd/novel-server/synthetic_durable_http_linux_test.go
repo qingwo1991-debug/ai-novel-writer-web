@@ -311,18 +311,20 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	if cleared := configRead(); cleared["defaultModelId"] != nil {
 		t.Fatalf("llm:delete-model did not clear the default reference: %v", cleared)
 	}
-	// A profile outside the administrator approved origins is refused at 403 and
-	// nothing is persisted for it.
+	// Saving a model is the author's declaration of its endpoint, so a base URL
+	// outside the startup policy is committed (and the production lane then
+	// rebuilds its dispatch policy from that commit) instead of being refused.
+	// The save must succeed and persist without echoing the credential.
 	deniedModel := rpc("llm:save-model", []any{map[string]any{
 		"id": "denied-model", "provider": "custom", "protocol": "openai",
 		"baseUrl": "https://denied.example/v1", "modelName": "denied",
 		"apiKey": "sk-durable-denied-key",
 	}})
-	if deniedModel.Code != http.StatusForbidden || !strings.Contains(deniedModel.Body.String(), "ENDPOINT_NOT_ALLOWED") {
-		t.Fatalf("llm:save-model accepted an unapproved endpoint: %d %s", deniedModel.Code, deniedModel.Body.String())
+	if deniedModel.Code != http.StatusOK || !strings.Contains(deniedModel.Body.String(), `"success":true`) || strings.Contains(deniedModel.Body.String(), "sk-durable-denied-key") {
+		t.Fatalf("llm:save-model refused a committed endpoint: %d %s", deniedModel.Code, deniedModel.Body.String())
 	}
-	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || bytes.Contains(raw, []byte("denied-model")) {
-		t.Fatalf("a refused model save persisted a profile: %v", err)
+	if raw, err := os.ReadFile(filepath.Join(globalRoot, "models.json")); err != nil || !bytes.Contains(raw, []byte("denied-model")) {
+		t.Fatalf("a committed model save did not persist a profile: %v", err)
 	}
 	// The six model-routing preference names are bound on this lane by
 	// BindModelRouting: each reads or rewrites config.json alone, so every
