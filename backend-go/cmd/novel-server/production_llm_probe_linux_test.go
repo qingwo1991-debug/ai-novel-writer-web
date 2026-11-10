@@ -510,6 +510,26 @@ func TestProductionLLMProbeRestoresAStoredCredentialOnlyForItsOwnEndpoint(t *tes
 	}
 }
 
+// TestProductionLLMProbeDiscoveryNamesAnUncommittedEndpoint holds the settings
+// form's ability to tell "save this model first" apart from "this endpoint
+// publishes no list". An endpoint outside the committed egress cannot be dialed
+// yet, and answering "unsupported" told the author the endpoint had no model
+// list at all - which is exactly what happened when adding a vector model.
+func TestProductionLLMProbeDiscoveryNamesAnUncommittedEndpoint(t *testing.T) {
+	for _, purpose := range []string{"generation", "embedding"} {
+		provider, _ := productionProbeFakeProvider(t, http.StatusOK,
+			`{"object":"list","data":[{"id":"synthetic-model","object":"model"}]}`)
+		fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+		profile := productionProbeTypedProfile("https://uncommitted.example/v1", productionTestModelSecret)
+		profile["purposes"] = []any{purpose}
+		var wire productionProbeDiscoveryWire
+		fixture.client.decode(t, "llm:discover-models", []any{profile}, &wire)
+		if wire.Success || wire.ErrorCode != "endpoint_not_allowed" {
+			t.Fatalf("%s: an uncommitted endpoint answered success=%v errorCode=%q", purpose, wire.Success, wire.ErrorCode)
+		}
+	}
+}
+
 // TestProductionLLMProbeDiscoversWithoutAModelName holds the browser contract: a
 // ModelDiscoveryRequest is provider/protocol/baseUrl/apiKey/purposes and carries
 // no model name (src/shared/ipc-channels.ts). Demanding one refused every real

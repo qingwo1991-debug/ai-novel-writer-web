@@ -521,6 +521,7 @@ export interface DiscoveredModel {
 export type ModelDiscoveryErrorCode =
   | 'auth'
   | 'unsupported'
+  | 'endpoint_not_allowed'
   | 'network'
   | 'invalid_response'
   | 'no_models'

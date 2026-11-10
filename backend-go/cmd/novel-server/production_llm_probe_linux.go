@@ -319,6 +319,13 @@ func (p *productionLLMProbe) discoverModels(ctx context.Context, caller transpor
 		return productionProbeDiscoveryFailure(err)
 	}
 	if err := client.CheckBaseURL(form.baseURL); err != nil {
+		if errors.Is(err, egress.ErrNotAllowed) {
+			// The endpoint is well-formed but not in the committed egress
+			// allowlist yet. Saving this model commits it and rebuilds the
+			// policy, after which the list is available. Answering "unsupported"
+			// here told the author the endpoint had no model list at all.
+			return map[string]any{"success": false, "errorCode": "endpoint_not_allowed"}, nil
+		}
 		return productionProbeDiscoveryFailure(productionProbeRefusedOrigin(err))
 	}
 	endpoint, ok := productionModelsEndpoint(form.baseURL, form.provider)

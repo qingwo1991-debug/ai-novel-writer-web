@@ -23,6 +23,7 @@ const AUTO_DISCOVERY_DELAY_MS = 500
 const DISCOVERY_NOTICES: Record<ModelDiscoveryErrorCode, readonly [string, string]> = {
   auth: ['鉴权失败：请检查 API Key。手工模型 ID 仍可使用。', 'Authentication failed. Check the API key. Manual model IDs remain available.'],
   unsupported: ['该端点不支持标准模型列表接口。请继续手工填写模型 ID。', 'This endpoint does not support the standard model-list API. Continue with a manual model ID.'],
+  endpoint_not_allowed: ['这个端点还没加入允许列表，所以暂时取不到模型列表；先保存这个模型，之后就能自动获取。手工填写模型 ID 也可以。', 'This endpoint is not in the allowed list yet, so its model list cannot be fetched; save this model first and the list becomes available. A manual model ID also works.'],
   network: ['网络请求失败，请检查端点或网络后重试。手工模型 ID 仍可使用。', 'The network request failed. Check the endpoint or network and retry. Manual model IDs remain available.'],
   invalid_response: ['端点返回了无法识别的模型列表。请继续手工填写模型 ID。', 'The endpoint returned an invalid model list. Continue with a manual model ID.'],
   no_models: ['端点没有返回任何模型。请继续手工填写模型 ID。', 'The endpoint returned no models. Continue with a manual model ID.'],
