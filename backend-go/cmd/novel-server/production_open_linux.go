@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +40,19 @@ const (
 	productionConfigTarget     = "ai-novel-writer"
 	productionMigrationTarget  = "ai-novel-writer-web-runtime"
 	productionLegacyDirectory  = "legacy-global"
-	// productionMaxDatabaseBytes bounds one staged author database copy. It is
-	// the same 64 MiB budget the durable synthetic lane admits.
-	productionMaxDatabaseBytes = 64 << 20
+	// productionMaxDatabaseBytes bounds one staged author database copy. It is a
+	// sane author-novel ceiling (1 GiB), not the disposable-fixture 64 MiB budget
+	// the durable synthetic lane admits: a real book must never be refused, hidden
+	// or left unopenable because its own database outgrew a test-sized limit.
+	productionMaxDatabaseBytes = 1 << 30
+	// productionProjectTooLargeCode is the named refusal an author project whose
+	// canonical files exceed that budget answers. Such a project is still
+	// inventoried and named on the chooser and the shelf; only its open refuses,
+	// and it refuses by this code rather than answering PROJECT_NOT_FOUND.
+	productionProjectTooLargeCode = "PRODUCTION_PROJECT_TOO_LARGE"
+	// productionProjectTooLargeMessage is the author-facing text beside that code,
+	// so the refusal says what happened instead of reading as a missing book.
+	productionProjectTooLargeMessage = "项目太大"
 	// productionStartupTimeout bounds the whole startup admission, including one
 	// staged copy per library project.
 	productionStartupTimeout = 5 * time.Minute
@@ -79,6 +90,76 @@ func productionLayoutFor(raw string) (productionLayout, error) {
 		migrationRoot:   filepath.Join(root, productionConfigDirectory, productionMigrationTarget),
 		legacySource:    filepath.Join(root, productionLegacyDirectory),
 	}, nil
+}
+
+// productionScratchRoot returns the directory every private staging workspace of
+// this lane is created under: the admit copy of an author database, the export and
+// archive staging, the cloud-backup staging and the runtime's own per-open copies.
+// NOVEL_SCRATCH_ROOT selects it; the default is the process temporary directory.
+// A deployment moves it onto the author data volume because one staged copy is as
+// large as the biggest admitted book, which a small tmpfs cannot hold.
+// The value is operator configuration, never request or author input, so creating
+// a named mount is configuration rather than authority.
+func productionScratchRoot() (string, error) {
+	raw := strings.TrimSpace(os.Getenv("NOVEL_SCRATCH_ROOT"))
+	if raw == "" {
+		return os.TempDir(), nil
+	}
+	if strings.ContainsRune(raw, '\x00') || !filepath.IsAbs(raw) {
+		return "", errors.New("PRODUCTION_SCRATCH_ROOT_UNSAFE")
+	}
+	root := filepath.Clean(raw)
+	if root == string(filepath.Separator) {
+		return "", errors.New("PRODUCTION_SCRATCH_ROOT_UNSAFE")
+	}
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", fmt.Errorf("production scratch root: %w", err)
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("PRODUCTION_SCRATCH_ROOT_UNSAFE")
+	}
+	return root, nil
+}
+
+// productionProjectRefusal is the wire refusal one inventoried-but-unserved
+// project answers. The named code is the machine contract; the message is the
+// author-facing half, and neither is a fabricated success or a missing book.
+func productionProjectRefusal(code string) error {
+	refusal := security.NewHTTPError(http.StatusConflict, code)
+	if code == productionProjectTooLargeCode {
+		refusal.Message = productionProjectTooLargeMessage
+	}
+	return refusal
+}
+
+// productionRefusedProject is an inventoried library entry this lane deliberately
+// does not stage, with the named code its open answers. A refused project is never
+// dropped: the chooser and the shelf still name it, and project:open refuses it by
+// code instead of answering PROJECT_NOT_FOUND.
+type productionRefusedProject struct {
+	listed projectfs.ListedProject
+	code   string
+}
+
+// productionListedInventory merges the admitted and refused entries back into the
+// library's own newest-first order, so a refused book appears on the chooser and
+// the shelf where its timestamp belongs instead of after every served project.
+func productionListedInventory(projects []productionProject, refused []productionRefusedProject) []projectfs.ListedProject {
+	merged := make([]projectfs.ListedProject, 0, len(projects)+len(refused))
+	for _, item := range projects {
+		merged = append(merged, item.listed)
+	}
+	for _, item := range refused {
+		merged = append(merged, item.listed)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].UpdatedAt != merged[j].UpdatedAt {
+			return merged[i].UpdatedAt > merged[j].UpdatedAt
+		}
+		return merged[i].Name < merged[j].Name
+	})
+	return merged
 }
 
 // productionConfig is the trusted backend input of this lane. Schema is the
@@ -126,6 +207,10 @@ type productionOpen struct {
 	library  *projectfs.Library
 	scratch  string
 	projects []productionProject
+	// refused is the inventoried-but-unserved set: a project whose canonical
+	// files exceed the staging budget. The chooser and the shelf serve it and
+	// project:open refuses it by name; it is never silently omitted.
+	refused []productionRefusedProject
 	// recentRemoved is the shelf's own memory: the paths project:recent-remove
 	// dropped from the recent list. It is consulted by RecentProjects only, so
 	// removing an entry can never change what this lane admits.
@@ -224,7 +309,11 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 	if err != nil {
 		return fail(fmt.Errorf("production library: %w", err))
 	}
-	open.scratch, err = os.MkdirTemp(os.TempDir(), "novel-production-admission-")
+	scratchParent, scratchErr := productionScratchRoot()
+	if scratchErr != nil {
+		return fail(scratchErr)
+	}
+	open.scratch, err = os.MkdirTemp(scratchParent, "novel-production-admission-")
 	if err != nil {
 		return fail(err)
 	}
@@ -233,6 +322,7 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 		return fail(fmt.Errorf("production library inventory: %w", err))
 	}
 	admitted := make([]productionProject, 0, len(listed))
+	refused := make([]productionRefusedProject, 0)
 	var rejected error
 	for _, entry := range listed {
 		if err := ctx.Err(); err != nil {
@@ -240,6 +330,15 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 		}
 		evidence, admitErr := admitProductionProject(ctx, open.library, entry, open.scratch, config)
 		if admitErr != nil {
+			// A project over the staging budget is not a silent omission: it stays
+			// inventoried, the chooser and the shelf keep naming it, and its open
+			// answers productionProjectTooLargeCode (productionProjectRefusal).
+			if errors.Is(admitErr, projectfs.ErrTooLarge) {
+				refused = append(refused, productionRefusedProject{listed: entry, code: productionProjectTooLargeCode})
+				log.Printf("novel-server: author project exceeds the %d-byte staging budget, listed but not staged (%s): %s",
+					config.MaxDatabaseBytes, productionProjectTooLargeCode, entry.Path)
+				continue
+			}
 			if rejected == nil {
 				rejected = admitErr
 			}
@@ -250,15 +349,20 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 	}
 	// A library holding projects this build cannot admit is a configuration
 	// failure, not an empty shelf: report it instead of hiding the author's data.
-	if len(listed) > 0 && len(admitted) == 0 {
+	// An over-budget library is the exception: those projects are surfaced by name
+	// on every shelf projection and by code on open, so startup proceeds and the
+	// author sees the refusal rather than a server that will not start.
+	if len(listed) > 0 && len(admitted) == 0 && len(refused) == 0 {
 		return fail(fmt.Errorf("production library holds no admitted author database: %w", rejected))
 	}
 	open.projects = admitted
-	log.Printf("novel-server: admitted %d of %d author projects from %s", len(admitted), len(listed), open.layout.libraryRoot)
+	open.refused = refused
+	log.Printf("novel-server: admitted %d of %d author projects from %s (%d over the staging budget)",
+		len(admitted), len(listed), open.layout.libraryRoot, len(refused))
 	// The author runtime is installed last, over the already admitted library,
 	// and takes over the writer lease this function has held since the top. A
 	// failure here closes the runtime (and therefore the lease) before returning.
-	durable, err := newProductionDurable(open.library, open.layout, open.scratch, held, config, admitted)
+	durable, err := newProductionDurable(open.library, open.layout, open.scratch, held, config, admitted, refused)
 	if err != nil {
 		if errors.Is(err, errProductionLeaseRetained) {
 			// Never release a lease whose runtime could not close every handle.
@@ -325,9 +429,10 @@ func (p *productionOpen) closedError() error {
 	return nil
 }
 
-// ListCanonicalProjects is the /api/library inventory. It serves only the
-// projects whose author database was admitted at startup, so the chooser and
-// the recent shelf can never disagree about what this build can read.
+// ListCanonicalProjects is the /api/library inventory. It serves the projects
+// whose author database was admitted at startup plus the inventoried-but-refused
+// ones (over the staging budget), so the chooser and the recent shelf can never
+// disagree about what this build can read and no author book is silently hidden.
 func (p *productionOpen) ListCanonicalProjects(ctx context.Context, maxEntries int) ([]projectfs.ListedProject, error) {
 	if p == nil || ctx == nil || maxEntries < 1 || maxEntries > projectfs.MaxLibraryEntries {
 		return nil, errors.New("PRODUCTION_LIBRARY_REQUEST_INVALID")
@@ -340,19 +445,24 @@ func (p *productionOpen) ListCanonicalProjects(ctx context.Context, maxEntries i
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	listed := make([]projectfs.ListedProject, 0, len(p.projects))
-	for _, item := range p.projects {
+	listed := make([]projectfs.ListedProject, 0, len(p.projects)+len(p.refused))
+	// Refused projects are listed beside the admitted ones: a book this lane
+	// cannot stage is still the author's book, and hiding it is what this lane
+	// must never do. Its open answers productionProjectTooLargeCode.
+	for _, item := range productionListedInventory(p.projects, p.refused) {
 		if len(listed) >= maxEntries {
 			break
 		}
-		listed = append(listed, item.listed)
+		listed = append(listed, item)
 	}
 	return listed, nil
 }
 
 // RecentProjects is project:recent-list. The shipped gateway indexes the
 // canonical library directly instead of the desktop recent-projects.json, so
-// this shelf is the admitted library in the library's own newest-first order.
+// this shelf is the admitted library - refused projects included, so a book that
+// is merely too large to stage stays openable-looking rather than vanishing - in
+// the library's own newest-first order.
 func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller) ([]transport.RecentNavigationProject, error) {
 	if p == nil || ctx == nil {
 		return nil, errors.New("PRODUCTION_LIBRARY_REQUEST_INVALID")
@@ -365,8 +475,8 @@ func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	result := make([]transport.RecentNavigationProject, 0, len(p.projects))
-	for _, item := range p.projects {
+	result := make([]transport.RecentNavigationProject, 0, len(p.projects)+len(p.refused))
+	for _, item := range productionListedInventory(p.projects, p.refused) {
 		if len(result) >= productionRecentLimit {
 			break
 		}
@@ -374,12 +484,12 @@ func (p *productionOpen) RecentProjects(ctx context.Context, _ transport.Caller)
 		// navigation decision, not a withdrawal of the project from this lane, so the
 		// library listing, the admission fence and project:create's own proofs keep
 		// seeing it (production_recent_remove_linux.go).
-		if p.recentRemoved[item.listed.Path] {
+		if p.recentRemoved[item.Path] {
 			continue
 		}
 		result = append(result, transport.RecentNavigationProject{
-			Name: item.listed.Name, Path: item.listed.Path,
-			UpdatedAt: item.listed.UpdatedAt, ProjectID: item.listed.ProjectID,
+			Name: item.Name, Path: item.Path,
+			UpdatedAt: item.UpdatedAt, ProjectID: item.ProjectID,
 		})
 	}
 	return result, nil

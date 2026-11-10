@@ -1562,3 +1562,47 @@ it('reopens the saved config after discarding edits to the same project', async 
   expect(useProjectStore.getState().currentProject?.novelConfig.coreOutline).toBe(project('A').novelConfig.coreOutline)
   expect(JSON.parse(useEditorStore.getState().draftLedgers.config).projects).toEqual([])
 })
+
+it('keeps the current project when another tab already holds its lease', async () => {
+  mocks.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+    if (channel === 'project:open') return {
+      success: false, project: null, requestToken: args[1], activeProjectPath: null,
+      databaseRestored: false, dbReady: false, error: 'PROJECT_OPEN_IN_ANOTHER_TAB',
+    }
+    if (channel === 'fs:list-dir') return []
+    return { success: true }
+  })
+  await expect(useProjectStore.getState().openProject(project('B').path)).resolves.toBe(false)
+  expect(useProjectStore.getState().currentProject).toEqual(project('A'))
+  expect(useEditorStore.getState().tabs[0]?.id).toBe('a-tab')
+  expect(mocks.disableProjectBindingsPreservingDrafts).not.toHaveBeenCalled()
+  expect(mocks.alertError).toHaveBeenCalledWith(
+    expect.stringContaining('项目已在另一个标签页打开，请切换到那个标签页'),
+    expect.objectContaining({ title: '项目已在另一个标签页打开' }),
+  )
+})
+
+it('reopens the same project when the author accepts the lost-session offer', async () => {
+  useProjectStore.setState({ currentProject: { ...project('A'), sessionLease: 'lease-offer-reopen' } })
+  mocks.confirm.mockResolvedValueOnce(true)
+  mocks.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+    if (channel === 'project:open') return {
+      success: true, project: { ...project('A'), sessionLease: 'lease-A-recovered' }, requestToken: args[1],
+      activeProjectPath: project('A').path, databaseRestored: true, dbReady: true,
+    }
+    if (channel === 'fs:list-dir' || channel === 'project:recent-list') return []
+    return { success: true }
+  })
+  await expect(useProjectStore.getState().recoverLostProjectSession()).resolves.toBe(true)
+  expect(mocks.invoke).toHaveBeenCalledWith('project:open', project('A').path, expect.any(String), project('A').path)
+  expect(useProjectStore.getState().currentProject?.sessionLease).toBe('lease-A-recovered')
+})
+
+it('offers one reopen per dead session instead of repeating the same failure', async () => {
+  useProjectStore.setState({ currentProject: { ...project('A'), sessionLease: 'lease-offer-once' } })
+  mocks.confirm.mockResolvedValueOnce(false)
+  await expect(useProjectStore.getState().recoverLostProjectSession()).resolves.toBe(false)
+  await expect(useProjectStore.getState().recoverLostProjectSession()).resolves.toBe(false)
+  expect(mocks.confirm).toHaveBeenCalledTimes(1)
+  expect(mocks.invoke.mock.calls.some(([channel]) => channel === 'project:open')).toBe(false)
+})

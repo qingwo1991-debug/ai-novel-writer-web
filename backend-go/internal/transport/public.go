@@ -15,6 +15,17 @@ func(s *Server) RegisterSecret(value string)(bool,error) {
  return s.public.RegisterSecret(value)
 }
 
+// publicErrorCode is the symbolic code writePublicError would put on the wire
+// for err, computed without writing a response. Empty means no public code.
+func publicErrorCode(err error)string {
+ if err==nil{return ""}
+ var public *security.HTTPError
+ if errors.As(err,&public)&&public!=nil{return public.Code}
+ text:=err.Error();if len(text)<2||text[0]<'A'||text[0]>'Z'{return ""}
+ for i:=1;i<len(text);i++{b:=text[i];if (b<'A'||b>'Z')&&(b<'0'||b>'9')&&b!='_'{return ""}}
+ return text
+}
+
 func(s *Server) writePublicError(w http.ResponseWriter,err error)error {
  status:=http.StatusInternalServerError
  code:="REQUEST_FAILED"

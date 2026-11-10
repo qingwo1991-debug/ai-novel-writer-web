@@ -51,6 +51,9 @@ let openProjectRequestSequence = 0
 let recentProjectsRequestSequence = 0
 let closeProjectInFlight: Promise<boolean> | null = null
 let projectRecoveryInFlight: Promise<void> | null = null
+/** 主进程丢掉项目会话后的自动重开：同一时间只跑一次，同一个失效会话只主动提议一次。 */
+let lostProjectSessionRecoveryInFlight: Promise<boolean> | null = null
+let lostProjectSessionRecoveryOfferedFor: string | null = null
 
 type ProjectTransitionDecision = 'clean' | 'saved' | 'discard'
 type PreparedProjectTransition = Readonly<{
@@ -456,6 +459,11 @@ interface ProjectState {
   deleteProject: (projectPath: string) => Promise<boolean>
   /** 关闭项目 */
   closeProject: () => Promise<boolean>
+  /**
+   * 主进程已不再持有当前项目的会话（服务重启、租约已丢）时，向作者确认后按同一路径重开一次。
+   * 同一时间只跑一次；同一个失效会话只提议一次，避免自动保存每轮重复触发。
+   */
+  recoverLostProjectSession: () => Promise<boolean>
   /** 更新角色状态（内存 + 持久化） */
   updateCharacterStates: (states: string) => Promise<void>
 }
@@ -663,6 +671,14 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
           getRendererProjectPath: () => get().currentProject?.path ?? null,
           detachRenderer: () => set({ currentProject: null, fileTree: [] }),
           operation: 'open',
+        })
+        return false
+      }
+      // 另一个标签页正持有这个项目的写租约。这不是当前项目会话失效，
+      // 也绝不能走下面的「数据库不可用」分支停用界面。
+      if (!result.success && result.error === 'PROJECT_OPEN_IN_ANOTHER_TAB') {
+        alertError(projectError(result.error), {
+          title: projectText('项目已在另一个标签页打开', 'Project is already open in another tab'),
         })
         return false
       }
@@ -1344,6 +1360,8 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
     }
   },
 
+  recoverLostProjectSession: () => startLostProjectSessionRecovery(),
+
   updateCharacterStates: async (states) => {
     const project = get().currentProject
     if (!project) return
@@ -1388,3 +1406,44 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
 useProjectStore.subscribe((state) => {
   setActiveProjectSessionContext(projectSessionContextFromProject(state.currentProject))
 })
+
+/**
+ * 主进程已不再持有这个项目的会话（服务重启、租约已丢）：向作者确认后按同一路径重开一次，
+ * 让自动保存重新拿回写权限。未保存的编辑仍走 openProject 原有的保存/放弃选择，不会静默丢弃。
+ * 同一个失效会话只提议一次；重开成功后再丢会话会得到新的租约，可以重新提议。
+ */
+function startLostProjectSessionRecovery(): Promise<boolean> {
+  if (lostProjectSessionRecoveryInFlight) return lostProjectSessionRecoveryInFlight
+  const project = useProjectStore.getState().currentProject
+  if (!project) return Promise.resolve(false)
+  const sessionKey = `${projectPathKey(project.path)}|${project.sessionLease ?? ''}`
+  if (lostProjectSessionRecoveryOfferedFor === sessionKey) return Promise.resolve(false)
+  lostProjectSessionRecoveryOfferedFor = sessionKey
+  const recovery = (async () => {
+    try {
+      const approved = await confirm(
+        projectText(
+          '服务已不再持有这个项目的会话，自动保存暂时写不进去。现在重新打开项目吗？未保存的编辑会照常让你选择保存或放弃。',
+          'The server no longer holds this project session, so autosave cannot write. Reopen the project now? Unsaved edits still go through the usual save-or-discard choice.',
+        ),
+        {
+          title: projectText('项目会话已失效', 'Project session expired'),
+          confirmText: projectText('重新打开项目', 'Reopen project'),
+          cancelText: projectText('稍后', 'Later'),
+        },
+      )
+      if (!approved) return false
+      const recovered = await useProjectStore.getState().openProject(project.path)
+      // 重开成功就放开这次提议：下一个失效的会话（新租约）应该能再次得到恢复机会。
+      if (recovered) lostProjectSessionRecoveryOfferedFor = null
+      return recovered
+    } catch (error) {
+      console.error('[Project] 项目会话失效后的自动重开失败:', error)
+      return false
+    } finally {
+      lostProjectSessionRecoveryInFlight = null
+    }
+  })()
+  lostProjectSessionRecoveryInFlight = recovery
+  return recovery
+}

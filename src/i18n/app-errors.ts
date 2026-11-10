@@ -18,6 +18,8 @@ const ERROR_KEYS = {
   PROJECT_SESSION_REQUIRED: 'error.projectSessionRequired',
   PROJECT_CONTEXT_REQUIRED: 'error.projectSessionRequired',
   PROJECT_SESSION_STALE: 'error.projectSessionStale',
+  // 服务重启或别的标签页接管后，主进程不再持有这个渲染进程的租约：说明要指向重开项目。
+  PROJECT_SESSION_NOT_OWNED: 'error.projectSessionNotOwned',
   PROJECT_SESSION_ROOT_MISMATCH: 'error.projectSessionStale',
   PROJECT_SESSION_DATABASE_MISMATCH: 'error.projectSessionStale',
   PROJECT_SESSION_IDENTITY_MISMATCH: 'error.projectSessionStale',
@@ -33,6 +35,8 @@ const ERROR_KEYS = {
   PROJECT_DIRECTORY_MANIFEST_INVALID: 'error.projectManifestInvalid',
   PROJECT_MANIFEST_INVALID: 'error.projectManifestInvalid',
   PROJECT_OPEN_GRANT_REQUIRED: 'error.projectOpenGrantRequired',
+  // 另一个标签页正持有这个项目的写租约：不是当前项目失效，绝不能据此停用界面。
+  PROJECT_OPEN_IN_ANOTHER_TAB: 'error.projectOpenInAnotherTab',
   PROJECT_OPEN_RECENT_IDENTITY_CHANGED: 'error.projectRecentIdentityChanged',
   PROJECT_MIGRATION_NOT_QUALIFIED: 'error.projectMigrationNotQualified',
   PROJECT_MIGRATION_DUAL_ROOT: 'error.projectMigrationNotQualified',
@@ -315,6 +319,18 @@ function readCode(error: unknown): KnownErrorCode | undefined {
 /** 报错带的稳定错误码，登记与否都读；至少含一个下划线，ENOENT 这类平台码不算。 */
 export function errorCodeOf(error: unknown): string | undefined {
   return codeCandidates(error).find((code): code is string => typeof code === 'string' && /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u.test(code))
+}
+
+/**
+ * 主进程已不再持有这次请求所属的项目会话：服务重启丢掉了内存里的租约，或这个会话已被替换。
+ * 自动保存碰到它时应当干净重开项目，而不是每一轮都重复报同一个码。
+ */
+const PROJECT_SESSION_LOST_CODES = new Set(['PROJECT_SESSION_NOT_OWNED', 'PROJECT_SESSION_STALE'])
+
+/** 这次失败是否说明整个项目会话已经不在主进程里（而不只是某次写入冲突）。 */
+export function isProjectSessionLostError(error: unknown): boolean {
+  const code = errorCodeOf(error)
+  return code !== undefined && PROJECT_SESSION_LOST_CODES.has(code)
 }
 
 /** Electron 在主进程报错前加的调用通道前缀对作者没有意义，兜底说明里去掉。 */

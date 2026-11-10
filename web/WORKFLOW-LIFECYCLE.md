@@ -44,7 +44,7 @@ The native-Web project worker opens its canonical project once and serves cached
 - Draft, review/revision, and planning recovery factories reuse selected durable identities. Saved review/revision receipts can be opened without another model call; invalid/stale sources can be copy-only. Incomplete output is not automatically a valid saved result.
 - Finalization commits the authoritative SQLite snapshot and publication outbox together. Publication repair and finalized-generation slot receipts should be reused, never replaced with browser filesystem writes.
 - Import already has a durable stage/batch/effect ledger, execution owner/epoch, lease renewal, and safe-boundary cancellation. Its DI-shaped `ImportRunOrchestrator` is reusable, but its current stage scheduling and heartbeat still live in the frontend.
-- `src/services/browser-transport.ts` preserves a per-tab client ID in session storage, does not retry writes, and refreshes generation artifacts on an established EventSource reconnect. This does not restore workflow steps, approvals, or a lost HTTP completion. The gateway event buffer is bounded and volatile; it is not an execution ledger.
+- `src/services/browser-transport.ts` keeps one client ID per browsing context in `window.name` (session storage only records the witness a duplicated tab or `window.open` copy inherits, so a copy takes a fresh ID instead of sharing the session owner and project lease), does not retry writes, and refreshes generation artifacts on an established EventSource reconnect. This does not restore workflow steps, approvals, or a lost HTTP completion. The gateway event buffer is bounded and volatile; it is not an execution ledger.
 
 ## Finite minimum recovery hardening; no full supervisor
 

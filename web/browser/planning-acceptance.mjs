@@ -16,7 +16,13 @@ const browser = await chromium.connectOverCDP(process.env.NOVEL_TEST_CDP ?? 'ws:
 const context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 }, acceptDownloads: true, extraHTTPHeaders: { 'X-Novel-User': 'admin' } })
 let page = await context.newPage()
 if (resumeClient) await page.addInitScript(id => {
-  try { if (!sessionStorage.getItem('ai-novel-writer-browser-client-id')) sessionStorage.setItem('ai-novel-writer-browser-client-id', id) }
+  // The tab identity now lives in the browsing-context name; session storage is
+  // only the copy witness a duplicated tab or window.open inherits. Seed both, or
+  // the app will correctly treat this fresh context as a new tab.
+  try {
+    window.name = `ai-novel-writer-browser-client:${id}`
+    if (!sessionStorage.getItem('ai-novel-writer-browser-client-id')) sessionStorage.setItem('ai-novel-writer-browser-client-id', id)
+  }
   catch { /* about:blank and other opaque origins may deny storage access. */ }
 }, resumeClient)
 page.setDefaultTimeout(15000)

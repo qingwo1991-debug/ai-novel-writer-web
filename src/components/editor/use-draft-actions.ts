@@ -5,7 +5,7 @@ import { registerEditorExitSaveHandler, useEditorStore } from '../../stores/edit
 import { useWorkflowStore, workflowResourceKey } from '../../stores/workflow-store'
 import { useLocaleStore } from '../../stores/locale-store'
 import { toast } from '../ui/Toast'
-import { displayedErrorMessage, englishWithReason } from '../../i18n/app-errors'
+import { displayedErrorMessage, englishWithReason, isProjectSessionLostError } from '../../i18n/app-errors'
 import {
   parseDraftMeta,
   type DraftMeta,
@@ -249,6 +249,17 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
         return
       }
     } catch (error) {
+      // 主进程已不再持有这个项目的会话（服务重启、租约已丢）：交给项目 store 干净重开一次，
+      // 而不是让 30 秒一轮的自动保存每轮都弹同一个码。这里不能 await，重开内部的保存会重入本函数。
+      // 只有这次保存所属的会话仍是界面上的当前会话时才重开；已经切到别的项目时不能顺手把它重开一遍。
+      if (isProjectSessionLostError(error)) {
+        if (isProjectSessionCurrent(acknowledgedSession)) {
+          setSaveOutcome('failed')
+          void useProjectStore.getState().recoverLostProjectSession()
+        }
+        if (propagateFailure) throw error
+        return
+      }
       if (isProjectSessionCurrent(acknowledgedSession)) {
         setSaveOutcome('failed')
         toast.error(displayedErrorMessage(useLocaleStore.getState().locale, error, text('草稿保存失败', 'Could not save the draft')))

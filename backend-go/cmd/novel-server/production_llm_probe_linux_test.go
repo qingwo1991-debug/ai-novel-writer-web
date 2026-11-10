@@ -330,6 +330,14 @@ func TestProductionLLMProbeRefusesAnOriginOutsideTheCommittedAllowlist(t *testin
 	if testWire.Error != productionProbeOriginRefusedMessage(egress.ErrNotAllowed) {
 		t.Fatalf("the refusal read %v", testWire.Error)
 	}
+	// The connection test names the same state and the same remedy as the
+	// discovery surface's endpoint_not_allowed, not a generic failure sentence.
+	if !strings.Contains(testWire.Error, "Save this model") {
+		t.Fatalf("the connection test did not name the remedy: %v", testWire.Error)
+	}
+	if testWire.Error == productionProbeUnavailableMessage || testWire.Error == productionProbeNotReachedMessage {
+		t.Fatalf("an allowlist refusal fell back to a generic sentence: %v", testWire.Error)
+	}
 	var discoveryWire productionProbeDiscoveryWire
 	fixture.client.decode(t, "llm:discover-models", []any{productionProbeTypedProfile(outside.URL+"/v1", productionTestModelSecret)}, &discoveryWire)
 	// An endpoint outside the allowlist is not an endpoint without a model list:
@@ -515,21 +523,100 @@ func TestProductionLLMProbeRestoresAStoredCredentialOnlyForItsOwnEndpoint(t *tes
 
 // TestProductionLLMProbeDiscoveryNamesAnUncommittedEndpoint holds the settings
 // form's ability to tell "save this model first" apart from "this endpoint
-// publishes no list". An endpoint outside the committed egress cannot be dialed
-// yet, and answering "unsupported" told the author the endpoint had no model
-// list at all - which is exactly what happened when adding a vector model.
+// publishes no list". Every shape that stops the committed policy from admitting
+// the endpoint - an origin no committed value names and a Base URL the policy
+// cannot parse - is refused before any dispatch, and answering "unsupported" told
+// the author the endpoint had no model list at all, which is exactly what happened
+// when adding a vector model at a new endpoint.
 func TestProductionLLMProbeDiscoveryNamesAnUncommittedEndpoint(t *testing.T) {
 	for _, purpose := range []string{"generation", "embedding"} {
-		provider, _ := productionProbeFakeProvider(t, http.StatusOK,
-			`{"object":"list","data":[{"id":"synthetic-model","object":"model"}]}`)
-		fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
-		profile := productionProbeTypedProfile("https://uncommitted.example/v1", productionTestModelSecret)
-		profile["purposes"] = []any{purpose}
-		var wire productionProbeDiscoveryWire
-		fixture.client.decode(t, "llm:discover-models", []any{profile}, &wire)
-		if wire.Success || wire.ErrorCode != "endpoint_not_allowed" {
-			t.Fatalf("%s: an uncommitted endpoint answered success=%v errorCode=%q", purpose, wire.Success, wire.ErrorCode)
+		for name, baseURL := range map[string]string{
+			"uncommitted origin": "https://uncommitted.example/v1",
+			"malformed base URL": "not-a-url",
+		} {
+			provider, recorder := productionProbeFakeProvider(t, http.StatusOK,
+				`{"object":"list","data":[{"id":"synthetic-model","object":"model"}]}`)
+			fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+			profile := productionProbeTypedProfile(baseURL, productionTestModelSecret)
+			profile["purposes"] = []any{purpose}
+			var wire productionProbeDiscoveryWire
+			fixture.client.decode(t, "llm:discover-models", []any{profile}, &wire)
+			if wire.Success || wire.ErrorCode != "endpoint_not_allowed" {
+				t.Fatalf("%s: %s answered success=%v errorCode=%q", purpose, name, wire.Success, wire.ErrorCode)
+			}
+			if recorder.count() != 0 {
+				t.Fatalf("%s: %s dispatched %v requests to the committed provider", purpose, name, recorder.count())
+			}
 		}
+	}
+}
+
+// TestProductionLLMProbeNamesAnUnavailablePolicy: a lane that cannot obtain the
+// committed policy at all admits no endpoint, and saving this model is what
+// rebuilds the policy (production_open_linux.go:418). Discovery must answer
+// endpoint_not_allowed - the code whose notice says "save this model first" -
+// never "unsupported", and the connection test must name that same remedy instead
+// of falling back to its generic probe-unavailable sentence.
+func TestProductionLLMProbeNamesAnUnavailablePolicy(t *testing.T) {
+	configRoot := productionCommittedConfigRoot(t,
+		`{"theme":"dark","defaultModelId":null,"modelOrigins":["https://committed.example"]}`, "")
+	startup := globalconfig.NewStartup(globalconfig.StartupCapture{Generation: productionTestGeneration})
+	server := transport.New(migrationRegistry(t), security.NewOrigins("http://"+productionDurableAddress), "go-production-admitted")
+	probe := newProductionLLMProbeOver(configRoot, startup, func() (*egress.Client, error) {
+		return nil, errProductionModelEgressUnconfigured
+	})
+	if err := probe.Bind(server); err != nil {
+		t.Fatalf("binding the two llm names over an unavailable policy failed: %v", err)
+	}
+	client := newProductionDurableClient(t, server, productionTestTab)
+	embedding := productionProbeTypedProfile("https://vector.example/v1", productionTestModelSecret)
+	embedding["purposes"] = []any{"embedding"}
+	var discovery productionProbeDiscoveryWire
+	client.decode(t, "llm:discover-models", []any{embedding}, &discovery)
+	if discovery.Success || discovery.ErrorCode != "endpoint_not_allowed" {
+		t.Fatalf("an unavailable policy answered success=%v errorCode=%q", discovery.Success, discovery.ErrorCode)
+	}
+	var test productionProbeTestWire
+	client.decode(t, "llm:test-connection", []any{productionProbeTypedProfile("https://vector.example/v1", productionTestModelSecret)}, &test)
+	if test.Success {
+		t.Fatal("an unavailable policy reported a working connection")
+	}
+	if !strings.Contains(test.Error, "no usable model-egress policy") {
+		t.Fatalf("the connection test did not name the policy refusal: %v", test.Error)
+	}
+	if !strings.Contains(test.Error, "rebuilds the allowed origins") {
+		t.Fatalf("the connection test did not name the remedy the discovery surface states: %v", test.Error)
+	}
+	if test.Error == productionProbeUnavailableMessage {
+		t.Fatal("a policy refusal fell back to the generic probe-unavailable sentence")
+	}
+}
+
+// TestProductionLLMProbeKeepsUnsupportedForAFeatureLack holds the far side of the
+// boundary the vector-model report crossed: "unsupported" stays for a genuine
+// feature lack - a protocol internal/llm has no list resolver for, and an endpoint
+// whose /models route truly does not exist - and never absorbs a policy refusal,
+// which is endpoint_not_allowed.
+func TestProductionLLMProbeKeepsUnsupportedForAFeatureLack(t *testing.T) {
+	provider, recorder := productionProbeFakeProvider(t, http.StatusNotFound, `{"error":{"message":"no such route"}}`)
+	fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+	gemini := productionProbeTypedProfile(provider.URL+"/v1beta", productionTestModelSecret)
+	gemini["protocol"] = "gemini"
+	var protocolWire productionProbeDiscoveryWire
+	fixture.client.decode(t, "llm:discover-models", []any{gemini}, &protocolWire)
+	if protocolWire.Success || protocolWire.ErrorCode != "unsupported" {
+		t.Fatalf("a gemini discovery answered success=%v errorCode=%q", protocolWire.Success, protocolWire.ErrorCode)
+	}
+	if recorder.count() != 0 {
+		t.Fatalf("a gemini discovery dispatched %v requests to the provider", recorder.count())
+	}
+	var routeWire productionProbeDiscoveryWire
+	fixture.client.decode(t, "llm:discover-models", []any{productionProbeTypedProfile(provider.URL+"/v1", productionTestModelSecret)}, &routeWire)
+	if routeWire.Success || routeWire.ErrorCode != "unsupported" {
+		t.Fatalf("an admitted endpoint without a /models route answered success=%v errorCode=%q", routeWire.Success, routeWire.ErrorCode)
+	}
+	if recorder.count() != 1 {
+		t.Fatalf("the /models route received %v requests, want exactly one", recorder.count())
 	}
 }
 

@@ -281,19 +281,31 @@ func (f *productionPortabilityFixture) decode(t *testing.T, operation string, ar
 }
 
 // session reads the frozen project session the browser passes to every operation
-// that writes or exports: the same {projectId, leaseId, projectPath} shape
-// project:get-runtime-context answers with.
+// that writes or exports: the {projectId, leaseId, projectPath} subset of the
+// project:get-runtime-context DTO. That DTO also carries the browser-only
+// {activeProjectPath, dbReady} readiness keys, so project it back to the exact
+// three-key shape strict consumers such as project:archive-export require.
 func (f *productionPortabilityFixture) session(t *testing.T) map[string]any {
 	t.Helper()
 	var frozen map[string]any
 	f.decode(t, "project:get-runtime-context", []any{}, &frozen)
+	session := make(map[string]any, 3)
 	for _, key := range []string{"projectId", "leaseId", "projectPath"} {
 		value, ok := frozen[key].(string)
 		if !ok || value == "" {
 			t.Fatalf("project:get-runtime-context answered no %v", key)
 		}
+		session[key] = value
 	}
-	return frozen
+	// The renderer reconciles stale opens against these readiness keys: a ready
+	// database that names this same live project, or it detaches the project.
+	if ready, ok := frozen["dbReady"].(bool); !ok || !ready {
+		t.Fatalf("project:get-runtime-context did not report a ready database: %v", frozen)
+	}
+	if active, ok := frozen["activeProjectPath"].(string); !ok || active != session["projectPath"] {
+		t.Fatalf("project:get-runtime-context reported %v as the active path, want %v", frozen["activeProjectPath"], session["projectPath"])
+	}
+	return session
 }
 
 // pick mints one grant for a library-relative name.

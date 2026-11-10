@@ -26,7 +26,6 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/writerlock"
 )
@@ -195,7 +194,11 @@ func (l *ReadLifecycle) OpenProjectDurable(ctx context.Context, owner projectses
 		return &admittedAuthor{context: candidate, project: project, permit: permit, handle: handle, core: store.NewProjectCore(db)}, nil
 	})
 	if err != nil {
-		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen) || errors.Is(err, runtime.ErrOwned)}
+		// Stale is reserved for ErrStaleOpen: the open was fenced by a newer
+		// generation of this caller's own session. ErrOwned means another tab
+		// legitimately holds the project, so this failure must not make the
+		// renderer detach a project it never stopped owning.
+		result := ProjectOpenResult{RequestToken: requestToken, Error: redactOpenError(err), Stale: errors.Is(err, projectsession.ErrStaleOpen)}
 		current, present, currentErr := l.Current(ctx, owner)
 		if currentErr != nil {
 			return ProjectOpenResult{}, currentErr

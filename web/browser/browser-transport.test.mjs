@@ -109,6 +109,45 @@ test('keeps a random ID in this tab sessionStorage and works when storage is dis
   assert.equal(isolated.clientId, 'another-tab-identity-1234')
 })
 
+test('gives a duplicated tab or window.open copy its own id while a reload keeps its id', () => {
+  const storage = new Map()
+  const shared = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) }
+  const issued = ['original-tab-identity-1234', 'duplicate-tab-identity-1234', 'opener-copy-identity-1234', 'storage-free-identity-1234']
+  let next = 0
+  const nameStore = () => { let value = ''; return { get: () => value, set: updated => { value = updated } } }
+  const build = (tabName, store = shared) => {
+    const transport = createBrowserTransport({
+      randomId: () => issued[next++],
+      storage: store,
+      tabName,
+      fetch: async path => json(path === '/api/bootstrap' ? { csrfToken: 'token' } : { result: null }),
+      createEventSource: () => ({ onopen: null, onerror: null, onmessage: null, close() {} }),
+    })
+    transports.push(transport)
+    return transport
+  }
+  const tab = nameStore()
+  const original = build(tab)
+  assert.equal(original.clientId, issued[0])
+  // Same browsing context (reload): the surviving name and the inherited witness agree.
+  assert.equal(build(tab).clientId, issued[0])
+  assert.equal(next, 1, 'a reload must not consume a fresh identity')
+  // Chrome/Edge "Duplicate tab" and window.open inherit sessionStorage but not window.name.
+  const duplicate = build(nameStore())
+  const openerCopy = build(nameStore())
+  assert.equal(duplicate.clientId, issued[1])
+  assert.equal(openerCopy.clientId, issued[2])
+  assert.notEqual(duplicate.clientId, original.clientId)
+  assert.notEqual(openerCopy.clientId, original.clientId)
+  assert.notEqual(openerCopy.clientId, duplicate.clientId)
+  // Storage being unavailable must not churn the identity on every reload either.
+  const throwing = { getItem() { throw Error('disabled') }, setItem() { throw Error('disabled') } }
+  const noStorageTab = nameStore()
+  assert.equal(build(noStorageTab, throwing).clientId, issued[3])
+  assert.equal(build(noStorageTab, throwing).clientId, issued[3])
+  assert.equal(next, 4)
+})
+
 test('subscriptions and once receive envelope args, reject malformed events, and cannot spoof lifecycle', async () => {
   const { transport, streams } = fixture()
   const events = [], once = [], errors = [], reconnected = []

@@ -7,6 +7,7 @@ import { useProjectStore } from './stores/project-store'
 import { useWorkflowStore } from './stores/workflow-store'
 import { useLocaleStore } from './stores/locale-store'
 import { ipc } from './services/ipc-client'
+import { getBrowserTransport } from './services/browser-transport'
 import { useWindowCloseGuard } from './components/layout/use-window-close-guard'
 import { useChapterAutoSave } from './components/editor/use-chapter-autosave'
 import ImportNovelDialog from './components/dialogs/ImportNovelDialog'
@@ -133,6 +134,16 @@ export default function App() {
       unsubAutoOpenNextChapter()
     }
   }, [initLocale, initTheme, initLLM, loadRecentProjects])
+
+  // 服务重启会丢掉内存里的项目租约：主进程在写入落到已不持有的会话时推 browser:project-lost，
+  // 工作台据此干净重开当前项目，而不是让自动保存一直往一个已经不存在的会话里写。
+  useEffect(() => {
+    if (ipc.runtimeKind !== 'web') return
+    const transport = getBrowserTransport()
+    return transport.on('browser:project-lost', () => {
+      void useProjectStore.getState().recoverLostProjectSession()
+    })
+  }, [])
 
   useEffect(() => {
     if (!ipc.isElectron) return

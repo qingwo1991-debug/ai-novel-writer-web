@@ -319,13 +319,15 @@ func (p *productionLLMProbe) discoverModels(ctx context.Context, caller transpor
 		return productionProbeDiscoveryFailure(err)
 	}
 	if err := client.CheckBaseURL(form.baseURL); err != nil {
-		if errors.Is(err, egress.ErrNotAllowed) {
-			// The endpoint is well-formed but not in the committed egress
-			// allowlist yet. Saving this model commits it and rebuilds the
-			// policy, after which the list is available. Answering "unsupported"
-			// here told the author the endpoint had no model list at all.
-			return map[string]any{"success": false, "errorCode": "endpoint_not_allowed"}, nil
-		}
+		// The committed policy refuses an origin it was never told to admit, a Base
+		// URL it cannot parse, a policy it cannot build and a redirect it will not
+		// follow. None of those says the endpoint has no model list: saving this
+		// model commits the endpoint and rebuilds the allowed origins, after which
+		// the same list request is served. productionProbeRefusedOrigin keeps each
+		// fixed egress code and productionProbeDiscoveryFailure answers the whole
+		// family with endpoint_not_allowed. Answering "unsupported" here told the
+		// author the endpoint had no model list at all - which is exactly what
+		// happened when adding a vector model at a new endpoint.
 		return productionProbeDiscoveryFailure(productionProbeRefusedOrigin(err))
 	}
 	endpoint, ok := productionModelsEndpoint(form.baseURL, form.provider)
@@ -602,14 +604,47 @@ func (p *productionLLMProbe) egress() (*egress.Client, error) {
 
 // productionProbeRefusedOrigin turns one policy refusal into a symbolic error
 // whose text is a fixed egress code, so the caller can format the code without a
-// committed URL ever entering the message.
+// committed URL ever entering the message. All four of egress's refusal codes are
+// named, so a redirect refusal keeps its own identity instead of being reported
+// under the allowlist's code.
 func productionProbeRefusedOrigin(err error) error {
-	for _, known := range []error{egress.ErrNotAllowed, egress.ErrBaseURLInvalid, egress.ErrPolicyInvalid} {
+	for _, known := range []error{
+		egress.ErrNotAllowed,
+		egress.ErrBaseURLInvalid,
+		egress.ErrPolicyInvalid,
+		egress.ErrRedirectForbidden,
+	} {
 		if errors.Is(err, known) {
 			return known
 		}
 	}
 	return egress.ErrNotAllowed
+}
+
+// productionProbeEndpointNotAdmitted reports whether err is one of the lane's
+// "this endpoint is not admitted yet" answers rather than a statement about the
+// provider. The committed policy refuses an origin it was never told to admit, a
+// Base URL it cannot parse, a policy it cannot build and a redirect it will not
+// follow; a lane that cannot obtain a policy at all admits nothing. Saving this
+// model commits the endpoint and rebuilds the allowed origins
+// (production_open_linux.go:418), after which the very same request is served, so
+// the whole family is the state the settings form calls endpoint_not_allowed.
+func productionProbeEndpointNotAdmitted(err error) bool {
+	for _, known := range []error{
+		egress.ErrNotAllowed,
+		egress.ErrBaseURLInvalid,
+		egress.ErrPolicyInvalid,
+		egress.ErrRedirectForbidden,
+		errProductionModelEgressUnconfigured,
+		errProductionModelEgressInvalid,
+		errProductionModelEgressUnavailable,
+		errProductionProbeUnavailable,
+	} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	return false
 }
 
 // productionProbeDispatchFailure classifies a dispatch error that came back from
@@ -859,23 +894,32 @@ func productionProbeTestFailure(err error) (any, error) {
 
 // productionProbeDiscoveryFailure shapes one llm:discover-models refusal as the
 // renderer's { success: false, errorCode } business result
-// (src/shared/ipc-channels.ts:529-531), whose union has no free text.
+// (src/shared/ipc-channels.ts:529-531), whose union has no free text. "unsupported"
+// is reserved for a genuine protocol or feature lack - the settings form reads it
+// as "this endpoint does not support the standard model-list API". An endpoint the
+// committed policy does not admit yet is not a feature lack: the same list request
+// succeeds once the model is saved, so that whole family is endpoint_not_allowed.
 func productionProbeDiscoveryFailure(err error) (any, error) {
 	var httpError *security.HTTPError
 	if errors.As(err, &httpError) {
 		return nil, err
 	}
 	switch {
-	case errors.Is(err, errProductionProbeCredentialRequired), errors.Is(err, errProductionProbeCredentialChanged):
+	case errors.Is(err, errProductionProbeCredentialRequired), errors.Is(err, errProductionProbeCredentialChanged),
+		errors.Is(err, errProductionProbeConfigUnavailable):
+		// A credential could not be resolved or restored, which the settings form
+		// reads as "check the API key".
 		return map[string]any{"success": false, "errorCode": "auth"}, nil
 	case errors.Is(err, errProductionProbeProtocolUnsupported), errors.Is(err, errProductionProbeEmbeddingPurpose):
+		// The only genuine feature lacks: a protocol internal/llm has no list URL
+		// resolver for, and an embedding profile whose list this lane does not
+		// serve.
 		return map[string]any{"success": false, "errorCode": "unsupported"}, nil
-	case errors.Is(err, errProductionProbeConfigUnavailable), errors.Is(err, errProductionProbeUnavailable),
-		errors.Is(err, errProductionModelEgressUnconfigured), errors.Is(err, errProductionModelEgressInvalid),
-		errors.Is(err, errProductionModelEgressUnavailable),
-		errors.Is(err, egress.ErrNotAllowed), errors.Is(err, egress.ErrBaseURLInvalid), errors.Is(err, egress.ErrPolicyInvalid),
-		errors.Is(err, egress.ErrRedirectForbidden):
-		return map[string]any{"success": false, "errorCode": "unsupported"}, nil
+	case productionProbeEndpointNotAdmitted(err):
+		// Every way the committed policy can refuse an endpoint, including a policy
+		// that could not be obtained at all: not admitted *yet*, never an endpoint
+		// without a model list.
+		return map[string]any{"success": false, "errorCode": "endpoint_not_allowed"}, nil
 	case errors.Is(err, errProductionProbeNotReached), errors.Is(err, context.DeadlineExceeded):
 		return map[string]any{"success": false, "errorCode": "network"}, nil
 	}
@@ -912,7 +956,7 @@ func productionProbeMessage(err error) string {
 	case errors.Is(err, errProductionModelEgressUnconfigured),
 		errors.Is(err, errProductionModelEgressInvalid),
 		errors.Is(err, errProductionModelEgressUnavailable):
-		return fmt.Sprintf("This deployment has no usable model-egress policy (%v).", err)
+		return fmt.Sprintf("This deployment has no usable model-egress policy (%v). Check the committed model endpoints, then save this model: a save rebuilds the allowed origins.", err)
 	}
 	return productionProbeUnavailableMessage
 }
@@ -929,9 +973,18 @@ func productionProbeRefusedMessage(status int) string {
 	return fmt.Sprintf("The provider answered and refused the request (HTTP %v). Check the Base URL, API key, and model name.", status)
 }
 
-// productionProbeOriginRefusedMessage reports the policy's fixed code.
+// productionProbeOriginRefusedMessage reports the policy's fixed code. An origin
+// the committed allowlist does not hold yet and a policy that could not be built
+// are the same state llm:discover-models calls endpoint_not_allowed, so both name
+// the one action that admits the endpoint - a model save commits it and rebuilds
+// the allowed origins (production_open_linux.go:418) - and neither surface tells
+// the author a different story. A Base URL the policy cannot parse is the author's
+// own input and names that instead of an allowlist.
 func productionProbeOriginRefusedMessage(err error) string {
-	return fmt.Sprintf("This deployment does not allow model requests to that endpoint (%v).", err)
+	if errors.Is(err, egress.ErrBaseURLInvalid) {
+		return fmt.Sprintf("This deployment refuses the endpoint's Base URL (%v). Check the Base URL.", err)
+	}
+	return fmt.Sprintf("This deployment has not admitted that endpoint yet (%v). Save this model, then retry: a save commits the endpoint and rebuilds the allowed origins.", err)
 }
 
 // productionProbeUnusableMessage reports a reply the adapter could not decode,

@@ -24,6 +24,9 @@ name: ai-novel-writer-native
 #   - The proxy and allowed-origin variables are gone: the Go lane reads egress
 #     policy and browser origins from the author data directory, not from the
 #     environment, so a stale env var here would be a false comfort.
+#   - NOVEL_SCRATCH_ROOT and TMPDIR are added: staging copies must not land on the
+#     128 MiB /tmp tmpfs, so both the lane's scratch root and SQLite's temp files
+#     move to /data (see the service's environment block).
 #
 # Order of operations (never start this while the Node container is running - both
 # take the same exclusive writer lease on the same SQLite files, and the second one
@@ -58,6 +61,12 @@ services:
     environment:
       NOVEL_DATA_ROOT: /data
       NOVEL_ALLOWED_ORIGINS: "${NOVEL_ALLOWED_ORIGINS:-http://192.168.1.15:8093,https://192.168.1.15:8445}"
+      # Every staging copy this lane takes - project admission, export/archive,
+      # cloud backup - is as large as the biggest admitted book, and SQLite's own
+      # row-sort temp files are too. They must not share the small /tmp tmpfs, so
+      # both roots move onto the data volume, whose whole point is holding books.
+      NOVEL_SCRATCH_ROOT: /data/.scratch
+      TMPDIR: /data/.scratch
     restart: unless-stopped
     # The single-writer lease is released on a clean stop; give the process the
     # same grace the Node service had so an in-flight commit is not cut in half.
@@ -68,7 +77,9 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=128m,mode=1777
+      # Staging no longer lands here (NOVEL_SCRATCH_ROOT/TMPDIR point at /data),
+      # but keep a writable /tmp with headroom for anything else that needs it.
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
     healthcheck:
       test:
         - CMD

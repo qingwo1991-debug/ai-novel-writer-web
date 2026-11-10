@@ -216,7 +216,15 @@ func (l *productionProjectLifecycle) delete(ctx context.Context, caller transpor
 	// The browser path is never authority: it selects one entry of the admitted
 	// startup inventory, and only that entry's path is ever touched below.
 	admitted, inventoried := open.productionProjectAdmitted(target.projectPath, target.projectID)
-	if !inventoried || !durable.productionProjectKeyed(admitted.Path) {
+	if !inventoried {
+		// A project this lane inventoried but refuses to stage still exists on
+		// disk. Naming its refusal beats answering as though it were never here.
+		if refusal, refused := open.productionProjectRefused(target.projectPath, target.projectID); refused {
+			return productionProjectDeleteAnswer(false, false, true, refusal, ""), nil
+		}
+		return productionProjectDeleteAnswer(false, false, true, "PROJECT_NOT_FOUND", ""), nil
+	}
+	if !durable.productionProjectKeyed(admitted.Path) {
 		return productionProjectDeleteAnswer(false, false, true, "PROJECT_NOT_FOUND", ""), nil
 	}
 	// A directory this lane did not enumerate as a direct child of its own pinned
@@ -416,6 +424,21 @@ func (p *productionOpen) productionProjectAdmitted(projectPath, projectID string
 		}
 	}
 	return projectfs.ListedProject{}, false
+}
+
+// productionProjectRefused returns the named refusal of one inventoried-but-
+// unserved project (over the staging budget). Both the path and the project id
+// must match, exactly as productionProjectAdmitted requires them, so a path
+// alone never selects a refusal either.
+func (p *productionOpen) productionProjectRefused(projectPath, projectID string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, item := range p.refused {
+		if item.listed.Path == projectPath && item.listed.ProjectID == projectID {
+			return item.code, true
+		}
+	}
+	return "", false
 }
 
 // productionProjectForget drops one admitted entry after its directory is gone,

@@ -42,3 +42,31 @@ func TestPublicBoundarySanitizesBeforeLiveAndReplayStorage(t *testing.T) {
  if len(history)!=1||strings.Contains(string(history[0].Wire()),secret) {t.Fatal("credential entered replay history")}
  if payload[0].(map[string]any)["secret"]!=secret {t.Fatal("event sanitizer mutated producer values")}
 }
+
+// A write against a session the server no longer holds must tell that tab its
+// project was lost, so the renderer reopens instead of autosaving forever.
+func TestProjectSessionLossPublishesOnlyForLostSessionCodes(t *testing.T) {
+ server:=fixture(t)
+ current,err:=server.getClient("session-synthetic","synthetic-tab-0001");if err!=nil {t.Fatal(err)};defer server.unpin(current)
+ caller:=Caller{Principal:"synthetic-author",SessionID:"session-synthetic",ClientID:"synthetic-tab-0001"}
+ _,queue,cancel,err:=current.hub.Subscribe(0);if err!=nil {t.Fatal(err)};defer cancel()
+ for _,row:=range []struct{err error;lost bool}{
+  {errors.New("PROJECT_SESSION_NOT_OWNED"),true},
+  {&security.HTTPError{Status:409,Code:"PROJECT_SESSION_STALE",Message:"PROJECT_SESSION_STALE"},true},
+  {errors.New("PROJECT_CONTEXT_CHANGED"),false},
+  {errors.New("private /author/project.db ENOENT"),false},
+ }{
+  server.publishProjectSessionLost(caller,row.err)
+  select{
+  case event:=<-queue:
+   if !row.lost {t.Fatal("unexpected event",string(event.Wire()))}
+   if !strings.Contains(string(event.Wire()),"browser:project-lost") {t.Fatal(string(event.Wire()))}
+   event.Done()
+  default:
+   if row.lost {t.Fatal("no project-lost event for",row.err)}
+  }
+ }
+ if code:=publicErrorCode(errors.New("PROJECT_SESSION_NOT_OWNED"));code!="PROJECT_SESSION_NOT_OWNED" {t.Fatal(code)}
+ if code:=publicErrorCode(&security.HTTPError{Status:409,Code:"PROJECT_SESSION_STALE"});code!="PROJECT_SESSION_STALE" {t.Fatal(code)}
+ if code:=publicErrorCode(errors.New("private /author/project.db"));code!="" {t.Fatal(code)}
+}

@@ -115,7 +115,9 @@ func(s *Server)serve(w http.ResponseWriter,r *http.Request)error{
   s.mu.Lock();handler:=s.handlers[operation]
   if handler==nil{s.mu.Unlock();return security.NewHTTPError(501,"GO_OPERATION_NOT_MIGRATED")}
   s.mu.Unlock()
-  result,err:=handler(r.Context(),Caller{Principal:principal,SessionID:session.ID(),ClientID:token},args);if err!=nil{return err}
+  caller:=Caller{Principal:principal,SessionID:session.ID(),ClientID:token}
+  result,err:=handler(r.Context(),caller,args)
+  if err!=nil{s.publishProjectSessionLost(caller,err);return err}
   return security.WriteJSON(w,200,s.public.Sanitize(map[string]any{"result":result}))
  }
  // Release/transfer/dialog semantics require actual domain ownership and are
@@ -144,5 +146,19 @@ func(s *Server)events(w http.ResponseWriter,r *http.Request,current *client)erro
 // Domains must still project safe DTOs, not raw private configuration objects.
 func(s *Server)Publish(caller Caller,channel string,args []any)error{
  s.mu.Lock();entry:=s.clients[caller.SessionID+":"+caller.ClientID];s.mu.Unlock();if entry==nil{return fmt.Errorf("CLIENT_NOT_FOUND")};if args==nil{args=[]any{}};clean,ok:=s.public.Sanitize(args).([]any);if !ok{return errors.New("PUBLIC_EVENT_INVALID")};name,ok:=s.public.Sanitize(channel).(string);if !ok{return errors.New("PUBLIC_EVENT_INVALID")};return entry.hub.Publish(name,clean)
+}
+// projectSessionLostCodes are the frozen-session failures that prove this
+// caller's lease is gone, for example after a restart dropped the in-memory
+// lease table. Only these codes justify telling the tab its project was lost.
+var projectSessionLostCodes=map[string]struct{}{"PROJECT_SESSION_NOT_OWNED":{},"PROJECT_SESSION_STALE":{}}
+// publishProjectSessionLost tells the caller's own tab that the session it was
+// writing through no longer exists, so the renderer can stop autosaving against
+// it and reopen the project cleanly. Best effort by design: the failed
+// operation's own error remains the authoritative answer, and a caller with no
+// event stream simply receives no event.
+func(s *Server)publishProjectSessionLost(caller Caller,err error){
+ if s==nil{return}
+ code:=publicErrorCode(err);if _,lost:=projectSessionLostCodes[code];!lost{return}
+ _ = s.Publish(caller,"browser:project-lost",[]any{map[string]any{"code":code}})
 }
 func(s *Server)Close(){s.mu.Lock();defer s.mu.Unlock();for key,entry:=range s.clients{entry.hub.Close();delete(s.clients,key)}}

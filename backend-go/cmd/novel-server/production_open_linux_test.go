@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
@@ -213,6 +215,84 @@ func TestProductionLaneAdmitsOnlyCurrentSchemaAuthorDatabase(t *testing.T) {
 	}
 	if len(recent) != 1 || recent[0].Path != filepath.Join(root, productionLibraryDirectory, "current-novel") {
 		t.Fatalf("recent shelf leaked unadmitted projects: %v", recent)
+	}
+}
+
+// TestProductionLaneNamesOverBudgetProjectInsteadOfDroppingIt proves a database
+// larger than the lane's staging budget is never silently omitted: the project
+// stays on the chooser and the shelf, and project:open answers the named refusal
+// with its author-facing message instead of PROJECT_NOT_FOUND. A library made only
+// of over-budget books starts rather than aborting.
+func TestProductionLaneNamesOverBudgetProjectInsteadOfDroppingIt(t *testing.T) {
+	root := syntheticProductionDataDir(t)
+	layout, err := productionLayoutFor(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One byte is smaller than every seeded database, so all three library
+	// projects are over budget before their schema can even be verified.
+	open, err := openProduction(context.Background(), layout, productionConfig{
+		Schema: productionTestContract(), MaxDatabaseBytes: 1,
+	})
+	if err != nil {
+		t.Fatalf("an over-budget library blocked startup: %v", err)
+	}
+	defer open.Close()
+	if len(open.projects) != 0 || len(open.refused) != 3 {
+		t.Fatalf("over-budget admission: %d admitted, %d refused; want 0 and 3", len(open.projects), len(open.refused))
+	}
+	for _, item := range open.refused {
+		if item.code != productionProjectTooLargeCode {
+			t.Fatalf("refused %s with code %q", item.listed.Path, item.code)
+		}
+	}
+	listed, err := open.ListCanonicalProjects(context.Background(), productionLibraryEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 3 {
+		t.Fatalf("the chooser omitted over-budget projects: %v", listed)
+	}
+	recent, err := open.RecentProjects(context.Background(), transportCallerForTest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 3 {
+		t.Fatalf("the shelf omitted over-budget projects: %v", recent)
+	}
+	target := filepath.Join(root, productionLibraryDirectory, "current-novel")
+	value, err := open.durable.OpenProject(context.Background(), transportCallerForTest(), target, "over-budget-token", nil)
+	if value != nil || err == nil {
+		t.Fatalf("project:open answered an over-budget project: %v %v", value, err)
+	}
+	var refusal *security.HTTPError
+	if !errors.As(err, &refusal) || refusal.Code != productionProjectTooLargeCode || refusal.Status != http.StatusConflict {
+		t.Fatalf("project:open answered %v; want %s", err, productionProjectTooLargeCode)
+	}
+	if refusal.Message != productionProjectTooLargeMessage {
+		t.Fatalf("project:open refusal message %q; want %q", refusal.Message, productionProjectTooLargeMessage)
+	}
+}
+
+// TestProductionScratchRootFollowsTheEnvironment proves the staging root is
+// operator configuration: NOVEL_SCRATCH_ROOT selects it, the lane creates it, and
+// an unsafe value is refused instead of being used.
+func TestProductionScratchRootFollowsTheEnvironment(t *testing.T) {
+	root := t.TempDir()
+	configured := filepath.Join(root, "scratch")
+	t.Setenv("NOVEL_SCRATCH_ROOT", configured)
+	got, err := productionScratchRoot()
+	if err != nil || got != configured {
+		t.Fatalf("scratch root %q: %v", got, err)
+	}
+	if info, statErr := os.Lstat(got); statErr != nil || !info.IsDir() {
+		t.Fatalf("the configured scratch root was not created: %v", statErr)
+	}
+	for _, unsafe := range []string{"relative/scratch", "/"} {
+		t.Setenv("NOVEL_SCRATCH_ROOT", unsafe)
+		if value, err := productionScratchRoot(); err == nil {
+			t.Fatalf("unsafe scratch root %q was accepted as %q", unsafe, value)
+		}
 	}
 }
 

@@ -103,16 +103,24 @@ func (m *Manager) ProjectRuntimeContext(ctx context.Context, caller transport.Ca
 		return nil, err
 	}
 	if !present {
+		// The browser contract is {activeProjectPath, dbReady}; the frozen
+		// {projectId, leaseId, projectPath} keys stay for the existing consumers
+		// so a caller can still feed this DTO back as a frozen context.
 		return map[string]any{
-			"projectId":   nil,
-			"leaseId":     nil,
-			"projectPath": nil,
+			"projectId":         nil,
+			"leaseId":           nil,
+			"projectPath":       nil,
+			"activeProjectPath": nil,
+			"dbReady":           false,
 		}, nil
 	}
+	path := frozen.ProjectPath
 	return map[string]any{
-		"projectId":   frozen.ProjectID,
-		"leaseId":     frozen.LeaseID,
-		"projectPath": frozen.ProjectPath,
+		"projectId":         frozen.ProjectID,
+		"leaseId":           frozen.LeaseID,
+		"projectPath":       frozen.ProjectPath,
+		"activeProjectPath": path,
+		"dbReady":           true,
 	}, nil
 }
 

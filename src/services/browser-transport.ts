@@ -3,7 +3,12 @@ import type { ProjectSessionContext } from '../shared/ipc-channels'
 import { getActiveProjectSessionContext, sameProjectSessionContext } from '../shared/project-session-context'
 import type { MainGenerationRunSummary, MainGenerationRunView } from './generation/generation-runtime'
 
-const CLIENT_STORAGE_KEY = 'ai-novel-writer-browser-client-id'
+// A duplicated tab or a window.open copy inherits sessionStorage, so this key is
+// only a copy witness: it proves what the document inherited, never who this tab is.
+const CLIENT_SESSION_WITNESS_KEY = 'ai-novel-writer-browser-client-id'
+// The browsing-context name is the authoritative per-tab slot: a reload keeps it,
+// while Browser "duplicate tab" and window.open start a fresh context without it.
+const CLIENT_NAME_PREFIX = 'ai-novel-writer-browser-client:'
 const CLIENT_ID_PATTERN = /^[a-zA-Z0-9_-]{16,128}$/u
 const OPERATION_PATTERN = /^[a-z][a-z0-9:-]{0,127}$/u
 const SEND_OPERATIONS = new Set([
@@ -12,6 +17,11 @@ const SEND_OPERATIONS = new Set([
 
 type Listener = (...args: unknown[]) => void
 type BrowserEventSource = Pick<EventSource, 'onopen' | 'onmessage' | 'onerror' | 'close'>
+/** The per-browsing-context `window.name` slot, injectable for non-document hosts. */
+export interface BrowserTabName {
+  get(): string
+  set(value: string): void
+}
 export interface BrowserTransportDependencies {
   fetch?: typeof fetch
   createEventSource?: (url: string, options: EventSourceInit) => BrowserEventSource
@@ -19,6 +29,7 @@ export interface BrowserTransportDependencies {
   randomId?: () => string
   captureSession?: () => ProjectSessionContext | null
   connectionTimeoutMs?: number
+  tabName?: BrowserTabName
 }
 
 export class BrowserTransportError extends Error {
@@ -45,17 +56,70 @@ function randomClientId(): string {
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
-function readClientId(dependencies: BrowserTransportDependencies): string {
-  let storage = dependencies.storage
-  try {
-    storage ??= window.sessionStorage
-    const saved = storage.getItem(CLIENT_STORAGE_KEY)
-    if (saved && CLIENT_ID_PATTERN.test(saved)) return saved
-  } catch { /* Private browsing/storage restrictions must not prevent a per-tab in-memory identity. */ }
+/**
+ * The real `window.name` slot when a document exists. Reading it is best-effort:
+ * a sandboxed or restricted document may reject both access and assignment, and
+ * that must only cost duplicate detection, never this page's identity.
+ */
+function defaultTabName(): BrowserTabName | undefined {
+  if (typeof window === 'undefined') return undefined
+  const view = window
+  return {
+    get() { try { return view.name } catch { return '' } },
+    set(value) { try { view.name = value } catch { /* Keep this identity for this page lifetime. */ } },
+  }
+}
+
+// Only OUR name is an identity. An unrelated window name (a legacy popup target,
+// another same-origin page) is never trusted or reused as a client id.
+function namedClientId(value: string): string | undefined {
+  if (!value.startsWith(CLIENT_NAME_PREFIX)) return undefined
+  const clientId = value.slice(CLIENT_NAME_PREFIX.length)
+  return CLIENT_ID_PATTERN.test(clientId) ? clientId : undefined
+}
+
+function issueClientId(
+  dependencies: BrowserTransportDependencies,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | undefined,
+  tabName: BrowserTabName | undefined,
+): string {
   const clientId = (dependencies.randomId ?? randomClientId)()
   if (!CLIENT_ID_PATTERN.test(clientId)) throw new BrowserTransportError('BROWSER_CLIENT_ID_INVALID', 'Invalid browser client identity.')
-  try { storage?.setItem(CLIENT_STORAGE_KEY, clientId) } catch { /* Keep this identity for this page lifetime. */ }
+  // The witness is written first so a copy made between the two writes still sees
+  // a name that does not match it, and therefore still takes a fresh identity.
+  try { storage?.setItem(CLIENT_SESSION_WITNESS_KEY, clientId) } catch { /* Keep this identity for this page lifetime. */ }
+  try { tabName?.set(CLIENT_NAME_PREFIX + clientId) } catch { /* Keep this identity for this page lifetime. */ }
   return clientId
+}
+
+/**
+ * One client id per browsing context. A same-tab reload keeps the name AND the
+ * inherited session witness, so it reuses its id (the server owner and project
+ * lease survive). A duplicated tab or window.open copy inherits the session
+ * witness but not the browsing-context name, so it MUST take a fresh id rather
+ * than silently sharing another tab's owner and project lease.
+ */
+function readClientId(dependencies: BrowserTransportDependencies): string {
+  const tabName = dependencies.tabName ?? defaultTabName()
+  let storage = dependencies.storage
+  let witness: string | undefined
+  try {
+    storage ??= window.sessionStorage
+    const saved = storage.getItem(CLIENT_SESSION_WITNESS_KEY)
+    if (saved && CLIENT_ID_PATTERN.test(saved)) witness = saved
+  } catch { /* Private browsing/storage restrictions must not prevent a per-tab in-memory identity. */ }
+  if (!tabName) {
+    // No browsing context to name (non-document host): keep the historical
+    // per-session identity so one tab still reuses exactly one client id.
+    if (witness) return witness
+    return issueClientId(dependencies, storage, tabName)
+  }
+  const named = namedClientId(tabName.get())
+  // Only an inherited witness that DIFFERS from the name proves this document is a
+  // copy. An absent witness is never copy evidence: storage being unavailable must
+  // not churn the id (and the server lease) on every reload of the same tab.
+  if (named && (witness === undefined || witness === named)) return named
+  return issueClientId(dependencies, storage, tabName)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

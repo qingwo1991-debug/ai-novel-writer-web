@@ -59,6 +59,11 @@ type productionDurableOpen struct {
 	// issued for it at startup. A browser path selects a key; it never becomes
 	// one, and an unlisted path can never reach the runtime.
 	keys map[string]string
+	// unserved maps a trusted library project path this lane inventoried but
+	// deliberately did not stage (over the staging budget) to the named code its
+	// open answers. It is consulted before the key lookup so such a project is
+	// refused by name instead of being reported as missing.
+	unserved map[string]string
 	// catalog is the one live project catalog this process admitted at startup.
 	// project:create registers a new project in it so the created book is
 	// openable in this same process; a second Store would have an empty key map
@@ -72,7 +77,7 @@ type productionDurableOpen struct {
 // lifecycle owns the lease and releases it in Shutdown; on error the lifecycle
 // has already shut down (and released it), and every remaining failure path
 // returns with the runtime closed.
-func newProductionDurable(library *projectfs.Library, layout productionLayout, scratch string, held *writerlock.Lock, config productionConfig, projects []productionProject) (*productionDurableOpen, error) {
+func newProductionDurable(library *projectfs.Library, layout productionLayout, scratch string, held *writerlock.Lock, config productionConfig, projects []productionProject, refused []productionRefusedProject) (*productionDurableOpen, error) {
 	if library == nil || held == nil || scratch == "" || len(config.Schema) == 0 || config.MaxDatabaseBytes <= 0 {
 		return nil, errors.New("PRODUCTION_DURABLE_CONFIGURATION_INVALID")
 	}
@@ -127,7 +132,11 @@ func newProductionDurable(library *projectfs.Library, layout productionLayout, s
 		}
 		keys[item.listed.Path] = recent.Key
 	}
-	return &productionDurableOpen{lifecycle: lifecycle, manager: manager, keys: keys, catalog: catalog}, nil
+	unserved := make(map[string]string, len(refused))
+	for _, item := range refused {
+		unserved[item.listed.Path] = item.code
+	}
+	return &productionDurableOpen{lifecycle: lifecycle, manager: manager, keys: keys, catalog: catalog, unserved: unserved}, nil
 }
 
 // Close shuts the admitted runtime down. Every open author database is closed
@@ -185,6 +194,11 @@ func (d *productionDurableOpen) OpenProject(ctx context.Context, caller transpor
 	defer d.mu.Unlock()
 	if d.closed || d.manager == nil {
 		return nil, errors.New("PRODUCTION_CLOSED")
+	}
+	// An inventoried-but-unserved project is refused by name, never as missing:
+	// the chooser named it, so PROJECT_NOT_FOUND would be a lie about the book.
+	if code, unserved := d.unserved[browserPath]; unserved {
+		return nil, productionProjectRefusal(code)
 	}
 	key, known := d.keyFor(browserPath)
 	if !known {
