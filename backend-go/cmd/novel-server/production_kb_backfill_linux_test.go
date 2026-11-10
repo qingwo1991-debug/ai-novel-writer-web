@@ -24,10 +24,10 @@ func init() {
 	productionKnowledgeWireArity[productionKnowledgeBackfillVectorsName] = 1
 }
 
-// TestProductionKnowledgeBackfillVectorsAnswersHonestZero proves the success arm:
-// one imported document gives the backfill real rows it could have touched, and
-// the answer is exactly zero vectors backfilled with zero failures, leaving the
-// whole store byte-identical.
+// TestProductionKnowledgeBackfillVectorsAnswersHonestZero proves the failure arm:
+// the synthetic fixture commits an embedding model whose endpoint is outside the
+// model-egress allowlist, so the backfill attempts, fails every chunk, reports
+// them in failed, backfills zero, and leaves the canonical store byte-identical.
 func TestProductionKnowledgeBackfillVectorsAnswersHonestZero(t *testing.T) {
 	client, projectPath, frozen, _ := productionKnowledgeLane(t)
 	imported := productionKnowledgeCall(t, client, productionKnowledgeImportTextName,
@@ -35,21 +35,22 @@ func TestProductionKnowledgeBackfillVectorsAnswersHonestZero(t *testing.T) {
 	if imported["success"] != true {
 		t.Fatalf("kb:import-text refused the seed the backfill needs: %v", imported)
 	}
+	chunks := productionKnowledgeCount(t, imported["chunkCount"])
 	before := productionKnowledgeReadFingerprint(t, projectPath)
 
 	answer := productionKnowledgeCall(t, client, productionKnowledgeBackfillVectorsName,
 		[]any{projectPath, frozen})
-	if answer["success"] != true {
-		t.Fatalf("kb:backfill-vectors refused instead of answering the honest no-op: %v", answer)
+	if answer["success"] != false {
+		t.Fatalf("kb:backfill-vectors claimed success over an unreachable embedding endpoint: %v", answer)
 	}
 	if processed := productionKnowledgeCount(t, answer["processed"]); processed != 0 {
-		t.Fatalf("kb:backfill-vectors claimed %d vectors backfilled in an FTS-only store", processed)
+		t.Fatalf("kb:backfill-vectors claimed %d vectors backfilled", processed)
 	}
-	if failed := productionKnowledgeCount(t, answer["failed"]); failed != 0 {
-		t.Fatalf("kb:backfill-vectors reported %d failures: %v", failed, answer)
+	if failed := productionKnowledgeCount(t, answer["failed"]); failed != chunks {
+		t.Fatalf("kb:backfill-vectors reported %d failures, want %d: %v", failed, chunks, answer)
 	}
 	if after := productionKnowledgeReadFingerprint(t, projectPath); after != before {
-		t.Fatal("a successful backfill wrote the author database or the knowledge store")
+		t.Fatal("a failed backfill wrote the author database or the canonical knowledge store")
 	}
 }
 

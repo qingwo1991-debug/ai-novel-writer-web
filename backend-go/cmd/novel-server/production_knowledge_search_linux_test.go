@@ -322,16 +322,20 @@ func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 	}
 	status := productionKnowledgeCall(t, client, productionKnowledgeVectorStatusName, []any{projectPath, frozen})
 	assertStatus("imported store", status, 2, true)
-	// The honest backfill is a zero-vector no-op, and it spends nothing.
+	// The configured embedding endpoint is unreachable, so the backfill attempts,
+	// fails every chunk, backfills zero and writes nothing to the canonical snapshot.
 	indexPath := productionKnowledgeQueryIndexPath(projectPath)
 	before := productionKnowledgeQueryFileBytes(t, indexPath)
 	backfilled := productionKnowledgeCall(t, client, productionKnowledgeBackfillVectorsName,
 		[]any{projectPath, frozen})
-	if backfilled["success"] != true {
-		t.Fatalf("kb:backfill-vectors refused instead of answering the honest no-op: %v", backfilled)
+	if backfilled["success"] != false {
+		t.Fatalf("kb:backfill-vectors claimed success over an unreachable endpoint: %v", backfilled)
 	}
 	if processed := productionKnowledgeCount(t, backfilled["processed"]); processed != 0 {
-		t.Fatalf("kb:backfill-vectors claimed %d vectors backfilled in an FTS-only store", processed)
+		t.Fatalf("kb:backfill-vectors claimed %d vectors backfilled", processed)
+	}
+	if failed := productionKnowledgeCount(t, backfilled["failed"]); failed != 2 {
+		t.Fatalf("kb:backfill-vectors reported %d failures, want 2: %v", failed, backfilled)
 	}
 	if after := productionKnowledgeQueryFileBytes(t, indexPath); !bytes.Equal(after, before) {
 		t.Fatal("a backfill wrote the canonical snapshot")
