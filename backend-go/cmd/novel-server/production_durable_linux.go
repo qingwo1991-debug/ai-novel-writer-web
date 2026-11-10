@@ -151,12 +151,17 @@ func (d *productionDurableOpen) Close() error {
 	return lifecycle.Shutdown()
 }
 
-// productionOwner is the exact cookie session plus browser tab identity. A
-// browser cannot borrow another caller's lease, so an unnamed caller is refused
-// before any repository or lease is touched.
+// productionOwner keys the project lease by the authenticated account, not by
+// the tab or browser session. This is a single-author browser workspace: the same
+// account may open and edit a project from any tab or device (home computer,
+// phone). Concurrent writes are resolved by the per-resource CAS (draft content
+// baseline, character/roster revision, finalization commit) and by SQLite's own
+// in-process serialization, never by refusing a sibling tab's open. The per-tab
+// ClientID still fences the SSE stream and the in-flight request counter.
+// An unnamed caller is still refused before any repository or lease is touched.
 func productionOwner(caller transport.Caller) (projectsession.Owner, error) {
-	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
-	if owner.SessionID == "" || owner.ClientID == "" ||
+	owner := projectsession.Owner{SessionID: caller.Principal, ClientID: "account"}
+	if owner.SessionID == "" ||
 		strings.ContainsAny(owner.SessionID+owner.ClientID, ":\x00") {
 		return projectsession.Owner{}, errors.New("PROJECT_SESSION_REQUIRED")
 	}

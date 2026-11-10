@@ -286,8 +286,20 @@ func productionEditorDecode(t *testing.T, client *productionDurableClient, opera
 	}
 }
 
+// productionEditorServed asserts one read answers 200 for a caller that shares the
+// project lease. The lease is keyed by the authenticated account now, so a second
+// tab (or device) of the same account is served the same frozen context instead of
+// being refused as a foreign tab.
+func productionEditorServed(t *testing.T, client *productionDurableClient, label, operation string, args []any) {
+	t.Helper()
+	response := client.call(t, operation, args)
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s: %s was refused the shared account lease: %d %s", label, operation, response.Code, response.Body.String())
+	}
+}
+
 // productionEditorRefused asserts one refusal without pinning a single code: a
-// stale or absent lease, a foreign tab and a closed session are all honest
+// different account, a stale or absent lease and a closed session are all honest
 // refusals, and none of them may answer 200 or return data.
 func productionEditorRefused(t *testing.T, client *productionDurableClient, label, operation string, args []any) {
 	t.Helper()
@@ -313,8 +325,9 @@ func productionEditorRefused(t *testing.T, client *productionDurableClient, labe
 
 // TestProductionEditorReadsServeAdmittedAuthorDatabase is the read half of this
 // lane: every editor read that can be answered from the author's own database is
-// bound, answers 200 with the seeded rows, and refuses a stale, foreign or
-// absent lease without touching the admitted bytes.
+// bound, answers 200 with the seeded rows, and refuses a stale, other-account or
+// absent lease without touching the admitted bytes - while a sibling tab of the
+// same account shares the lease and is served.
 func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 	root, projectPath, contract, seeded, _ := productionEditorReadsRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
@@ -432,8 +445,9 @@ func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 		}
 	}
 
-	// Refusals: a foreign tab, a stale lease and an absent lease are all
-	// refused by the same fence, for every newly bound operation.
+	// A sibling tab of the same account shares the project lease and is served the
+	// same frozen context; a different account, a stale lease and an absent lease
+	// are all refused by the same fence, for every newly bound operation.
 	reads := []struct {
 		operation string
 		args      func(map[string]any) []any
@@ -448,9 +462,11 @@ func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 	}
 	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
 	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
-	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	stranger := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
 	for _, read := range reads {
-		productionEditorRefused(t, foreign, "foreign tab", read.operation, read.args(frozen))
+		productionEditorServed(t, sibling, "sibling tab", read.operation, read.args(frozen))
+		productionEditorRefused(t, stranger, "other account", read.operation, read.args(frozen))
 		productionEditorRefused(t, author, "stale lease", read.operation, read.args(stale))
 		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
 	}
@@ -592,8 +608,9 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 		t.Fatal("a generation read changed the admitted author database")
 	}
 
-	// The fence is the same one the editor reads use: a foreign tab, a stale lease
-	// and an absent lease are refused for the newly bound generation reads too.
+	// The fence is the same one the editor reads use: a sibling tab of the same
+	// account shares the lease and is served, while a different account, a stale
+	// lease and an absent lease are refused for the newly bound generation reads too.
 	reads := []struct {
 		operation string
 		args      func(map[string]any) []any
@@ -603,9 +620,11 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 	}
 	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
 	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
-	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	stranger := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
 	for _, read := range reads {
-		productionEditorRefused(t, foreign, "foreign tab", read.operation, read.args(frozen))
+		productionEditorServed(t, sibling, "sibling tab", read.operation, read.args(frozen))
+		productionEditorRefused(t, stranger, "other account", read.operation, read.args(frozen))
 		productionEditorRefused(t, author, "stale lease", read.operation, read.args(stale))
 		productionEditorRefused(t, author, "absent lease", read.operation, read.args(absent))
 	}
