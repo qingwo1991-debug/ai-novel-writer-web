@@ -510,6 +510,53 @@ func TestProductionLLMProbeRestoresAStoredCredentialOnlyForItsOwnEndpoint(t *tes
 	}
 }
 
+// TestProductionLLMProbeDiscoversWithoutAModelName holds the browser contract: a
+// ModelDiscoveryRequest is provider/protocol/baseUrl/apiKey/purposes and carries
+// no model name (src/shared/ipc-channels.ts). Demanding one refused every real
+// discovery with an unreadable-list answer, whatever the endpoint.
+func TestProductionLLMProbeDiscoversWithoutAModelName(t *testing.T) {
+	provider, _ := productionProbeFakeProvider(t, http.StatusOK,
+		`{"object":"list","data":[{"id":"synthetic-model","object":"model"}]}`)
+	fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+	// Exactly the fields the settings form sends: no modelName.
+	request := map[string]any{
+		"provider": "openai",
+		"protocol": "openai",
+		"baseUrl":  provider.URL + "/v1",
+		"apiKey":   productionTestModelSecret,
+		"purposes": []any{"generation"},
+	}
+	var wire productionProbeDiscoveryWire
+	fixture.client.decode(t, "llm:discover-models", []any{request}, &wire)
+	if !wire.Success {
+		t.Fatalf("a discovery without a model name was refused: errorCode=%q", wire.ErrorCode)
+	}
+	if len(wire.Models) != 1 || wire.Models[0].ID != "synthetic-model" {
+		t.Fatalf("a discovery without a model name returned %+v", wire.Models)
+	}
+}
+
+// TestProductionLLMProbeReportsAnUnreachableEndpointAsNetwork holds the error-code
+// line the settings form depends on: a refused connection is a network failure,
+// never an unreadable model list. Reporting a refused connection as
+// invalid_response blamed the provider's list and sent the author looking in the
+// wrong place.
+func TestProductionLLMProbeReportsAnUnreachableEndpointAsNetwork(t *testing.T) {
+	// Port 1 is closed on every host. The origin is committed, so the policy
+	// admits it and the only possible failure is the transport itself.
+	const unreachable = "http://127.0.0.1:1"
+	fixture := newProductionProbeFixture(t, []string{unreachable}, "")
+	var wire productionProbeDiscoveryWire
+	fixture.client.decode(t, "llm:discover-models",
+		[]any{productionProbeTypedProfile(unreachable+"/v1", productionTestModelSecret)}, &wire)
+	if wire.Success {
+		t.Fatal("an unreachable endpoint reported a successful model list")
+	}
+	if wire.ErrorCode != "network" {
+		t.Fatalf("an unreachable endpoint answered %q; want network", wire.ErrorCode)
+	}
+}
+
 // TestProductionLLMProbeKeepsTheCredentialOutOfEveryRefusal holds the credential
 // containment line: a provider that echoes the submitted key, a provider whose
 // model list echoes it, and a discovery refusal all stay clean.

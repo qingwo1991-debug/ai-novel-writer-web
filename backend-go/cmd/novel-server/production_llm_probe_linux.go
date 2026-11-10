@@ -219,6 +219,11 @@ func (p *productionLLMProbe) testConnection(ctx context.Context, caller transpor
 	if err != nil {
 		return productionProbeTestFailure(err)
 	}
+	if strings.TrimSpace(form.modelName) == "" {
+		// The connection test builds a chat body, so it is the one caller that
+		// cannot proceed without a model name.
+		return productionProbeTestFailure(errProductionProbeRequestInvalid)
+	}
 	if productionProbePurpose(form.purposes) == "embedding" {
 		return productionProbeTestFailure(errProductionProbeEmbeddingPurpose)
 	}
@@ -333,7 +338,14 @@ func (p *productionLLMProbe) discoverModels(ctx context.Context, caller transpor
 		if deadline.Err() != nil {
 			return map[string]any{"success": false, "errorCode": "network"}, nil
 		}
-		return productionProbeDiscoveryFailure(productionProbeDispatchFailure(err))
+		// The dispatcher's own refusals are policy answers. Every other failure to
+		// reach the endpoint is a transport failure, not an unreadable body: a
+		// refused connection reported as "invalid_response" blames the provider's
+		// model list and sends the author looking in the wrong place.
+		if failure := productionProbeDispatchFailure(err); productionProbeEgressRefusal(failure) {
+			return productionProbeDiscoveryFailure(failure)
+		}
+		return map[string]any{"success": false, "errorCode": "network"}, nil
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -415,8 +427,11 @@ func productionProbeFormFrom(request map[string]any) (productionProbeForm, error
 		return productionProbeForm{}, errProductionProbeRequestInvalid
 	}
 	// modelName is what the tiny chat body names and what a Gemini endpoint puts
-	// in its path, so an empty one is a request this lane cannot build.
-	if form.modelName, ok = request["modelName"].(string); !ok || strings.TrimSpace(form.modelName) == "" {
+	// in its path, so test-connection requires it. llm:discover-models does not:
+	// the browser discovery request is provider/protocol/baseUrl/apiKey/purposes
+	// with no model name (src/shared/ipc-channels.ts ModelDiscoveryRequest), so
+	// demanding one here refused every discovery with an unreadable-list answer.
+	if form.modelName, ok = productionProbeOptionalString(request, "modelName"); !ok {
 		return productionProbeForm{}, errProductionProbeRequestInvalid
 	}
 	// A public Web profile redacts apiKey (src/shared/ipc-channels.ts:833), so
@@ -593,6 +608,23 @@ func productionProbeRefusedOrigin(err error) error {
 // productionProbeDispatchFailure classifies a dispatch error that came back from
 // the policy itself. Every code is fixed: egress.Do never exposes a native
 // *url.Error, because that error carries the full URL.
+// productionProbeEgressRefusal reports whether err is one of the dispatcher's own
+// policy refusals - an answer from this lane - rather than a provider or
+// transport fault.
+func productionProbeEgressRefusal(err error) bool {
+	for _, known := range []error{
+		egress.ErrNotAllowed,
+		egress.ErrBaseURLInvalid,
+		egress.ErrPolicyInvalid,
+		egress.ErrRedirectForbidden,
+	} {
+		if errors.Is(err, known) {
+			return true
+		}
+	}
+	return false
+}
+
 func productionProbeDispatchFailure(err error) error {
 	for _, known := range []error{
 		egress.ErrNotAllowed,
