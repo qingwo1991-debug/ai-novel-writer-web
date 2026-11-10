@@ -335,7 +335,7 @@ func (w *productionGlobalWrites) bindModelSave(server *transport.Server, config 
 		log.Printf("novel-server: production model writes: %s stays unbound (committed model egress unavailable: %v)", productionModelSaveName, policyErr)
 		return nil
 	}
-	return server.BindModelSave(config, startup, egressPolicy)
+	return server.BindModelSave(config, startup, egressPolicy, w.open.refreshModelEgress)
 }
 
 // setStageModel is llm:set-stage-model, ported from

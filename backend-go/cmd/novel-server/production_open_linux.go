@@ -410,6 +410,37 @@ func (p *productionOpen) ModelEgress() (*egress.Client, error) {
 	return p.modelEgress.policy, nil
 }
 
+// refreshModelEgress re-derives the policy from the committed config after a
+// model save. The committed document is still the only source: saving a model
+// declares its endpoint, and the next dispatch can then dial exactly that
+// committed origin. The previous policy is closed only after the swap, so an
+// in-flight generation that already holds it finishes on its own transport.
+func (p *productionOpen) refreshModelEgress() error {
+	if p == nil || p.config == nil {
+		return errProductionModelEgressUnavailable
+	}
+	plan, err := productionModelEgressPlan(p.config)
+	if err != nil {
+		p.mu.Lock()
+		p.modelEgressErr = err
+		p.mu.Unlock()
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.closedError(); err != nil {
+		plan.policy.Close()
+		return err
+	}
+	previous := p.modelEgress
+	p.modelEgress = plan
+	p.modelEgressErr = nil
+	if previous != nil && previous.policy != nil {
+		_ = previous.policy.Close()
+	}
+	return nil
+}
+
 func (p *productionOpen) Close() error {
 	if p == nil {
 		return nil

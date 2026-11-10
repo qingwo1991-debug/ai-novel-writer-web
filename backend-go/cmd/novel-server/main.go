@@ -327,7 +327,7 @@ func migrationHandlerWithModelsReadOpenAndCapture(registry *policy.Registry, add
 		for _, bind := range []func() error{
 			func() error { return server.BindGlobalConfig(models, startup) },
 			func() error { return server.BindModelReads(models, startup) },
-			func() error { return server.BindModelSave(models, startup, endpoints) },
+			func() error { return server.BindModelSave(models, startup, endpoints, nil) },
 			func() error { return server.BindModelDelete(models, startup) },
 		} {
 			if err := bind(); err != nil {

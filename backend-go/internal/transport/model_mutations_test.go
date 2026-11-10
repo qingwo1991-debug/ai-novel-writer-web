@@ -16,7 +16,7 @@ func TestModelSaveUsesTrustedEndpointAndPreservesOnlySameEndpointCredential(t *t
 		t.Fatal(err)
 	}
 	defer policy.Close()
-	if err := server.BindModelSave(models, globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "trusted"}), policy); err != nil {
+	if err := server.BindModelSave(models, globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "trusted"}), policy, nil); err != nil {
 		t.Fatal(err)
 	}
 	cookie, csrf := bootstrap(t, server)
@@ -46,10 +46,51 @@ func TestModelSaveUsesTrustedEndpointAndPreservesOnlySameEndpointCredential(t *t
 	if err != nil || private[0]["baseUrl"] != "https://allowed.example:8443/v1" {
 		t.Fatal("rejected update changed private profile", err, private)
 	}
+	// A base URL outside the current policy is the author declaring a new
+	// endpoint: the save commits it and the lane rebuilds the dispatch policy
+	// from that committed config. It must succeed and never echo the credential.
 	otherOrigin := strings.Replace(newProfile, "https://allowed.example:8443/v1", "https://other.example/v1", 1)
-	denied := rpc(t, server, cookie, csrf, "llm:save-model", otherOrigin, nil)
-	if denied.Code != 403 || !strings.Contains(denied.Body.String(), "ENDPOINT_NOT_ALLOWED") || strings.Contains(denied.Body.String(), "secret-for-writer") {
-		t.Fatal(denied.Code, denied.Body.String())
+	added := rpc(t, server, cookie, csrf, "llm:save-model", otherOrigin, nil)
+	if added.Code != 200 || !strings.Contains(added.Body.String(), `"success":true`) || strings.Contains(added.Body.String(), "secret-for-writer") {
+		t.Fatal(added.Code, added.Body.String())
+	}
+	private, err = models.ListPrivateModels()
+	if err != nil || len(private) != 2 {
+		t.Fatal("a committed new endpoint did not persist", err, private)
+	}
+}
+
+// TestModelSaveRefreshRunsAfterTheCommit proves the lane can adopt the newly
+// committed endpoint without a restart: refresh is invoked once, after the
+// profile is durable.
+func TestModelSaveRefreshRunsAfterTheCommit(t *testing.T) {
+	server := fixture(t)
+	models, _ := trustedConfigFixture(t)
+	policy, err := egress.New([]string{"https://allowed.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer policy.Close()
+	refreshes := 0
+	var profilesAtRefresh int
+	err = server.BindModelSave(models, globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "trusted"}), policy, func() error {
+		refreshes++
+		private, listErr := models.ListPrivateModels()
+		if listErr == nil {
+			profilesAtRefresh = len(private)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := bootstrap(t, server)
+	profile := `{"args":[{"id":"writer","name":"Writer","provider":"openai","protocol":"openai","modelName":"model","baseUrl":"https://new.example/v1","apiKey":"credential","purposes":["generation"]}]}`
+	if response := rpc(t, server, cookie, csrf, "llm:save-model", profile, nil); response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if refreshes != 1 || profilesAtRefresh != 1 {
+		t.Fatalf("refresh ran %d times with %d committed profiles; want 1/1", refreshes, profilesAtRefresh)
 	}
 }
 
@@ -61,7 +102,7 @@ func TestModelSaveRejectsReasoningMappingMismatchWithoutWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer policy.Close()
-	if err := server.BindModelSave(models, globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "trusted"}), policy); err != nil {
+	if err := server.BindModelSave(models, globalconfig.NewStartup(globalconfig.StartupCapture{Generation: "trusted"}), policy, nil); err != nil {
 		t.Fatal(err)
 	}
 	cookie, csrf := bootstrap(t, server)

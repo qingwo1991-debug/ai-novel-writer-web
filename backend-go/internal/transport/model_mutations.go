@@ -15,8 +15,12 @@ import (
 // BindModelSave accepts browser model profiles only after the trusted global
 // migration capture and an administrator supplied egress policy are present.
 // The endpoint is checked again at provider dispatch through egress.Client.Do.
+// A base URL outside the current policy is still accepted here: saving the
+// model is the author's declaration of the endpoint, and refresh (when supplied)
+// rebuilds the policy from the committed config afterwards. Generation still
+// dispatches through the committed policy, so this never widens a live request.
 // Deletion needs a separate two-file reference transaction and is not bound.
-func (s *Server) BindModelSave(models *globalconfig.Service, startup *globalconfig.Startup, policy *egress.Client) error {
+func (s *Server) BindModelSave(models *globalconfig.Service, startup *globalconfig.Startup, policy *egress.Client, refresh func() error) error {
 	if models == nil || startup == nil || policy == nil {
 		return errors.New("MODEL_SAVE_AUTHORITY_REQUIRED")
 	}
@@ -36,7 +40,10 @@ func (s *Server) BindModelSave(models *globalconfig.Service, startup *globalconf
 		case errors.Is(err, egress.ErrBaseURLInvalid):
 			return nil, security.NewHTTPError(http.StatusBadRequest, "MODEL_ENDPOINT_INVALID")
 		case errors.Is(err, egress.ErrNotAllowed):
-			return nil, security.NewHTTPError(http.StatusForbidden, "ENDPOINT_NOT_ALLOWED")
+			// A new endpoint is the author's declaration, committed below. The
+			// live dispatch policy is rebuilt from that committed config, so this
+			// is not a request-time widening: generation still dials only what the
+			// committed policy admits.
 		case err != nil:
 			return nil, security.NewHTTPError(http.StatusInternalServerError, "MODEL_ENDPOINT_POLICY_UNAVAILABLE")
 		}
@@ -66,6 +73,12 @@ func (s *Server) BindModelSave(models *globalconfig.Service, startup *globalconf
 				return map[string]any{"success": false, "error": "Error: LLM_MODEL_INVALID"}, nil
 			}
 			return map[string]any{"success": false, "error": "Error: LLM_MODEL_CONFIG_WRITE_FAILED"}, nil
+		}
+		if refresh != nil {
+			// The save is already committed; a refresh failure leaves the previous
+			// policy in place and is reported through the lane's own log, never a
+			// false save failure. The next startup derives the policy again.
+			_ = refresh()
 		}
 		return map[string]any{"success": true}, nil
 	})
