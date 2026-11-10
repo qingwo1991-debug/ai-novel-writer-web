@@ -154,25 +154,17 @@ func productionDurableBody(t *testing.T, projectPath string) string {
 // productionDurableClient is one browser tab: its own cookie session, its own
 // CSRF token and its own X-Client-Id, which is what the lease is keyed by.
 type productionDurableClient struct {
-	handler   http.Handler
-	principal string
-	tab       string
-	csrf      string
-	cookie    *http.Cookie
+	handler http.Handler
+	tab     string
+	csrf    string
+	cookie  *http.Cookie
 }
 
 func newProductionDurableClient(t *testing.T, handler http.Handler, tab string) *productionDurableClient {
 	t.Helper()
-	return newProductionDurableClientAs(t, handler, "production-author", tab)
-}
-
-// newProductionDurableClientAs boots a client for an explicit account, so a test
-// can prove that a sibling tab shares the lease while a different account does not.
-func newProductionDurableClientAs(t *testing.T, handler http.Handler, principal, tab string) *productionDurableClient {
-	t.Helper()
 	boot := httptest.NewRecorder()
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
-	bootRequest.Header.Set("X-Novel-User", principal)
+	bootRequest.Header.Set("X-Novel-User", "production-author")
 	handler.ServeHTTP(boot, bootRequest)
 	if boot.Code != http.StatusOK || len(boot.Result().Cookies()) != 1 {
 		t.Fatalf("bootstrap failed: %d %s", boot.Code, boot.Body.String())
@@ -183,7 +175,7 @@ func newProductionDurableClientAs(t *testing.T, handler http.Handler, principal,
 	if err := json.Unmarshal(boot.Body.Bytes(), &wire); err != nil || wire.CSRFToken == "" {
 		t.Fatalf("bootstrap csrf: %v %s", err, boot.Body.String())
 	}
-	return &productionDurableClient{handler: handler, principal: principal, tab: tab, csrf: wire.CSRFToken, cookie: boot.Result().Cookies()[0]}
+	return &productionDurableClient{handler: handler, tab: tab, csrf: wire.CSRFToken, cookie: boot.Result().Cookies()[0]}
 }
 
 func (c *productionDurableClient) call(t *testing.T, operation string, args []any) *httptest.ResponseRecorder {
@@ -193,7 +185,7 @@ func (c *productionDurableClient) call(t *testing.T, operation string, args []an
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/operations/"+operation, bytes.NewReader(payload))
-	request.Header.Set("X-Novel-User", c.principal)
+	request.Header.Set("X-Novel-User", "production-author")
 	request.Header.Set("X-Client-Id", c.tab)
 	request.Header.Set("X-CSRF-Token", c.csrf)
 	request.Header.Set("Origin", "http://"+productionDurableAddress)
@@ -347,23 +339,13 @@ func TestProductionLaneOpensProjectAndCommitsDraftCAS(t *testing.T) {
 		t.Fatalf("a refused CAS save still changed the database: %q", body)
 	}
 
-	// A sibling tab of the same account shares the project: a browser workspace is
-	// multi-tab and multi-device by nature, and the CAS above (not the lease) is
-	// what protects the body from a lost update.
+	// One project, one writer. A second tab opening the same project is refused
+	// by the owner lease instead of sharing the handle.
 	other := newProductionDurableClient(t, handler, productionDurableOtherTab)
 	var second productionDurableOpenWire
 	other.decode(t, "project:open", []any{projectPath, "open-token-2", projectPath}, &second)
-	if !second.Success {
-		t.Fatalf("a sibling tab of the same account was refused the shared lease: %+v", second)
-	}
-
-	// A different account is still refused the lease: sharing is per account, not
-	// global. This is the security boundary that must survive the relaxation.
-	stranger := newProductionDurableClientAs(t, handler, "other-author", productionDurableOtherTab)
-	var cross productionDurableOpenWire
-	stranger.decode(t, "project:open", []any{projectPath, "open-token-3", projectPath}, &cross)
-	if cross.Success || cross.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
-		t.Fatalf("a different account was not refused the lease: %+v", cross)
+	if second.Success || second.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
+		t.Fatalf("a second tab was not refused the single-writer lease: %+v", second)
 	}
 }
 

@@ -647,13 +647,12 @@ func TestProductionStoryStateWritesServeAdmittedAuthorDatabase(t *testing.T) {
 }
 
 // TestProductionStoryStateWritesRefuseWithoutTheLiveLease is the fence proof: a
-// stale lease on the caller's own tab, and a live lease held by a different
-// account, are both refused for every one of the eleven names, in the envelope each
-// binder already commits to - and the admitted author database is byte-identical
-// afterwards, so a refusal really is a non-write. A sibling tab of the same account
-// is the other half: it shares the account-keyed lease and its write really lands.
-// db:plot-tree-save is asserted here too: it is a capability gate, so it must keep
-// failing closed at 501 instead of acquiring a handler that could only refuse.
+// stale lease on the caller's own tab, and a live lease belonging to another tab,
+// are both refused for every one of the eleven names, in the envelope each binder
+// already commits to - and the admitted author database is byte-identical
+// afterwards, so a refusal really is a non-write. db:plot-tree-save is asserted
+// here too: it is a capability gate, so it must keep failing closed at 501
+// instead of acquiring a handler that could only refuse.
 func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 	root, projectPath, contract, baseline := productionStoryStateWriteRoot(t)
 	handler, cleanup, err := productionHandlerWithContract(migrationRegistry(t), productionDurableAddress, "", root,
@@ -682,11 +681,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		"projectPath": opened.Project["path"],
 		"leaseId":     "stale-lease",
 	}
-	// A different account does not share this project's lease: `frozen` is real, but
-	// it belongs to the production-author account, so even the same tab is refused.
-	// (A sibling tab of that account shares the lease and is served; see the two
-	// tests below.)
-	foreign := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
+	// A second tab with its own cookie and its own X-Client-Id: the lease in
+	// `frozen` is real, but it belongs to the other tab.
+	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
 
 	t.Run("narrative plan and exemption writes", func(t *testing.T) {
 		for _, operation := range []string{
@@ -698,7 +695,7 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		} {
 			productionStoryStateWriteBusinessRefusal(t, author, "stale lease", operation,
 				productionStoryStateWriteArgs(t, operation, stale, projectPath), "NARRATIVE_OPERATION_FAILED")
-			productionStoryStateWriteBusinessRefusal(t, foreign, "other account", operation,
+			productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", operation,
 				productionStoryStateWriteArgs(t, operation, frozen, projectPath), "NARRATIVE_OPERATION_FAILED")
 		}
 	})
@@ -707,9 +704,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		for _, session := range []struct {
 			label string
 			args  map[string]any
-		}{{"stale lease", stale}, {"other account", frozen}} {
+		}{{"stale lease", stale}, {"foreign tab", frozen}} {
 			client := author
-			if session.label == "other account" {
+			if session.label == "foreign tab" {
 				client = foreign
 			}
 			productionStoryStateWriteTransportRefusal(t, client, session.label, "db:narrative-thread-event-confirm",
@@ -722,9 +719,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		for _, session := range []struct {
 			label string
 			args  map[string]any
-		}{{"stale lease", stale}, {"other account", frozen}} {
+		}{{"stale lease", stale}, {"foreign tab", frozen}} {
 			client := author
-			if session.label == "other account" {
+			if session.label == "foreign tab" {
 				client = foreign
 			}
 			productionStoryStateWriteTransportRefusal(t, client, session.label, "db:plot-tree-clear",
@@ -741,14 +738,14 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		} {
 			productionStoryStateWriteBusinessRefusal(t, author, "stale lease", operation,
 				productionStoryStateWriteArgs(t, operation, stale, projectPath), "POST_HISTORY_OPERATION_FAILED")
-			productionStoryStateWriteBusinessRefusal(t, foreign, "other account", operation,
+			productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", operation,
 				productionStoryStateWriteArgs(t, operation, frozen, projectPath), "POST_HISTORY_OPERATION_FAILED")
 		}
 		// db:log-llm-call keeps the original's bare refusal shape: success=false
 		// and no code at all, which must not gain one.
 		productionStoryStateWriteBusinessRefusal(t, author, "stale lease", "db:log-llm-call",
 			productionStoryStateWriteArgs(t, "db:log-llm-call", stale, projectPath), "")
-		productionStoryStateWriteBusinessRefusal(t, foreign, "other account", "db:log-llm-call",
+		productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", "db:log-llm-call",
 			productionStoryStateWriteArgs(t, "db:log-llm-call", frozen, projectPath), "")
 	})
 
@@ -773,23 +770,6 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 	}
 	if !bytes.Equal(after, baseline) {
 		t.Fatal("a refused or unbound story-state write changed the admitted author database")
-	}
-
-	// The lease is keyed by the authenticated account now, so a sibling tab of the
-	// same account shares it: a write it makes with the frozen lease is served and
-	// really lands in the admitted database. The refusals above are what remains of
-	// the per-tab fence - the different account, which is the security boundary.
-	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
-	shared := productionStoryStateWriteCall(t, sibling, "db:log-llm-call",
-		productionStoryStateWriteArgs(t, "db:log-llm-call", frozen, projectPath))
-	if shared["success"] != true || shared["error"] != nil {
-		t.Fatalf("a sibling tab of the same account was refused the shared lease: %v", shared)
-	}
-	var sharedRows int64
-	productionStoryStateWriteScan(t, productionStoryStateWriteReadback(t, projectPath),
-		"SELECT COUNT(*) FROM llm_calls", nil, &sharedRows)
-	if sharedRows != 1 {
-		t.Fatalf("the sibling tab's shared-lease write committed %d ledger rows; want 1", sharedRows)
 	}
 }
 

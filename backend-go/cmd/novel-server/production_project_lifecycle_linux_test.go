@@ -137,20 +137,13 @@ func TestProductionProjectLifecycleDeletesAdmittedProject(t *testing.T) {
 	if full.Content != productionDurableSeed {
 		t.Fatalf("the refused deletes disturbed the live author database: %q", full.Content)
 	}
-	// A sibling tab of the same account shares this project's lease (browser
-	// workspaces are multi-tab); the delete still only has to account for that one
-	// shared lease. A different account is refused, which is the security boundary.
+	// One project, one writer: a second tab cannot hold this project, which is why
+	// the delete only has to account for the caller's own lease.
 	other := newProductionDurableClient(t, handler, productionDurableOtherTab)
 	var second productionDurableOpenWire
 	other.decode(t, "project:open", []any{projectPath, "open-token-other", projectPath}, &second)
-	if !second.Success {
-		t.Fatalf("a sibling tab of the same account was refused the shared lease: %+v", second)
-	}
-	stranger := newProductionDurableClientAs(t, handler, "other-author", productionDurableOtherTab)
-	var cross productionDurableOpenWire
-	stranger.decode(t, "project:open", []any{projectPath, "open-token-stranger", projectPath}, &cross)
-	if cross.Success || cross.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
-		t.Fatalf("a different account was not refused the lease: %+v", cross)
+	if second.Success || second.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
+		t.Fatalf("a second tab was not refused the single-writer lease: %+v", second)
 	}
 
 	var deleted productionProjectDeleteWire

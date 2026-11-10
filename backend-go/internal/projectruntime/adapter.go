@@ -35,12 +35,10 @@ func NewManager(runtime *authorruntime.ReadLifecycle) (*Manager, error) {
 }
 
 func owner(caller transport.Caller) (projectsession.Owner, error) {
-	// Same account-level key as productionOwner: the project lease is shared by
-	// all tabs and devices of the authenticated account. See productionOwner.
-	if caller.Principal == "" {
+	if caller.SessionID == "" || caller.ClientID == "" {
 		return projectsession.Owner{}, ErrInvalid
 	}
-	return projectsession.Owner{SessionID: caller.Principal, ClientID: "account"}, nil
+	return projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, nil
 }
 
 // OpenProject resolves a server-catalog key (never a caller path) and returns

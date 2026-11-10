@@ -51,9 +51,9 @@ const (
 	productionReviewRevisionStaleHash = "0000000000000000000000000000000000000000000000000000000000000000"
 	// productionReviewRevisionAbsentHandle is an id this process never minted.
 	productionReviewRevisionAbsentHandle = "00000000-0000-4000-8000-000000000000"
-	// productionReviewRevisionOtherTab is the second tab this file presents. The
-	// lease arm proves a sibling tab shares the account-keyed project lease; the
-	// wrong-caller arm proves the per-tab review-revision registry still refuses it.
+	// productionReviewRevisionOtherTab is the second tab the wrong-caller arm
+	// presents; it holds no lease, exactly like a foreign webContents in the
+	// reference.
 	productionReviewRevisionOtherTab = "client_0123456789"
 )
 
@@ -329,21 +329,6 @@ func productionReviewRevisionRefused(t *testing.T, client *productionDurableClie
 	t.Fatalf("%s: refused with %v; want one of %v: %s", label, body.Error.Code, want, response.Body.String())
 }
 
-// productionReviewRevisionServed asserts one prepare is served: a sibling tab of the
-// same account shares the account-keyed project lease, so it is handed its own
-// context handle for the same frozen context instead of being refused.
-func productionReviewRevisionServed(t *testing.T, client *productionDurableClient, label string,
-	request map[string]any, frozen map[string]any) {
-	t.Helper()
-	raw := productionEditorCall(t, client, productionReviewRevisionPrepare, []any{request, frozen})
-	var answered struct {
-		ContextID string `json:"contextId"`
-	}
-	if err := json.Unmarshal(raw, &answered); err != nil || answered.ContextID == "" {
-		t.Fatalf("%s: %s answered no contextId: %v %s", label, productionReviewRevisionPrepare, err, raw)
-	}
-}
-
 // testProductionReviewRevisionRefusals is the family's refusal half. Each arm is a
 // state the reference also refuses, and none of them may open a run or write a byte.
 func testProductionReviewRevisionRefusals(t *testing.T) {
@@ -359,14 +344,9 @@ func testProductionReviewRevisionRefusals(t *testing.T) {
 	// (generation-controller.ts:184).
 	noLease := map[string]any{"projectId": projectID, "projectPath": lane.projectPath, "leaseId": ""}
 	productionReviewRevisionRefused(t, lane.author, "absent lease", []any{request, noLease}, "PROJECT_SESSION_REQUIRED")
-	// A sibling tab of the same account shares this project's lease, so the same
-	// prepare is served: the lease is keyed by account now, not by tab.
-	sibling := newProductionDurableClient(t, lane.author.handler, productionReviewRevisionOtherTab)
-	productionReviewRevisionServed(t, sibling, "sibling tab", request, lane.frozen)
-	// A different account is still refused the lease: sharing is per account, not
-	// global, and that is the boundary the relaxation must not cross.
-	stranger := newProductionDurableClientAs(t, lane.author.handler, "other-author", productionReviewRevisionOtherTab)
-	productionReviewRevisionRefused(t, stranger, "other account", []any{request, lane.frozen},
+	// A tab that never opened this project is not an owner.
+	foreign := newProductionDurableClient(t, lane.author.handler, productionReviewRevisionOtherTab)
+	productionReviewRevisionRefused(t, foreign, "foreign tab", []any{request, lane.frozen},
 		"PROJECT_SESSION_NOT_OWNED", "PROJECT_SESSION_STALE", "PROJECT_NOT_OPEN")
 	// A path this lane never admitted: the borrow refuses before any handle is
 	// resolved.
