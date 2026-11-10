@@ -332,7 +332,10 @@ func TestProductionLLMProbeRefusesAnOriginOutsideTheCommittedAllowlist(t *testin
 	}
 	var discoveryWire productionProbeDiscoveryWire
 	fixture.client.decode(t, "llm:discover-models", []any{productionProbeTypedProfile(outside.URL+"/v1", productionTestModelSecret)}, &discoveryWire)
-	if discoveryWire.Success || discoveryWire.ErrorCode != "unsupported" {
+	// An endpoint outside the allowlist is not an endpoint without a model list:
+	// saving the model commits it and the list becomes available, so the answer
+	// names that state instead of "unsupported".
+	if discoveryWire.Success || discoveryWire.ErrorCode != "endpoint_not_allowed" {
 		t.Fatalf("discovery from an outside origin answered %v / %v", discoveryWire.Success, discoveryWire.ErrorCode)
 	}
 	if outsideRecorder.count() != 0 {
