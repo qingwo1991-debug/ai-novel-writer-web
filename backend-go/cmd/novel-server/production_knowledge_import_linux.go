@@ -247,6 +247,12 @@ var productionKnowledgeFileNamePattern = regexp.MustCompile(
 type productionKnowledgeImports struct {
 	durable *productionDurableOpen
 
+	// model is the embedding seam the vector writer resolves through. A nil
+	// model means this bridge has no embedding configuration: import and search
+	// then behave exactly as the FTS-only lane always did, and no vector file is
+	// ever created.
+	model productionKnowledgeModel
+
 	// mu guards gates, the analogue of withKnowledgeSourceGate
 	// (electron/services/knowledge-source-gate.ts): the knowledge files are
 	// written by this process only, so one mutex per project path is what keeps
@@ -804,6 +810,9 @@ func (k *productionKnowledgeImports) write(ctx context.Context, projectPath stri
 	if err := productionKnowledgeCommit(ctx, storage.storage, index, document, rows); err != nil {
 		return nil, err
 	}
+	// The vectors are written after the canonical snapshot is committed and can
+	// never fail this import (production_knowledge_vectors_linux.go).
+	k.refreshVectorsBestEffort(ctx, storage)
 	// The directories this write committed into must still be the ones the lane
 	// opened (projectfs.checkIdentityLocked's rule around every write).
 	if err := storage.verify(); err != nil {
@@ -841,6 +850,7 @@ func (k *productionKnowledgeImports) finalize(ctx context.Context, db *sql.DB, c
 		if err := k.complete(ctx, storage.storage, index, document, content, chunks); err != nil {
 			return nil, err
 		}
+		k.refreshVectorsBestEffort(ctx, storage)
 		idempotent := true
 		return productionKnowledgeReceipt(request.DocumentID, int64(len(chunks)), &idempotent), nil
 	}
@@ -877,6 +887,9 @@ func (k *productionKnowledgeImports) finalize(ctx context.Context, db *sql.DB, c
 	if err := productionKnowledgeCanonical(committed, written, chunks); err != nil {
 		return nil, err
 	}
+	// The fresh import is already complete; the vectors are optional and can
+	// never turn it into a failure.
+	k.refreshVectorsBestEffort(ctx, storage)
 	if err := storage.verify(); err != nil {
 		return nil, err
 	}

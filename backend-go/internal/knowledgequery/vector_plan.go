@@ -64,23 +64,8 @@ func PrepareVectorPlan(ctx context.Context, snapshot knowledgedomain.Snapshot, r
 	if err := check(ctx); err != nil {
 		return nil, err
 	}
-	if request.TopK < 0 || request.TopK > 100 || len(request.Query) > 4096 || len(request.ExcludedCorpusKinds) > 32 ||
-		len(request.ModelFingerprint) > 1024 || !utf8.ValidString(request.ModelFingerprint) ||
-		len(request.DistanceMetric) > 32 || !utf8.ValidString(request.DistanceMetric) {
-		return nil, ErrInput
-	}
-	if request.Scope != nil && (request.Scope.From < 0 || request.Scope.To < request.Scope.From || request.Scope.To > 9007199254740991) {
-		return nil, ErrInput
-	}
-	for _, value := range request.Query {
-		if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > math.MaxFloat32 {
-			return nil, ErrInput
-		}
-	}
-	for _, kind := range request.ExcludedCorpusKinds {
-		if len(kind) > 1024 || !utf8.ValidString(kind) {
-			return nil, ErrInput
-		}
+	if err := validateVectorRequest(request); err != nil {
+		return nil, err
 	}
 	capture, err := NewSearchCapture(ctx, snapshot, root, budget)
 	if err != nil {
@@ -165,3 +150,89 @@ func PrepareVectorPlan(ctx context.Context, snapshot knowledgedomain.Snapshot, r
 	}
 	return nil, nil
 }
+
+// validateVectorRequest is the bounded request admission both plan builders
+// share, so an external-store plan cannot accept a shape the native one refuses.
+func validateVectorRequest(request VectorRequest) error {
+	if request.TopK < 0 || request.TopK > 100 || len(request.Query) > 4096 || len(request.ExcludedCorpusKinds) > 32 ||
+		len(request.ModelFingerprint) > 1024 || !utf8.ValidString(request.ModelFingerprint) ||
+		len(request.DistanceMetric) > 32 || !utf8.ValidString(request.DistanceMetric) {
+		return ErrInput
+	}
+	if request.Scope != nil && (request.Scope.From < 0 || request.Scope.To < request.Scope.From || request.Scope.To > 9007199254740991) {
+		return ErrInput
+	}
+	for _, value := range request.Query {
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > math.MaxFloat32 {
+			return ErrInput
+		}
+	}
+	for _, kind := range request.ExcludedCorpusKinds {
+		if len(kind) > 1024 || !utf8.ValidString(kind) {
+			return ErrInput
+		}
+	}
+	return nil
+}
+
+// PrepareVectorPlanOverSpaces is PrepareVectorPlan for an admitted vector store
+// that keeps its vectors outside the canonical domain snapshot. It validates the
+// same bounded snapshot, managed copies and request, but takes the registry from
+// the caller's already-verified store and the space table's version from that
+// store's own pin instead of requiring a ``chunks__space_<generation>`` table to
+// appear in snapshot.Tables: a real vector table of 4096-dimension rows cannot
+// fit the domain validator's hard cell budget, so it is not part of the
+// canonical document. The plan is still refused unless the registry's active
+// space matches the request's fingerprint, dimension and metric exactly.
+//
+// A nil plan and nil error means the external space cannot serve this request,
+// so the caller may use SearchFTS. A non-nil plan still requires a qualified
+// executor (SearchWithAdmittedVectorOverSpaces).
+func PrepareVectorPlanOverSpaces(ctx context.Context, snapshot knowledgedomain.Snapshot, root *os.Root, budget knowledgecopy.Budget, request VectorRequest, registry VectorSpaceRegistry, tableVersion uint64) (*VectorPlan, error) {
+	if err := check(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateVectorRequest(request); err != nil {
+		return nil, err
+	}
+	capture, err := NewSearchCapture(ctx, snapshot, root, budget)
+	if err != nil {
+		return nil, err
+	}
+	if request.TopK == 0 || len(request.Query) == 0 || request.ModelFingerprint == "" || request.DistanceMetric == "" {
+		return nil, nil
+	}
+	if tableVersion == 0 {
+		return nil, ErrDomain
+	}
+	space, ok := registry.ActiveSpace()
+	if !ok {
+		return nil, nil
+	}
+	if len(request.Query) != space.VectorDimension ||
+		space.ModelFingerprint != strings.TrimSpace(request.ModelFingerprint) ||
+		space.DistanceMetric != strings.ToLower(strings.TrimSpace(request.DistanceMetric)) {
+		return nil, nil
+	}
+	excluded := make([]string, 0, len(capture.stale))
+	for id := range capture.stale {
+		excluded = append(excluded, id)
+	}
+	sort.Strings(excluded)
+	plan := &VectorPlan{
+		TableName: space.TableName, TableVersion: tableVersion,
+		Generation: space.Generation, Dimension: space.VectorDimension,
+		ModelFingerprint: space.ModelFingerprint, DistanceMetric: space.DistanceMetric,
+		Query: append([]float64(nil), request.Query...), TopK: request.TopK,
+		ExcludedCorpusKinds: append([]string(nil), request.ExcludedCorpusKinds...),
+		ExcludedDocumentIDs: excluded,
+		ApplyChapterScope:   capture.hasChapter && request.Scope != nil,
+		ApplyCorpusFilter:   capture.hasCorpusKind && len(request.ExcludedCorpusKinds) > 0,
+	}
+	if request.Scope != nil {
+		copy := *request.Scope
+		plan.Scope = &copy
+	}
+	return plan, nil
+}
+

@@ -580,6 +580,13 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 	// binder owns the per-project gate the document and search binders reuse, so a
 	// single admission decision covers all of them.
 	knowledge := newProductionKnowledgeImports(open.durable)
+	// The embedding seam is the same committed global config and the same
+	// committed model-egress policy the generation executor uses, so the
+	// knowledge lane can embed through the author's own model without a second
+	// dispatch path. A lane with no usable embedding model leaves this seam in
+	// place but answers "not configured", which keeps every knowledge read
+	// FTS-only and creates no vector file.
+	knowledge.model = productionEmbeddingSource{open: open}
 	// The draft surface, in three disjoint binders: the eight live draft reads,
 	// the single full-body CAS save, and the three self-contained author
 	// mutations (create, update-status, delete). Nothing here overlaps the

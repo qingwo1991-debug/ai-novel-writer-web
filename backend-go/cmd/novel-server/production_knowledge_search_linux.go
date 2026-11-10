@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgequery"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/knowledgevector"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -58,6 +59,21 @@ import (
 // operation at all (internal/knowledgequery/vector_plan.go:19-27). So the answer
 // is the reference's FTS answer, not an approximation of it.
 //
+// # When the author has configured an embedding model
+//
+// The two retrieval names first try the vector branch of
+// production_knowledge_vectors_linux.go: the configured embedding model (the
+// profile named by config.json's defaultEmbeddingModelId, else the first saved
+// profile whose purposes include "embedding") embeds the query through the
+// committed model-egress policy, and knowledgequery.SearchWithAdmittedVectorOverSpaces
+// answers from internal/knowledgevector's pinned store. That store is a separate
+// file beside the canonical snapshot, because a real space table cannot fit
+// knowledgedomain's hard cell budget. Every embedding, egress, registry or store
+// failure - and an absent model, or a space built by a different model - falls
+// through to the FTS branch below, so the answer never becomes a search failure.
+// A configured model therefore changes which branch answers, never the shape of
+// the answer.
+//
 // kb:search-writing-context excludes the 'reference' corpus kind exactly as the
 // controller does (kb-controller.ts:391-409), which is what keeps an imported
 // reference novel out of a draft's writing context; kb:search-with-scope passes
@@ -85,35 +101,31 @@ import (
 // The reference's status read has two halves: with no usable embedding
 // configuration it answers all-zero counts without touching the store
 // (kb-controller.ts:492-500), and otherwise it reads the canonical stats and the
-// vectorless count. This lane is permanently in the first half - it binds no
-// embedding dispatch anywhere (production_draft_context_linux.go:508-514 says so
-// for the one other place that would want one), so `embeddingConfigured` is false
-// and `canRebuild` is false: nothing here could rebuild a generation, and
-// offering the button would produce a failure on the next click. What this file
-// does NOT copy is the zeros: the reference zeroes the counts only because it
-// never looked, while this lane can look, and reporting 0 chunks for a store it
-// just wrote would deny the author's own documents. The counts are therefore read
-// from the served reader - totalChunks is View.Stats' total, vectorlessCount is
-// View.VectorlessCount's count, which is every chunk because no active space
-// exists - and activeVectorDimension is the registry's own dimension, which is 0.
-// That is the truthful "no vector index exists here, every document is FTS-only"
-// answer the browser needs to stop offering a rebuild.
+// vectorless count. This file keeps the first half for the FTS-only lane: with no
+// embedding model configured, `embeddingConfigured` and `canRebuild` are false and
+// no vector file is read. What it does NOT copy is the reference's zeros: it can
+// look, and reporting 0 chunks for a store it just wrote would deny the author's
+// own documents. totalChunks is therefore View.Stats' total and vectorlessCount is
+// View.VectorlessCount's count (every chunk, because no active space exists).
+// When an embedding model is configured and a real vector store exists, the store
+// supplies the truthful vectorless count and the active dimension, and a partial
+// or model-mismatched space reports no active dimension at all.
 //
-// # kb:backfill-vectors is served as an honest no-op
+// # kb:backfill-vectors
 //
-// The reference's enabled path (kb.backfillVectors, knowledge-base.ts:768-832)
-// generates embeddings and rebuilds an embedding generation - a capability this
-// lane does not have: there is no embedding-space writer, no registry generation
-// and no vector query executor (vector_plan.go:19-27), and the store this lane
-// writes carries `registry: null` with FTS as its only search index
-// (production_knowledge_import_linux.go:78-102). So there are no vectors to
-// backfill, and the truthful answer is the reference's own "up-to-date" branch:
-// `{ success: true, processed: 0, failed: 0 }` (knowledge-base.ts:788-790). That
-// is a statement of what this lane did - zero vectors backfilled, zero rows
-// written - never a claim that vectors exist. The renderer reads `processed` as
-// advisory (use-knowledge-base.ts:96-99): a zero count shows "check complete, no
-// rebuild needed", so the honest answer cannot stall it. The handler lives in
-// production_kb_backfill_linux.go.
+// With no embedding model configured the answer is the reference's own
+// "up-to-date" branch: `{ success: true, processed: 0, failed: 0 }`
+// (knowledge-base.ts:788-790). That is a statement of what this lane did - zero
+// vectors backfilled, zero rows written - never a claim that vectors exist, and
+// the store stays byte-identical. With a model configured it embeds the chunks
+// the selected space is missing and answers real `{ success, processed, failed }`
+// counts (production_kb_backfill_linux.go). The renderer reads `processed` as
+// advisory (use-knowledge-base.ts:96-99), so neither branch can stall it.
+//
+// The status read above is likewise two-branched: with a model configured,
+// embeddingConfigured is true and canRebuild is `totalChunks > 0`; a real vector
+// store then supplies vectorlessCount and the active dimension, and a partial or
+// model-mismatched space reports no active dimension at all.
 type productionKnowledgeSearches struct {
 	imports *productionKnowledgeImports
 }
@@ -256,6 +268,14 @@ func (k *productionKnowledgeSearches) search(ctx context.Context, projectPath, q
 		}
 		return []knowledgequery.SearchResult{}, nil
 	}
+	// With an embedding model configured and a complete active vector space this
+	// answers from the store; otherwise, and on every embedding/vector failure, it
+	// falls through to the byte-exact FTS fallback below (production_knowledge_vectors_linux.go).
+	if vectorResults, answered, vectorErr := k.searchWithVectors(ctx, storage, index, query, topK, scope, excludedCorpusKinds); vectorErr != nil {
+		return nil, vectorErr
+	} else if answered {
+		return vectorResults, nil
+	}
 	results, err := capture.SearchFTS(ctx, query, topK, scope, excludedCorpusKinds)
 	if err != nil {
 		if contextError := ctx.Err(); contextError != nil {
@@ -336,6 +356,25 @@ func (k *productionKnowledgeSearches) vectorRebuildStatus(ctx context.Context, c
 	}
 	if vectorless, ok := productionKnowledgeSafeIntegerOf(counts["count"]); ok {
 		answer["vectorlessCount"] = vectorless
+	}
+	// A usable embedding configuration is what the browser needs before it offers
+	// the rebuild action; canRebuild is the reference's own `totalChunks > 0`.
+	if k.imports.model != nil {
+		if _, configured, settingsErr := k.imports.model.EmbeddingSettings(); settingsErr == nil && configured {
+			answer["embeddingConfigured"] = true
+			if total, ok := productionKnowledgeSafeIntegerOf(answer["totalChunks"]); ok && total > 0 {
+				answer["canRebuild"] = true
+			}
+		}
+	}
+	// The vector store, when one exists, is the authority for how much of this
+	// store is really indexed and at what dimension.
+	if executor, openErr := knowledgevector.Open(ctx, storage.storage); openErr == nil && executor != nil {
+		status := executor.Store().Status(productionKnowledgeChunkIDs(index))
+		answer["vectorlessCount"] = int64(status.Vectorless)
+		if status.Active {
+			answer["activeVectorDimension"] = int64(status.Dimension)
+		}
 	}
 	return answer, nil
 }

@@ -161,10 +161,19 @@ func validateVectorResponse(snapshot knowledgedomain.Snapshot, plan VectorPlan, 
 	if indexed == nil {
 		return nil, ErrDomain
 	}
-	results := make([]SearchResult, 0, len(response.Hits))
-	seen := make(map[string]bool, len(response.Hits))
+	return vectorHitsToResults(indexed, response.Hits)
+}
+
+// vectorHitsToResults is the one conversion from an executor's hits to public
+// results, shared by the snapshot-space and external-space envelopes so the two
+// can never disagree about identity, order or score. Every hit must be a
+// distinct, finite, monotonically non-decreasing distance over a row that the
+// admitted identity map proves.
+func vectorHitsToResults(indexed map[string]VectorHit, hits []VectorHit) ([]SearchResult, error) {
+	results := make([]SearchResult, 0, len(hits))
+	seen := make(map[string]bool, len(hits))
 	previousDistance := math.Inf(-1)
-	for _, hit := range response.Hits {
+	for _, hit := range hits {
 		if seen[hit.ID] || hit.ID == "" || !utf8.ValidString(hit.ID+hit.DocumentID+hit.FileName+hit.Text) ||
 			math.IsNaN(hit.Distance) || math.IsInf(hit.Distance, 0) || hit.Distance < previousDistance {
 			return nil, ErrDomain
@@ -180,6 +189,142 @@ func validateVectorResponse(snapshot knowledgedomain.Snapshot, plan VectorPlan, 
 			return nil, ErrDomain
 		}
 		results = append(results, SearchResult{Text: hit.Text, Score: score, FileName: hit.FileName})
+	}
+	return results, nil
+}
+
+// validateVectorResponseOverCanonical is validateVectorResponse for an admitted
+// external vector store. The space table is not part of the snapshot's tables
+// (its vector rows cannot fit the domain validator's hard cell budget), so the
+// hit identity is re-proved against the canonical `chunks` table the snapshot
+// does admit. That is at least as strong as a space-table lookup: a hit whose
+// id, document, file name or text does not match the admitted canonical row is
+// refused, and the returned text is the canonical text.
+func validateVectorResponseOverCanonical(snapshot knowledgedomain.Snapshot, plan VectorPlan, response VectorResponse) ([]SearchResult, error) {
+	if response.TableName != plan.TableName || response.TableVersion != plan.TableVersion ||
+		response.Generation != plan.Generation || response.Dimension != plan.Dimension ||
+		response.ModelFingerprint != plan.ModelFingerprint || response.DistanceMetric != plan.DistanceMetric ||
+		len(response.Hits) > plan.TopK {
+		return nil, ErrDomain
+	}
+	var indexed map[string]VectorHit
+	for _, table := range snapshot.Tables {
+		if table.Name != "chunks" {
+			continue
+		}
+		indexed = make(map[string]VectorHit, len(table.Records))
+		for _, row := range table.Records {
+			id, idOK := row["id"].(string)
+			docID, docOK := row["docId"].(string)
+			fileName, fileOK := row["fileName"].(string)
+			text, textOK := row["text"].(string)
+			if !idOK || !docOK || !fileOK || !textOK || id == "" || docID == "" || !utf8.ValidString(id+docID+fileName+text) {
+				return nil, ErrDomain
+			}
+			if _, duplicate := indexed[id]; duplicate {
+				return nil, ErrDomain
+			}
+			indexed[id] = VectorHit{ID: id, DocumentID: docID, FileName: fileName, Text: text}
+		}
+		break
+	}
+	if indexed == nil {
+		return nil, ErrDomain
+	}
+	return vectorHitsToResults(indexed, response.Hits)
+}
+
+// PlanFilteringExecutor is implemented by an admitted executor that applies the
+// plan's chapter scope, corpus exclusions and stale-copy exclusions inside its
+// own store before top-k selection. Only an executor that opts in may be handed
+// a filtered plan: an executor that cannot apply those filters would otherwise
+// silently omit lower-ranked valid hits, which is why
+// SearchWithAdmittedVector refuses every filtered plan.
+type PlanFilteringExecutor interface {
+	VectorExecutor
+	AppliesPlanFilters()
+}
+
+// SearchWithAdmittedVectorOverSpaces is SearchWithAdmittedVector for an admitted
+// external vector store. It applies the same input bounds, caller fence,
+// identity envelope and FTS fallback, but prepares its plan with
+// PrepareVectorPlanOverSpaces (the space registry and the store's own table
+// version come from the caller's pinned store) and re-proves hit identity
+// against the canonical `chunks` table.
+//
+// A plan carrying the request's scope, corpus exclusions or stale-copy
+// exclusions is only dispatched to an executor that implements
+// PlanFilteringExecutor, because those filters must be applied before top-k.
+// Any other executor receives ErrVectorQueryUnavailable for such a plan, which
+// the caller answers with the admitted FTS fallback.
+func SearchWithAdmittedVectorOverSpaces(ctx context.Context, snapshot knowledgedomain.Snapshot, root *os.Root, budget knowledgecopy.Budget, request VectorRequest, queryText string, registry VectorSpaceRegistry, tableVersion uint64, executor VectorExecutor, verifyCurrent func(context.Context) error) ([]SearchResult, error) {
+	if err := check(ctx); err != nil {
+		return nil, err
+	}
+	if root == nil || verifyCurrent == nil || len(queryText) > 32*1024 || !utf8.ValidString(queryText) {
+		return nil, ErrInput
+	}
+	if err := verifyCurrent(ctx); err != nil {
+		return nil, err
+	}
+	plan, err := PrepareVectorPlanOverSpaces(ctx, snapshot, root, budget, request, registry, tableVersion)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil {
+		capture, err := NewSearchCapture(ctx, snapshot, root, budget)
+		if err != nil {
+			return nil, err
+		}
+		results, err := capture.SearchFTS(ctx, queryText, request.TopK, request.Scope, request.ExcludedCorpusKinds)
+		if err != nil {
+			return nil, err
+		}
+		if err := verifyCurrent(ctx); err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
+	filtered := plan.Scope != nil || len(plan.ExcludedCorpusKinds) != 0 || len(plan.ExcludedDocumentIDs) != 0
+	if executor == nil {
+		return nil, ErrVectorQueryUnavailable
+	}
+	if filtered {
+		if _, ok := executor.(PlanFilteringExecutor); !ok {
+			return nil, ErrVectorQueryUnavailable
+		}
+	}
+	if plan.Generation <= 0 || plan.TableVersion == 0 || plan.TableName != fmt.Sprintf("chunks__space_%d", plan.Generation) ||
+		plan.Dimension <= 0 || plan.Dimension > 4096 || plan.TopK <= 0 || plan.TopK > 100 ||
+		(plan.DistanceMetric != "l2" && plan.DistanceMetric != "cosine" && plan.DistanceMetric != "dot") {
+		return nil, ErrVectorQueryUnavailable
+	}
+	// The executor's own numeric surface is float32. Do not dispatch a vector
+	// which became non-finite or a zero cosine vector after narrowing.
+	query := make([]float64, len(plan.Query))
+	zero := true
+	for i, value := range plan.Query {
+		narrowed := float32(value)
+		if math.IsInf(float64(narrowed), 0) || math.IsNaN(float64(narrowed)) {
+			return nil, ErrInput
+		}
+		query[i] = float64(narrowed)
+		zero = zero && narrowed == 0
+	}
+	if plan.DistanceMetric == "cosine" && zero {
+		return nil, ErrInput
+	}
+	plan.Query = query
+	response, err := executor.QueryVector(ctx, *plan)
+	if err != nil {
+		return nil, err
+	}
+	results, err := validateVectorResponseOverCanonical(snapshot, *plan, response)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyCurrent(ctx); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
