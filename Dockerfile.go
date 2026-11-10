@@ -28,6 +28,13 @@ FROM ubuntu:24.04
 LABEL org.opencontainers.image.title="AI Novel Writer Go migration candidate"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
+# The base image ships no trust store. Every cloud model provider is HTTPS, so
+# without this every TLS dial failed with an unknown-authority error before the
+# request left the process, and only plain-HTTP local endpoints worked.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY backend-go/out/novel-server /usr/local/bin/novel-server
 COPY web/operations.json /web/operations.json
 # Vite output from the builder stage: /build/dist-web -> /app/dist-web.
