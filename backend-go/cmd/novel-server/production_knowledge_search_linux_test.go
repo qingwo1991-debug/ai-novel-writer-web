@@ -285,14 +285,18 @@ func TestProductionKnowledgeSearchRefusesArgsOutOfContract(t *testing.T) {
 // TestProductionKnowledgeVectorStatusReportsFTSOnly proves the status answer is
 // about this store rather than a fixed refusal: an empty project answers zeros, an
 // imported store answers its real chunk count, and every chunk it holds is
-// vectorless because no vector index exists. kb:backfill-vectors answers the
-// honest zero-vector no-op beside it.
+// vectorless because the committed embedding endpoint is outside the model-egress
+// allowlist, so no vector can be built. kb:backfill-vectors answers the honest
+// zero-vector no-op beside it.
 func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 	client, projectPath, frozen, _ := productionKnowledgeLane(t)
 	assertStatus := func(label string, answer map[string]any, chunks int64) {
 		t.Helper()
-		if answer["embeddingConfigured"] != false || answer["canRebuild"] != false {
-			t.Fatalf("%s: the status offered a rebuild this lane cannot run: %v", label, answer)
+		// The synthetic fixture commits an embedding model (synthetic.invalid), so
+		// embeddingConfigured is now truthfully true; the endpoint is outside the
+		// committed egress, so canRebuild stays false and nothing is vectorised.
+		if answer["embeddingConfigured"] != true || answer["canRebuild"] != false {
+			t.Fatalf("%s: the status misreported the configured-but-unreachable embedding model: %v", label, answer)
 		}
 		if count := productionKnowledgeCount(t, answer["totalChunks"]); count != chunks {
 			t.Fatalf("%s: the status counted %d chunks instead of %d", label, count, chunks)
