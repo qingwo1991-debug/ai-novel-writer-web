@@ -88,12 +88,20 @@ func New(origins []string) (*Client, error) {
 		}
 		allowed[origin] = struct{}{}
 	}
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	// Dial through tcp4 for every egress connection. This host's container IPv6
+	// link has no internet route, and the bridge DNS resolves some providers to
+	// AAAA only, so a stock dual-stack dialer fails instantly before Happy
+	// Eyeballs can try the A record. tcp4 keeps the DNS lookup to A records; the
+	// committed origin set above is still revalidated on every send.
 	transport := &http.Transport{
 		Proxy: nil,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "tcp4", address)
+		},
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
