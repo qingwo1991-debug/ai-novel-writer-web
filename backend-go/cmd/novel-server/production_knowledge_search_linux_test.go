@@ -290,13 +290,15 @@ func TestProductionKnowledgeSearchRefusesArgsOutOfContract(t *testing.T) {
 // zero-vector no-op beside it.
 func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 	client, projectPath, frozen, _ := productionKnowledgeLane(t)
-	assertStatus := func(label string, answer map[string]any, chunks int64) {
+	assertStatus := func(label string, answer map[string]any, chunks int64, canRebuild bool) {
 		t.Helper()
 		// The synthetic fixture commits an embedding model (synthetic.invalid), so
-		// embeddingConfigured is now truthfully true; the endpoint is outside the
-		// committed egress, so canRebuild stays false and nothing is vectorised.
-		if answer["embeddingConfigured"] != true || answer["canRebuild"] != false {
-			t.Fatalf("%s: the status misreported the configured-but-unreachable embedding model: %v", label, answer)
+		// embeddingConfigured is truthfully true. canRebuild is the reference's
+		// own `totalChunks > 0`: an empty project has nothing to rebuild, while an
+		// imported store may offer it. Nothing is vectorised either way because
+		// the committed endpoint is outside the model-egress allowlist.
+		if answer["embeddingConfigured"] != true || answer["canRebuild"] != canRebuild {
+			t.Fatalf("%s: the status misreported the configured embedding model: %v", label, answer)
 		}
 		if count := productionKnowledgeCount(t, answer["totalChunks"]); count != chunks {
 			t.Fatalf("%s: the status counted %d chunks instead of %d", label, count, chunks)
@@ -309,7 +311,7 @@ func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 		}
 	}
 	empty := productionKnowledgeCall(t, client, productionKnowledgeVectorStatusName, []any{projectPath, frozen})
-	assertStatus("empty project", empty, 0)
+	assertStatus("empty project", empty, 0, false)
 	imported := productionKnowledgeCall(t, client, productionKnowledgeImportTextName,
 		[]any{productionKnowledgeProse, productionKnowledgeNamedFile, projectPath, frozen})
 	if imported["success"] != true {
@@ -319,7 +321,7 @@ func TestProductionKnowledgeVectorStatusReportsFTSOnly(t *testing.T) {
 		t.Fatalf("the import counted %d chunks instead of 2", count)
 	}
 	status := productionKnowledgeCall(t, client, productionKnowledgeVectorStatusName, []any{projectPath, frozen})
-	assertStatus("imported store", status, 2)
+	assertStatus("imported store", status, 2, true)
 	// The honest backfill is a zero-vector no-op, and it spends nothing.
 	indexPath := productionKnowledgeQueryIndexPath(projectPath)
 	before := productionKnowledgeQueryFileBytes(t, indexPath)
