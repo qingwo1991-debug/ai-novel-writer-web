@@ -5,6 +5,7 @@ import type { DraftStatus } from '../shared/draft-status'
 import { sameProjectPathKey } from '../shared/project-session-context'
 import { countUnsavedEditorItems, countUnsavedEditorItemsForProject } from './editor-unsaved'
 import { useLocaleStore } from './locale-store'
+import { writeManuscriptSnapshot } from '../components/editor/manuscript-snapshot'
 import { canonicalResourceUri } from '../shared/project-paths'
 import type { GenerationRecoveryContext } from '../shared/generation-owner-contract'
 import type { AllInvokeChannels } from '../shared/ipc-channels'
@@ -276,6 +277,15 @@ function hasBackgroundProjectDraft(
   }
 }
 
+/** 正文标签内容或保存基准变化后，把 `{ content, savedContent }` 写进 localStorage 快照。 */
+function persistChapterSnapshot(tab: EditorTab | undefined): void {
+  if (!tab || tab.type !== 'chapter' || !tab.filePath || !tab.projectKey) return
+  writeManuscriptSnapshot(tab.projectKey, tab.filePath, {
+    content: tab.content ?? '',
+    savedContent: tab.savedContent ?? '',
+  })
+}
+
 export const useEditorStore = create<EditorState>()((set, get) => ({
   tabs: [],
   activeTabId: null,
@@ -430,6 +440,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
           }
         : t),
     }))
+    persistChapterSnapshot(get().tabs.find(t => t.id === tabId))
   },
 
   // 静默刷新内容（不改变 dirty 标记，用于 AI 生成后刷新、打开文件同步等场景）
@@ -445,6 +456,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
           }
         : t),
     }))
+    persistChapterSnapshot(get().tabs.find(t => t.id === tabId))
   },
 
   // 标记 Tab 已保存 —— 清除 dirty 标记，使标题栏警示灯和 Tab 圆点消失
@@ -458,6 +470,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
           }
         : t),
     }))
+    persistChapterSnapshot(get().tabs.find(t => t.id === tabId))
   },
 
   settleTabSave: (tabId, snapshot) => {
@@ -475,6 +488,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
         }
       }),
     }))
+    persistChapterSnapshot(get().tabs.find(tab => tab.id === tabId))
   },
 
   setPlanningSaveSnapshot: (tabId, snapshot) => {
@@ -505,6 +519,7 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
         }
       }),
     }))
+    persistChapterSnapshot(get().tabs.find(tab => tab.id === tabId))
   },
 
   clearTabs: () => {

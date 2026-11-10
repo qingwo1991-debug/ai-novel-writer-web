@@ -27,6 +27,7 @@ import BlueprintRecovery from './blueprint/BlueprintRecovery'
 import StageBlueprint from './blueprint/StageBlueprint'
 import ChapterView from './chapter/ChapterView'
 import ProseDocument from './chapter/ProseDocument'
+import DraftConflictDialog from '../editor/DraftConflictDialog'
 import { installChapterTabRouting, isChapterViewTab, isProseDocumentTab } from './chapter/chapter-tab-routing'
 import { stageTabName } from './stage-text'
 import { cancelCloseTab, closeCleanTabs, confirmCloseTab, requestCloseTab, STAGE_CONTENT_ID } from './tab-close'
@@ -212,6 +213,7 @@ export default function StageWorkspace({ library, focus }: { library: boolean; f
         onConfirm={confirmCloseTab}
       />
       <CloseTabsConfirm pending={closingMany} onSettled={() => setClosingMany(null)} />
+      <DraftConflictDialog />
     </main>
   )
 }

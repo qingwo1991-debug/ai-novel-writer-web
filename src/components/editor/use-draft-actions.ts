@@ -16,6 +16,7 @@ import { DRAFT_STATUS_INFO } from '../../shared/draft-status'
 import { getPendingRevisions, getReviewsForVersion, type ReviewEntry, type RevisionEntry } from '../../services/draft-index'
 import { isRevisionSourceCurrent, refreshChapterFacts } from '../../stores/navigation/chapter-facts'
 import { readDraftBody } from '../../stores/draft-store'
+import { openDraftConflictDialog } from './DraftConflictDialog'
 import { ipc } from '../../services/ipc-client'
 import { retryFinalizationPublication } from '../../services/finalization-client'
 import { captureFinalizationSnapshot } from '../../services/finalization-snapshot'
@@ -178,7 +179,6 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
       if (propagateFailure) throw new Error(message)
       return
     }
-    const expectedContent = targetTab.savedContent
     const saveSnapshot = {
       content: targetTab.content ?? draftContent,
       contentRevision: targetTab.contentRevision ?? 0,
@@ -190,40 +190,64 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
     try {
       const resource = parseResourceUri(filePath)
       if (!resourceWriteAllowed(filePath) || resource?.kind !== 'draft') throw new Error(text('资源只读或无效', 'This resource is read-only or invalid.'))
-      const result = await ipc.invokeWithProjectSession(
-        projectSession,
-        'db:draft-update-content',
-        resource.id,
-        saveSnapshot.content,
-        countDraftUnits(saveSnapshot.content),
-        projectSession.projectPath,
-        expectedContent,
-      )
-      if (!result.success) {
-        if (result.errorCode === 'DRAFT_CONTENT_CONFLICT') throw new Error(text(
-          '保存冲突：服务器正文已被修改或已变为只读。你的修改仍保留在当前标签中；请先复制备份，再重新打开并比较，未覆盖服务器内容。',
-          'Save conflict: server text changed or became read-only. Your edits remain in this tab. Copy them before reopening and comparing; server text was not overwritten.',
-        ))
-        throw new Error(result.error || text('草稿保存失败', 'Could not save the draft'))
-      }
-      if (!isProjectSessionCurrent(projectSession)) return
-      if (result.projectSession) {
-        if (!useProjectStore.getState().adoptCommittedProjectSession(projectSession, result.projectSession)) {
-          throw new Error(text('保存后的项目会话无效，请重新打开项目核对正文。', 'The saved project session is invalid. Reopen the project to verify the draft.'))
+
+      // 保存冲突解决循环：expectedContent 从标签基准开始；冲突时读出服务器正文交给作者，
+      // 覆盖写入就用刚读出的服务器正文做基准重试，仍冲突就再读再问。
+      let expectedContent = targetTab.savedContent
+      for (;;) {
+        const result = await ipc.invokeWithProjectSession(
+          projectSession,
+          'db:draft-update-content',
+          resource.id,
+          saveSnapshot.content,
+          countDraftUnits(saveSnapshot.content),
+          projectSession.projectPath,
+          expectedContent,
+        )
+        if (result.success) {
+          if (!isProjectSessionCurrent(projectSession)) return
+          if (result.projectSession) {
+            if (!useProjectStore.getState().adoptCommittedProjectSession(projectSession, result.projectSession)) {
+              throw new Error(text('保存后的项目会话无效，请重新打开项目核对正文。', 'The saved project session is invalid. Reopen the project to verify the draft.'))
+            }
+            acknowledgedSession = result.projectSession
+          }
+          if (!isProjectSessionCurrent(acknowledgedSession)) return
+          const currentTab = useEditorStore.getState().tabs.find(
+            tab => tab.id === tabId && tab.projectKey === projectKey,
+          )
+          if (currentTab) {
+            useEditorStore.getState().settleTabSave(currentTab.id, saveSnapshot)
+            const settledTab = useEditorStore.getState().tabs.find(tab => tab.id === currentTab.id)
+            setSaveOutcome(settledTab?.dirty ? 'idle' : 'saved')
+          }
+          // 待合并的修稿按保存的正文判断能否合并，正文变了就要重读。
+          if (pendingRevisions.length > 0) reload()
+          break
         }
-        acknowledgedSession = result.projectSession
+
+        if (result.errorCode !== 'DRAFT_CONTENT_CONFLICT') {
+          throw new Error(result.error || text('草稿保存失败', 'Could not save the draft'))
+        }
+
+        const serverContent = await readDraftBody(filePath, projectKey, projectSession)
+        if (!isProjectSessionCurrent(projectSession)) return
+        const choice = await openDraftConflictDialog({
+          serverContent,
+          localContent: saveSnapshot.content,
+        })
+        if (!isProjectSessionCurrent(projectSession)) return
+        if (choice.action === 'overwrite') {
+          expectedContent = serverContent
+          continue
+        }
+        // merge：两版已复制到剪贴板，保留本地修改、不写服务器。cancel：同样保留本地修改。
+        // propagateFailure 时（退出前保存 / AI 冻结源稿）必须抛出，让调用方中止，不能假装保存成功。
+        if (propagateFailure) {
+          throw new Error(text('保存冲突未解决，已保留本地修改。', 'The save conflict was not resolved; local edits were kept.'))
+        }
+        return
       }
-      if (!isProjectSessionCurrent(acknowledgedSession)) return
-      const currentTab = useEditorStore.getState().tabs.find(
-        tab => tab.id === tabId && tab.projectKey === projectKey,
-      )
-      if (currentTab) {
-        useEditorStore.getState().settleTabSave(currentTab.id, saveSnapshot)
-        const settledTab = useEditorStore.getState().tabs.find(tab => tab.id === currentTab.id)
-        setSaveOutcome(settledTab?.dirty ? 'idle' : 'saved')
-      }
-      // 待合并的修稿按保存的正文判断能否合并，正文变了就要重读。
-      if (pendingRevisions.length > 0) reload()
     } catch (error) {
       if (isProjectSessionCurrent(acknowledgedSession)) {
         setSaveOutcome('failed')
