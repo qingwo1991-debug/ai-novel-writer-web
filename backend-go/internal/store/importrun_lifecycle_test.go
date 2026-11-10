@@ -1042,3 +1042,75 @@ func TestImportRunLifecycleFail(t *testing.T) {
 		})
 	})
 }
+
+// TestImportRunLifecycleReferenceArmCommitsEverySource walks the exact call
+// sequence db:import-run-prepare-inspection's reference arm makes - BeginParsing
+// once, CommitParsedSource per source in the order the resolved identity names
+// them, then FinalizeParsing - with two sources whose chapters the prepared run
+// must interleave in source order rather than in the order the commits happened.
+// The second source is committed first on purpose: the arm iterates the identity,
+// so the store may not depend on commit order for the final numbering.
+func TestImportRunLifecycleReferenceArmCommitsEverySource(t *testing.T) {
+	_, runs, path := irlFixture(t)
+	ctx := context.Background()
+	request := ImportRunBeginParsingRequest{
+		RunID:             irlRunID,
+		Purpose:           "reference",
+		SourceFingerprint: strings.Repeat("a", 64),
+		SourceIDs:         []string{irlSourceID, irlOtherSourceID},
+		SourceFingerprints: []string{strings.Repeat("b", 64),
+			strings.Repeat("c", 64)},
+		SourceDisplay: []ImportRunSourceDisplay{
+			{DisplayName: irlDisplayName, MediaType: "text/plain", Size: 128},
+			{DisplayName: "第二章-夜渡.txt", MediaType: "text/plain", Size: 64},
+		},
+		Locale: "zh-CN",
+	}
+	created, err := runs.BeginParsing(ctx, request)
+	if err != nil {
+		t.Fatalf("begin parsing with two sources: %v", err)
+	}
+	runID := irlText(t, created, "id")
+	if runID != irlRunID {
+		t.Fatalf("begin answered run %q, want %q", runID, irlRunID)
+	}
+	secondChapters := []ImportRunChapterInput{
+		irlChapter(1, "第二章 夜渡", "夜色沉沉，江上无人。"),
+	}
+	if _, err := runs.CommitParsedSource(ctx, runID, irlOtherSourceID, secondChapters); err != nil {
+		t.Fatalf("commit the second source: %v", err)
+	}
+	if _, err := runs.CommitParsedSource(ctx, runID, irlSourceID, irlChapters); err != nil {
+		t.Fatalf("commit the first source: %v", err)
+	}
+	finalized, err := runs.FinalizeParsing(ctx, runID)
+	if err != nil {
+		t.Fatalf("finalize parsing: %v", err)
+	}
+	if got := irlText(t, finalized, "classification"); got != "new" {
+		t.Fatalf("classification %q, want new", got)
+	}
+	if got := irlInt(t, irlNested(t, finalized, "run"), "manifestChapterCount"); got != 3 {
+		t.Fatalf("manifestChapterCount %d, want 3", got)
+	}
+	ro := irlReadOnly(t, path)
+	adopted := irlQueryRows(t, ro, `SELECT chapter_number, source_id, source_chapter_number
+ FROM import_run_chapters WHERE run_id = ? ORDER BY chapter_number`, runID)
+	if len(adopted) != 3 {
+		t.Fatalf("%d adopted chapters, want 3", len(adopted))
+	}
+	wantSource := []string{irlSourceID, irlSourceID, irlOtherSourceID}
+	wantSourceChapter := []int64{1, 2, 1}
+	for index, row := range adopted {
+		if got := irlInt(t, row, "chapter_number"); got != int64(index+1) {
+			t.Fatalf("adopted chapter %d is numbered %d", index+1, got)
+		}
+		if got := irlText(t, row, "source_id"); got != wantSource[index] {
+			t.Fatalf("adopted chapter %d belongs to %q, want %q", index+1, got, wantSource[index])
+		}
+		if got := irlInt(t, row, "source_chapter_number"); got != wantSourceChapter[index] {
+			t.Fatalf("adopted chapter %d is source chapter %d, want %d",
+				index+1, got, wantSourceChapter[index])
+		}
+	}
+}

@@ -16,7 +16,7 @@ import (
 //
 //	db:import-run-effect-receipt-prepare   SERVED  productionImportRunReceiptsServe2
 //	db:import-run-effect-receipt-commit    SERVED  productionImportRunReceiptsServe2
-//	db:import-run-prepare-inspection       refused the inspection CAS never reaches the wire
+//	db:import-run-prepare-inspection       SERVED  productionImportRunPrepareInspectionServe
 //
 // # Why the pair flipped
 //
@@ -57,15 +57,19 @@ import (
 // proof, which lets prepare accept a handle commit would refuse
 // (internal/store/importrun_receipts.go:1002 against :1029).
 //
-// # The one refusal
+// # The last refusal, and what closed it
 //
-// db:import-run-prepare-inspection keeps its own blocker, re-checked in the seam
-// file: the served `dialog:select-novel-files` still answers only inspectionId,
-// purpose, the counts, the display names and the eight-chapter preview
-// (internal/transport/import_selection.go:112-116). importsource.Summary does carry
-// a keyed previewCAS (internal/importsource/inspection.go:49) and Consume still
-// demands it (:165-167), but the picker's response drops it, so the value the CAS
-// exists to prove would have to be invented by the handler.
+// db:import-run-prepare-inspection was refused because the served
+// dialog:select-novel-files answered an inspection id and no preview CAS, so the
+// handler had no honest value for Consume's expectedPreviewCAS. That was the wrong
+// question: the CAS is a server-side handoff, not a wire value. The adapter holds
+// the same importsource.Store the picker mints into, peeks the receipt and consumes
+// it with the summary it just read (production_importrun_prepare_inspection_serve_linux.go,
+// takeInspection), exactly as db-controller.ts:269/:282 does. What actually blocked
+// the reference arm was that the picker refused its purpose; the binder now admits
+// both, and the handler runs BeginParsing -> CommitParsedSource -> FinalizeParsing
+// from internal/store/importrun_lifecycle.go. Every name in this family is served,
+// so the decision below carries no refusal.
 
 // productionImportRunReceiptServeDecision is one name's verdict: the operation,
 // whether this family installs a handler for it, and the symbolic code naming why
@@ -78,12 +82,12 @@ type productionImportRunReceiptServeDecision struct {
 	Reason    string
 }
 
-// productionImportRunReceiptInspectionUnreachable is the one reason code left. It
-// is this file's own vocabulary, in the symbolic shape this lane publishes, and it
-// is never returned to a renderer: the renderer only ever sees
-// GO_OPERATION_NOT_MIGRATED from an unbound name
-// (internal/transport/server.go:111-116). It exists so the startup check and the
-// test can name a decision without parsing a sentence.
+// productionImportRunReceiptInspectionUnreachable is the reason code the last
+// refusal carried, kept as this file's own vocabulary so the startup check and the
+// test can still name a fabricated refusal without parsing a sentence. No decision
+// row carries it now: the inspection name is served. It is never returned to a
+// renderer either way - a renderer only ever sees GO_OPERATION_NOT_MIGRATED from an
+// unbound name (internal/transport/server.go:111-116).
 const productionImportRunReceiptInspectionUnreachable = "IMPORT_RUN_PREPARE_INSPECTION_UNREACHABLE"
 
 // productionImportRunReceiptServeDecisions is the whole answer of this file, in
@@ -94,8 +98,7 @@ func productionImportRunReceiptServeDecisions() []productionImportRunReceiptServ
 	return []productionImportRunReceiptServeDecision{
 		{Operation: productionImportRunReceiptsPrepareOperation, Served: true},
 		{Operation: productionImportRunReceiptsCommitOperation, Served: true},
-		{Operation: productionImportRunReceiptsInspectionOperation, Served: false,
-			Reason: productionImportRunReceiptInspectionUnreachable},
+		{Operation: productionImportRunReceiptsInspectionOperation, Served: true},
 	}
 }
 

@@ -23,8 +23,8 @@ import (
 // what productionImportRunReceiptServeAgrees refuses at startup.
 
 // TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam pins the two tables:
-// one served row per receipt name, one refused row for the inspection name, a
-// symbolic reason for that refusal, and the agreement check in both directions.
+// one served row per name in the family - including the inspection name - and the
+// agreement check in both directions.
 func TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam(t *testing.T) {
 	decisions := productionImportRunReceiptServeDecisions()
 	seams := productionImportRunReceiptSeams()
@@ -32,8 +32,8 @@ func TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam(t *testing.T) 
 		t.Fatalf("decision table holds %v rows, want three", len(decisions))
 	}
 	served := productionImportRunReceiptServedOperations()
-	if len(served) != 2 {
-		t.Fatalf("served set is %v, want the two receipt names", served)
+	if len(served) != 3 {
+		t.Fatalf("served set is %v, want all three names", served)
 	}
 	seen := make(map[string]bool, len(decisions))
 	for _, decision := range decisions {
@@ -41,14 +41,11 @@ func TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam(t *testing.T) 
 			t.Fatalf("%v is decided twice", decision.Operation)
 		}
 		seen[decision.Operation] = true
-		if decision.Served {
-			if decision.Reason != "" {
-				t.Fatalf("%v is served and records %v as a reason", decision.Operation, decision.Reason)
-			}
-			continue
+		if !decision.Served {
+			t.Fatalf("%v is refused, want the whole family served", decision.Operation)
 		}
-		if !productionImportRunReceiptSeamSymbolic(decision.Reason) {
-			t.Fatalf("%v records %v, which is not a symbolic reason", decision.Operation, decision.Reason)
+		if decision.Reason != "" {
+			t.Fatalf("%v is served and records %v as a reason", decision.Operation, decision.Reason)
 		}
 	}
 	if err := productionImportRunReceiptServeAgrees(decisions, seams); err != nil {
@@ -68,7 +65,14 @@ func TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam(t *testing.T) 
 	if err := productionImportRunReceiptServeAgrees(decisions, stillSeamed); err == nil {
 		t.Fatal("a served name that still has a seam row was accepted")
 	}
-	if err := productionImportRunReceiptServeAgrees(decisions, seams[1:]); err == nil {
+	refusedWithoutSeam := append([]productionImportRunReceiptServeDecision(nil), decisions...)
+	for index := range refusedWithoutSeam {
+		if refusedWithoutSeam[index].Operation == productionImportRunReceiptsInspectionOperation {
+			refusedWithoutSeam[index].Served = false
+			refusedWithoutSeam[index].Reason = productionImportRunReceiptInspectionUnreachable
+		}
+	}
+	if err := productionImportRunReceiptServeAgrees(refusedWithoutSeam, seams); err == nil {
 		t.Fatal("a refused name with no seam row was accepted")
 	}
 	withReason := append([]productionImportRunReceiptServeDecision(nil), decisions...)
@@ -83,14 +87,16 @@ func TestProductionImportRunReceiptServeDecisionAgreesWithTheSeam(t *testing.T) 
 	}
 }
 
-// TestProductionImportRunReceiptInspectionRefusalsAreByteIdentical drives the one
-// still-refused name through the real frozen-session lane with a live lease, a stale
-// lease and a foreign project path, and asserts every body is the exact same 501
+// TestProductionImportRunReceiptInspectionIsNotInstalledByTheResidualLane drives the
+// inspection name through the residual fixture, which installs neither the picker's
+// receipt store nor the serve adapter, and asserts every body is the exact same 501
 // bytes. The dispatch that answers GO_OPERATION_NOT_MIGRATED runs before any handler
 // reads the path or the lease (internal/transport/server.go:111-116), so the refusal
 // cannot depend on them; proving the bytes are equal is proving that independence,
 // and proving the database image is unchanged is proving the refusals wrote nothing.
-func TestProductionImportRunReceiptInspectionRefusalsAreByteIdentical(t *testing.T) {
+// The name's served journey is
+// production_importrun_prepare_inspection_serve_linux_test.go.
+func TestProductionImportRunReceiptInspectionIsNotInstalledByTheResidualLane(t *testing.T) {
 	f := productionImportRunReceiptSeed(t)
 	settled := productionImportRunResidualImage(t, f.database)
 	execution := productionImportRunResidualLeaseWire(productionImportRunResidualStyleEpoch)
@@ -103,22 +109,20 @@ func TestProductionImportRunReceiptInspectionRefusalsAreByteIdentical(t *testing
 		{label: "stale lease", path: f.projectPath, execution: productionImportRunResidualLeaseWire(99)},
 		{label: "foreign project", path: f.projectPath + "-foreign", execution: execution},
 	}
-	seams := productionImportRunReceiptSeams()
-	if len(seams) != 1 || seams[0].Operation != productionImportRunReceiptsInspectionOperation {
-		t.Fatalf("the seam table holds %v rows, want the inspection name only", len(seams))
-	}
+	seam := productionImportRunReceiptSeam{Operation: productionImportRunReceiptsInspectionOperation,
+		Arity: 3, PathIndex: 1}
 	var reference string
 	for index, shape := range shapes {
-		response := f.author.call(t, seams[0].Operation,
-			productionImportRunReceiptWire(seams[0], shape.path, f.frozen, shape.execution))
+		response := f.author.call(t, seam.Operation,
+			productionImportRunReceiptWire(seam, shape.path, f.frozen, shape.execution))
 		if response.Code != http.StatusNotImplemented {
 			t.Fatalf("%v under %v answered %v, want 501: %v",
-				seams[0].Operation, shape.label, response.Code, response.Body.String())
+				seam.Operation, shape.label, response.Code, response.Body.String())
 		}
 		body := response.Body.String()
 		if !strings.Contains(body, "GO_OPERATION_NOT_MIGRATED") {
 			t.Fatalf("%v under %v answered 501 without the code: %v",
-				seams[0].Operation, shape.label, body)
+				seam.Operation, shape.label, body)
 		}
 		if index == 0 {
 			reference = body
@@ -126,7 +130,7 @@ func TestProductionImportRunReceiptInspectionRefusalsAreByteIdentical(t *testing
 		}
 		if body != reference {
 			t.Fatalf("%v under %v differs from the live-lease body:\n live:  %v\n other: %v",
-				seams[0].Operation, shape.label, reference, body)
+				seam.Operation, shape.label, reference, body)
 		}
 	}
 	productionImportRunResidualAssertUnchanged(t, f.database, settled,
@@ -135,9 +139,12 @@ func TestProductionImportRunReceiptInspectionRefusalsAreByteIdentical(t *testing
 
 // TestProductionImportRunReceiptServeProofMarkers re-reads the declarations the
 // decision quotes. It pins that the store hands the run to the assert as data, that
-// the read happens on the receipt's own connection, that the registry lease record
-// ReproduceBinding resolves is still real, and that the served picker still drops the
-// preview CAS - which is the whole reason the inspection name stays refused.
+// the read happens on the receipt's own connection, and that the registry lease
+// record ReproduceBinding resolves is still real. It also pins that the served
+// picker still answers an inspection id and no preview CAS: the CAS is a
+// server-side handoff the prepare adapter reads for itself, not a wire value, and a
+// picker that started publishing it would be a contract change this family has not
+// agreed to.
 func TestProductionImportRunReceiptServeProofMarkers(t *testing.T) {
 	markers := []struct {
 		path   string
@@ -175,8 +182,9 @@ func TestProductionImportRunReceiptServeProofMarkers(t *testing.T) {
 	}
 
 	// The served picker still answers an inspection id but no preview CAS, while the
-	// store still computes one and still demands it at consume time. That is the whole
-	// prepare-inspection refusal, pinned in both directions.
+	// store still computes one and still demands it at consume time. That pairing is
+	// not a gap: the prepare adapter peeks the receipt and consumes it with the
+	// summary it just read, so the value never has to cross the wire.
 	selection, err := os.ReadFile("../../internal/transport/import_selection.go")
 	if err != nil {
 		t.Fatal(err)

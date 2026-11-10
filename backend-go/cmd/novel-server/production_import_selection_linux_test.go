@@ -333,23 +333,36 @@ func TestProductionImportSelectionRefusesStaleAndForeignContext(t *testing.T) {
 		t.Fatal("a caller without a lease imported through another caller's context")
 	}
 
-	// Only the author-manuscript purpose reaches a provider; a reference selection is
-	// the durable parsing run this lane does not claim.
-	if _, release, err := lane.selection.BeginImportSelection(context.Background(),
-		lane.caller(lane.author), transport.ImportSelectionRequest{RunID: "production-import-run-3",
-			Purpose: importsource.Reference, Locale: "zh-CN"}, copyProductionImportContext(lane.frozen)); err == nil {
-		if release != nil {
-			release()
-		}
-		t.Fatal("a reference selection was admitted")
+	// Both purposes reach the provider. The reference arm is the durable parsing
+	// run the same handler (db:import-run-prepare-inspection) executes, so the
+	// selection must be admitted here and the wire must mint a receipt for it.
+	referenceSelection, release, referenceErr := lane.selection.BeginImportSelection(
+		context.Background(), lane.caller(lane.author),
+		transport.ImportSelectionRequest{RunID: "production-import-run-3",
+			Purpose: importsource.Reference, Locale: "zh-CN"},
+		copyProductionImportContext(lane.frozen))
+	if release != nil {
+		release()
 	}
-	// The wire refuses a reference selection with the transport's own code, before
-	// any provider runs.
+	if referenceErr != nil {
+		t.Fatalf("a reference selection was refused: %v", referenceErr)
+	}
+	if len(referenceSelection.Sources) == 0 ||
+		referenceSelection.ProjectID != lane.frozen["projectId"] {
+		t.Fatalf("the reference selection carried %v sources for %v",
+			len(referenceSelection.Sources), referenceSelection.ProjectID)
+	}
 	referenceRequest := lane.request()
 	referenceRequest["purpose"] = string(importsource.Reference)
-	productionUploadTestRefused(t,
-		lane.author.call(t, "dialog:select-novel-files", []any{referenceRequest, lane.frozen}),
-		http.StatusNotImplemented, "IMPORT_DURABLE_PARSING_REQUIRED")
+	var referenceAnswer productionImportWire
+	lane.author.decode(t, "dialog:select-novel-files", []any{referenceRequest, lane.frozen}, &referenceAnswer)
+	if !referenceAnswer.Success || referenceAnswer.Inspection.InspectionID == "" ||
+		referenceAnswer.Inspection.Purpose != string(importsource.Reference) {
+		t.Fatalf("the picker did not mint a reference inspection: %+v", referenceAnswer.Inspection)
+	}
+	if referenceAnswer.Inspection.SourceCount == 0 || referenceAnswer.Inspection.ChapterCount == 0 {
+		t.Fatalf("the reference inspection froze nothing: %+v", referenceAnswer.Inspection)
+	}
 	// And a request that would name an upload id is refused as INVALID_ARGUMENTS: the
 	// frozen four-key shape is the whole attack surface, and it names nothing.
 	smuggled := lane.request()

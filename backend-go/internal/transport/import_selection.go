@@ -41,9 +41,11 @@ func (f ImportSelectionProviderFunc) BeginImportSelection(ctx context.Context, c
 	return f(ctx, caller, request, expected)
 }
 
-// BindImportSelection admits only the original author-manuscript source
-// inspection response. Reference selection requires a durable parsing run,
-// which an in-memory inspection cannot represent. No commit or author preview
+// BindImportSelection admits the import picker's two purposes. A reference
+// selection is not refused here any more: the durable parsing lane it needs is
+// store.ImportRuns.BeginParsing/CommitParsedSource/FinalizeParsing
+// (internal/store/importrun_lifecycle.go), and the receipt this binder mints is the
+// one db:import-run-prepare-inspection consumes. No commit or author preview
 // operation is bound here; the latter needs target-draft conflict reads.
 func (s *Server) BindImportSelection(store *importsource.Store, provider ImportSelectionProvider) error {
 	if store == nil || provider == nil {
@@ -76,10 +78,12 @@ func (s *Server) BindImportSelection(store *importsource.Store, provider ImportS
 		if !runOK || !validImportText(runID, 128) || !purposeOK || !localeOK || !pathOK || !validImportText(path, 4096) || path != expected["projectPath"] || (locale != "zh-CN" && locale != "en-US") {
 			return fail(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
 		}
-		if purpose != string(importsource.AuthorManuscript) {
-			if purpose == string(importsource.Reference) {
-				return fail(security.NewHTTPError(http.StatusNotImplemented, "IMPORT_DURABLE_PARSING_REQUIRED"))
-			}
+		// Both purposes the reference's picker declares reach the provider; the
+		// binder freezes the receipt under the purpose the request named, which is
+		// also the binding db:import-run-prepare-inspection must present to spend it.
+		switch importsource.Purpose(purpose) {
+		case importsource.AuthorManuscript, importsource.Reference:
+		default:
 			return fail(security.NewHTTPError(http.StatusBadRequest, "IMPORT_PURPOSE_INVALID"))
 		}
 		if ctx == nil {
@@ -88,7 +92,7 @@ func (s *Server) BindImportSelection(store *importsource.Store, provider ImportS
 		if err := ctx.Err(); err != nil {
 			return fail(err)
 		}
-		request := ImportSelectionRequest{RunID: runID, Purpose: importsource.AuthorManuscript, Locale: locale}
+		request := ImportSelectionRequest{RunID: runID, Purpose: importsource.Purpose(purpose), Locale: locale}
 		selection, release, err := provider.BeginImportSelection(ctx, caller, request, expected)
 		if release != nil {
 			defer release()

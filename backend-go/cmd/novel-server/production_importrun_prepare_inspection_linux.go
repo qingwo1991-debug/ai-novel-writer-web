@@ -40,6 +40,16 @@ package main
 //    (internal/store/importrun_lifecycle.go:801-802), and that is now correct rather
 //    than a blocker: the author arm never enters the parsing lane.
 //
+// # The reference arm, added after the author one
+//
+// The same name serves purpose 'reference'. Its controller arm
+// (electron/controllers/db-controller.ts:321-355) begins a parsing run, commits
+// every source the receipt froze and finalizes parsing; the store half already
+// existed (internal/store/importrun_lifecycle.go), and the two things missing were
+// a picker that would mint a reference receipt and a handler that would spend it.
+// Both are declarations this record now points at, so the arm cannot disappear
+// while the record still claims it.
+//
 // # What was never a gap, and is still not one
 //
 // The preview CAS does not cross the wire, and it does not have to. The store keeps
@@ -114,5 +124,15 @@ func productionImportRunPrepareInspectionClosed() []productionImportRunPrepareIn
 		// Gap 2: the id form is answered by the shared store, not refused.
 		productionImportRunPrepareInspectionLineOf("production_importrun_prepare_inspection_serve_linux.go", 273,
 			"func (r *productionImportRunPrepareInspectionServe) previewFromInspection(ctx context.Context,"),
+		// The reference arm: the picker admits the purpose, and the handler runs the
+		// parsing lane's three store calls in the reference's own order.
+		productionImportRunPrepareInspectionLineOf("../../internal/transport/import_selection.go", 80,
+			"case importsource.AuthorManuscript, importsource.Reference:"),
+		productionImportRunPrepareInspectionLineOf("production_importrun_prepare_inspection_serve_linux.go", 275,
+			"func (r *productionImportRunPrepareInspectionServe) prepareReferenceParsing(ctx context.Context,"),
+		productionImportRunPrepareInspectionLineOf("production_importrun_prepare_inspection_serve_linux.go", 279,
+			"run, err := runs.BeginParsing(ctx, store.ImportRunBeginParsingRequest{"),
+		productionImportRunPrepareInspectionLineOf("production_importrun_prepare_inspection_serve_linux.go", 310,
+			"preparation, err := runs.FinalizeParsing(ctx, parsingRunID)"),
 	}
 }

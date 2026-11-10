@@ -81,15 +81,29 @@ import (
 // those chapters for that binding - and it adds no way to name an inspection the
 // store never minted.
 //
-// # The one arm this lane refuses, and why
+// # The reference arm, and why it is the same call
 //
-// purpose 'reference' is refused with the picker's own code
-// IMPORT_DURABLE_PARSING_REQUIRED: dialog:select-novel-files refuses that purpose
-// before it reads a byte (internal/transport/import_selection.go:79-84), so no
-// reference receipt can exist for this binder to consume. The renderer's reference
-// flow never reaches this name either - it returns through the picker's own
-// preparation (ImportNovelDialog.tsx:363-370) - so binding a parsing lane here
-// would publish a branch no caller can enter.
+// purpose 'reference' is served by the same handler: the reference's controller
+// peeks the tab-scoped receipt, consumes it, resolves the encoded source identity
+// for that purpose and then runs the durable parsing lane instead of the author
+// prepare (db-controller.ts:321-355):
+//
+//	ImportRunRepository.beginParsing(...)          store.ImportRuns.BeginParsing
+//	commitParsedSource per source (failParsedSource on a refusal)
+//	finalizeParsing                                store.ImportRuns.FinalizeParsing
+//
+// The three store methods exist in internal/store/importrun_lifecycle.go, so the
+// only thing this arm needed was a picker that mints a reference receipt: the
+// transport binder now admits both purposes and the provider captures for both
+// (internal/transport/import_selection.go:79-84). One receipt, one purpose, one
+// binding: the handoff compares the full Binding, so a reference receipt can never
+// be spent by the author arm or the other way round.
+//
+// The failure wording is the one substitution this lane already documents for
+// db:import-run-fail: the renderer localizes a symbolic code through an i18n
+// catalog this repository does not carry (electron/controllers/import-run-failure.ts),
+// so FailParsedSource stores the symbolic message verbatim. No run state is
+// misreported and no text is invented.
 //
 // # The authority fence, and the two refusals it makes identical
 //
@@ -125,9 +139,6 @@ const (
 	// productionImportRunPrepareInspectionStaleCode is AUTHOR_IMPORT_PREVIEW_STALE
 	// (src/shared/import-run.ts:3), the one answer that is a business envelope.
 	productionImportRunPrepareInspectionStaleCode = "AUTHOR_IMPORT_PREVIEW_STALE"
-	// productionImportRunPrepareInspectionReferenceCode is the picker's own code for
-	// a reference selection this lane cannot mint.
-	productionImportRunPrepareInspectionReferenceCode = "IMPORT_DURABLE_PARSING_REQUIRED"
 	// productionImportRunPrepareInspectionPurposeCode is the store's own guard for a
 	// purpose that is neither of the two.
 	productionImportRunPrepareInspectionPurposeCode = "IMPORT_RUN_PURPOSE_INVALID"
@@ -200,8 +211,9 @@ func (r *productionImportRunPrepareInspectionServe) Bind(server *transport.Serve
 
 // prepare is db:import-run-prepare-inspection. The order is the reference's: the
 // path assertion, the authority fence, the receipt (peek + consume, or the ordered
-// replay of a preview), the source identity in its own transaction, then the
-// store's author prepare in one BEGIN IMMEDIATE.
+// replay of a preview), the source identity in its own transaction, then the store
+// write the request's purpose selects - the author prepare, or the parsing lane
+// beginParsing -> commitParsedSource per source -> finalizeParsing.
 func (r *productionImportRunPrepareInspectionServe) prepare(ctx context.Context,
 	caller transport.Caller, args []any) (any, error) {
 	expected, err := productionImportRunPrepareInspectionAdmit(args)
@@ -212,13 +224,11 @@ func (r *productionImportRunPrepareInspectionServe) prepare(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	if request.purpose == productionImportRunPrepareInspectionReferencePurpose {
-		return nil, security.NewHTTPError(http.StatusNotImplemented, productionImportRunPrepareInspectionReferenceCode)
-	}
 	if err := r.assertCurrentProject(ctx, caller, expected); err != nil {
 		return nil, productionImportRunWriteFailure(err)
 	}
-	inspection, err := r.takeInspection(ctx, caller, expected, request.inspectionID)
+	purpose := importsource.Purpose(request.purpose)
+	inspection, err := r.takeInspection(ctx, caller, expected, request.inspectionID, purpose)
 	if err != nil {
 		return nil, productionImportRunWriteFailure(err)
 	}
@@ -232,9 +242,12 @@ func (r *productionImportRunPrepareInspectionServe) prepare(ctx context.Context,
 	if db == nil {
 		return nil, productionImportRunWriteFailure(errors.New("PRODUCTION_CLOSED"))
 	}
-	identity, err := r.resolveSources(ctx, db, inspection.Sources)
+	identity, err := r.resolveSources(ctx, db, inspection.Sources, purpose)
 	if err != nil {
 		return nil, productionImportRunWriteFailure(err)
+	}
+	if purpose == importsource.Reference {
+		return r.prepareReferenceParsing(ctx, db, request, identity, inspection)
 	}
 	preparation, err := store.NewImportRuns(db).PrepareAuthor(ctx, store.ImportRunPrepareAuthorRequest{
 		RunID:                       request.runID,
@@ -255,6 +268,55 @@ func (r *productionImportRunPrepareInspectionServe) prepare(ctx context.Context,
 			return map[string]any{"success": false,
 				"errorCode": productionImportRunPrepareInspectionStaleCode}, nil
 		}
+		return nil, productionImportRunWriteFailure(err)
+	}
+	return map[string]any{"success": true, "preparation": preparation}, nil
+}
+
+// prepareReferenceParsing is the reference arm's durable parse
+// (electron/controllers/db-controller.ts:321-355): beginParsing opens (or re-enters)
+// the parsing run, every source the inspection froze is committed under that run's
+// own id - the id beginParsing answers, which is not always the requested one when
+// it re-enters an existing run - and finalizeParsing turns the fully parsed run into
+// the prepared one whose preparation the renderer reads.
+//
+// A source whose chapters cannot be committed is marked failed with the symbolic
+// reason and the commit's own refusal is rethrown, in that order, exactly like the
+// controller's catch block. Only the failure's wording is substituted (there is no
+// i18n catalog here); the code the renderer sees is the store's own.
+func (r *productionImportRunPrepareInspectionServe) prepareReferenceParsing(ctx context.Context,
+	db *sql.DB, request productionImportRunPrepareInspectionRequestValue,
+	identity importsource.ResolvedIdentity, inspection importsource.Inspection) (any, error) {
+	runs := store.NewImportRuns(db)
+	run, err := runs.BeginParsing(ctx, store.ImportRunBeginParsingRequest{
+		RunID:                       request.runID,
+		Purpose:                     request.purpose,
+		SourceFingerprint:           identity.SourceFingerprint,
+		SourceIDs:                   identity.SourceIDs,
+		SourceFingerprints:          identity.SourceFingerprints,
+		LegacySourceFingerprints:    identity.LegacySourceFingerprints,
+		LegacyCollectionFingerprint: identity.LegacyCollectionFingerprint,
+		SourceDisplay:               productionImportRunPrepareInspectionDisplay(inspection.Sources),
+		Locale:                      request.locale,
+	})
+	if err != nil {
+		return nil, productionImportRunWriteFailure(err)
+	}
+	parsingRunID := productionImportRunPrepareInspectionString(run, "id")
+	if parsingRunID == "" {
+		return nil, productionImportRunWriteFailure(errors.New("IMPORT_RUN_STATE_CONFLICT"))
+	}
+	for index, sourceID := range identity.SourceIDs {
+		chapters := productionImportRunPrepareInspectionParsedChapters(inspection.Chapters, int64(index))
+		if _, err := runs.CommitParsedSource(ctx, parsingRunID, sourceID, chapters); err != nil {
+			if _, failErr := runs.FailParsedSource(ctx, parsingRunID, sourceID, err.Error()); failErr != nil {
+				return nil, productionImportRunWriteFailure(failErr)
+			}
+			return nil, productionImportRunWriteFailure(err)
+		}
+	}
+	preparation, err := runs.FinalizeParsing(ctx, parsingRunID)
+	if err != nil {
 		return nil, productionImportRunWriteFailure(err)
 	}
 	return map[string]any{"success": true, "preparation": preparation}, nil
@@ -326,16 +388,19 @@ func (r *productionImportRunPrepareInspectionServe) assertCurrentProject(ctx con
 // takeInspection is the receipt one-use path: a previewed id is taken from the
 // handoff, an id that was never previewed is peeked and consumed here. Both return
 // the same frozen inspection, and both answer IMPORT_INSPECTION_EXPIRED when the
-// id is unknown, expired, consumed or names another caller's generation.
+// id is unknown, expired, consumed or names another caller's generation. The
+// purpose is part of the binding, so a receipt minted for one arm can never be
+// spent by the other.
 func (r *productionImportRunPrepareInspectionServe) takeInspection(ctx context.Context,
-	caller transport.Caller, expected map[string]any, inspectionID string) (importsource.Inspection, error) {
+	caller transport.Caller, expected map[string]any, inspectionID string,
+	purpose importsource.Purpose) (importsource.Inspection, error) {
 	if r == nil || r.inspections == nil {
 		return importsource.Inspection{}, errors.New("IMPORT_INSPECTION_OWNER_UNAVAILABLE")
 	}
 	if ctx == nil || !productionImportRunPrepareInspectionIDValid(inspectionID) {
 		return importsource.Inspection{}, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
 	}
-	binding, err := productionImportRunPrepareInspectionBinding(caller, expected)
+	binding, err := productionImportRunPrepareInspectionBinding(caller, expected, purpose)
 	if err != nil {
 		return importsource.Inspection{}, err
 	}
@@ -361,7 +426,11 @@ func (r *productionImportRunPrepareInspectionServe) obtainInspection(ctx context
 	if ctx == nil || !productionImportRunPrepareInspectionIDValid(inspectionID) {
 		return importsource.Inspection{}, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
 	}
-	binding, err := productionImportRunPrepareInspectionBinding(caller, expected)
+	// The preview's id form is the author-manuscript arm only
+	// (db-controller.ts:367-377 hardcodes that purpose at the store peek), so its
+	// binding is the author one.
+	binding, err := productionImportRunPrepareInspectionBinding(caller, expected,
+		importsource.AuthorManuscript)
 	if err != nil {
 		return importsource.Inspection{}, err
 	}
@@ -384,9 +453,11 @@ func (r *productionImportRunPrepareInspectionServe) obtainInspection(ctx context
 // (electron/repositories/import-source-identity-repository.ts:104-...): the alias
 // table's stable ids, one fingerprint per source and the collection fingerprint,
 // inside its own transaction - the reference owns a separate transaction here too,
-// and the prepare that follows re-reads what this one committed.
+// and the prepare that follows re-reads what this one committed. The purpose is the
+// request's: it is part of every digest the table derives, so an author receipt and
+// a reference receipt cannot resolve to the same collection fingerprint.
 func (r *productionImportRunPrepareInspectionServe) resolveSources(ctx context.Context,
-	db *sql.DB, sources []importsource.Source) (importsource.ResolvedIdentity, error) {
+	db *sql.DB, sources []importsource.Source, purpose importsource.Purpose) (importsource.ResolvedIdentity, error) {
 	if len(r.identityKey) != productionImportRunPrepareInspectionIdentityKeyBytes {
 		return importsource.ResolvedIdentity{}, errors.New("IMPORT_SOURCE_SECRET_INVALID")
 	}
@@ -399,8 +470,7 @@ func (r *productionImportRunPrepareInspectionServe) resolveSources(ctx context.C
 		return importsource.ResolvedIdentity{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	resolved, err := importsource.ResolveEncodedSources(ctx, tx, encoded,
-		importsource.AuthorManuscript, r.identityKey)
+	resolved, err := importsource.ResolveEncodedSources(ctx, tx, encoded, purpose, r.identityKey)
 	if err != nil {
 		return importsource.ResolvedIdentity{}, err
 	}
@@ -622,17 +692,21 @@ func productionImportRunPrepareInspectionRequest(value any) (productionImportRun
 
 // productionImportRunPrepareInspectionBinding is the receipt binding the picker
 // minted (internal/transport/import_selection.go:104-105): the cookie session and
-// the browser tab, and the project generation the frozen context names. It is
-// derived, never read from the payload.
+// the browser tab, the project generation the frozen context names, and the purpose
+// the receipt was frozen for. It is derived, never read from the payload.
 func productionImportRunPrepareInspectionBinding(caller transport.Caller,
-	expected map[string]any) (importsource.Binding, error) {
+	expected map[string]any, purpose importsource.Purpose) (importsource.Binding, error) {
 	projectID := productionImportRunPrepareInspectionString(expected, "projectId")
 	leaseID := productionImportRunPrepareInspectionString(expected, "leaseId")
 	if caller.SessionID == "" || caller.ClientID == "" || projectID == "" || leaseID == "" {
 		return importsource.Binding{}, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
 	}
+	if purpose != importsource.AuthorManuscript && purpose != importsource.Reference {
+		return importsource.Binding{}, security.NewHTTPError(http.StatusBadRequest,
+			productionImportRunPrepareInspectionPurposeCode)
+	}
 	return importsource.Binding{Caller: caller.SessionID + ":" + caller.ClientID,
-		Generation: projectID + ":" + leaseID, Purpose: importsource.AuthorManuscript}, nil
+		Generation: projectID + ":" + leaseID, Purpose: purpose}, nil
 }
 
 // productionImportRunPrepareInspectionDisplay is the display list the run freezes:
@@ -655,6 +729,27 @@ func productionImportRunPrepareInspectionChapters(
 	for _, chapter := range chapters {
 		inputs = append(inputs, store.ImportRunChapterInput{Number: int64(chapter.Number),
 			SourceIndex: int64(chapter.SourceIndex), SourceChapterNumber: int64(chapter.SourceChapterNumber),
+			Title: chapter.Title, Content: chapter.Content,
+			ContentFingerprint: chapter.ContentFingerprint, ContentSize: int64(chapter.ContentSize)})
+	}
+	return inputs
+}
+
+// productionImportRunPrepareInspectionParsedChapters is the chapter array one
+// source of the reference arm commits: the frozen chapters whose sourceIndex names
+// that source, with the parser's own local chapter number (the reference's
+// db-controller.ts:334-343 maps number = sourceChapterNumber and leaves the
+// affiliation to the per-source call, so SourceIndex is zero - the store's single
+// source id makes it the only legal value).
+func productionImportRunPrepareInspectionParsedChapters(
+	chapters []importsource.Chapter, sourceIndex int64) []store.ImportRunChapterInput {
+	inputs := make([]store.ImportRunChapterInput, 0, len(chapters))
+	for _, chapter := range chapters {
+		if int64(chapter.SourceIndex) != sourceIndex {
+			continue
+		}
+		inputs = append(inputs, store.ImportRunChapterInput{Number: int64(chapter.SourceChapterNumber),
+			SourceIndex: 0, SourceChapterNumber: int64(chapter.SourceChapterNumber),
 			Title: chapter.Title, Content: chapter.Content,
 			ContentFingerprint: chapter.ContentFingerprint, ContentSize: int64(chapter.ContentSize)})
 	}

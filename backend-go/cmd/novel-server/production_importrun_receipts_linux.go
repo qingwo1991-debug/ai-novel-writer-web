@@ -8,12 +8,12 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// This file is the import-run family's last seam. It now holds exactly ONE name:
+// This file is the import-run family's last seam. It now holds NO name:
 //
-//	db:import-run-prepare-inspection       refused, the inspection store is unreachable
+//	db:import-run-prepare-inspection       served  production_importrun_prepare_inspection_serve_linux.go
 //
-// The other two names it used to hold are SERVED, and the reason they can be is
-// recorded here because this is the file whose argument they defeated:
+// The two receipt writes it also used to hold are SERVED, and the reason they can
+// be is recorded here because this is the file whose argument they defeated:
 //
 //	db:import-run-effect-receipt-prepare   served  productionImportRunReceiptsServe2.prepare
 //	db:import-run-effect-receipt-commit    served  productionImportRunReceiptsServe2.commit
@@ -102,40 +102,27 @@ import (
 // retires the old "the two store guards disagree about nil" objection: neither leg
 // is handed nil any more.
 //
-// # The one name this file still refuses
+// # The one name this file used to refuse, and what closed it
 //
-// db:import-run-prepare-inspection has its own, unrelated blocker, and nothing in
-// the change above touches it. The reference handler peeks the tab-scoped
-// inspection by id, optionally checks the author preview fingerprints, consumes the
-// inspection, resolves the encoded source identities, begins a parsing run, commits
-// every parsed source and finalizes parsing
-// (electron/controllers/db-controller.ts:262-355). The Go store has the parsing half
-// (BeginParsing, CommitParsedSource, FailParsedSource, FinalizeParsing), but the
-// request cannot reach it:
+// db:import-run-prepare-inspection was refused because the request could not
+// reach the parsing store: the inspection store was closure-local to the picker,
+// the only served mint dropped the preview CAS, and a reference-purpose receipt
+// could not be minted at all (dialog:select-novel-files answered
+// IMPORT_DURABLE_PARSING_REQUIRED). All three are closed now:
 //
-//   - importsource.Summary does carry the keyed CAS
-//     (internal/importsource/inspection.go:49, `previewCAS`), but Store.Peek
-//     returns only that Summary (:158) - never chapter bodies or canonical
-//     identities - and Store.Consume demands the exact expectedPreviewCAS (:165)
-//     and answers IMPORT_INSPECTION_PREVIEW_CHANGED when it differs (:167);
-//   - the only served response that carries an inspection id is
-//     dialog:select-novel-files, and it returns inspectionId, purpose, counts,
-//     display names, total words, total bytes and the eight-chapter preview, but
-//     never previewCAS (internal/transport/import_selection.go:112). The value the
-//     CAS exists to prove is therefore not something the handler can obtain from
-//     the renderer, and peeking it server-side would hand back a digest the
-//     renderer never saw;
-//   - the inspection store is not reachable from this adapter: the picker owns the
-//     only importsource.Store (production_import_selection_linux.go:173-180);
-//   - a reference-purpose inspection cannot be minted at all:
-//     dialog:select-novel-files refuses reference with
-//     IMPORT_DURABLE_PARSING_REQUIRED (internal/transport/import_selection.go:81),
-//     while BeginParsing refuses every purpose except reference
-//     (internal/store/importrun_lifecycle.go:801-802). The author branch would
-//     additionally need the unported prepare() and FinalizedDraftImportRepository.preview
-//     (internal/store/importrun_lifecycle.go:26-34) plus
-//     ImportSourceIdentityRepository.resolveEncodedSources, which needs the
-//     application import-source secret.
+//   - the picker's store is hoisted and shared with this name's adapter
+//     (production_open_linux.go:596-597, :969);
+//   - the CAS never needs to cross the wire: the adapter peeks the receipt it is
+//     about to spend and consumes it with that same server-side value
+//     (production_importrun_prepare_inspection_serve_linux.go, takeInspection),
+//     exactly as the desktop's controller does (db-controller.ts:269, :282);
+//   - the picker admits both purposes (internal/transport/import_selection.go),
+//     and the reference arm of the handler runs the parsing lane the store already
+//     has: BeginParsing, CommitParsedSource per source (FailParsedSource on a
+//     refusal) and FinalizeParsing (internal/store/importrun_lifecycle.go).
+//
+// The seam table below is therefore empty, and Bind refuses a non-empty one: a row
+// here would be a refusal whose operation the serve decision says is served.
 //
 // # The binder
 //
@@ -194,33 +181,14 @@ func productionImportRunReceiptLineOf(path string, line int, marker string) prod
 	return productionImportRunReceiptLine{Path: path, Line: line, Marker: marker}
 }
 
-// productionImportRunReceiptSeams is the whole answer of this file: the one name
-// the family still refuses, with the declarations that keep it refused.
+// productionImportRunReceiptSeams is the whole answer of this file: no rows. Every
+// name the family's seam used to hold has a binder, and the last one -
+// db:import-run-prepare-inspection - moved to
+// production_importrun_prepare_inspection_serve_linux.go with the parsing store
+// behind it. The table is kept, and kept empty, so the completeness test can prove
+// the family is covered rather than simply short.
 func productionImportRunReceiptSeams() []productionImportRunReceiptSeam {
-	return []productionImportRunReceiptSeam{
-		{
-			Operation: productionImportRunReceiptsInspectionOperation,
-			Arity:     3,
-			PathIndex: 1,
-			Gate:      "IMPORT_DURABLE_PARSING_REQUIRED",
-			Port:      "the inspection store never reaches this adapter and the only served mint drops the preview CAS, so Consume's expectedPreviewCAS has no honest source",
-			Missing: []productionImportRunReceiptLine{
-				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 49, "PreviewCAS string `json:\"previewCAS\"`"),
-				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 158, "func (s *Store) Peek(receipt string,binding Binding) (Summary,error)"),
-				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 165, "func (s *Store) Consume(receipt,expectedPreviewCAS string,binding Binding)"),
-				productionImportRunReceiptLineOf("../../internal/importsource/inspection.go", 167, "IMPORT_INSPECTION_PREVIEW_CHANGED"),
-				productionImportRunReceiptLineOf("../../internal/transport/import_selection.go", 81, "IMPORT_DURABLE_PARSING_REQUIRED"),
-				productionImportRunReceiptLineOf("../../internal/transport/import_selection.go", 112, `"inspectionId": summary.InspectionID`),
-				productionImportRunReceiptLineOf("../../internal/store/importrun_lifecycle.go", 801, `if candidate.Purpose != "reference"`),
-				productionImportRunReceiptLineOf("../../internal/store/importrun_lifecycle.go", 1048, "func (r *ImportRuns) CommitParsedSource(ctx context.Context, runID, sourceID string, chapters []ImportRunChapterInput)"),
-				productionImportRunReceiptLineOf("production_import_selection_linux.go", 173, "importsource.Store"),
-				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 262, "operations.handle('db:import-run-prepare-inspection', async ("),
-				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 269, "importInspectionStore.peek(request.inspectionId, webContentsId, request.purpose)"),
-				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 282, "importInspectionStore.consume(request.inspectionId, webContentsId)"),
-				productionImportRunReceiptLineOf("../../../electron/controllers/db-controller.ts", 283, "ImportSourceIdentityRepository.resolveEncodedSources("),
-			},
-		},
-	}
+	return nil
 }
 
 // productionImportRunReceiptSeamFor returns the row for one name. A name the
@@ -269,11 +237,9 @@ func newProductionImportRunReceipts(durable *productionDurableOpen) *productionI
 }
 
 // Bind installs nothing and validates the seam. It refuses a nil adapter, a nil
-// server, a duplicate name, a name outside the family, a gate that is not
-// symbolic, an arity/path index that cannot describe a real request, and a seam
-// whose declarations are blank. It also refuses to proceed when the refused name is
-// already bound, because that would make this table a stale note rather than the
-// family's refusal, and when the serve decision and the seam disagree.
+// server, and any row in a table the family has finished: every name this file
+// used to hold is served, so a row here would be a refusal the serve decision
+// contradicts. The remaining row checks are kept for the day a refusal returns.
 //
 // It deliberately does not read the source files: the production binary's working
 // directory is not the test's, and a startup that reads the source tree would
@@ -287,7 +253,7 @@ func (r *productionImportRunReceipts) Bind(server *transport.Server) error {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")
 	}
 	seams := productionImportRunReceiptSeams()
-	if len(seams) != 1 {
+	if len(seams) != 0 {
 		return errors.New("IMPORT_RUN_RECEIPTS_SEAM_COUNT_INVALID")
 	}
 	bound := make(map[string]bool, len(seams))

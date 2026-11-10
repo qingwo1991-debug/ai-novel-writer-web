@@ -30,9 +30,9 @@ import (
 // {runId, purpose, locale, expectedProjectPath} plus the frozen project session
 // and reads back an inspection token). Transport already owns its binder:
 // BindImportSelection (internal/transport/import_selection.go:48-118) validates
-// the two arguments, the frozen three-key project context and the
-// author-manuscript purpose, then asks an ImportSelectionProvider for the captured
-// sources and freezes them in an importsource.Store. The lane had no such
+// the two arguments, the frozen three-key project context and the purpose, then
+// asks an ImportSelectionProvider for the captured sources and freezes them in an
+// importsource.Store. The lane had no such
 // provider, so the name stayed at GO_OPERATION_NOT_MIGRATED with a reason that
 // said "POST /api/uploads is 501" (production_project_portability_linux.go:222-224).
 // That reason is no longer true: the upload route is mounted
@@ -85,8 +85,12 @@ import (
 //     and projectPath are compared with projectsession's own current context
 //     (productionFSGrantProject, production_fs_grants_linux.go:249-276), so a tab
 //     that has moved on cannot import through a lease id it still remembers;
-//   - author-manuscript purpose only, which is the only purpose the binder passes
-//     (import_reference needs durable parsing that this lane does not have);
+//   - either purpose the renderer declares: author-manuscript, which
+//     db:import-run-prepare-inspection turns into the author run, and reference,
+//     which the same name turns into the durable parsing run
+//     (store.ImportRuns.BeginParsing -> CommitParsedSource -> FinalizeParsing). The
+//     receipt is frozen under the requested purpose and only that purpose's binding
+//     can spend it;
 //   - within importsource's limits: source count and total bytes, and the parser's
 //     own per-source bounds. One oversized pending set refuses the whole selection
 //     with the code the renderer already understands rather than truncating.
@@ -251,10 +255,11 @@ func (s *productionImportSelection) BeginImportSelection(ctx context.Context, ca
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionProjectCode)
 	}
-	// Only the author-manuscript purpose reaches a provider at all
-	// (import_selection.go:79-84); asserting it here keeps that true if the binder
-	// ever grows a second purpose.
-	if request.Purpose != importsource.AuthorManuscript {
+	// Both purposes reach a provider now: the binder validates the vocabulary and
+	// this provider only re-asserts it, so a purpose added to the binder without a
+	// capture rule here would still be refused instead of frozen under a wrong
+	// binding.
+	if request.Purpose != importsource.AuthorManuscript && request.Purpose != importsource.Reference {
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionContextCode)
 	}

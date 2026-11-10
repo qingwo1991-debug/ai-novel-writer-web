@@ -8,6 +8,7 @@ import { useWorkflowStore } from './stores/workflow-store'
 import { useLocaleStore } from './stores/locale-store'
 import { ipc } from './services/ipc-client'
 import { useWindowCloseGuard } from './components/layout/use-window-close-guard'
+import { useChapterAutoSave } from './components/editor/use-chapter-autosave'
 import ImportNovelDialog from './components/dialogs/ImportNovelDialog'
 import ExportDialog from './components/dialogs/ExportDialog'
 import { leaveSettingsThen, openProjectFolder } from './components/settings/unsaved-settings'
@@ -35,6 +36,8 @@ export default function App() {
   const initLLM = useLLMStore((s) => s.init)
   const loadRecentProjects = useProjectStore((s) => s.loadRecentProjects)
   const exitGuard = useWindowCloseGuard()
+  // 只有一个定时器，随 App 的整个生命周期；没有脏正文标签时每一轮都是空转。
+  useChapterAutoSave()
 
   useEffect(() => {
     const root = document.documentElement

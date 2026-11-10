@@ -271,6 +271,11 @@ export function useDraftActions({ tabId, filePath, content, projectKey }: DraftT
       type: 'chapter',
       projectKey,
       save: () => exitSaveRef.current(currentBodyRef.current, true),
+      // 定时保存走非抛错路径：冲突对话框仍由作者决定，取消时保留本地修改，不向定时器抛错。
+      autoSave: {
+        inFlight: () => saveInFlight.current,
+        save: () => exitSaveRef.current(currentBodyRef.current, false),
+      },
     })
   }, [projectKey, tabId])
 

@@ -13,24 +13,21 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
 )
 
-// These tests pin the import-run receipt family where this pass leaves it: the two
-// receipt writes are SERVED by production_importrun_receipts_serve2_linux.go (driven
-// end to end in production_importrun_receipts_serve2_linux_test.go), one name -
-// db:import-run-prepare-inspection - is still refused with the declaration that
-// keeps it refused, and the lane's residual adapter, which holds no generation owner,
-// installs nothing for the served pair.
+// These tests pin the import-run receipt family where this pass leaves it: every
+// name in it is SERVED. The two receipt writes are served by
+// production_importrun_receipts_serve2_linux.go (driven end to end in
+// production_importrun_receipts_serve2_linux_test.go), db:import-run-prepare-inspection
+// is served by production_importrun_prepare_inspection_serve_linux.go (driven end to
+// end in production_importrun_prepare_inspection_serve_linux_test.go), and the
+// family's seam table is therefore empty.
 //
 // # What is deliberately absent
 //
-// There is no success subtest here, because no name in THIS file is bound. The 501
-// GO_OPERATION_NOT_MIGRATED is decided before the handler reads the request
-// envelope, the path or the lease; only the JSON body and its argument shape are
-// parsed first (internal/transport/server.go:111-116). A "success" assertion here
-// would have to be written against a handler this file does not install, and the
-// served-name journeys belong to the file that installs them. The calls below
-// therefore use the reference's real wire shape and a REAL live execution lease, and
-// prove that even the branch that needs no generation proof - the replay of an
-// already committed receipt - is not served by an ownerless lane.
+// There is no refused-name subtest here any more, because no name in this file's
+// family is refused. The 501 GO_OPERATION_NOT_MIGRATED a caller sees belongs to a
+// lane that did not install the binder (the residual adapter holds no generation
+// owner and no inspection store), and the served-name journeys belong to the files
+// that install those binders.
 //
 // # Why the requests are still fully formed
 //
@@ -178,34 +175,35 @@ func productionImportRunReceiptSeed(t *testing.T) *productionImportRunResidualFi
 	return openProductionImportRunResidualFixture(t, projectPath, "import-run-receipt-open-1")
 }
 
-// TestProductionImportRunReceiptSeamsStayRefused is the per-name pin. One subtest
-// per name keeps a failure naming the operation; inside it, the live, stale and
-// foreign shapes prove the 501 does not depend on the lease, the path or the run.
-func TestProductionImportRunReceiptSeamsStayRefused(t *testing.T) {
-	f := productionImportRunReceiptSeed(t)
-	settled := productionImportRunResidualImage(t, f.database)
-	execution := productionImportRunResidualLeaseWire(productionImportRunResidualStyleEpoch)
-	for _, seam := range productionImportRunReceiptSeams() {
-		seam := seam
-		t.Run(seam.Operation, func(t *testing.T) {
-			for _, shape := range []struct {
-				label     string
-				path      string
-				execution map[string]any
-			}{
-				{label: "live lease", path: f.projectPath, execution: execution},
-				{label: "stale lease", path: f.projectPath, execution: productionImportRunResidualLeaseWire(99)},
-				{label: "foreign project", path: f.projectPath + "-foreign", execution: execution},
-			} {
-				before := productionImportRunResidualImage(t, f.database)
-				productionImportRunReceiptRefused(t, f.author, seam.Operation,
-					productionImportRunReceiptWire(seam, shape.path, f.frozen, shape.execution), shape.label)
-				productionImportRunResidualAssertUnchanged(t, f.database, before,
-					"the refused "+shape.label+" "+seam.Operation)
-			}
-		})
+// TestProductionImportRunReceiptSeamIsEmpty pins the family's last state: the seam
+// table holds no row, the serve decision says all three names are served, and the
+// two tables still agree in both directions. A row returning without a decision
+// flip, or a decision flipping back without a row, fails here.
+func TestProductionImportRunReceiptSeamIsEmpty(t *testing.T) {
+	seams := productionImportRunReceiptSeams()
+	if len(seams) != 0 {
+		t.Fatalf("the seam table holds %v rows, want none", len(seams))
 	}
-	productionImportRunResidualAssertUnchanged(t, f.database, settled, "the three refused names")
+	decisions := productionImportRunReceiptServeDecisions()
+	served := productionImportRunReceiptServedOperations()
+	if len(served) != len(decisions) {
+		t.Fatalf("served set is %v, want every decided name", served)
+	}
+	if err := productionImportRunReceiptServeAgrees(decisions, seams); err != nil {
+		t.Fatalf("the real decision and seam tables disagree: %v", err)
+	}
+	// A fabricated refusal row is still caught, so the empty table is a decision and
+	// not a check that stopped working.
+	fabricated := []productionImportRunReceiptSeam{{
+		Operation: productionImportRunReceiptsInspectionOperation, Arity: 3, PathIndex: 1,
+		Gate: "IMPORT_DURABLE_PARSING_REQUIRED", Port: "a fabricated refusal",
+		Missing: []productionImportRunReceiptLine{
+			productionImportRunReceiptLineOf("production_open_linux.go", 0, "package main"),
+		},
+	}}
+	if err := productionImportRunReceiptServeAgrees(decisions, fabricated); err == nil {
+		t.Fatal("a fabricated refusal row was accepted beside a served decision")
+	}
 }
 
 // TestProductionImportRunReceiptReplayIsNotServedWithoutTheOwner drives the one
@@ -283,18 +281,15 @@ func TestProductionImportRunReceiptReplayIsNotServedWithoutTheOwner(t *testing.T
 // this test fails and the seam's claim has to be re-argued instead of silently
 // becoming stale.
 func TestProductionImportRunReceiptSeamProof(t *testing.T) {
-	// One row: the two receipt names are SERVED by
-	// production_importrun_receipts_serve2_linux.go, so they have no seam left.
-	want := map[string]bool{productionImportRunReceiptsInspectionOperation: true}
+	// No rows: the two receipt names are SERVED by
+	// production_importrun_receipts_serve2_linux.go and the inspection name is
+	// SERVED by production_importrun_prepare_inspection_serve_linux.go, so none of
+	// them has a seam left.
 	seams := productionImportRunReceiptSeams()
-	if len(seams) != len(want) {
-		t.Fatalf("the seam table holds %v rows, want %v", len(seams), len(want))
+	if len(seams) != 0 {
+		t.Fatalf("the seam table holds %v rows, want none", len(seams))
 	}
 	for _, seam := range seams {
-		if !want[seam.Operation] {
-			t.Fatalf("%v is not the refused import-run name", seam.Operation)
-		}
-		delete(want, seam.Operation)
 		if seam.Arity < 2 || seam.PathIndex < 0 || seam.PathIndex > seam.Arity-2 {
 			t.Fatalf("%v records arity %v and path index %v, which cannot describe a real request",
 				seam.Operation, seam.Arity, seam.PathIndex)
@@ -316,9 +311,6 @@ func TestProductionImportRunReceiptSeamProof(t *testing.T) {
 					productionSeamDiagnosis(string(raw), line.Marker, line.Line))
 			}
 		}
-	}
-	if len(want) != 0 {
-		t.Fatalf("%v refused names have no seam row", len(want))
 	}
 	for _, path := range []string{"../../internal/store/importrun.go", "../../internal/store/importrun_lifecycle.go"} {
 		raw, err := os.ReadFile(path)

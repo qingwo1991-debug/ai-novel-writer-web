@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { randomUUID } from '../utils/id'
 
-import type { DraftStatus } from '../shared/draft-status'
+import { DRAFT_STATUS_INFO, type DraftStatus } from '../shared/draft-status'
 import { sameProjectPathKey } from '../shared/project-session-context'
 import { countUnsavedEditorItems, countUnsavedEditorItemsForProject } from './editor-unsaved'
 import { useLocaleStore } from './locale-store'
@@ -208,11 +208,20 @@ const PROJECT_SCOPED_BUILTIN_TYPES = new Set<EditorTab['type']>([
   'knowledge',
 ])
 
+/** 正文标签的定时自动保存入口：与退出保存共用登记项，但走不向调用方抛错的路径。 */
+export interface EditorAutoSaveHandler {
+  /** 这个标签已有保存请求在途时为 true，这一轮跳过它。 */
+  inFlight: () => boolean
+  save: () => Promise<void>
+}
+
 export interface EditorExitSaveHandler {
   tabId?: string
   type: EditorTab['type']
   projectKey?: string
   save: () => Promise<void>
+  /** 定时自动保存；只有正文编辑器登记，退出前保存仍走 save。 */
+  autoSave?: EditorAutoSaveHandler
 }
 
 const exitSaveHandlers = new Map<string, EditorExitSaveHandler>()
@@ -244,11 +253,23 @@ function removeEditorExitSaveHandlers(tab: EditorTab): void {
   }
 }
 
+function findExitSaveHandler(
+  tab: Pick<EditorTab, 'id' | 'type' | 'projectKey'>,
+): EditorExitSaveHandler | undefined {
+  return exitSaveHandlers.get(`tab:${tab.id}`)
+    ?? (tab.projectKey ? exitSaveHandlers.get(exitSaveTypeKey(tab.type, tab.projectKey)) : undefined)
+}
+
 /** 标签自身的保存入口：与退出前保存共用各编辑器注册的处理器；编辑器没有注册时为 null。 */
 export function editorSaveHandler(tab: Pick<EditorTab, 'id' | 'type' | 'projectKey'>): (() => Promise<void>) | null {
-  const handler = exitSaveHandlers.get(`tab:${tab.id}`)
-    ?? (tab.projectKey ? exitSaveHandlers.get(exitSaveTypeKey(tab.type, tab.projectKey)) : undefined)
-  return handler ? handler.save : null
+  return findExitSaveHandler(tab)?.save ?? null
+}
+
+/** 标签的定时自动保存入口；编辑器没有登记定时保存时为 null。 */
+export function editorAutoSaveHandler(
+  tab: Pick<EditorTab, 'id' | 'type' | 'projectKey'>,
+): EditorAutoSaveHandler | null {
+  return findExitSaveHandler(tab)?.autoSave ?? null
 }
 
 export function createProjectScopedEditorTabId(
@@ -557,6 +578,24 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     })
   },
 }))
+
+/**
+ * 一轮章节自动保存：把每个脏的、可写的正文标签交给它自己登记的自动保存入口。
+ * 只读/已定稿状态和已有保存在途的标签跳过；某个标签失败由保存自己提示，同一轮里后面的标签照常保存。
+ */
+export async function autoSaveDirtyChapterTabs(): Promise<void> {
+  for (const tab of useEditorStore.getState().tabs) {
+    if (tab.type !== 'chapter' || !tab.dirty) continue
+    if (tab.draftStatus && DRAFT_STATUS_INFO[tab.draftStatus].readOnly) continue
+    const handler = editorAutoSaveHandler(tab)
+    if (!handler || handler.inFlight()) continue
+    try {
+      await handler.save()
+    } catch {
+      // 保存内部已经提示过失败或冲突；这里只保证本轮剩余标签继续。
+    }
+  }
+}
 
 export async function saveDirtyEditorChangesForExit(
   currentProjectKey: string | undefined, scope: 'all' | 'project' = 'all',

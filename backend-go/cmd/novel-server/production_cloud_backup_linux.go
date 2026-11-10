@@ -32,44 +32,51 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/webdav"
 )
 
-// This file is the production lane's answer to the eight `cloud-backup:*` names
-// in web/operations.json:66-73. Six are bound here; two are deliberately left
-// unbound so they keep answering 501 GO_OPERATION_NOT_MIGRATED, and this comment
-// names the port each of those two is missing.
+// This file is the production lane's answer to six of the eight `cloud-backup:*`
+// names in web/operations.json:66-73. The credential lifecycle - connect and
+// clear-credential - is bound by production_cloud_backup_credentials_linux.go,
+// which seals one account's secret at rest under this store's own root.
 //
 //	cloud-backup:view             served   derived local binding view
-//	cloud-backup:connect          UNBOUND  missing port, see below
+//	cloud-backup:connect          served   sealed account record, by the credentials binder
 //	cloud-backup:confirm-binding  served   re-affirms the derived binding
 //	cloud-backup:backup           served   archive + manifest + completion
 //	cloud-backup:list             served   verified catalogue of one book
 //	cloud-backup:restore-copy     served   verified archive -> fresh project
 //	cloud-backup:cancel           served   per-process operation registry
-//	cloud-backup:clear-credential UNBOUND  missing port, see below
+//	cloud-backup:clear-credential served   removes that record, by the credentials binder
 //
 // # The destination this lane can honestly offer
 //
 // The desktop's destination is a WebDAV endpoint the author types, with a secret
 // the main process keeps (electron/services/cloud-credential-store.ts) and a
 // binding document whose single writer is B02
-// (docs/plans/novel-quality-program-v3-2026-09-13/specs/B02.md:15). This lane has
-// none of those three ports:
+// (docs/plans/novel-quality-program-v3-2026-09-13/specs/B02.md:15). One of those
+// three ports now exists and two do not:
 //
-//   - EGRESS. A request-supplied endpoint cannot become a dialable origin here.
-//     internal/egress admits only an immutable origin set, and this lane's one
-//     committed set is derived from the author's own model profiles
+//   - CREDENTIAL. The server-side secret store the desktop's safeStorage was
+//     replaced with: one sealed record under this store's root
+//     (internal/cloudbackup's credential record, sealed with internal/secrets and
+//     read back only as non-secret metadata). connect creates or replaces it,
+//     clear-credential removes it, and cloudbackup.ResolveCredential is the one
+//     read that could return the secret - no wired operation calls it.
+//   - EGRESS. A request-supplied endpoint still cannot become a dialable origin
+//     here. internal/egress admits only an immutable origin set, and this lane's
+//     one committed set is derived from the author's own model profiles
 //     (production_model_egress_linux.go:47-56: "the production lane has no
 //     administrator flag"). operations.json:20 says proxy/egress/global-credential
 //     administration needs role enforcement a string routing scope cannot
 //     distinguish, so an author-supplied backup origin has no admittable policy.
-//   - CREDENTIAL. There is no server-side secret store bound to an endpoint
-//     account id; internal/secrets owns a key file, not the per-endpoint records
-//     cloud-backup:connect would have to create, read at call time and clear.
 //   - BINDING. cloud-backup-bindings.json has exactly one writer (B02), and this
 //     lane must not become a second one. Nothing here persists a binding.
 //
-// So cloud-backup:connect and cloud-backup:clear-credential stay unbound: both
-// exist only to administer that remote account, and answering either without the
-// three ports above would be a confident wrong answer about the author's backup.
+// The consequence is stated rather than hidden: connect answers `connected` on
+// the strength of a record it re-read from disk, never on a probe of the endpoint
+// (there is no admittable origin to probe), and reports the account as
+// `server-encrypted` rather than `os-backed`. The destination a backup writes to
+// remains the server's own store below, so a stored credential is the account of
+// the family's wire shape - the port that was missing - not a claim that a remote
+// destination was reached.
 //
 // What IS served is the self-hosted destination this product actually has: the
 // server's own append-only generation store (internal/cloudbackup), addressed by
@@ -136,10 +143,12 @@ const (
 	productionCloudBackupListName    = "cloud-backup:list"
 	productionCloudBackupRestoreName = "cloud-backup:restore-copy"
 	productionCloudBackupCancelName  = "cloud-backup:cancel"
-	// The two names this lane deliberately leaves unbound. They are named here so
-	// the refusal is a decision in code, and this file's test asserts they still
-	// answer GO_OPERATION_NOT_MIGRATED: a half-served credential surface would be
-	// worse than an honest 501.
+	// The two credential names. This file's Bind does not install them: the
+	// lifecycle is a separate binder with its own sealed store port
+	// (production_cloud_backup_credentials_linux.go). They are named here because
+	// the family's wire vocabulary is defined in one place, and this file's test
+	// asserts that the six-name binder alone leaves them unbound at
+	// GO_OPERATION_NOT_MIGRATED rather than answering them half-served.
 	productionCloudBackupConnectName = "cloud-backup:connect"
 	productionCloudBackupClearName   = "cloud-backup:clear-credential"
 

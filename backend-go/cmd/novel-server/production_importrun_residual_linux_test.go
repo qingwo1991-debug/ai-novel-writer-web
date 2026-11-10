@@ -859,10 +859,9 @@ func TestProductionImportRunResidualsServeAdmittedAuthorDatabase(t *testing.T) {
 		f := newProductionImportRunResidualFixture(t)
 		settled := productionImportRunResidualImage(t, f.database)
 		execution := productionImportRunResidualLeaseWire(3)
-		// db:import-run-prepare-inspection: no author-purpose prepare()
-		// (internal/store/importrun_lifecycle.go:26-34), which is also why its
-		// dependent db:import-run-author-preview is now bound but refuses the
-		// inspection-id form with IMPORT_INSPECTION_OWNER_UNAVAILABLE.
+		// db:import-run-prepare-inspection: served by its own binder, which holds
+		// the picker's receipt store this adapter does not; nothing is installed for
+		// it here, so this lane still answers 501 for it.
 		productionImportRunResidualStaysUnbound(t, f.author,
 			productionImportRunResidualPrepareInspectionName, []any{
 				map[string]any{"inspectionId": "inspection-1", "runId": productionImportRunResidualParseRunID,

@@ -921,8 +921,8 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// The six cloud-backup names a self-hosted product actually needs: a verified
 		// archive with a manifest, a listing, and a restore that proves the payload and
 		// protects the live project with a pre-restore generation before it refuses to
-		// overwrite it. connect and clear-credential stay unbound: an endpoint named by
-		// a request has no admittable egress policy in this lane
+		// overwrite it. This is the binder that writes and proves generations; the
+		// credential half of the family is bound just below
 		// (production_cloud_backup_linux.go, internal/cloudbackup).
 		func() error { return newProductionCloudBackup(open, config).Bind(server) },
 		// The chapter family's four deletion names. The state machine lives in the

@@ -842,12 +842,14 @@ func TestProductionImportRunReceiptsServe2WiringRecord(t *testing.T) {
 }
 
 // TestProductionImportRunReceiptsServe2SeamIsGone pins the seam and the decision
-// table against the two served names: neither may keep a seam row, both must be
-// decided served, and the one remaining refusal must still have its row.
+// table against the family: no served name may keep a seam row, every name must be
+// decided served, and the whole family's seam table must be empty now that
+// db:import-run-prepare-inspection has its own binder.
 func TestProductionImportRunReceiptsServe2SeamIsGone(t *testing.T) {
 	served := map[string]bool{
-		productionImportRunReceiptsPrepareOperation: true,
-		productionImportRunReceiptsCommitOperation:  true,
+		productionImportRunReceiptsPrepareOperation:    true,
+		productionImportRunReceiptsCommitOperation:     true,
+		productionImportRunReceiptsInspectionOperation: true,
 	}
 	decided := make(map[string]productionImportRunReceiptServeDecision)
 	for _, decision := range productionImportRunReceiptServeDecisions() {
@@ -871,6 +873,7 @@ func TestProductionImportRunReceiptsServe2SeamIsGone(t *testing.T) {
 	expected := []string{
 		productionImportRunReceiptsCommitOperation,
 		productionImportRunReceiptsPrepareOperation,
+		productionImportRunReceiptsInspectionOperation,
 	}
 	got := productionImportRunReceiptServedOperations()
 	if len(got) != len(expected) {
@@ -881,12 +884,8 @@ func TestProductionImportRunReceiptsServe2SeamIsGone(t *testing.T) {
 			t.Fatalf("the served set is %v, want %v", got, expected)
 		}
 	}
-	inspection, seamed := productionImportRunReceiptSeamFor(productionImportRunReceiptsInspectionOperation)
-	if !seamed {
-		t.Fatalf("%v lost its seam row", productionImportRunReceiptsInspectionOperation)
-	}
-	if decided[inspection.Operation].Served {
-		t.Fatalf("%v is decided served while nothing serves it", inspection.Operation)
+	if _, seamed := productionImportRunReceiptSeamFor(productionImportRunReceiptsInspectionOperation); seamed {
+		t.Fatalf("%v still has a seam row", productionImportRunReceiptsInspectionOperation)
 	}
 	if err := productionImportRunReceiptServeAgrees(productionImportRunReceiptServeDecisions(),
 		productionImportRunReceiptSeams()); err != nil {

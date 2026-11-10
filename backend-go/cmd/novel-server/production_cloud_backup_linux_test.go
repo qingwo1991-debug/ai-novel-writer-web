@@ -508,16 +508,19 @@ func TestProductionCloudBackupListReportsVerifiedGenerations(t *testing.T) {
 		t.Fatalf("cloud-backup:list answered %v for an account with no credential; want %v", code, productionCloudBackupCredentialMissing)
 	}
 
-	// The two names this lane refuses are not in the bound set: asking for one
-	// answers 501 GO_OPERATION_NOT_MIGRATED, which is the engine saying the name
-	// is inventoried and unbound. The empty argument list is what makes this the
-	// engine's answer: a null one is refused by the request validator at 400
-	// before the binding is ever consulted.
+	// The two credential names are not in THIS binder's bound set: asking this lane
+	// for one answers 501 GO_OPERATION_NOT_MIGRATED, which is the engine saying the
+	// name is inventoried and unbound here. The lifecycle itself is real and served
+	// by production_cloud_backup_credentials_linux.go, whose own test binds both
+	// names over the same lane; this assertion pins only that the six-generation
+	// binder does not answer them half-served. The empty argument list is what makes
+	// this the engine's answer: a null one is refused by the request validator at
+	// 400 before the binding is ever consulted.
 	for _, operation := range []string{productionCloudBackupConnectName, productionCloudBackupClearName} {
 		response := author.call(t, operation, []any{})
 		body := response.Body.String()
 		if response.Code != http.StatusNotImplemented || !strings.Contains(body, "GO_OPERATION_NOT_MIGRATED") {
-			t.Fatalf("%v is served by this lane, but it has no credential port to serve it with: %d %s", operation, response.Code, body)
+			t.Fatalf("%v is served by the six-generation binder, but its credential port is a separate binder: %d %s", operation, response.Code, body)
 		}
 	}
 }

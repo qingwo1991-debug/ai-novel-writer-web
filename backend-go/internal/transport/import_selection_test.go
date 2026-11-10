@@ -78,7 +78,7 @@ func TestImportSelectionAuthorInspectionUsesTrustedCaptureAndOneUseReceipt(t *te
 	}
 }
 
-func TestImportSelectionRejectsUnboundAuthorityAndReferenceDurability(t *testing.T) {
+func TestImportSelectionRejectsUnboundAuthorityAndAdmitsBothPurposes(t *testing.T) {
 	server := fixture(t)
 	store, err := importsource.NewStore([]byte("0123456789abcdef0123456789abcdef"), importsource.StoreOptions{})
 	if err != nil {
@@ -103,6 +103,7 @@ func TestImportSelectionRejectsUnboundAuthorityAndReferenceDurability(t *testing
 		{map[string]any{"runId": "run-1", "purpose": "author-manuscript", "locale": "zh-CN", "expectedProjectPath": "/private/book", "filePath": "/etc/passwd"}, expected},
 		{request, map[string]any{"projectId": "project-1", "leaseId": "lease-1", "projectPath": "/private/book", "extra": true}},
 		{map[string]any{"runId": "run-1", "purpose": "author-manuscript", "locale": "zh-CN", "expectedProjectPath": "/other/book"}, expected},
+		{map[string]any{"runId": "run-1", "purpose": "other-purpose", "locale": "zh-CN", "expectedProjectPath": "/private/book"}, expected},
 	} {
 		if _, err := server.handlers["dialog:select-novel-files"](context.Background(), caller, args); err == nil {
 			t.Fatalf("invalid request accepted: %+v", args)
@@ -111,15 +112,21 @@ func TestImportSelectionRejectsUnboundAuthorityAndReferenceDurability(t *testing
 	if calls != 0 {
 		t.Fatal("invalid request reached source provider")
 	}
+	// Both purposes the renderer declares reach the provider. This provider answers
+	// a foreign project, so the binder refuses the identity it returned - the point
+	// is that the reference purpose is no longer refused before the provider runs.
 	reference := map[string]any{"runId": "run-1", "purpose": "reference", "locale": "zh-CN", "expectedProjectPath": "/private/book"}
-	if _, err := server.handlers["dialog:select-novel-files"](context.Background(), caller, []any{reference, expected}); err == nil || !strings.Contains(err.Error(), "IMPORT_DURABLE_PARSING_REQUIRED") {
-		t.Fatalf("reference parsing falsely admitted: %v", err)
+	if _, err := server.handlers["dialog:select-novel-files"](context.Background(), caller, []any{reference, expected}); err == nil || !strings.Contains(err.Error(), "IMPORT_SELECTION_FAILED") {
+		t.Fatalf("reference selection accepted a foreign project: %v", err)
 	}
-	if calls != 0 {
-		t.Fatal("reference selection reached source provider")
+	if calls != 1 {
+		t.Fatalf("the reference selection did not reach the provider: calls=%d", calls)
 	}
 	if _, err := server.handlers["dialog:select-novel-files"](context.Background(), caller, []any{request, expected}); err == nil || !strings.Contains(err.Error(), "IMPORT_SELECTION_FAILED") {
 		t.Fatalf("foreign project selection accepted: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("the author selection did not reach the provider: calls=%d", calls)
 	}
 	if store.ActiveCount() != 0 {
 		t.Fatal("foreign project left an inspection receipt")

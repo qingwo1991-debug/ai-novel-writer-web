@@ -86,7 +86,9 @@ var productionPrepareInspectionSchema = []string{
 	"CREATE TABLE drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, chapter_number INTEGER NOT NULL, version INTEGER NOT NULL, status TEXT DEFAULT 'draft', source TEXT DEFAULT 'write', content_id INTEGER NOT NULL, word_count INTEGER DEFAULT 0, source_dependencies TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
 	"CREATE TABLE finalization_outbox (finalization_id TEXT PRIMARY KEY, draft_id INTEGER NOT NULL UNIQUE, chapter_number INTEGER NOT NULL, chapter_title TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL, content_revision INTEGER NOT NULL, content_snapshot TEXT NOT NULL DEFAULT '', target_file_name TEXT NOT NULL, knowledge_document_id TEXT NOT NULL DEFAULT '', publication_status TEXT NOT NULL DEFAULT 'pending', last_error TEXT NOT NULL DEFAULT '', published_at TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))",
 	"CREATE TABLE import_runs (id TEXT PRIMARY KEY, purpose TEXT NOT NULL DEFAULT '', root_run_id TEXT NOT NULL DEFAULT '', effect_namespace TEXT NOT NULL DEFAULT '', source_fingerprint TEXT NOT NULL DEFAULT '', manifest_fingerprint TEXT NOT NULL DEFAULT '', authority_fingerprint TEXT NOT NULL DEFAULT '', legacy_source_fingerprint TEXT NOT NULL DEFAULT '', source_display_json TEXT NOT NULL DEFAULT '[]', locale TEXT NOT NULL DEFAULT 'zh-CN', stage TEXT NOT NULL DEFAULT 'prepared', status TEXT NOT NULL DEFAULT 'ready', completed_batches_json TEXT NOT NULL DEFAULT '{}', last_error TEXT NOT NULL DEFAULT '', resumable INTEGER NOT NULL DEFAULT 1, cancel_requested INTEGER NOT NULL DEFAULT 0, execution_owner TEXT NOT NULL DEFAULT '', execution_epoch INTEGER NOT NULL DEFAULT 0, lease_expires_at INTEGER NOT NULL DEFAULT 0, total_chapters INTEGER NOT NULL DEFAULT 0, total_content_size INTEGER NOT NULL DEFAULT 0, manifest_chapter_count INTEGER NOT NULL DEFAULT 0, manifest_content_size INTEGER NOT NULL DEFAULT 0, manifest_word_count INTEGER NOT NULL DEFAULT 0, completed_chapters INTEGER NOT NULL DEFAULT 0, base_run_id TEXT, created_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:11', updated_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:12', completed_at TEXT)",
-	"CREATE TABLE import_run_sources (run_id TEXT NOT NULL, source_index INTEGER NOT NULL, source_id TEXT NOT NULL, source_fingerprint TEXT NOT NULL, display_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, chapter_count INTEGER NOT NULL DEFAULT 0, content_size INTEGER NOT NULL DEFAULT 0, word_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:13', PRIMARY KEY (run_id, source_index))",
+	"CREATE TABLE import_run_sources (run_id TEXT NOT NULL, source_index INTEGER NOT NULL, source_id TEXT NOT NULL, source_fingerprint TEXT NOT NULL, legacy_source_fingerprint TEXT NOT NULL DEFAULT '', display_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', manifest_fingerprint TEXT NOT NULL DEFAULT '', chapter_count INTEGER NOT NULL DEFAULT 0, content_size INTEGER NOT NULL DEFAULT 0, word_count INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:13', PRIMARY KEY (run_id, source_id), UNIQUE (run_id, source_index))",
+	"CREATE TABLE import_run_source_chapters (run_id TEXT NOT NULL, source_id TEXT NOT NULL, source_chapter_number INTEGER NOT NULL, title TEXT NOT NULL, content_fingerprint TEXT NOT NULL, content_size INTEGER NOT NULL, word_count INTEGER NOT NULL, content_snapshot TEXT NOT NULL, PRIMARY KEY (run_id, source_id, source_chapter_number))",
+	"CREATE TABLE import_source_chapter_map (purpose TEXT NOT NULL, source_id TEXT NOT NULL, source_chapter_number INTEGER NOT NULL, chapter_number INTEGER NOT NULL, PRIMARY KEY (purpose, source_id, source_chapter_number), UNIQUE (purpose, chapter_number))",
 	"CREATE TABLE import_run_chapters (run_id TEXT NOT NULL, chapter_number INTEGER NOT NULL, source_id TEXT NOT NULL DEFAULT '', source_chapter_number INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT '', content_fingerprint TEXT NOT NULL DEFAULT '', content_size INTEGER NOT NULL DEFAULT 0, content_snapshot TEXT NOT NULL DEFAULT '', PRIMARY KEY (run_id, chapter_number))",
 	"CREATE TABLE import_effect_ledger (run_id TEXT NOT NULL, stage TEXT NOT NULL, batch_id TEXT NOT NULL, effect_namespace TEXT NOT NULL DEFAULT '', effect_key TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, evidence_kind TEXT NOT NULL DEFAULT '', diagnostic_code TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:14', PRIMARY KEY (run_id, stage, batch_id))",
 	"CREATE TABLE import_run_receipts (run_id TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1, effect_namespace TEXT NOT NULL DEFAULT '', effect_key TEXT NOT NULL DEFAULT '', stage TEXT NOT NULL, batch_id TEXT NOT NULL, kind TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}', payload_hash TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, effect_receipt_json TEXT, created_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:15', updated_at TEXT NOT NULL DEFAULT '2024-05-06 09:10:16', PRIMARY KEY (run_id, stage, batch_id))",
@@ -208,6 +210,13 @@ func newProductionPrepareInspectionLane(t *testing.T) *productionPrepareInspecti
 	}
 	if bindErr := newProductionFinalizedDraftImports(open.durable, adapter).Bind(server); bindErr != nil {
 		t.Fatalf("bind db:import-run-author-preview: %v", bindErr)
+	}
+	// The residual slice installs db:import-run-finalize-parsing, -restart, -fail and
+	// -effect-receipt-get over the same durable bridge, which is what lets the
+	// reference arm's refusals be driven on the wire rather than asserted against the
+	// store alone.
+	if bindErr := newProductionImportRunResiduals(open.durable).Bind(server); bindErr != nil {
+		t.Fatalf("bind the import-run residual slice: %v", bindErr)
 	}
 	author, frozen := productionExecuteSession(t, mux, projectPath, productionPrepareInspectionNonce)
 	return &productionPrepareInspectionLane{open: open, route: route, mux: mux, server: server,
@@ -720,5 +729,325 @@ func TestProductionImportRunPrepareInspectionWiringLanded(t *testing.T) {
 		productionSeamCompact("newProductionImportSelection(open, uploads)")); count != 1 {
 		t.Fatalf("production_open_linux.go constructs the picker %d times, want one shared store",
 			count)
+	}
+}
+
+// referenceRequest is ImportRunPrepareFromInspectionRequest's reference arm
+// (src/shared/import-run.ts:306-310): the receipt id, the run id, the purpose and
+// the locale. It carries no fingerprints - the reference arm has no preview to
+// compare, because its receipt is the frozen manuscript itself.
+func (l *productionPrepareInspectionLane) referenceRequest(inspectionID, runID string) map[string]any {
+	return map[string]any{
+		"inspectionId": inspectionID,
+		"runId":        runID,
+		"purpose":      string(importsource.Reference),
+		"locale":       "zh-CN",
+	}
+}
+
+// selectReferenceInspection runs the served picker with the reference purpose and
+// returns the receipt it minted.
+func (l *productionPrepareInspectionLane) selectReferenceInspection(t *testing.T) string {
+	t.Helper()
+	request := l.request()
+	request["purpose"] = string(importsource.Reference)
+	response := l.author.call(t, "dialog:select-novel-files", []any{request, l.frozen})
+	if response.Code != http.StatusOK {
+		t.Fatalf("the picker refused a reference selection: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "previewCAS") {
+		t.Fatal("the picker put the preview CAS on the wire; it is a server-side handoff")
+	}
+	var wire productionImportWire
+	if err := decodeProductionPrepareInspection(response.Body.Bytes(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	if !wire.Success || wire.Inspection.InspectionID == "" ||
+		wire.Inspection.Purpose != string(importsource.Reference) {
+		t.Fatalf("the picker did not mint a reference inspection: %s", response.Body.String())
+	}
+	if wire.Inspection.ChapterCount != productionPrepareInspectionChapters {
+		t.Fatalf("the reference picker froze %d chapters, want %d",
+			wire.Inspection.ChapterCount, productionPrepareInspectionChapters)
+	}
+	return wire.Inspection.InspectionID
+}
+
+// prepareReference runs the reference arm of the served prepare and returns its
+// decoded envelope.
+func (l *productionPrepareInspectionLane) prepareReference(t *testing.T,
+	inspectionID, runID string) productionPrepareInspectionPreparation {
+	t.Helper()
+	response := l.author.call(t, productionImportRunPrepareInspectionOperation,
+		[]any{l.referenceRequest(inspectionID, runID), l.project, l.frozen})
+	if response.Code != http.StatusOK {
+		t.Fatalf("the reference prepare answered %d %s", response.Code, response.Body.String())
+	}
+	var preparation productionPrepareInspectionPreparation
+	if err := decodeProductionPrepareInspection(response.Body.Bytes(), &preparation); err != nil {
+		t.Fatalf("%v: %s", err, response.Body.String())
+	}
+	return preparation
+}
+
+// TestProductionImportRunPrepareInspectionParsesTheReferenceManuscript is the
+// reference arm's whole journey: stage a TXT manuscript, mint a reference receipt,
+// prepare it (BeginParsing -> CommitParsedSource -> FinalizeParsing) and read the
+// prepared run back over a SEPARATE mode=ro connection. The receipt is one-use, so
+// the same id cannot create a second run.
+func TestProductionImportRunPrepareInspectionParsesTheReferenceManuscript(t *testing.T) {
+	lane := newProductionPrepareInspectionLane(t)
+	lane.stage(t, productionPrepareInspectionSourceName,
+		productionPrepareInspectionManuscript(productionPrepareInspectionChapters))
+	inspectionID := lane.selectReferenceInspection(t)
+	prepared := lane.prepareReference(t, inspectionID, productionPrepareInspectionRunID)
+	if !prepared.Success {
+		t.Fatalf("the reference prepare refused a live receipt: %v", prepared.ErrorCode)
+	}
+	if prepared.Preparation.Classification != "new" {
+		t.Fatalf("the reference run was classified %v, want new", prepared.Preparation.Classification)
+	}
+	run := prepared.Preparation.Run
+	if run == nil || syntheticString(run["id"]) != productionPrepareInspectionRunID {
+		t.Fatalf("the preparation carries no run for %v", productionPrepareInspectionRunID)
+	}
+	if syntheticString(run["stage"]) != "prepared" || syntheticString(run["status"]) != "ready" ||
+		syntheticString(run["purpose"]) != "reference" {
+		t.Fatalf("the run was created at %v/%v/%v, want prepared/ready/reference",
+			run["stage"], run["status"], run["purpose"])
+	}
+	if len(prepared.Preparation.NewChapterNumbers) != productionPrepareInspectionChapters ||
+		len(prepared.Preparation.ConflictChapterNumbers) != 0 {
+		t.Fatalf("the reference preparation answered new=%d conflict=%d",
+			len(prepared.Preparation.NewChapterNumbers),
+			len(prepared.Preparation.ConflictChapterNumbers))
+	}
+
+	handle := productionPrepareInspectionReadOnly(t, lane.database)
+	var stage, status, purpose, locale, manifest string
+	var resumable, totalChapters, manifestChapterCount, manifestContentSize, manifestWordCount int64
+	if err := handle.QueryRow(`SELECT stage, status, purpose, locale, manifest_fingerprint,
+ resumable, total_chapters, manifest_chapter_count, manifest_content_size, manifest_word_count
+ FROM import_runs WHERE id = ?`, productionPrepareInspectionRunID).Scan(&stage, &status, &purpose,
+		&locale, &manifest, &resumable, &totalChapters, &manifestChapterCount,
+		&manifestContentSize, &manifestWordCount); err != nil {
+		t.Fatalf("read the prepared reference run back over mode=ro: %v", err)
+	}
+	if stage != "prepared" || status != "ready" || purpose != "reference" ||
+		locale != "zh-CN" || resumable != 1 {
+		t.Fatalf("the prepared run is %v/%v/%v/%v resumable=%d",
+			stage, status, purpose, locale, resumable)
+	}
+	if len(manifest) != 64 {
+		t.Fatalf("the prepared run carries manifest %q, want a digest", manifest)
+	}
+	if totalChapters != productionPrepareInspectionChapters ||
+		manifestChapterCount != productionPrepareInspectionChapters ||
+		manifestContentSize <= 0 || manifestWordCount <= 0 {
+		t.Fatalf("the prepared manifest is %d chapters of %d bytes, %d words (total %d)",
+			manifestChapterCount, manifestContentSize, manifestWordCount, totalChapters)
+	}
+
+	// The source row the parsing lane completed, with its own per-source manifest.
+	var sourceID, sourceStatus, sourceManifest string
+	var sourceChapters, sourceBytes, sourceWords int64
+	if err := handle.QueryRow(`SELECT source_id, status, manifest_fingerprint, chapter_count,
+ content_size, word_count FROM import_run_sources WHERE run_id = ?`,
+		productionPrepareInspectionRunID).Scan(&sourceID, &sourceStatus, &sourceManifest,
+		&sourceChapters, &sourceBytes, &sourceWords); err != nil {
+		t.Fatalf("read the completed source back: %v", err)
+	}
+	if sourceStatus != "completed" || len(sourceManifest) != 64 {
+		t.Fatalf("the source is %v with manifest %q, want completed with a digest",
+			sourceStatus, sourceManifest)
+	}
+	if sourceChapters != productionPrepareInspectionChapters || sourceBytes <= 0 || sourceWords <= 0 {
+		t.Fatalf("the source declared %d chapters of %d bytes, %d words",
+			sourceChapters, sourceBytes, sourceWords)
+	}
+	if sourceBytes != manifestContentSize || sourceWords != manifestWordCount {
+		t.Fatalf("the run manifest (%d bytes, %d words) does not match its source (%d, %d)",
+			manifestContentSize, manifestWordCount, sourceBytes, sourceWords)
+	}
+
+	var frozenSourceChapters int64
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM import_run_source_chapters
+ WHERE run_id = ? AND source_id = ?`, productionPrepareInspectionRunID, sourceID).
+		Scan(&frozenSourceChapters); err != nil {
+		t.Fatalf("count the frozen source chapters: %v", err)
+	}
+	if frozenSourceChapters != productionPrepareInspectionChapters {
+		t.Fatalf("the source froze %d chapters, want %d", frozenSourceChapters,
+			productionPrepareInspectionChapters)
+	}
+
+	// The adopted chapters: the staged body, its own digest, and the source's local
+	// chapter number (the reference numbers chapters globally; one source keeps 1..N).
+	rows, err := handle.Query(`SELECT chapter_number, source_chapter_number, title,
+ content_snapshot, content_fingerprint, source_id FROM import_run_chapters
+ WHERE run_id = ? ORDER BY chapter_number`, productionPrepareInspectionRunID)
+	if err != nil {
+		t.Fatalf("read the adopted reference chapters back: %v", err)
+	}
+	seen := make(map[int64]bool, productionPrepareInspectionChapters)
+	for rows.Next() {
+		var number, sourceNumber int64
+		var title, content, fingerprint, chapterSource string
+		if err := rows.Scan(&number, &sourceNumber, &title, &content, &fingerprint,
+			&chapterSource); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan an adopted reference chapter: %v", err)
+		}
+		if seen[number] {
+			_ = rows.Close()
+			t.Fatalf("chapter %d was written twice", number)
+		}
+		seen[number] = true
+		if number != sourceNumber {
+			_ = rows.Close()
+			t.Fatalf("chapter %d froze source chapter %d; one source keeps its own numbers",
+				number, sourceNumber)
+		}
+		if content != productionPrepareInspectionChapterBody(int(number)) {
+			_ = rows.Close()
+			t.Fatalf("chapter %d did not freeze the staged body", number)
+		}
+		if fingerprint != sha256Hex(content) {
+			_ = rows.Close()
+			t.Fatalf("chapter %d did not freeze its own digest", number)
+		}
+		if chapterSource != sourceID || title == "" {
+			_ = rows.Close()
+			t.Fatalf("chapter %d names source %v / title %q", number, chapterSource, title)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatalf("iterate the adopted reference chapters: %v", err)
+	}
+	_ = rows.Close()
+	if len(seen) != productionPrepareInspectionChapters {
+		t.Fatalf("the run adopted %d chapters, want %d", len(seen), productionPrepareInspectionChapters)
+	}
+
+	// The stable map the next import of the same source compares against.
+	var mappings int64
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM import_source_chapter_map
+ WHERE purpose = 'reference' AND source_id = ?`, sourceID).Scan(&mappings); err != nil {
+		t.Fatalf("count the reference chapter map: %v", err)
+	}
+	if mappings != productionPrepareInspectionChapters {
+		t.Fatalf("the reference map holds %d rows, want %d", mappings,
+			productionPrepareInspectionChapters)
+	}
+
+	// The receipt is one-use: the same id cannot create a second run.
+	replay := lane.author.call(t, productionImportRunPrepareInspectionOperation,
+		[]any{lane.referenceRequest(inspectionID, productionPrepareInspectionRunID+"-replay"),
+			lane.project, lane.frozen})
+	if replay.Code == http.StatusOK ||
+		!strings.Contains(replay.Body.String(), "IMPORT_INSPECTION_EXPIRED") {
+		t.Fatalf("a spent reference receipt answered %d %s, want IMPORT_INSPECTION_EXPIRED",
+			replay.Code, replay.Body.String())
+	}
+	var runs int64
+	if err := handle.QueryRow(`SELECT COUNT(*) FROM import_runs`).Scan(&runs); err != nil {
+		t.Fatalf("count the runs: %v", err)
+	}
+	if runs != 1 {
+		t.Fatalf("the lane committed %d runs, want the one", runs)
+	}
+}
+
+// TestProductionImportRunPrepareInspectionReferenceRefusals pins the reference arm's
+// symbolic refusals on the wire: a receipt is bound to its purpose, the parsing
+// stage is closed once finalized, a prepared run is not restartable, a missing
+// receipt is null (the reference's own answer, not a refusal), and a malformed
+// request is refused before the receipt is spent.
+func TestProductionImportRunPrepareInspectionReferenceRefusals(t *testing.T) {
+	lane := newProductionPrepareInspectionLane(t)
+	lane.stage(t, productionPrepareInspectionSourceName,
+		productionPrepareInspectionManuscript(productionPrepareInspectionChapters))
+	referenceID := lane.selectReferenceInspection(t)
+
+	// The receipt is frozen for purpose reference, so the author arm cannot spend it:
+	// the binding's purpose is part of what the store compares.
+	authorRequest := lane.prepareRequest(referenceID, productionPrepareInspectionRunID+"-author",
+		productionPrepareInspectionPreview{AuthorityFingerprint: strings.Repeat("a", 64),
+			ManifestFingerprint: strings.Repeat("b", 64)})
+	crossPurpose := lane.author.call(t, productionImportRunPrepareInspectionOperation,
+		[]any{authorRequest, lane.project, lane.frozen})
+	if crossPurpose.Code == http.StatusOK ||
+		!strings.Contains(crossPurpose.Body.String(), "IMPORT_INSPECTION_EXPIRED") {
+		t.Fatalf("the author arm spent a reference receipt: %d %s",
+			crossPurpose.Code, crossPurpose.Body.String())
+	}
+	if active := lane.selection.store.ActiveCount(); active != 1 {
+		t.Fatalf("the cross-purpose refusal left %d receipts, want the one", active)
+	}
+
+	// The reference arm still resolves the receipt the author arm could not.
+	prepared := lane.prepareReference(t, referenceID, productionPrepareInspectionRunID)
+	if !prepared.Success || prepared.Preparation.Classification != "new" {
+		t.Fatalf("the reference arm refused a receipt the author arm did not spend: %v %v",
+			prepared.ErrorCode, prepared.Preparation.Classification)
+	}
+
+	// The run left 'parsing': finalizing it again is IMPORT_RUN_PARSING_CLOSED.
+	finalize := lane.author.call(t, "db:import-run-finalize-parsing",
+		[]any{productionPrepareInspectionRunID, lane.project, lane.frozen})
+	if finalize.Code == http.StatusOK ||
+		!strings.Contains(finalize.Body.String(), "IMPORT_RUN_PARSING_CLOSED") {
+		t.Fatalf("a second finalize answered %d %s, want IMPORT_RUN_PARSING_CLOSED",
+			finalize.Code, finalize.Body.String())
+	}
+
+	// A prepared run is not failed or cancelled, so it is not restartable.
+	restart := lane.author.call(t, "db:import-run-restart",
+		[]any{productionPrepareInspectionRunID, productionPrepareInspectionRunID + "-next",
+			lane.project, lane.frozen})
+	if restart.Code == http.StatusOK ||
+		!strings.Contains(restart.Body.String(), "IMPORT_RUN_NOT_RESTARTABLE") {
+		t.Fatalf("restarting a prepared run answered %d %s, want IMPORT_RUN_NOT_RESTARTABLE",
+			restart.Code, restart.Body.String())
+	}
+
+	// A receipt that was never written is null, exactly as the reference answers.
+	receipt := lane.author.call(t, "db:import-run-effect-receipt-get",
+		[]any{productionPrepareInspectionRunID, "global", "done", lane.project, lane.frozen})
+	if receipt.Code != http.StatusOK {
+		t.Fatalf("db:import-run-effect-receipt-get answered %d %s",
+			receipt.Code, receipt.Body.String())
+	}
+	var raw json.RawMessage
+	if err := decodeProductionPrepareInspection(receipt.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("%v: %s", err, receipt.Body.String())
+	}
+	if string(raw) != "null" {
+		t.Fatalf("a missing reference receipt answered %s, want null", receipt.Body.String())
+	}
+
+	// A malformed reference request is refused before the receipt is touched.
+	freshID := lane.selectReferenceInspection(t)
+	badLocale := lane.referenceRequest(freshID, productionPrepareInspectionRunID+"-locale")
+	badLocale["locale"] = "fr-FR"
+	localeAnswer := lane.author.call(t, productionImportRunPrepareInspectionOperation,
+		[]any{badLocale, lane.project, lane.frozen})
+	if localeAnswer.Code != http.StatusBadRequest ||
+		!strings.Contains(localeAnswer.Body.String(), "IMPORT_RUN_LOCALE_INVALID") {
+		t.Fatalf("a bad locale answered %d %s, want IMPORT_RUN_LOCALE_INVALID",
+			localeAnswer.Code, localeAnswer.Body.String())
+	}
+	badPurpose := lane.referenceRequest(freshID, productionPrepareInspectionRunID+"-purpose")
+	badPurpose["purpose"] = "not-a-purpose"
+	purposeAnswer := lane.author.call(t, productionImportRunPrepareInspectionOperation,
+		[]any{badPurpose, lane.project, lane.frozen})
+	if purposeAnswer.Code != http.StatusBadRequest ||
+		!strings.Contains(purposeAnswer.Body.String(), "IMPORT_RUN_PURPOSE_INVALID") {
+		t.Fatalf("a bad purpose answered %d %s, want IMPORT_RUN_PURPOSE_INVALID",
+			purposeAnswer.Code, purposeAnswer.Body.String())
+	}
+	if active := lane.selection.store.ActiveCount(); active != 1 {
+		t.Fatalf("the malformed requests spent the receipt: %d active, want 1", active)
 	}
 }
