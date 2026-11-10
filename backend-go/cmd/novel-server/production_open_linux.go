@@ -436,7 +436,7 @@ func (p *productionOpen) refreshModelEgress() error {
 	p.modelEgress = plan
 	p.modelEgressErr = nil
 	if previous != nil && previous.policy != nil {
-		_ = previous.policy.Close()
+		previous.policy.Close()
 	}
 	return nil
 }
