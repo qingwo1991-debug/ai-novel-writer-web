@@ -108,9 +108,10 @@ import (
 //
 //   - No row can become this session's run. begin is refused by this lane
 //     (production_finalization_generation_linux.go:164), and the served read
-//     refuses every row that does carry the slot key with
-//     GENERATION_FINALIZATION_CONTEXT_INVALID (synthetic_graph_linux.go:156)
-//     because it cannot prove the frozen context.
+//     only projects a row whose committed slot reproduces the requested key
+//     (synthetic_graph_linux.go:199) - it refuses a row whose committed slot
+//     cannot be proved with GENERATION_FINALIZATION_CONTEXT_INVALID
+//     (synthetic_graph_linux.go:211).
 //   - The freeze has no Go producer. finalizationGenerationTask
 //     (electron/services/finalization-generation-source.ts:47) renders a
 //     PromptTemplate through renderPrompt, and no Go file in this module names

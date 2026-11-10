@@ -19,6 +19,7 @@ import (
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/prompttemplate"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
@@ -33,7 +34,7 @@ const (
 	productionGraphReadsFrozenEpoch           = "lease-0000000003-frozen-history"
 	productionGraphReadsOperation             = "plot-tree-snapshot"
 	productionGraphReadsFinalizationOp        = "finalized-character-state"
-	productionGraphReadsStepKey               = "chapter_notes"
+	productionGraphReadsStepKey               = "character_cards"
 	productionGraphReadsOwnedFinalizationID   = "graph-reads-owned-finalization"
 	productionGraphReadsForeignFinalizationID = "graph-reads-foreign-finalization"
 	productionGraphReadsAbsentFinalizationID  = "graph-reads-absent-finalization"
@@ -74,11 +75,15 @@ var productionGraphReadsContentHash = strings.Repeat("d", 64)
 // row written under the live lease and such a row cannot be seeded into a database
 // the admission permit has already hashed.
 //
-// finalization-generation:read does answer 200 with real seeded state: the slot
+// finalization-generation:read does answer 200 with real seeded state. The slot
 // no run owns comes back as JSON null out of a look-up over the seeded rows,
-// which is what the renderer reads as "nothing to resume". The two slots that do
-// exist are refused with their own codes, which is what proves the seeded rows
-// were found.
+// which is what the renderer reads as "nothing to resume". The row this project
+// owns carries the slot it was frozen for, so that committed slot is re-derived
+// into the requested key and the row is projected as the recovery begin replays
+// - which is what proves the seeded row was found and matched rather than
+// answered with a constant. The row another project owns is still the original's
+// slot conflict, and a step key outside the frozen vocabulary is still refused
+// before the database is read.
 func TestProductionLaneServesGraphAndFinalizationReads(t *testing.T) {
 	root, projectPath, database, contract := productionGraphReadsRoot(t)
 	graphRunID, graphRootID := productionGraphReadsSeedLedger(t, database)
@@ -138,14 +143,33 @@ func TestProductionLaneServesGraphAndFinalizationReads(t *testing.T) {
 		if string(result) != "null" {
 			t.Fatalf("finalization-generation:read projected %s for an unowned slot, want null", result)
 		}
-		// The seeded rows are found and refused: one this project owns, one whose
-		// binding names another project.
-		productionGraphReadsRefused(t, author, "finalization-generation:read",
-			[]any{map[string]any{"slot": owned}, frozen}, "GENERATION_FINALIZATION_CONTEXT_INVALID")
+		// The owned row's frozen manifest names this slot key and its committed
+		// slot reproduces it, so the read projects the run instead of refusing:
+		// the FinalizationGenerationRecovery begin replays for the same run, with
+		// the stored context. Which run owns the slot is read back out of the file
+		// rather than assumed, so the projection is compared with the row the
+		// fixture wrote.
+		_, ownedRunID := productionFinalizationGenerationRun(t, database, productionGraphReadsSlotKey(t, owned))
+		projected := productionEditorCall(t, author, "finalization-generation:read",
+			[]any{map[string]any{"slot": owned}, frozen})
+		var recovery map[string]any
+		if err := json.Unmarshal(projected, &recovery); err != nil {
+			t.Fatalf("finalization-generation:read projected %s: %v", projected, err)
+		}
+		handle := syntheticMap(syntheticMap(recovery["view"])["handle"])
+		if handle == nil || syntheticString(handle["runId"]) != ownedRunID ||
+			syntheticString(handle["projectId"]) != productionGraphReadsProjectID {
+			t.Fatalf("finalization-generation:read projected %s, want the run that owns the slot", projected)
+		}
+		stored := syntheticMap(syntheticMap(recovery["context"])["slot"])
+		if stored == nil || productionGraphReadsSlotKey(t, stored) != productionGraphReadsSlotKey(t, owned) {
+			t.Fatalf("finalization-generation:read projected the wrong frozen slot: %s", projected)
+		}
+		// The two refusals the read still owes: a row whose binding names another
+		// project, and a slot outside the frozen step-key vocabulary (refused
+		// before the database is touched).
 		productionGraphReadsRefused(t, author, "finalization-generation:read",
 			[]any{map[string]any{"slot": foreign}, frozen}, "GENERATION_FINALIZATION_SLOT_CONFLICT")
-		// A slot outside the frozen step-key vocabulary is refused before the
-		// database is touched.
 		productionGraphReadsRefused(t, author, "finalization-generation:read",
 			[]any{map[string]any{"slot": map[string]any{"source": owned["source"], "stepKey": "unmapped_step"}}, frozen},
 			"GENERATION_FINALIZATION_SLOT_INVALID")
@@ -238,11 +262,11 @@ func productionGraphReadsSeedLedger(t *testing.T, database string) (runID, rootI
 	owned := productionGraphReadsSlot(productionGraphReadsOwnedFinalizationID)
 	productionGraphReadsSeedRun(t, ctx, ledger, productionGraphReadsSeedRequest(t,
 		productionGraphReadsFinalizationOp, productionGraphReadsProjectID, productionGraphReadsFrozenEpoch,
-		productionGraphReadsFinalizationManifest(t, owned)))
+		productionGraphReadsFinalizationManifest(t, productionGraphReadsProjectID, owned)))
 	foreign := productionGraphReadsSlot(productionGraphReadsForeignFinalizationID)
 	productionGraphReadsSeedRun(t, ctx, ledger, productionGraphReadsSeedRequest(t,
 		productionGraphReadsFinalizationOp, productionGraphReadsForeignProjectID, productionGraphReadsFrozenEpoch,
-		productionGraphReadsFinalizationManifest(t, foreign)))
+		productionGraphReadsFinalizationManifest(t, productionGraphReadsForeignProjectID, foreign)))
 	// The permit hashes the file at project:open, so the seeded rows have to be
 	// on disk before it runs.
 	if err := db.Close(); err != nil {
@@ -320,13 +344,73 @@ func productionGraphReadsManifest(t *testing.T) map[string]any {
 }
 
 // productionGraphReadsFinalizationManifest is the binding half the finalization
-// read matches on: the slot key, under the operation that alone may carry it.
-func productionGraphReadsFinalizationManifest(t *testing.T, slot map[string]any) map[string]any {
+// read matches on: the operation that may carry a slot, the committed slot the
+// read re-derives the key from, and the frozen seven-member context the recovery
+// projects. The context is assembled by the lane's own writer, and its digest is
+// taken over the exact text that writer returns, so the stored row is one this
+// lane's own read path can prove rather than a shape invented for the test.
+func productionGraphReadsFinalizationManifest(t *testing.T, projectID string, slot map[string]any) map[string]any {
 	t.Helper()
+	typed, err := productionFinalizationParseSlot(slot)
+	if err != nil {
+		t.Fatalf("the fixture's finalization slot is not one the lane validates: %v", err)
+	}
+	templateKey := prompttemplate.FinalizationChapterNotesKey
+	if typed.StepKey == "character_cards" {
+		templateKey = prompttemplate.FinalizationCharacterCardsKey
+	}
+	template, err := prompttemplate.FinalizationTemplate(templateKey, prompttemplate.LanguageChinese)
+	if err != nil {
+		t.Fatalf("the fixture's finalization template is not resolvable: %v", err)
+	}
+	contextText, err := productionFinalizationContextText(typed,
+		productionGraphReadsFinalizationIdentity(projectID, typed), "第三章 门后有人", []string{},
+		prompttemplate.LanguageChinese, template.Template.Text, productionFinalizationNotesBaseline{})
+	if err != nil {
+		t.Fatalf("the fixture's finalization context is not assemblable: %v", err)
+	}
+	// The seed request reaches the ledger through json.Marshal, which HTML-escapes
+	// <, >, & and U+2028/U+2029 inside a RawMessage; the ledger's own serializer
+	// does not, and the frozen digest is taken over the text the ledger keeps. The
+	// fixture asserts the text carries none of those characters, so the digest
+	// stored beside it is the digest of the stored bytes instead of a silently
+	// re-escaped copy.
+	if strings.ContainsAny(contextText, "<>&") || strings.Contains(contextText, "\u2028") || strings.Contains(contextText, "\u2029") {
+		t.Fatalf("the fixture's finalization context carries a character json.Marshal would re-escape: %q", contextText)
+	}
 	manifest := map[string]any{}
 	manifest["operation"] = productionGraphReadsFinalizationOp
-	manifest["finalizationGenerationSlotKey"] = productionGraphReadsSlotKey(t, slot)
+	manifest["finalizationGenerationSlot"] = slot
+	manifest["finalizationGenerationSlotKey"] = typed.Key
+	manifest["finalizationGenerationContext"] = json.RawMessage(contextText)
+	manifest["finalizationGenerationContextHash"] = syntheticHash(contextText)
+	manifest["finalizationGenerationOriginEpoch"] = productionGraphReadsFrozenEpoch
 	return manifest
+}
+
+// productionGraphReadsFinalizationIdentity is the finalized identity the fixture
+// context freezes. It is built from the slot's own five primitives so the frozen
+// row is internally consistent, which is what the reference's read requires of a
+// context it projects.
+func productionGraphReadsFinalizationIdentity(projectID string, slot productionFinalizationSlot) *store.FinalizedCharacterContext {
+	return &store.FinalizedCharacterContext{
+		ProjectID: projectID,
+		Epoch:     productionGraphReadsFrozenEpoch,
+		Source: store.FinalizedCharacterSourceIdentity{
+			DraftID:        slot.DraftID,
+			FinalizationID: slot.FinalizationID,
+			ChapterNumber:  slot.ChapterNumber,
+			ContentHash:    slot.ContentHash,
+		},
+		Content:        "第三章正文：门后有人。",
+		IdentityStatus: store.FinalizedCharacterIdentityLegacy,
+		SourceOrder: store.FinalizedCharacterSourceOrder{
+			ContinuityEpoch:                   projectID + ":0",
+			ChapterNumber:                     slot.ChapterNumber,
+			AuthoritativeFinalizationRevision: 1,
+		},
+		Characters: []store.FinalizedCharacterContextCharacter{},
+	}
 }
 
 func productionGraphReadsSlot(finalizationID string) map[string]any {

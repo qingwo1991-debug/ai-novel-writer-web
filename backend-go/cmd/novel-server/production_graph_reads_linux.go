@@ -29,12 +29,14 @@ import (
 // replay never sees, so this binder still lends exactly one name.
 //
 // The finalization slot read is a real projection: it answers the recovery of
-// the run that the slot currently owns, JSON null when it owns none, or its
-// documented refusal (GENERATION_FINALIZATION_CONTEXT_INVALID,
-// GENERATION_FINALIZATION_SLOT_CONFLICT, GENERATION_FINALIZATION_SLOT_INVALID).
-// Of syntheticGeneration's fields only lifecycle is set, because
-// FinalizationRead touches nothing else, and the read reserves no attempt,
-// resolves no credential, opens no egress endpoint and dispatches to no
+// the run that the slot currently owns - the row whose committed slot
+// re-derives into the requested key - JSON null when it owns none, or its
+// documented refusal (GENERATION_FINALIZATION_CONTEXT_INVALID for a row whose
+// committed slot cannot be re-proved, GENERATION_FINALIZATION_SLOT_CONFLICT for
+// a row this project does not own, GENERATION_FINALIZATION_SLOT_INVALID for a
+// slot that is not a slot). Of syntheticGeneration's fields only lifecycle is
+// set, because FinalizationRead touches nothing else, and the read reserves no
+// attempt, resolves no credential, opens no egress endpoint and dispatches to no
 // provider.
 type productionGraphReads struct {
 	read func(context.Context, transport.Caller, map[string]any, any) (any, error)

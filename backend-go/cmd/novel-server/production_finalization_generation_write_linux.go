@@ -94,17 +94,17 @@ import (
 // is the one change that lifts begin - writing the prose here instead would make
 // this lane the prompt author it forbids itself from being.
 //
-// # The second refusal, in a file this change does not own
+// # The second refusal, closed by the read itself
 //
-// Even with the template, a begun run would be unobservable. The served
-// finalization-generation:read refuses every row that carries
-// finalizationGenerationSlotKey with GENERATION_FINALIZATION_CONTEXT_INVALID
-// (synthetic_graph_linux.go:156) because it cannot prove the stored context, and
-// the renderer asks that read before every begin and before any resume
-// (src/services/finalization-generation.ts:38). A begin served here would hand
-// the author a slot whose own next read throws. That read lives in the graph
-// family's synthetic_graph_linux.go; lifting it means teaching that read the
-// context proof, not widening the ledger.
+// A row this lane froze is observable: the served finalization-generation:read
+// re-derives the requested key from each row's committed slot and projects the
+// first row that reproduces it, so the renderer's own first step
+// (src/services/finalization-generation.ts:38) answers the begun run. A row
+// whose committed slot does not reproduce the key is still the reference's
+// unprovable-context refusal (GENERATION_FINALIZATION_CONTEXT_INVALID,
+// synthetic_graph_linux.go:211). The read lives in the graph family's
+// synthetic_graph_linux.go; what it needed was the comparison, not a wider
+// ledger.
 //
 // # execute and commit
 //
@@ -170,9 +170,10 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 				{Path: "../../internal/prompttemplate/editselectedtext.go", Line: 165, Marker: "func EditSelectedTextTemplate(language string) (Template, error) {"},
 				// The member the context freezes from it.
 				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 35, Marker: "template: structuredClone(template),"},
-				// The served read that refuses any row carrying the slot key, so a
-				// begun run would be unobservable even with the template.
-				{Path: "synthetic_graph_linux.go", Line: 156, Marker: productionFinalizationGenerationWriteContextInvalid},
+				// The served read that refuses a row whose committed slot cannot
+				// be re-proved, so a begun run is only observable once its own
+				// context is the one that can.
+				{Path: "synthetic_graph_linux.go", Line: 211, Marker: productionFinalizationGenerationWriteContextInvalid},
 			},
 		},
 		{
@@ -186,7 +187,7 @@ func productionFinalizationGenerationWriteDecisions() []productionFinalizationGe
 				// A run without a re-provable task is refused by the family's own read.
 				{Path: "../../../electron/services/finalization-generation.ts", Line: 49, Marker: productionFinalizationGenerationWriteTaskInvalid},
 				// And there is no row for it to be read from.
-				{Path: "synthetic_graph_linux.go", Line: 156, Marker: productionFinalizationGenerationWriteContextInvalid},
+				{Path: "synthetic_graph_linux.go", Line: 211, Marker: productionFinalizationGenerationWriteContextInvalid},
 			},
 		},
 		{

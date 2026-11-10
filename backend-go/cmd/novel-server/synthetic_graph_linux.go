@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/graphgen"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -98,62 +99,143 @@ func (s *syntheticGeneration) graphRecovery(ctx context.Context, ledger *store.G
 // begin (src/services/finalization-generation.ts:38) and reads null as "nothing
 // to resume", so refusing the call would break the first step of every
 // finalization instead of protecting anything. The slot is validated exactly
-// like finalizationSlotKey and its key is matched against the frozen manifest of
-// the runs this project's ledger holds, so an absent answer is the result of a
-// real lookup rather than a constant.
+// like finalizationSlotKey (syntheticFinalizationSlotKey), and the rows whose
+// frozen manifest names that key are then held to it: the committed slot each
+// row carries would have been re-derived into its key by the original's find
+// (electron/services/finalization-generation.ts:20-26) before that row is
+// answered. Doing that derivation is what turns an absent answer into the result
+// of a real lookup rather than a constant.
 //
-// A matching row is refused instead of projected. That key is stamped by the
-// finalization source binding alone
-// (electron/services/generation-source-binding.ts:589), which this lane never
-// reaches because it does not bind finalization begin, so such a row can only
-// come from another writer. Recovering it would mean proving textHash(JSON.stringify(context))
-// against the stored finalizationGenerationContextHash, and JSON.stringify
-// writes property insertion order while every digest this lane derives is
-// canonical (syntheticGraphDigest): either that comparison is skipped or a
-// context the lane cannot prove is handed to the renderer. It refuses with the
-// code the original raises for an unprovable context, and a row whose binding
-// names another project is the original's slot conflict
-// (electron/services/finalization-generation.ts:27).
+// The comparison runs over the rows that name the requested key, in rowid
+// order, and a matched row is projected with the family's own recovery builder,
+// so a reload read answers the same FinalizationGenerationRecovery the begin
+// that replays the run answers. A row whose binding names another project is the
+// original's slot conflict, and a row whose committed slot does not reproduce
+// the requested key is a frozen context this lane cannot prove - the original's
+// own GENERATION_FINALIZATION_CONTEXT_INVALID refusal. A project whose ledger
+// holds no row for the key reads as null, which is what the original's find
+// returns for a run it cannot select.
 func (s *syntheticGeneration) FinalizationRead(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
 	key, err := syntheticFinalizationSlotKey(arg)
 	if err != nil {
 		return nil, err
 	}
-	_, scope, _, db, done, err := s.admit(ctx, caller, expected)
+	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	rows, err := db.QueryContext(ctx,
-		`SELECT json_extract(binding_json,'$.projectId') FROM generation_runs
-		 WHERE json_extract(binding_json,'$.sourceManifest.finalizationGenerationSlotKey')=? ORDER BY rowid`, key)
+	// The rows are scanned and filtered in Go rather than with json_extract, the
+	// way the family's own begin looks its prior run up
+	// (production_finalization_generation_serve_linux.go:792), so this read does
+	// not depend on a JSON extension the admission fingerprint does not declare.
+	rows, err := db.QueryContext(ctx, `SELECT run_id,root_action_id,binding_json FROM generation_runs ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	found := false
+	candidates := make([]syntheticFinalizationReadRow, 0, 1)
 	for rows.Next() {
-		// A missing projectId (NULL) is the original's `undefined !== projectId`
-		// conflict, so NullString covers both the foreign row and the shapeless one.
-		var owner sql.NullString
-		if err := rows.Scan(&owner); err != nil {
+		var runID, rootActionID, bindingJSON string
+		if err := rows.Scan(&runID, &rootActionID, &bindingJSON); err != nil {
 			return nil, err
 		}
-		if !owner.Valid || owner.String != scope.Project {
-			return nil, errors.New("GENERATION_FINALIZATION_SLOT_CONFLICT")
+		var binding map[string]any
+		if err := json.Unmarshal([]byte(bindingJSON), &binding); err != nil {
+			continue
 		}
-		found = true
+		manifest := syntheticMap(binding["sourceManifest"])
+		if manifest == nil || syntheticString(manifest["finalizationGenerationSlotKey"]) != key {
+			continue
+		}
+		candidates = append(candidates, syntheticFinalizationReadRow{
+			RunID:        runID,
+			RootActionID: rootActionID,
+			Epoch:        syntheticString(binding["epoch"]),
+			Owner:        syntheticString(binding["projectId"]),
+			Committed:    syntheticMap(manifest["finalizationGenerationSlot"]),
+		})
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	matched, found, err := syntheticFinalizationReadChoice(candidates, scope.Project, key)
+	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, nil
 	}
-	// The rows all belong to this project, so the original would go on to compare
-	// each stored context with the slot; that comparison is what this lane cannot
-	// reproduce, and it refuses rather than guesses.
-	return nil, errors.New("GENERATION_FINALIZATION_CONTEXT_INVALID")
+	return s.syntheticFinalizationProjection(ctx, scope, ledger, db, matched)
+}
+
+// syntheticFinalizationReadRow is one generation_runs row whose frozen manifest
+// names the requested finalization slot key, together with the committed slot
+// value that key has to be re-derived from. The committed value is
+// sourceManifest.finalizationGenerationSlot, which the source binding freezes as
+// finalizationContext.slot (electron/services/generation-source-binding.ts:589)
+// and which is exactly the [draftId, finalizationId, chapterNumber, contentHash,
+// stepKey] the key is taken over.
+type syntheticFinalizationReadRow struct {
+	RunID        string
+	RootActionID string
+	Epoch        string
+	Owner        string
+	Committed    map[string]any
+}
+
+// syntheticFinalizationReadChoice is the slot comparison on its own, so the rule
+// can be pinned by a test that needs no database. Every row passed here already
+// names the requested slot key in its frozen manifest; the question left is
+// which of them that key's committed values reproduce.
+//
+// The original walks its rows in rowid order and refuses on the first row whose
+// binding names another project or whose stored context it cannot prove
+// (electron/services/finalization-generation.ts:20-26), so both refusals are
+// raised before any row is answered and a later bad row still fails an earlier
+// good one. Among the rows that do reproduce the key this lane answers the first,
+// which is the deterministic choice for a project whose ledger holds more than
+// one row for the key.
+func syntheticFinalizationReadChoice(rows []syntheticFinalizationReadRow, projectID, slotKey string) (syntheticFinalizationReadRow, bool, error) {
+	matched := syntheticFinalizationReadRow{}
+	found := false
+	for _, row := range rows {
+		if row.Owner != projectID {
+			return syntheticFinalizationReadRow{}, false, errors.New("GENERATION_FINALIZATION_SLOT_CONFLICT")
+		}
+		// The stored committed slot is parsed with the same validator the wire
+		// slot goes through, so the derivation - and its refusal - is the
+		// original's finalizationSlotKey, not a second copy of it.
+		committed, err := productionFinalizationParseSlot(row.Committed)
+		if err != nil || committed.Key != slotKey {
+			return syntheticFinalizationReadRow{}, false, errors.New("GENERATION_FINALIZATION_CONTEXT_INVALID")
+		}
+		if !found {
+			matched, found = row, true
+		}
+	}
+	return matched, found, nil
+}
+
+// syntheticFinalizationProjection answers one matched row with the family's own
+// recovery builder, so this read and the begin that replays the same run answer
+// one envelope. The builder proves the row again on the way out - the frozen
+// context digest against finalizationGenerationContextHash, the slot against its
+// key and the identity of the run - so a stored context this lane cannot prove
+// is still refused instead of handed to the renderer.
+//
+// Only owner.inner is reached (the view projection and the source-status gate,
+// which stays fail-closed at "conflict" because this read holds no registry to
+// re-derive the binding with). owner.open is not touched: this read reserves no
+// attempt, dials no provider and opens no egress endpoint.
+func (s *syntheticGeneration) syntheticFinalizationProjection(ctx context.Context, scope generationowner.Scope, ledger *store.GenerationLedger, db *sql.DB, row syntheticFinalizationReadRow) (any, error) {
+	serve := &productionFinalizationServe{owner: &productionGeneration{inner: s}}
+	return serve.recovery(ctx, scope, ledger, db, syntheticHandle{
+		ProjectID:    scope.Project,
+		Epoch:        row.Epoch,
+		RootActionID: row.RootActionID,
+		RunID:        row.RunID,
+	})
 }
 
 // syntheticFinalizationSlotKey validates one FinalizationGenerationSlot and

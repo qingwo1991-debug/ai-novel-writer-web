@@ -508,10 +508,12 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 	// --- finalization-generation:read is bound: it validates the `{ slot }`
 	// envelope, derives the slot key the original derives, and answers null for a
 	// slot no run owns. The two seeded rows prove the look-up is real: the row in
-	// this project is refused as an unprovable context (its manifest was written by
-	// something other than this lane, which cannot reproduce the insertion-order
-	// digest the desktop build froze), and the row in another project is the
-	// original's slot conflict. ---
+	// this project carries nothing but the slot key, so the committed slot the key
+	// is compared against is missing and the row is refused as a context this lane
+	// cannot prove; the row in another project is the original's slot conflict. A
+	// row whose committed slot reproduces the key is projected instead, which the
+	// production fixture (production_graph_reads_linux_test.go) covers with a row
+	// this lane's own context writer froze. ---
 	absentSlot := rpc("finalization-generation:read", []any{map[string]any{"slot": slotAbsent}, expected})
 	var absentWire struct {
 		Result json.RawMessage `json:"result"`

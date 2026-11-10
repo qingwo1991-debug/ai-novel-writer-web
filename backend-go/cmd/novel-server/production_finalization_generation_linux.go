@@ -70,12 +70,12 @@ import (
 //     builds from it (electron/services/finalization-generation-source.ts:47-59)
 //     is a prompt author, not a projection - which is why begin stays refused.
 //
-// A claimed slot would also be unreadable: FinalizationRead refuses every row
-// that carries the slot key with GENERATION_FINALIZATION_CONTEXT_INVALID
-// (synthetic_graph_linux.go:156) because it cannot prove the frozen context
-// digest. The renderer asks that read first (src/services/finalization-generation.ts:38),
-// so a begin written by this file would hand the author a run whose very next
-// read throws.
+// A claimed slot is readable. FinalizationRead re-derives the requested key from
+// each row's committed slot and projects the row that reproduces it, so the read
+// the renderer asks first (src/services/finalization-generation.ts:38) answers
+// the begun run instead of refusing it; the row whose committed slot does not
+// reproduce the key is still GENERATION_FINALIZATION_CONTEXT_INVALID
+// (synthetic_graph_linux.go:211).
 //
 // # execute
 //
@@ -87,9 +87,9 @@ import (
 // is missing is everything around that task:
 //
 //   - No row can become this session's run. begin is the refusal documented
-//     above, and the served read refuses every row that does carry the slot key
-//     with GENERATION_FINALIZATION_CONTEXT_INVALID (synthetic_graph_linux.go:156)
-//     because it cannot prove the frozen context.
+//     above, and the served read only projects a row whose committed slot
+//     reproduces the requested key (synthetic_graph_linux.go:199) - a run this
+//     lane cannot freeze carries no such row.
 //   - The freeze has no Go producer. finalizationGenerationTask
 //     (electron/services/finalization-generation-source.ts:47) renders a
 //     PromptTemplate through renderPrompt, and no Go file in this module names
@@ -182,7 +182,7 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 			Operation: productionFinalizationBegin,
 			Missing: []productionFinalizationLine{
 				{Path: "synthetic_generation_linux.go", Line: 736, Marker: "func syntheticManifest("},
-				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+				{Path: "synthetic_graph_linux.go", Line: 211, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
 				// The refused field: the step's template exists only in the
 				// renderer's asset, and this module resolves one unrelated one
 				// (production_finalization_generation_write_linux.go).
@@ -195,7 +195,7 @@ func productionFinalizationGenerationSeams() []productionFinalizationSeam {
 			Missing: []productionFinalizationLine{
 				{Path: "synthetic_generation_linux.go", Line: 1337, Marker: "request[\"task\"]"},
 				{Path: "synthetic_generation_linux.go", Line: 1306, Marker: "request[\"invocationNonce\"]"},
-				{Path: "synthetic_graph_linux.go", Line: 156, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
+				{Path: "synthetic_graph_linux.go", Line: 211, Marker: "GENERATION_FINALIZATION_CONTEXT_INVALID"},
 				// The task is rendered from the same template the begin above cannot
 				// freeze, so the field-level seam is the same one step later.
 				{Path: "../../../electron/services/finalization-generation-source.ts", Line: 55, Marker: "const prompt = renderPrompt(context.template, {"},
