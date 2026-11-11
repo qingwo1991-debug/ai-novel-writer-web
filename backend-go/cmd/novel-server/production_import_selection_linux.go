@@ -241,10 +241,18 @@ func (s *productionImportSelection) BeginImportSelection(ctx context.Context, ca
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionContextCode)
 	}
-	// The caller is the cookie session plus the browser tab, and nothing else
-	// (production_durable_linux.go:157-166).
-	owner, ownerErr := productionOwner(caller)
+	// The TAB IDENTITY (cookie session plus browser tab) keys the staged sources
+	// this provider redeems; the LEASE OWNER below (the authenticated account)
+	// names the project lease the frozen context must still match. Aliasing them
+	// would either leak one tab's staged manuscript into its sibling or refuse a
+	// legitimate second tab.
+	tab, ownerErr := productionTabOwner(caller)
 	if ownerErr != nil {
+		return transport.ImportSelection{}, nil,
+			productionImportSelectionRefusal(productionImportSelectionProjectCode)
+	}
+	leaseOwner, leaseOwnerErr := productionLeaseOwner(caller)
+	if leaseOwnerErr != nil {
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionProjectCode)
 	}
@@ -274,7 +282,7 @@ func (s *productionImportSelection) BeginImportSelection(ctx context.Context, ca
 	// the request named. This is the same proof the portability and grant families
 	// make (production_project_portability_linux.go:560-570), and it is why an
 	// upload staged for another project cannot be imported into this one.
-	current, present, leaseErr := durable.productionFSGrantProject(ctx, owner)
+	current, present, leaseErr := durable.productionFSGrantProject(ctx, leaseOwner)
 	if leaseErr != nil || !present {
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionProjectCode)
@@ -283,7 +291,7 @@ func (s *productionImportSelection) BeginImportSelection(ctx context.Context, ca
 		return transport.ImportSelection{}, nil,
 			productionImportSelectionRefusal(productionImportSelectionStaleCode)
 	}
-	sources, sourceErr := s.capture(owner.SessionID, owner.ClientID)
+	sources, sourceErr := s.capture(tab.SessionID, tab.ClientID)
 	if sourceErr != nil {
 		return transport.ImportSelection{}, nil, sourceErr
 	}

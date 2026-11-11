@@ -993,7 +993,7 @@ func productionPickerOpaqueID(value string) bool {
 
 // productionPickerBinding is the caller identity a token or an upload belongs to.
 func productionPickerBinding(caller transport.Caller) (librarypath.Binding, error) {
-	owner, err := productionOwner(caller)
+	owner, err := productionTabOwner(caller)
 	if err != nil {
 		return librarypath.Binding{}, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
 	}

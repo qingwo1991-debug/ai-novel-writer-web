@@ -404,7 +404,7 @@ func (c *productionProjectCreate) activeProjectPath(ctx context.Context, caller 
 	if ctx == nil || durable == nil || durable.lifecycle == nil {
 		return nil
 	}
-	owner, ownerErr := productionOwner(caller)
+	owner, ownerErr := productionLeaseOwner(caller)
 	if ownerErr != nil {
 		return nil
 	}

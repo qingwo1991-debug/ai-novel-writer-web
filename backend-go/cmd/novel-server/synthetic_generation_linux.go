@@ -40,6 +40,12 @@ type syntheticGeneration struct {
 	registry  *generationowner.Registry
 	executor  *generationowner.Executor
 	loadModel func(context.Context, string) (generationowner.Profile, bool, error)
+	// leaseOwner derives the LEASE OWNER this lane's ledger admission borrows the
+	// project under. It is injected per lane: the production lane passes
+	// productionLeaseOwner (account-level, so sibling tabs share the lease) and
+	// the migration scaffold passes syntheticLeaseOwner (per tab). The run's
+	// RECEIPT scope stays per-tab either way: see the Scope built in admit.
+	leaseOwner func(transport.Caller) (projectsession.Owner, error)
 }
 
 const (
@@ -124,7 +130,11 @@ func newSyntheticGeneration(durable *syntheticDurableOpen, server *transport.Ser
 		return generationowner.Profile{}, false, nil
 	}
 	current := func(ctx context.Context, scope generationowner.Scope) error {
-		currentValue, found, err := durable.lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.Session, ClientID: scope.Tab})
+		// The live lease is looked up under the LEASE OWNER the begin captured,
+		// never under the per-tab receipt identity: two tabs of one account hold
+		// the same lease and each must still see it as current, while their
+		// receipts stay disjoint.
+		currentValue, found, err := durable.lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient})
 		if err != nil {
 			return err
 		}
@@ -157,11 +167,12 @@ func newSyntheticGeneration(durable *syntheticDurableOpen, server *transport.Ser
 		DispatchFunc:   config.Dispatch,
 	}
 	return &syntheticGeneration{
-		lifecycle: durable.lifecycle,
-		server:    server,
-		registry:  registry,
-		executor:  executor,
-		loadModel: loadModel,
+		lifecycle:  durable.lifecycle,
+		server:     server,
+		registry:   registry,
+		executor:   executor,
+		loadModel:  loadModel,
+		leaseOwner: syntheticLeaseOwner,
 	}, nil
 }
 
@@ -328,15 +339,25 @@ func syntheticCall(ctx context.Context, ledger *store.GenerationLedger, method s
 
 // admit re-verifies the frozen context and returns the fence plus the fresh
 // ledger/database pair under exactly one release function.
+//
+// It carries the lane's TWO identities apart on purpose. The project is borrowed
+// under the LEASE OWNER (s.leaseOwner), so every tab of one account reaches the
+// same single live lease; the returned Scope still records the TAB IDENTITY
+// (cookie session plus tab) the receipt is scoped to, so a model lease one tab
+// took can never be resolved by its sibling.
 func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller, expected any) (projectsession.Context, generationowner.Scope, *store.GenerationLedger, *sql.DB, func(), error) {
 	contextValue, err := projectsession.ParseContext(expected)
 	if err != nil {
 		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, err
 	}
-	if caller.SessionID == "" || caller.ClientID == "" {
+	if s.leaseOwner == nil {
 		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, projectsession.ErrContext
 	}
-	ledger, db, refresh, done, err := s.lifecycle.BeginGenerationLedgerDB(ctx, projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, contextValue)
+	leaseOwner, err := s.leaseOwner(caller)
+	if err != nil || !leaseOwner.Valid() {
+		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, projectsession.ErrContext
+	}
+	ledger, db, refresh, done, err := s.lifecycle.BeginGenerationLedgerDB(ctx, leaseOwner, contextValue)
 	if err != nil {
 		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, err
 	}
@@ -351,7 +372,15 @@ func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller
 		}
 		done()
 	}
-	scope := generationowner.Scope{Caller: caller.SessionID, Session: caller.SessionID, Tab: caller.ClientID, Project: contextValue.ProjectID, Epoch: contextValue.LeaseID}
+	scope := generationowner.Scope{
+		Caller:       caller.SessionID,
+		Session:      caller.SessionID,
+		Tab:          caller.ClientID,
+		LeaseSession: leaseOwner.SessionID,
+		LeaseClient:  leaseOwner.ClientID,
+		Project:      contextValue.ProjectID,
+		Epoch:        contextValue.LeaseID,
+	}
 	return contextValue, scope, ledger, db, release, nil
 }
 

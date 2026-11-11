@@ -1563,7 +1563,7 @@ it('reopens the saved config after discarding edits to the same project', async 
   expect(JSON.parse(useEditorStore.getState().draftLedgers.config).projects).toEqual([])
 })
 
-it('keeps the current project when another tab already holds its lease', async () => {
+it('keeps the current project when another account already holds its lease', async () => {
   mocks.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
     if (channel === 'project:open') return {
       success: false, project: null, requestToken: args[1], activeProjectPath: null,

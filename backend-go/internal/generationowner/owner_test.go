@@ -17,7 +17,10 @@ import (
  "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/secrets"
 )
 
-var publicScope=Scope{"public-caller","public-session","public-tab","public-project","public-epoch"}
+// publicScope carries BOTH identities a real admission captures: the per-tab
+// receipt identity (Caller/Session/Tab) that a lease is scoped to, and the LEASE
+// OWNER (LeaseSession/LeaseClient) Current re-proves it against.
+var publicScope=Scope{Caller:"public-caller",Session:"public-session",Tab:"public-tab",LeaseSession:"public-lease-session",LeaseClient:"public-lease-client",Project:"public-project",Epoch:"public-epoch"}
 func publicProfile()Profile{return Profile{ID:"public-model",Provider:"custom",Protocol:"openai",BaseURL:"https://example.invalid/v1",ModelName:"public-synthetic",Temperature:0.8,MaxTokens:8192,Purposes:[]string{"generation"}}}
 func publicTask()Task{return Task{Purpose:"public-test",Output:"visible-text",Messages:[]llm.Message{{Role:"user",Content:"PUBLIC synthetic 合成 😀"}}}}
 type testSettings struct { mu sync.RWMutex; gate sync.Mutex; model Profile; epoch Scope; now atomic.Int64 }
@@ -31,13 +34,26 @@ func begin(t *testing.T,r *Registry)Receipt{t.Helper();receipt,err:=r.Begin(cont
 func TestLeaseIdentityExpiryAndDetachedReceipt(t *testing.T){
  s,r:=newSettings(t);receipt:=begin(t,r);receipt.CapabilityEvidence.Output=1
  resolved,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");if err!=nil||resolved.CapabilityEvidence.Output!=8192{t.Fatalf("alias %v %v",resolved,err)}
- foreign:=[]Scope{publicScope,publicScope,publicScope,publicScope,publicScope};foreign[0].Caller="other";foreign[1].Session="other";foreign[2].Tab="other";foreign[3].Project="other";foreign[4].Epoch="browser-lease-is-not-epoch"
+ foreign:=[]Scope{publicScope,publicScope,publicScope,publicScope,publicScope,publicScope,publicScope};foreign[0].Caller="other";foreign[1].Session="other";foreign[2].Tab="other";foreign[3].Project="other";foreign[4].Epoch="browser-lease-is-not-epoch";foreign[5].LeaseSession="other";foreign[6].LeaseClient="other"
  for _,scope:=range foreign{if _,err:=r.Resolve(context.Background(),receipt.LeaseID,scope,"generation");err==nil{t.Fatalf("foreign scope accepted %+v",scope)}}
  if _,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"embedding");err==nil{t.Fatal("foreign purpose accepted")};s.now.Store(2000);if _,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");err==nil||err.Error()!="MODEL_EXECUTION_LEASE_EXPIRED"{t.Fatalf("expiry %v",err)}
 }
 func TestRevisionCredentialAndEpochInvalidate(t *testing.T){
  changes:=[]func(*testSettings){func(s *testSettings){s.model.MaxTokens++},func(s *testSettings){s.model.Temperature=0.4},func(s *testSettings){s.model.ModelName="new"},func(s *testSettings){s.model.BaseURL="https://other.invalid/v1"},func(s *testSettings){s.model.EncryptedCredential=[]byte("PUBLIC different envelope")},func(s *testSettings){s.epoch.Epoch="new-epoch"}}
  for i,change:=range changes{t.Run(string(rune('a'+i)),func(t *testing.T){s,r:=newSettings(t);receipt:=begin(t,r);s.gate.Lock();s.mu.Lock();change(s);s.mu.Unlock();s.gate.Unlock();if _,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");err==nil{t.Fatal("stale model/scope accepted")}})}
+}
+// TestReceiptStaysScopedToTheTabThatTookIt is the multi-tab half of the receipt
+// identity, and the property the production lane and the import-run receipt scope
+// both rely on: two browser tabs of ONE account share the LEASE OWNER
+// (LeaseSession/LeaseClient), and a model lease one of them took must still not be
+// resolvable, closeable or reproducible by its sibling. Only the per-tab half of
+// the Scope (Caller/Session/Tab) differs here.
+func TestReceiptStaysScopedToTheTabThatTookIt(t *testing.T){
+ _,r:=newSettings(t);receipt:=begin(t,r)
+ sibling:=publicScope;sibling.Caller="public-sibling-session";sibling.Session="public-sibling-session";sibling.Tab="public-sibling-tab"
+ if _,err:=r.Resolve(context.Background(),receipt.LeaseID,sibling,"generation");err==nil{t.Fatal("a sibling tab of the same account resolved this tab's receipt")}
+ if r.Close(context.Background(),receipt.LeaseID,sibling,"generation"){t.Fatal("a sibling tab of the same account closed this tab's receipt")}
+ if _,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");err!=nil{t.Fatalf("the tab that took the receipt lost it: %v",err)}
 }
 func TestConcurrentRegistryAndRevocation(t *testing.T){
  _,r:=newSettings(t);var wg sync.WaitGroup;for i:=0;i<32;i++{wg.Add(1);go func(){defer wg.Done();receipt,err:=r.Begin(context.Background(),publicScope,"public-model","generation");if err!=nil{t.Error(err);return};_,_ = r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");r.Close(context.Background(),receipt.LeaseID,publicScope,"generation")}()};wg.Wait();receipt:=begin(t,r);r.RevokeScope(publicScope);if _,err:=r.Resolve(context.Background(),receipt.LeaseID,publicScope,"generation");err==nil{t.Fatal("revocation failed")}

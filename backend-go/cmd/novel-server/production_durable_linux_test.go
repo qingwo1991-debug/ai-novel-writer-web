@@ -152,19 +152,32 @@ func productionDurableBody(t *testing.T, projectPath string) string {
 }
 
 // productionDurableClient is one browser tab: its own cookie session, its own
-// CSRF token and its own X-Client-Id, which is what the lease is keyed by.
+// CSRF token and its own X-Client-Id. Those two halves are its TAB IDENTITY
+// (file grants, upload staging, generation receipts); the principal it bootstraps
+// as is the ACCOUNT the production lane keys the project lease by, so two
+// clients with the same principal are two tabs of one author that share the
+// single live lease.
 type productionDurableClient struct {
-	handler http.Handler
-	tab     string
-	csrf    string
-	cookie  *http.Cookie
+	handler   http.Handler
+	principal string
+	tab       string
+	csrf      string
+	cookie    *http.Cookie
 }
 
 func newProductionDurableClient(t *testing.T, handler http.Handler, tab string) *productionDurableClient {
 	t.Helper()
+	return newProductionDurableClientAs(t, handler, "production-author", tab)
+}
+
+// newProductionDurableClientAs boots a client for an explicit account, so a test
+// can prove that a sibling tab of the same account shares the account lease while
+// a different account is still refused.
+func newProductionDurableClientAs(t *testing.T, handler http.Handler, principal, tab string) *productionDurableClient {
+	t.Helper()
 	boot := httptest.NewRecorder()
 	bootRequest := httptest.NewRequest(http.MethodGet, "/api/bootstrap", nil)
-	bootRequest.Header.Set("X-Novel-User", "production-author")
+	bootRequest.Header.Set("X-Novel-User", principal)
 	handler.ServeHTTP(boot, bootRequest)
 	if boot.Code != http.StatusOK || len(boot.Result().Cookies()) != 1 {
 		t.Fatalf("bootstrap failed: %d %s", boot.Code, boot.Body.String())
@@ -175,7 +188,7 @@ func newProductionDurableClient(t *testing.T, handler http.Handler, tab string) 
 	if err := json.Unmarshal(boot.Body.Bytes(), &wire); err != nil || wire.CSRFToken == "" {
 		t.Fatalf("bootstrap csrf: %v %s", err, boot.Body.String())
 	}
-	return &productionDurableClient{handler: handler, tab: tab, csrf: wire.CSRFToken, cookie: boot.Result().Cookies()[0]}
+	return &productionDurableClient{handler: handler, principal: principal, tab: tab, csrf: wire.CSRFToken, cookie: boot.Result().Cookies()[0]}
 }
 
 func (c *productionDurableClient) call(t *testing.T, operation string, args []any) *httptest.ResponseRecorder {
@@ -185,7 +198,7 @@ func (c *productionDurableClient) call(t *testing.T, operation string, args []an
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/operations/"+operation, bytes.NewReader(payload))
-	request.Header.Set("X-Novel-User", "production-author")
+	request.Header.Set("X-Novel-User", c.principal)
 	request.Header.Set("X-Client-Id", c.tab)
 	request.Header.Set("X-CSRF-Token", c.csrf)
 	request.Header.Set("Origin", "http://"+productionDurableAddress)
@@ -339,13 +352,29 @@ func TestProductionLaneOpensProjectAndCommitsDraftCAS(t *testing.T) {
 		t.Fatalf("a refused CAS save still changed the database: %q", body)
 	}
 
-	// One project, one writer. A second tab opening the same project is refused
-	// by the owner lease instead of sharing the handle.
+	// Two tabs, one author, one project. The lease is keyed by the authenticated
+	// ACCOUNT now, so the second tab ADOPTS the live lease and is served instead
+	// of being refused; the write safety between them is the CAS proved above,
+	// not the lease. A different ACCOUNT is still refused, which is the security
+	// boundary that sharing must not cross.
 	other := newProductionDurableClient(t, handler, productionDurableOtherTab)
 	var second productionDurableOpenWire
 	other.decode(t, "project:open", []any{projectPath, "open-token-2", projectPath}, &second)
-	if second.Success || second.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
-		t.Fatalf("a second tab was not refused the single-writer lease: %+v", second)
+	if !second.Success || !second.DBReady || second.Error != "" {
+		t.Fatalf("a sibling tab of the same account was refused the account lease: %+v", second)
+	}
+	// Both tabs resolve the SAME live lease, which is what "one writer per
+	// account" means: neither holds a private copy of the project write handle.
+	if second.Project["sessionLease"] != saved.ProjectSession["leaseId"] {
+		t.Fatalf("a sibling tab was handed a different lease for the shared project: %+v vs %+v",
+			second.Project["sessionLease"], saved.ProjectSession["leaseId"])
+	}
+
+	stranger := newProductionDurableClientAs(t, handler, "other-author", productionDurableOtherTab)
+	var cross productionDurableOpenWire
+	stranger.decode(t, "project:open", []any{projectPath, "open-token-3", projectPath}, &cross)
+	if cross.Success || cross.Error != "PROJECT_OPEN_IN_ANOTHER_TAB" {
+		t.Fatalf("a different account was not refused the project lease: %+v", cross)
 	}
 }
 

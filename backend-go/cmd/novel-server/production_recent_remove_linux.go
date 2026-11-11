@@ -119,9 +119,9 @@ func (r *productionRecentRemove) Bind(server *transport.Server) error {
 // RemoveRecentNavigation is the provider method the family binder drives. The
 // target is the path project:recent-list handed the browser, never a new host
 // path, and the only authority the request carries is the caller identity the
-// transport itself admitted: the cookie session plus the browser tab, the same
-// pair productionOwner validates for every leased name
-// (production_durable_linux.go:157-164).
+// transport itself admitted: the account whose LEASE OWNER this lane keys the
+// project lease by, which productionLeaseOwner validates for every leased name
+// (production_durable_linux.go:157-204).
 //
 // A refusal is a named symbolic error, never a fabricated success. The binder
 // turns it into the family's own failure envelope so the browser learns a stable
@@ -133,7 +133,7 @@ func (r *productionRecentRemove) RemoveRecentNavigation(ctx context.Context, cal
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := productionOwner(caller); err != nil {
+	if _, err := productionLeaseOwner(caller); err != nil {
 		return nil, errors.New("PROJECT_SESSION_REQUIRED")
 	}
 	return productionRecentRemoveShelve(r.open, target)

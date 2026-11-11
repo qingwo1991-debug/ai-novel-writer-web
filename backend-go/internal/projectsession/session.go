@@ -28,6 +28,30 @@ var ErrContext=errors.New("PROJECT_SESSION_CONTEXT_REQUIRED")
 type Owner struct {SessionID string; ClientID string}
 func(o Owner) key()string{return o.SessionID+":"+o.ClientID}
 func(o Owner) valid()bool{return o.SessionID!=""&&o.ClientID!=""&&!strings.ContainsAny(o.SessionID+o.ClientID,":\x00")}
+// Valid is the exported half of valid(), for the lanes that build an owner from
+// trusted request identity before handing it to this package.
+func(o Owner) Valid()bool{return o.valid()}
+
+// AccountClientID is the ClientID half of an ACCOUNT-level LEASE OWNER. It is
+// deliberately not a browser tab identity: it is the marker that says "this
+// owner names the account, not the tab".
+const AccountClientID="account"
+
+// AccountOwner returns the account-level LEASE OWNER for one authenticated
+// principal. Every browser tab that authenticated as the same account derives
+// this same owner, so the single-writer project lease is held once per
+// account+project and each further tab ADOPTS it instead of being refused with
+// ErrOwned. A genuinely different account still derives a different owner and is
+// still refused, which is the security boundary the sharing must not cross.
+//
+// This is the LEASE OWNER only. The per-tab TAB IDENTITY used for file grants,
+// upload staging and generation/import-run receipt scoping stays the browser's
+// own {SessionID, ClientID} pair (see the production lane's productionTabOwner);
+// the two identities must never be substituted for one another. Write safety
+// between two tabs of one account therefore rests on the per-resource baselines
+// the stores already enforce (draft content CAS, project_core expected patch),
+// never on this owner.
+func AccountOwner(principal string) Owner { return Owner{SessionID: principal, ClientID: AccountClientID} }
 
 type Context struct {
  ProjectID string `json:"projectId"`

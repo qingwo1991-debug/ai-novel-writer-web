@@ -674,7 +674,8 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
         })
         return false
       }
-      // 另一个标签页正持有这个项目的写租约。这不是当前项目会话失效，
+      // 后端按「账号」持有项目写租约：同一账号的其它标签页现在会直接共享租约并打开成功，
+      // 因此这里只剩另一种真实情况——另一个账号正持有这个项目的租约。这不是当前项目会话失效，
       // 也绝不能走下面的「数据库不可用」分支停用界面。
       if (!result.success && result.error === 'PROJECT_OPEN_IN_ANOTHER_TAB') {
         alertError(projectError(result.error), {

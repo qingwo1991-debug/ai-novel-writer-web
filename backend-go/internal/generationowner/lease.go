@@ -23,8 +23,32 @@ const safeInteger int64 = 9007199254740991
 
 // Scope is captured by authenticated server admission, NOT decoded from RPC.
 // Current must validate the captured project writer/session/tab lifetime.
-type Scope struct { Caller string; Session string; Tab string; Project string; Epoch string }
-func (s Scope) valid() bool { return s.Caller!="" && s.Session!="" && s.Tab!="" && s.Project!="" && s.Epoch!="" }
+//
+// It carries TWO identities on purpose, and they must never be aliased:
+//
+//   - Caller/Session/Tab are the TAB IDENTITY: the browser cookie session plus
+//     the tab. Registry receipts are scoped to them, so a model lease one tab
+//     took cannot be resolved, closed or stolen by another tab of the same
+//     account.
+//   - LeaseSession/LeaseClient are the LEASE OWNER: the identity the project's
+//     single-writer lease is held under, spelled the way projectsession.Owner
+//     spells it so a Current implementation can rebuild the exact owner the
+//     project was opened under. The production lane derives it from the
+//     authenticated account (projectsession.AccountOwner), so every tab of one
+//     author names the SAME live lease here while their Caller/Session/Tab still
+//     differ; the migration scaffold keeps its per-tab pair. They are advisory
+//     identity, not a capability: ownership is still proved by the runtime's own
+//     lease fence, never by these strings.
+type Scope struct {
+	Caller       string
+	Session      string
+	Tab          string
+	LeaseSession string
+	LeaseClient  string
+	Project      string
+	Epoch        string
+}
+func (s Scope) valid() bool { return s.Caller!="" && s.Session!="" && s.Tab!="" && s.LeaseSession!="" && s.LeaseClient!="" && s.Project!="" && s.Epoch!="" }
 
 // Profile is loaded only from trusted server settings. Raw JSON retains the
 // original nested field order required by the TS revision hash. Credential data

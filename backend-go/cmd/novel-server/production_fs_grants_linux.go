@@ -273,15 +273,22 @@ func (d *productionDurableOpen) productionFSGrantProject(ctx context.Context, ow
 }
 
 // roots builds this request's allowlist and the caller binding the tokens are
-// compared against. The binding is the cookie session and the tab, exactly as
-// projectsession.Owner spells them, and it is derived from the authenticated
-// transport caller - never from an argument.
+// compared against. The binding is the TAB IDENTITY - the cookie session and the
+// tab, exactly as projectsession.Owner spells them - and it is derived from the
+// authenticated transport caller, never from an argument. The live project lease
+// beside it is looked up under the LEASE OWNER instead (this lane keys it by
+// account), so two tabs of one author both hold the project while neither can
+// redeem the other's file grant.
 func (g *productionFSGrants) roots(ctx context.Context, caller transport.Caller) (librarypath.Roots, librarypath.Binding, error) {
-	owner, err := productionOwner(caller)
+	tab, err := productionTabOwner(caller)
 	if err != nil {
 		return librarypath.Roots{}, librarypath.Binding{}, productionFSHTTPError("PROJECT_SESSION_REQUIRED")
 	}
-	binding := librarypath.Binding{SessionID: owner.SessionID, ClientID: owner.ClientID}
+	binding := librarypath.Binding{SessionID: tab.SessionID, ClientID: tab.ClientID}
+	leaseOwner, leaseErr := productionLeaseOwner(caller)
+	if leaseErr != nil {
+		return librarypath.Roots{}, librarypath.Binding{}, productionFSHTTPError("PROJECT_SESSION_REQUIRED")
+	}
 	durable, library, err := g.lane()
 	if err != nil {
 		return librarypath.Roots{}, librarypath.Binding{}, err
@@ -291,7 +298,7 @@ func (g *productionFSGrants) roots(ctx context.Context, caller transport.Caller)
 		Kind: librarypath.KindLibrary,
 		Path: library.Path(),
 	}}
-	current, present, err := durable.productionFSGrantProject(ctx, owner)
+	current, present, err := durable.productionFSGrantProject(ctx, leaseOwner)
 	if err != nil {
 		return librarypath.Roots{}, librarypath.Binding{}, err
 	}

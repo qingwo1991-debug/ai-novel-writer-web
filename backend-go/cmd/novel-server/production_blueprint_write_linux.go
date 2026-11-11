@@ -140,7 +140,7 @@ func (w *productionEditorWrites) CommitCharacterRoster(ctx context.Context, call
 	if err != nil {
 		return nil, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return nil, err
 	}

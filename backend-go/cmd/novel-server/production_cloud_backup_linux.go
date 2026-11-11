@@ -296,11 +296,11 @@ func (b *productionCloudBackup) view(ctx context.Context, caller transport.Calle
 	if err != nil {
 		return productionCloudBackupFailure(productionCloudBackupFailed, ""), nil
 	}
-	owner, ownerErr := productionOwner(caller)
+	leaseOwner, ownerErr := productionLeaseOwner(caller)
 	if ownerErr != nil {
 		return productionCloudBackupFailure(productionCloudBackupInputInvalid, ""), nil
 	}
-	current, present, currentErr := durable.productionFSGrantProject(ctx, owner)
+	current, present, currentErr := durable.productionFSGrantProject(ctx, leaseOwner)
 	if currentErr != nil {
 		return productionCloudBackupFailure(productionCloudBackupInputInvalid, ""), nil
 	}
@@ -356,11 +356,11 @@ func (b *productionCloudBackup) confirmBinding(ctx context.Context, caller trans
 	if err != nil {
 		return productionCloudBackupFailure(productionCloudBackupFailed, ""), nil
 	}
-	owner, ownerErr := productionOwner(caller)
+	leaseOwner, ownerErr := productionLeaseOwner(caller)
 	if ownerErr != nil {
 		return productionCloudBackupFailure(productionCloudBackupInputInvalid, ""), nil
 	}
-	current, present, currentErr := durable.productionFSGrantProject(ctx, owner)
+	current, present, currentErr := durable.productionFSGrantProject(ctx, leaseOwner)
 	if currentErr != nil {
 		return productionCloudBackupFailure(productionCloudBackupInputInvalid, ""), nil
 	}
@@ -413,11 +413,11 @@ func (b *productionCloudBackup) backup(ctx context.Context, caller transport.Cal
 		if err != nil {
 			return productionCloudBackupFailure(productionCloudBackupFailed, id)
 		}
-		owner, ownerErr := productionOwner(caller)
+		leaseOwner, ownerErr := productionLeaseOwner(caller)
 		if ownerErr != nil {
 			return productionCloudBackupFailure(productionCloudBackupInputInvalid, id)
 		}
-		current, present, currentErr := durable.productionFSGrantProject(operationContext, owner)
+		current, present, currentErr := durable.productionFSGrantProject(operationContext, leaseOwner)
 		if currentErr != nil {
 			return productionCloudBackupFailure(productionCloudBackupInputInvalid, id)
 		}
@@ -533,7 +533,7 @@ func (b *productionCloudBackup) restoreCopy(ctx context.Context, caller transpor
 		}
 		// The grant is the only target authority: the request carries an opaque id
 		// and never a path (src/shared/cloud-backup.ts:107-108).
-		owner, ownerErr := productionOwner(caller)
+		tab, ownerErr := productionTabOwner(caller)
 		if ownerErr != nil {
 			return productionCloudBackupFailure(productionCloudBackupInputInvalid, id)
 		}
@@ -541,7 +541,7 @@ func (b *productionCloudBackup) restoreCopy(ctx context.Context, caller transpor
 		if registryErr != nil {
 			return productionCloudBackupFailure(productionCloudBackupRestoreFailed, id)
 		}
-		binding := librarypath.Binding{SessionID: owner.SessionID, ClientID: owner.ClientID}
+		binding := librarypath.Binding{SessionID: tab.SessionID, ClientID: tab.ClientID}
 		grant, grantErr := registry.Peek(grantID, binding, librarypath.OpMkdir)
 		if grantErr != nil {
 			// Exactly the desktop's own answer for an unusable target grant

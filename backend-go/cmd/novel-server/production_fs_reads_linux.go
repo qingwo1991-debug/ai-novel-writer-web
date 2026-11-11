@@ -293,7 +293,7 @@ func (d *productionDurableOpen) productionFSHolds(ctx context.Context, owner pro
 // one, and the exact context this request froze must still be the context this
 // owner holds. A stale, foreign or absent lease never reaches a project tree.
 func (r *productionFSReads) productionFSFence(ctx context.Context, caller transport.Caller, expected projectsession.Context) error {
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return productionFSHTTPError("PROJECT_SESSION_REQUIRED")
 	}

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -110,7 +109,11 @@ func newProductionDurable(library *projectfs.Library, layout productionLayout, s
 		}
 		return nil, cause
 	}
-	manager, err := projectruntime.NewManager(lifecycle)
+	// The production lane's project lifecycle keys the lease by ACCOUNT, so a
+	// second tab adopts the live lease instead of being refused. Passing the
+	// derivation in (rather than letting the adapter guess) keeps the LEASE OWNER
+	// in one place and keeps the migration scaffold's per-tab owner untouched.
+	manager, err := projectruntime.NewManager(lifecycle, productionLeaseOwner)
 	if err != nil {
 		return fail(err)
 	}
@@ -160,13 +163,41 @@ func (d *productionDurableOpen) Close() error {
 	return lifecycle.Shutdown()
 }
 
-// productionOwner is the exact cookie session plus browser tab identity. A
-// browser cannot borrow another caller's lease, so an unnamed caller is refused
-// before any repository or lease is touched.
-func productionOwner(caller transport.Caller) (projectsession.Owner, error) {
+// productionLeaseOwner is the LEASE OWNER: the authenticated account, not the
+// tab and not the cookie session. This is a single-author browser workspace, so
+// the same author may open and edit one project from any number of tabs or
+// devices (home computer, phone). Every one of those tabs derives this same
+// owner, the single-writer project lease is therefore held once per
+// account+project, and a further tab ADOPTS the live lease instead of being
+// refused with PROJECT_OPEN_IN_ANOTHER_TAB. Only a genuinely different account
+// derives a different owner, and that is still refused.
+//
+// Concurrent writes are resolved by the per-resource baselines the stores
+// already enforce (draft content CAS, project_core expected patch) and by
+// SQLite's own serialization, never by refusing a sibling tab's open. The
+// per-tab ClientID still fences the SSE stream, the in-flight request counter,
+// file grants, upload staging and the generation/import-run receipt scopes -
+// through productionTabOwner below, which is a DIFFERENT identity and must never
+// be substituted for this one.
+func productionLeaseOwner(caller transport.Caller) (projectsession.Owner, error) {
+	owner := projectsession.AccountOwner(caller.Principal)
+	if !owner.Valid() {
+		// An unnamed caller is refused before any repository or lease is touched.
+		return projectsession.Owner{}, errors.New("PROJECT_SESSION_REQUIRED")
+	}
+	return owner, nil
+}
+
+// productionTabOwner is the TAB IDENTITY: the exact cookie session plus browser
+// tab that made this request. It is what a request's own file grants, staged
+// uploads, import selections, picker/directory bindings and generation or
+// import-run receipts are scoped to, so two tabs of one account stay isolated
+// from each other even though they share the LEASE OWNER above. It is
+// deliberately NOT the account owner: aliasing the two is exactly the mistake
+// that leaks one tab's staged bytes and receipts into its sibling.
+func productionTabOwner(caller transport.Caller) (projectsession.Owner, error) {
 	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
-	if owner.SessionID == "" || owner.ClientID == "" ||
-		strings.ContainsAny(owner.SessionID+owner.ClientID, ":\x00") {
+	if !owner.Valid() {
 		return projectsession.Owner{}, errors.New("PROJECT_SESSION_REQUIRED")
 	}
 	return owner, nil
@@ -258,7 +289,7 @@ func (d *productionDurableOpen) ReadDraftJSON(ctx context.Context, caller transp
 	if err != nil {
 		return nil, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +317,7 @@ func (d *productionDurableOpen) CommitDraftContent(ctx context.Context, caller t
 	if err != nil {
 		return zero, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return zero, err
 	}
@@ -332,7 +363,7 @@ func (d *productionDurableOpen) borrowAuthorDatabase(ctx context.Context, caller
 	if err != nil {
 		return nil, nil, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -437,7 +468,7 @@ func (d *productionDurableOpen) readDurableJSON(ctx context.Context, caller tran
 	if err != nil {
 		return nil, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return nil, err
 	}

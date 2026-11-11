@@ -364,7 +364,7 @@ func (r *productionImportRunPrepareInspectionServe) assertCurrentProject(ctx con
 	if r == nil || r.durable == nil || ctx == nil {
 		return errors.New("PRODUCTION_CLOSED")
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionLeaseOwner(caller)
 	if err != nil {
 		return errors.New("PROJECT_SESSION_REQUIRED")
 	}

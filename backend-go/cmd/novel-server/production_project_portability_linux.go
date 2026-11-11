@@ -348,11 +348,13 @@ func (b *productionPortability) ListDirectory(ctx context.Context, caller transp
 	if b == nil || b.open == nil || b.open.durable == nil {
 		return nil, security.NewHTTPError(http.StatusServiceUnavailable, productionPortabilityClosedCode)
 	}
-	owner, ownerErr := productionOwner(caller)
-	if ownerErr != nil {
+	// The live lease is looked up under the LEASE OWNER (the authenticated
+	// account), so every tab of one author resolves the same project.
+	leaseOwner, leaseErr := productionLeaseOwner(caller)
+	if leaseErr != nil {
 		return nil, security.NewHTTPError(http.StatusUnauthorized, "PROJECT_SESSION_REQUIRED")
 	}
-	current, present, leaseErr := b.open.durable.productionFSGrantProject(ctx, owner)
+	current, present, leaseErr := b.open.durable.productionFSGrantProject(ctx, leaseOwner)
 	if leaseErr != nil {
 		return nil, security.NewHTTPError(http.StatusConflict, "PROJECT_SESSION_STALE")
 	}
@@ -560,8 +562,15 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 	if ctx == nil {
 		return refuse("PRODUCTION_EXPORT_CONTEXT_MISSING")
 	}
-	owner, ownerErr := productionOwner(caller)
+	// Two identities: the grant is redeemed under the TAB IDENTITY, the lease
+	// under the LEASE OWNER (the account), so a sibling tab of the same author
+	// shares the project without sharing the grant.
+	tab, ownerErr := productionTabOwner(caller)
 	if ownerErr != nil {
+		return refuse("PROJECT_SESSION_REQUIRED")
+	}
+	leaseOwner, leaseOwnerErr := productionLeaseOwner(caller)
+	if leaseOwnerErr != nil {
 		return refuse("PROJECT_SESSION_REQUIRED")
 	}
 	durable, library, scratch, _, laneErr := b.backup.lane()
@@ -572,7 +581,7 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 	if registryErr != nil || registry == nil {
 		return refuse(productionFSGrantUnavailable.Error())
 	}
-	binding := librarypath.Binding{SessionID: owner.SessionID, ClientID: owner.ClientID}
+	binding := librarypath.Binding{SessionID: tab.SessionID, ClientID: tab.ClientID}
 	grant, grantErr := registry.Peek(grantID, binding, librarypath.OpWrite)
 	if grantErr != nil {
 		return refuse(productionPortabilityCodeGrant)
@@ -580,8 +589,8 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 	// 1. The caller's own lease, asked of the runtime, compared with the context
 	//    the request named. A tab that has moved on cannot export through a lease
 	//    id it still remembers.
-	current, present, leaseErr := durable.productionFSGrantProject(ctx, owner)
-	if leaseErr != nil || !present {
+	current, present, leaseLookupErr := durable.productionFSGrantProject(ctx, leaseOwner)
+	if leaseLookupErr != nil || !present {
 		return refuse("PROJECT_SESSION_REQUIRED")
 	}
 	if current.ProjectID != expected["projectId"] || current.LeaseID != expected["leaseId"] || current.ProjectPath != expected["projectPath"] {
@@ -754,7 +763,7 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 		// The lease must still be the caller's at both ends of the write, and the
 		// source file set must be the same bytes the snapshot was taken from.
 		CheckCurrent: func(checkContext context.Context) error {
-			live, liveErr := productionPortabilityLiveLease(checkContext, b.open, owner, current)
+			live, liveErr := productionPortabilityLiveLease(checkContext, b.open, leaseOwner, current)
 			if !live || liveErr != nil {
 				return errors.New("PROJECT_SESSION_STALE")
 			}
@@ -784,7 +793,7 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 				registry:       registry,
 				binding:        binding,
 				grantID:        grantID,
-				owner:          owner,
+				tab:            tab,
 			})
 		},
 		Abort: func() error {
@@ -796,7 +805,10 @@ func (b *productionPortability) BeginArchiveExport(ctx context.Context, caller t
 }
 
 // productionPortabilityPublish is everything Commit needs to prove one published
-// archive and mint exactly one URL for it.
+// archive and mint exactly one URL for it. binding and tab are the TAB IDENTITY
+// that asked for the export: the grant is spent under binding, and the download
+// token is bound to tab's cookie session, which is the identity the download
+// route re-derives from the request.
 type productionPortabilityPublish struct {
 	roots          librarypath.Roots
 	directory      librarypath.Target
@@ -810,7 +822,7 @@ type productionPortabilityPublish struct {
 	registry       *librarypath.Registry
 	binding        librarypath.Binding
 	grantID        string
-	owner          projectsession.Owner
+	tab            projectsession.Owner
 }
 
 // publishExport proves the bytes on disk are the receipt's bytes, proves the
@@ -890,7 +902,7 @@ func (b *productionPortability) publishExport(ctx context.Context, publish produ
 		_ = os.Remove(published.Path)
 		return "", "", spendErr
 	}
-	token, tokenErr := b.mintDownload(publish.owner.SessionID, combined, publish.archiveName)
+	token, tokenErr := b.mintDownload(publish.tab.SessionID, combined, publish.archiveName)
 	if tokenErr != nil {
 		return "", "", tokenErr
 	}
@@ -1081,7 +1093,7 @@ func (b *productionPortability) restore(ctx context.Context, caller transport.Ca
 	if laneErr != nil || durable == nil || library == nil || scratch == "" {
 		return fail(productionPortabilityClosedCode)
 	}
-	owner, ownerErr := productionOwner(caller)
+	tab, ownerErr := productionTabOwner(caller)
 	if ownerErr != nil {
 		return fail("PROJECT_SESSION_REQUIRED")
 	}
@@ -1089,7 +1101,7 @@ func (b *productionPortability) restore(ctx context.Context, caller transport.Ca
 	if registryErr != nil || registry == nil {
 		return fail(productionPortabilityCodeGrant)
 	}
-	binding := librarypath.Binding{SessionID: owner.SessionID, ClientID: owner.ClientID}
+	binding := librarypath.Binding{SessionID: tab.SessionID, ClientID: tab.ClientID}
 	archiveGrant, archivePeekErr := registry.Peek(archiveGrantID, binding, librarypath.OpRead)
 	if archivePeekErr != nil {
 		return fail(productionPortabilityCodeGrant)

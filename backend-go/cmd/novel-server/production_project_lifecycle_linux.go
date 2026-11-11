@@ -200,7 +200,7 @@ func (l *productionProjectLifecycle) delete(ctx context.Context, caller transpor
 	if ctx == nil {
 		return productionProjectDeleteAnswer(false, false, true, "PROJECT_SESSION_REQUIRED", ""), nil
 	}
-	owner, ownerErr := productionOwner(caller)
+	owner, ownerErr := productionLeaseOwner(caller)
 	if ownerErr != nil {
 		return productionProjectDeleteAnswer(false, false, true, "PROJECT_SESSION_REQUIRED", ""), nil
 	}

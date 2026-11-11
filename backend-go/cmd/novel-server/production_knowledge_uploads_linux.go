@@ -254,7 +254,7 @@ func (k *productionKnowledgeUploads) importFolder(ctx context.Context, caller tr
 	if err != nil {
 		return nil, err
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionTabOwner(caller)
 	if err != nil {
 		return nil, security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED")
 	}
@@ -396,7 +396,7 @@ func (k *productionKnowledgeUploads) read(caller transport.Caller, uploadID stri
 	if uploadID == "" {
 		return "", nil, errProductionKnowledgeUploadRequired
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionTabOwner(caller)
 	if err != nil {
 		return "", nil, errProductionKnowledgeUploadUnknown
 	}

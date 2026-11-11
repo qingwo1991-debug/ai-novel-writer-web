@@ -681,9 +681,10 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		"projectPath": opened.Project["path"],
 		"leaseId":     "stale-lease",
 	}
-	// A second tab with its own cookie and its own X-Client-Id: the lease in
-	// `frozen` is real, but it belongs to the other tab.
-	foreign := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	// A DIFFERENT ACCOUNT: the lease in `frozen` is real, but it belongs to the
+	// production-author account, so even the same tab name is refused. (A sibling
+	// tab of that account shares the lease and really writes; see the arm below.)
+	foreign := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
 
 	t.Run("narrative plan and exemption writes", func(t *testing.T) {
 		for _, operation := range []string{
@@ -695,7 +696,7 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		} {
 			productionStoryStateWriteBusinessRefusal(t, author, "stale lease", operation,
 				productionStoryStateWriteArgs(t, operation, stale, projectPath), "NARRATIVE_OPERATION_FAILED")
-			productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", operation,
+			productionStoryStateWriteBusinessRefusal(t, foreign, "other account", operation,
 				productionStoryStateWriteArgs(t, operation, frozen, projectPath), "NARRATIVE_OPERATION_FAILED")
 		}
 	})
@@ -704,9 +705,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		for _, session := range []struct {
 			label string
 			args  map[string]any
-		}{{"stale lease", stale}, {"foreign tab", frozen}} {
+		}{{"stale lease", stale}, {"other account", frozen}} {
 			client := author
-			if session.label == "foreign tab" {
+			if session.label == "other account" {
 				client = foreign
 			}
 			productionStoryStateWriteTransportRefusal(t, client, session.label, "db:narrative-thread-event-confirm",
@@ -719,9 +720,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		for _, session := range []struct {
 			label string
 			args  map[string]any
-		}{{"stale lease", stale}, {"foreign tab", frozen}} {
+		}{{"stale lease", stale}, {"other account", frozen}} {
 			client := author
-			if session.label == "foreign tab" {
+			if session.label == "other account" {
 				client = foreign
 			}
 			productionStoryStateWriteTransportRefusal(t, client, session.label, "db:plot-tree-clear",
@@ -738,14 +739,14 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 		} {
 			productionStoryStateWriteBusinessRefusal(t, author, "stale lease", operation,
 				productionStoryStateWriteArgs(t, operation, stale, projectPath), "POST_HISTORY_OPERATION_FAILED")
-			productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", operation,
+			productionStoryStateWriteBusinessRefusal(t, foreign, "other account", operation,
 				productionStoryStateWriteArgs(t, operation, frozen, projectPath), "POST_HISTORY_OPERATION_FAILED")
 		}
 		// db:log-llm-call keeps the original's bare refusal shape: success=false
 		// and no code at all, which must not gain one.
 		productionStoryStateWriteBusinessRefusal(t, author, "stale lease", "db:log-llm-call",
 			productionStoryStateWriteArgs(t, "db:log-llm-call", stale, projectPath), "")
-		productionStoryStateWriteBusinessRefusal(t, foreign, "foreign tab", "db:log-llm-call",
+		productionStoryStateWriteBusinessRefusal(t, foreign, "other account", "db:log-llm-call",
 			productionStoryStateWriteArgs(t, "db:log-llm-call", frozen, projectPath), "")
 	})
 
@@ -770,6 +771,23 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 	}
 	if !bytes.Equal(after, baseline) {
 		t.Fatal("a refused or unbound story-state write changed the admitted author database")
+	}
+
+	// The lease is keyed by the authenticated ACCOUNT, so a sibling tab of the
+	// same account shares it: a write it makes with the frozen lease is served and
+	// really lands, which is what "any number of tabs" has to mean. The refusals
+	// above are what remains of the fence - the different account.
+	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	shared := productionStoryStateWriteCall(t, sibling, "db:log-llm-call",
+		productionStoryStateWriteArgs(t, "db:log-llm-call", frozen, projectPath))
+	if shared["success"] != true || shared["error"] != nil {
+		t.Fatalf("a sibling tab of the same account was refused the shared lease: %v", shared)
+	}
+	var rows int64
+	productionStoryStateWriteScan(t, productionStoryStateWriteReadback(t, projectPath),
+		"SELECT COUNT(*) FROM llm_calls", nil, &rows)
+	if rows != 1 {
+		t.Fatalf("the sibling tab's own write did not land: %d llm_calls rows", rows)
 	}
 }
 

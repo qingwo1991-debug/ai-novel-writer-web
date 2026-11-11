@@ -462,12 +462,24 @@ func (r *productionImportRunReceiptsServe2) reproduce(ctx context.Context, calle
 	// comparison requireRun performs is gated on execution
 	// (electron/services/main-generation-owner.ts:164), which the assert never
 	// passes.
+	//
+	// Caller/Session/Tab stay the TAB IDENTITY: the receipt lease was taken under
+	// this tab and must not become resolvable from a sibling tab of the same
+	// account. LeaseSession/LeaseClient name the LEASE OWNER the receipt was
+	// admitted under, which is the account for this lane, so the registry's
+	// Current check can still re-prove the live lease.
+	leaseOwner, leaseErr := productionLeaseOwner(caller)
+	if leaseErr != nil {
+		return leaseErr
+	}
 	scope := generationowner.Scope{
-		Caller:  caller.SessionID,
-		Session: caller.SessionID,
-		Tab:     caller.ClientID,
-		Project: binding.ProjectID,
-		Epoch:   binding.Epoch,
+		Caller:       caller.SessionID,
+		Session:      caller.SessionID,
+		Tab:          caller.ClientID,
+		LeaseSession: leaseOwner.SessionID,
+		LeaseClient:  leaseOwner.ClientID,
+		Project:      binding.ProjectID,
+		Epoch:        binding.Epoch,
 	}
 	reproduced, err := r.owner.inner.registry.ReproduceBinding(ctx, scope, leaseID,
 		productionImportRunReceiptsServe2Sources(), selection)

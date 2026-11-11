@@ -316,7 +316,7 @@ func (a *productionCharacterAvatars) choose(ctx context.Context, caller transpor
 	if !exists {
 		return productionAvatarFailure(errProductionAvatarNotFound), nil
 	}
-	owner, err := productionOwner(caller)
+	owner, err := productionTabOwner(caller)
 	if err != nil {
 		// The transport already proved the caller; an unnamed owner is a shape
 		// refusal rather than an avatar answer.

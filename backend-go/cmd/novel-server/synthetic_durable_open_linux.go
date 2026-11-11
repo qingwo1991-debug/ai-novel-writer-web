@@ -143,6 +143,22 @@ type syntheticDurableOpen struct {
 	prompts *promptskills.Service
 }
 
+// syntheticLeaseOwner is the migration scaffold's LEASE OWNER: the exact cookie
+// session plus browser tab, exactly as this lane derived it before the
+// production lane split its account-level lease owner out. It is named rather
+// than inlined so the scaffold's per-tab choice is a decision, not an accident -
+// every read, borrow, upload and receipt in this lane is still keyed by it, and
+// the shipped lane keys the same lease by account instead
+// (productionLeaseOwner). An unnamed caller is refused before any repository or
+// lease is touched.
+func syntheticLeaseOwner(caller transport.Caller) (projectsession.Owner, error) {
+	owner := projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
+	if !owner.Valid() {
+		return projectsession.Owner{}, errors.New("PROJECT_SESSION_REQUIRED")
+	}
+	return owner, nil
+}
+
 // newSyntheticDurableOpen builds the read/write lifecycle and the transport
 // adapter under the held legacy writer lock, exactly like newSyntheticReadOpen
 // does for the read lane, and registers only the exactly-created synthetic
@@ -204,7 +220,12 @@ func newSyntheticDurableOpen(library *projectfs.Library, libraryDir, projectPath
 		remove()
 		return nil, cause
 	}
-	manager, err := projectruntime.NewManager(lifecycle)
+	// The migration scaffold keeps the ORIGINAL per-tab LEASE OWNER: this is the
+	// synthetic durable lane, not the shipped one, and every read, borrow and
+	// receipt in it is still keyed by the cookie session plus the tab. The
+	// production lane passes productionLeaseOwner (account-level) here instead;
+	// the two derivations are named separately so neither can be assumed.
+	manager, err := projectruntime.NewManager(lifecycle, syntheticLeaseOwner)
 	if err != nil {
 		return fail(err)
 	}

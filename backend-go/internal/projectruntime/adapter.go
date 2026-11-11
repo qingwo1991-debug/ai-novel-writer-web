@@ -23,22 +23,35 @@ var ErrInvalid = errors.New("PROJECT_RUNTIME_INVALID")
 // the underlying legacy writer lock is process-exclusive by design.
 type Manager struct {
 	runtime *authorruntime.ReadLifecycle
+	// leaseOwner derives the LEASE OWNER of one authenticated caller. It is
+	// injected, never hard-coded, because the two lanes make opposite choices:
+	// the production lane keys the lease by the authenticated ACCOUNT
+	// (projectsession.AccountOwner, so every tab of one author shares one lease),
+	// while the migration scaffold keeps its per-tab owner. Neither choice may be
+	// silently assumed here: a Manager that guessed wrong would either refuse a
+	// sibling tab or collapse two tabs' per-tab scopes into one.
+	leaseOwner func(transport.Caller) (projectsession.Owner, error)
 }
 
 // NewManager binds the adapter to an already constructed durable read/write
-// lifecycle. The lifecycle must own the retained legacy lock.
-func NewManager(runtime *authorruntime.ReadLifecycle) (*Manager, error) {
-	if runtime == nil {
+// lifecycle and the lane's own LEASE OWNER derivation. The lifecycle must own the
+// retained legacy lock.
+func NewManager(runtime *authorruntime.ReadLifecycle, leaseOwner func(transport.Caller) (projectsession.Owner, error)) (*Manager, error) {
+	if runtime == nil || leaseOwner == nil {
 		return nil, ErrInvalid
 	}
-	return &Manager{runtime: runtime}, nil
+	return &Manager{runtime: runtime, leaseOwner: leaseOwner}, nil
 }
 
-func owner(caller transport.Caller) (projectsession.Owner, error) {
-	if caller.SessionID == "" || caller.ClientID == "" {
+func (m *Manager) owner(caller transport.Caller) (projectsession.Owner, error) {
+	if m == nil || m.leaseOwner == nil {
 		return projectsession.Owner{}, ErrInvalid
 	}
-	return projectsession.Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}, nil
+	who, err := m.leaseOwner(caller)
+	if err != nil || !who.Valid() {
+		return projectsession.Owner{}, ErrInvalid
+	}
+	return who, nil
 }
 
 // OpenProject resolves a server-catalog key (never a caller path) and returns
@@ -51,7 +64,7 @@ func (m *Manager) OpenProject(ctx context.Context, caller transport.Caller, targ
 	if !ok || key == "" {
 		return nil, ErrInvalid
 	}
-	who, err := owner(caller)
+	who, err := m.owner(caller)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +84,7 @@ func (m *Manager) CloseProject(ctx context.Context, caller transport.Caller, pro
 	if m == nil || m.runtime == nil {
 		return nil, ErrInvalid
 	}
-	who, err := owner(caller)
+	who, err := m.owner(caller)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +107,7 @@ func (m *Manager) ProjectRuntimeContext(ctx context.Context, caller transport.Ca
 	if m == nil || m.runtime == nil {
 		return nil, ErrInvalid
 	}
-	who, err := owner(caller)
+	who, err := m.owner(caller)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +142,7 @@ func (m *Manager) SaveProject(ctx context.Context, caller transport.Caller, proj
 	if m == nil || m.runtime == nil {
 		return nil, ErrInvalid
 	}
-	who, err := owner(caller)
+	who, err := m.owner(caller)
 	if err != nil {
 		return nil, err
 	}
