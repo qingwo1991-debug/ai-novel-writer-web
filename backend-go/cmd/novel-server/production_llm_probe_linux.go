@@ -545,6 +545,15 @@ func productionProbeFormFrom(request map[string]any) (productionProbeForm, error
 	if form.modelID, ok = productionProbeOptionalString(request, "id"); !ok {
 		return productionProbeForm{}, errProductionProbeRequestInvalid
 	}
+	// The discovery request names the saved model savedModelId
+	// (src/shared/ipc-channels.ts ModelDiscoveryRequest), while test-connection
+	// carries the profile's own id field. Accept both so a saved credential is
+	// actually restored instead of demanding a fresh key on every list refresh.
+	if form.modelID == "" {
+		if form.modelID, ok = productionProbeOptionalString(request, "savedModelId"); !ok {
+			return productionProbeForm{}, errProductionProbeRequestInvalid
+		}
+	}
 	if form.saved, ok = productionProbeOptionalBool(request, "hasCredential"); !ok {
 		return productionProbeForm{}, errProductionProbeRequestInvalid
 	}
