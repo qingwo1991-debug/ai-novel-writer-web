@@ -313,12 +313,15 @@ func openProduction(ctx context.Context, layout productionLayout, config product
 	if scratchErr != nil {
 		return fail(scratchErr)
 	}
-	// The per-open preflight insists the scratch parent sit OUTSIDE the data root;
-	// under it, every project:open fails with AUTHOR_PREFLIGHT_CONFIGURATION_INVALID.
-	// Refuse at startup instead of listing books that can never be opened.
+	// The per-open preflight creates its staging directory under the scratch
+	// parent and refuses it when that directory sits inside the data root, so a
+	// scratch parent under NOVEL_DATA_ROOT makes every project:open fail with
+	// AUTHOR_PREFLIGHT_CONFIGURATION_INVALID. Refuse at startup instead of
+	// listing books that can never be opened. A scratch parent that merely
+	// CONTAINS the data root (the tests' shared /tmp) is fine: the preflight only
+	// judges the staging child it mints here.
 	if scratchParent == layout.dataRoot ||
-		strings.HasPrefix(scratchParent, layout.dataRoot+string(filepath.Separator)) ||
-		strings.HasPrefix(layout.dataRoot, scratchParent+string(filepath.Separator)) {
+		strings.HasPrefix(scratchParent, layout.dataRoot+string(filepath.Separator)) {
 		return fail(fmt.Errorf("NOVEL_SCRATCH_ROOT %q must sit outside NOVEL_DATA_ROOT %q", scratchParent, layout.dataRoot))
 	}
 	open.scratch, err = os.MkdirTemp(scratchParent, "novel-production-admission-")
