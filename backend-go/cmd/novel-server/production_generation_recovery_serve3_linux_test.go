@@ -383,7 +383,12 @@ func TestProductionGenerationRecoveryServe3ContinuationProjects(t *testing.T) {
 			RemainingRange: &productionRecoveryServe3RangeView{From: 3, To: 3},
 			PayloadHash:    sha256Hex(productionRecoveryResumableOperation),
 		}
-		if *blueprint.Saved != wantSaved {
+		// The view carries the remaining range as a pointer, so a struct !=
+		// would compare the two allocations instead of the values they hold.
+		saved, want := *blueprint.Saved, wantSaved
+		savedRemaining, wantRemaining := saved.RemainingRange, want.RemainingRange
+		saved.RemainingRange, want.RemainingRange = nil, nil
+		if saved != want || savedRemaining == nil || *savedRemaining != *wantRemaining {
 			t.Fatalf("blueprintRecovery.saved = %+v, want %+v", blueprint.Saved, wantSaved)
 		}
 
