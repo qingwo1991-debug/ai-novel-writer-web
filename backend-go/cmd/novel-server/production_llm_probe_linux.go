@@ -545,17 +545,27 @@ func productionProbeFormFrom(request map[string]any) (productionProbeForm, error
 	if form.modelID, ok = productionProbeOptionalString(request, "id"); !ok {
 		return productionProbeForm{}, errProductionProbeRequestInvalid
 	}
-	// The discovery request names the saved model savedModelId
-	// (src/shared/ipc-channels.ts ModelDiscoveryRequest), while test-connection
-	// carries the profile's own id field. Accept both so a saved credential is
-	// actually restored instead of demanding a fresh key on every list refresh.
+	// ModelDiscoveryRequest names the saved model savedModelId and carries no
+	// hasCredential field at all, while test-connection sends the profile's own
+	// id plus hasCredential. Presence of savedModelId is therefore the renderer's
+	// "restore the stored key" signal, and it sets both the model id and the saved
+	// flag below, instead of demanding a fresh key on every list refresh.
+	// model with savedModelId and nothing else. Presence of that field IS the
+	// renderer's "restore the stored key" signal, so it sets both the model id and
+	// the saved flag; test-connection keeps sending the profile's own id plus
+	// hasCredential.
+	savedModelID, ok := productionProbeOptionalString(request, "savedModelId")
+	if !ok {
+		return productionProbeForm{}, errProductionProbeRequestInvalid
+	}
 	if form.modelID == "" {
-		if form.modelID, ok = productionProbeOptionalString(request, "savedModelId"); !ok {
-			return productionProbeForm{}, errProductionProbeRequestInvalid
-		}
+		form.modelID = savedModelID
 	}
 	if form.saved, ok = productionProbeOptionalBool(request, "hasCredential"); !ok {
 		return productionProbeForm{}, errProductionProbeRequestInvalid
+	}
+	if savedModelID != "" {
+		form.saved = true
 	}
 	if raw, present := request["purposes"]; present && raw != nil {
 		items, ok := raw.([]any)
