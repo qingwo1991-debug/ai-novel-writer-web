@@ -159,7 +159,17 @@ func newProductionGeneration(open *productionOpen, server *transport.Server, dis
 		if err != nil {
 			return err
 		}
-		if !found || value.ProjectID != scope.Project || value.LeaseID != scope.Epoch {
+		if !found {
+			// No durable slot for this account+tab: the tab never opened the
+			// project itself, or the slot was released between begin and execute.
+			log.Printf("novel-server: generation current: no durable slot (tab tracked=%v)", scope.Tab != "")
+			return errors.New("GENERATION_EPOCH_STALE")
+		}
+		if value.ProjectID != scope.Project || value.LeaseID != scope.Epoch {
+			// Project id or lease mismatch: a sibling's save may have rotated the
+			// tab lease, or the request carries a stale context. Values are not
+			// logged; the two booleans are enough to tell which half failed.
+			log.Printf("novel-server: generation current: stale context (projectMismatch=%v leaseMismatch=%v)", value.ProjectID != scope.Project, value.LeaseID != scope.Epoch)
 			return errors.New("GENERATION_EPOCH_STALE")
 		}
 		return nil
