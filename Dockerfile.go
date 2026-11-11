@@ -31,10 +31,12 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 # The base image ships no trust store. Every cloud model provider is HTTPS, so
 # without one every TLS dial failed with an unknown-authority error before the
 # request left the process, and only plain-HTTP local endpoints worked. The
-# bundle is copied from the builder stage instead of installed with apt-get:
-# the CI runner intermittently cannot resolve archive.ubuntu.com, and a
-# trust store does not need a package manager to be deterministic.
-COPY --from=frontend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# bundle is committed (docker/ca-certificates.crt, the one the running
+# deployment uses) instead of installed with apt-get: the CI runner
+# intermittently cannot resolve archive.ubuntu.com, and a trust store does not
+# need a package manager to be deterministic. Refresh it from a container with
+# `docker cp <container>:/etc/ssl/certs/ca-certificates.crt docker/`.
+COPY docker/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 COPY backend-go/out/novel-server /usr/local/bin/novel-server
 COPY web/operations.json /web/operations.json
