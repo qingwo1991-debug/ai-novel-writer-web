@@ -74,7 +74,7 @@ func TestCharactersActualPrivateSessionSourceProofAndIdentityWire(t *testing.T) 
 		if err != nil {
 			return nil, nil, err
 		}
-		repo, done, err := manager.BeginCharacters(ctx, Owner{c.SessionID, c.ClientID}, expected)
+		repo, done, err := manager.BeginCharacters(ctx, Owner{SessionID: c.SessionID, ClientID: c.ClientID}, expected)
 		if err == nil {
 			captured = manager.mounts[expected.ProjectPath].db
 		}
@@ -127,7 +127,7 @@ func TestCharactersActualPrivateSessionSourceProofAndIdentityWire(t *testing.T) 
 	if status, _ := invoke(cookie, csrf, tab, "config:get", []any{}); status != 200 {
 		t.Fatal(status)
 	}
-	owner := Owner{caller.SessionID, caller.ClientID}
+	owner := Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
 	expected, err := manager.OpenScratchCopy(context.Background(), owner, project, contract, t.TempDir(), 32<<20)
 	if err != nil {
 		t.Fatal(err)

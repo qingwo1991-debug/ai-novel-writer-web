@@ -57,7 +57,7 @@ func TestRecoveryRealPrivateSessionHTTPAndSourceUnchanged(t *testing.T) {
 		if err != nil {
 			return nil, nil, err
 		}
-		return manager.BeginRecovery(ctx, Owner{c.SessionID, c.ClientID}, expected)
+		return manager.BeginRecovery(ctx, Owner{SessionID: c.SessionID, ClientID: c.ClientID}, expected)
 	})
 	if err := server.BindRecovery(provider); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRecoveryRealPrivateSessionHTTPAndSourceUnchanged(t *testing.T) {
 	if status, _ := invoke(cookie, csrf, tab, "config:get", []any{}); status != 200 {
 		t.Fatal(status)
 	}
-	owner := Owner{caller.SessionID, caller.ClientID}
+	owner := Owner{SessionID: caller.SessionID, ClientID: caller.ClientID}
 	expected, err := manager.OpenScratchCopy(context.Background(), owner, project, contract, t.TempDir(), 32<<20)
 	if err != nil {
 		t.Fatal(err)

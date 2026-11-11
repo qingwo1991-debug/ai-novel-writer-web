@@ -191,6 +191,35 @@ func newProductionDurableClientAs(t *testing.T, handler http.Handler, principal,
 	return &productionDurableClient{handler: handler, principal: principal, tab: tab, csrf: wire.CSRFToken, cookie: boot.Result().Cookies()[0]}
 }
 
+// siblingTab is one more tab of THIS client's own browser session and account:
+// the same principal, cookie and CSRF token, a different X-Client-Id. The tab
+// identity is what grants, staged uploads, candidates and receipts are keyed by,
+// so this is the only honest way to prove one tab cannot use another tab's
+// staged bytes - and, because the account lease is shared, it is also the only
+// way to build a client whose tab never opened the project.
+func (c *productionDurableClient) siblingTab(tab string) *productionDurableClient {
+	return &productionDurableClient{handler: c.handler, principal: c.principal, tab: tab,
+		csrf: c.csrf, cookie: c.cookie}
+}
+
+// openProject opens this client's own session over one admitted project and
+// returns the frozen three-key context it was handed. Every tab of one account
+// still has to open the project itself: the shared account lease is what makes
+// that succeed, not a licence to skip it.
+func (c *productionDurableClient) openProject(t *testing.T, projectPath, token string) map[string]any {
+	t.Helper()
+	var opened productionDurableOpenWire
+	c.decode(t, "project:open", []any{projectPath, token, projectPath}, &opened)
+	if !opened.Success || !opened.DBReady || opened.Error != "" {
+		t.Fatalf("project:open refused an admitted project: %+v", opened)
+	}
+	return map[string]any{
+		"projectId":   opened.Project["id"],
+		"projectPath": opened.Project["path"],
+		"leaseId":     opened.Project["sessionLease"],
+	}
+}
+
 func (c *productionDurableClient) call(t *testing.T, operation string, args []any) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{"args": args})

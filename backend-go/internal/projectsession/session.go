@@ -23,9 +23,23 @@ import (
 var ErrClosed=errors.New("PROJECT_SESSION_MANAGER_CLOSED")
 var ErrContext=errors.New("PROJECT_SESSION_CONTEXT_REQUIRED")
 
-// Owner contains both cookie session and browser tab identity. The upstream login
-// username is not a browser session and cannot be used alone as an owner.
-type Owner struct {SessionID string; ClientID string}
+// Owner is one caller's identity over one project, and it carries the two
+// identities this product keeps apart.
+//
+// SessionID+ClientID are the LEASE OWNER key (key() builds the map key from
+// exactly those two). The production lane derives them from the authenticated
+// ACCOUNT (AccountOwner), so every browser tab of one author resolves the SAME
+// single-writer project lease and a second tab adopts it instead of being
+// refused with ErrOwned. A genuinely different account derives a different key
+// and is still refused.
+//
+// Tab is the TAB IDENTITY of the request that holds that lease: the cookie
+// session plus the browser tab, or just the tab half when the lane keys the lease
+// per tab. The coordinator requires it to have completed its own Open before it
+// borrows the slot's handle, so sharing the account lease never lets a tab that
+// never opened the project use it. A lane that leaves Tab empty does not track
+// per-tab admission at all and behaves exactly as it did before.
+type Owner struct {SessionID string; ClientID string; Tab string}
 func(o Owner) key()string{return o.SessionID+":"+o.ClientID}
 func(o Owner) valid()bool{return o.SessionID!=""&&o.ClientID!=""&&!strings.ContainsAny(o.SessionID+o.ClientID,":\x00")}
 // Valid is the exported half of valid(), for the lanes that build an owner from

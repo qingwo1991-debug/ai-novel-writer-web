@@ -119,6 +119,63 @@ func TestActiveFailedAndStaleSwitchPreservePreviousHandle(t *testing.T) {
 	}
 }
 
+// TestActiveAccountLeaseServesOnlyTheTabsThatOpenedIt is the multi-tab fence at
+// its narrowest. One account-level slot (SessionID+ClientID name the account, the
+// way the production lane derives them) is opened by one tab. That tab keeps the
+// handle; a sibling tab of the SAME account that never opened the project is
+// refused exactly as it was when the lease was keyed per tab - and becomes
+// admissible, on the same shared handle, the moment it opens the project itself.
+func TestActiveAccountLeaseServesOnlyTheTabsThatOpenedIt(t *testing.T) {
+	active := activeFixture(t)
+	account := func(tab string) Owner {
+		return Owner{SessionID: "author", ClientID: "account", Tab: tab}
+	}
+	handle := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), account("tab-a"), "catalog-A", "first", stageAdmitted(handle)); err != nil {
+		t.Fatal(err)
+	}
+	// The sibling tab of the same account never opened this project.
+	sibling := account("tab-b")
+	if _, done, err := active.Begin(context.Background(), sibling, handle.identity); !errors.Is(err, novelruntime.ErrNotOwned) {
+		if done != nil {
+			done()
+		}
+		t.Fatal("a tab that never opened the project borrowed the shared handle", err)
+	}
+	if _, present, err := active.Current(context.Background(), sibling); err != nil || present {
+		t.Fatal("a tab that never opened the project reported the live context", err, present)
+	}
+	if err := active.CloseProject(context.Background(), sibling, handle.identity); !errors.Is(err, novelruntime.ErrNotOwned) {
+		t.Fatal("a tab that never opened the project closed the shared handle", err)
+	}
+	// The tab that did open it is still served.
+	_, done, err := active.Begin(context.Background(), account("tab-a"), handle.identity)
+	if err != nil {
+		t.Fatal("the tab that opened the project was refused", err)
+	}
+	done()
+
+	// The sibling opens the same project itself: it adopts the live lease instead
+	// of staging a second handle, and is served from its own tab.
+	refreshed, err := active.Open(context.Background(), sibling, "catalog-A", "second", func(context.Context, *writerlock.Lock) (Admitted, error) {
+		t.Fatal("a sibling tab of the same account staged a second handle")
+		return nil, nil
+	})
+	if err != nil || refreshed != handle.identity {
+		t.Fatal("the sibling tab did not adopt the live lease", refreshed, err)
+	}
+	_, siblingDone, err := active.Begin(context.Background(), sibling, handle.identity)
+	if err != nil {
+		t.Fatal("the sibling tab was refused after opening the project", err)
+	}
+	siblingDone()
+	if _, firstDone, err := active.Begin(context.Background(), account("tab-a"), handle.identity); err != nil {
+		t.Fatal("the first tab was refused after its sibling opened the project", err)
+	} else {
+		firstDone()
+	}
+}
+
 func TestActiveRefreshAndExactCloseWaitForInFlight(t *testing.T) {
 	active := activeFixture(t)
 	owner := Owner{SessionID: "browser", ClientID: "tab"}

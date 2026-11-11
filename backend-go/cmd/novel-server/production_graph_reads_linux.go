@@ -56,7 +56,7 @@ func newProductionGraphReads(durable *productionDurableOpen) *productionGraphRea
 	if closed || lifecycle == nil {
 		return &productionGraphReads{}
 	}
-	reads := &syntheticGeneration{lifecycle: lifecycle}
+	reads := &syntheticGeneration{lifecycle: lifecycle, leaseOwner: productionLeaseOwner}
 	return &productionGraphReads{read: reads.FinalizationRead}
 }
 

@@ -28,13 +28,13 @@ func TestGenerationLedgerPrivateSessionLifecycleDoesNotPublishSource(t *testing.
 		}
 	})
 	ctx := context.Background()
-	owner := Owner{"ledger-cookie", "ledger-tab"}
+	owner := Owner{SessionID: "ledger-cookie", ClientID: "ledger-tab"}
 	scratch := t.TempDir()
 	lease, err := manager.OpenScratchCopy(ctx, owner, project, contract, scratch, 32*1024*1024)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, foreign := range []Owner{{"foreign-cookie", owner.ClientID}, {owner.SessionID, "foreign-tab"}} {
+	for _, foreign := range []Owner{{SessionID: "foreign-cookie", ClientID: owner.ClientID}, {SessionID: owner.SessionID, ClientID: "foreign-tab"}} {
 		if _, done, err := manager.BeginGenerationLedger(ctx, foreign, lease); err == nil {
 			done()
 			t.Fatal("foreign ledger borrower")

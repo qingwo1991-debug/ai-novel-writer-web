@@ -366,6 +366,11 @@ func testProductionReviewRevisionRefusals(t *testing.T) {
 	// prepare is served: the lease is keyed by the authenticated account, not by
 	// the tab.
 	sibling := newProductionDurableClient(t, lane.author.handler, productionReviewRevisionOtherTab)
+	// The sibling tab opens the same project itself before its own prepare is
+	// served; the account lease it adopts is the one the author already holds.
+	if got := sibling.openProject(t, lane.projectPath, "open-token-review-sibling"); got["leaseId"] != lane.frozen["leaseId"] {
+		t.Fatalf("the sibling tab did not adopt the shared lease: %v vs %v", got["leaseId"], lane.frozen["leaseId"])
+	}
 	productionReviewRevisionServed(t, sibling, "sibling tab", request, lane.frozen)
 	// A DIFFERENT account is still refused the lease: sharing is per account, not
 	// global, and that is the boundary the relaxation must not cross.

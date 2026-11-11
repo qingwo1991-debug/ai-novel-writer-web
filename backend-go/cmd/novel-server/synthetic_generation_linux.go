@@ -130,11 +130,12 @@ func newSyntheticGeneration(durable *syntheticDurableOpen, server *transport.Ser
 		return generationowner.Profile{}, false, nil
 	}
 	current := func(ctx context.Context, scope generationowner.Scope) error {
-		// The live lease is looked up under the LEASE OWNER the begin captured,
-		// never under the per-tab receipt identity: two tabs of one account hold
-		// the same lease and each must still see it as current, while their
-		// receipts stay disjoint.
-		currentValue, found, err := durable.lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient})
+		// The live lease is looked up under the LEASE OWNER the begin captured (the
+		// account, for the production lane), and through the tab that captured the
+		// scope: sharing the account lease never makes a tab that never opened the
+		// project current. The receipt scope beside it stays per tab, so two tabs of
+		// one account hold the same lease and disjoint receipts.
+		currentValue, found, err := durable.lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient, Tab: scope.Tab})
 		if err != nil {
 			return err
 		}

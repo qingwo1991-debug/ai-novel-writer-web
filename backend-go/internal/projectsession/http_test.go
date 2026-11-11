@@ -24,7 +24,7 @@ func TestBrowserWireDraftCASOnAdmittedScratchSession(t *testing.T){
  file,err:=os.Open("../../../web/operations.json");if err!=nil{t.Fatal(err)};registry,err:=policy.Load(file);file.Close();if err!=nil{t.Fatal(err)}
  server:=transport.New(registry,security.NewOrigins("http://synthetic.test"),"synthetic");defer server.Close()
  manager:=New();defer manager.Close()
- if err:=server.BindDrafts(transport.DraftProviderFunc(func(ctx context.Context,caller transport.Caller,raw any)(*store.Drafts,func(),error){expected,err:=ParseContext(raw);if err!=nil{return nil,nil,err};return manager.Begin(ctx,Owner{caller.SessionID,caller.ClientID},expected)}));err!=nil{t.Fatal(err)}
+ if err:=server.BindDrafts(transport.DraftProviderFunc(func(ctx context.Context,caller transport.Caller,raw any)(*store.Drafts,func(),error){expected,err:=ParseContext(raw);if err!=nil{return nil,nil,err};return manager.Begin(ctx,Owner{SessionID: caller.SessionID, ClientID: caller.ClientID},expected)}));err!=nil{t.Fatal(err)}
  // Capture the authenticated server-side caller without exposing it in an HTTP
  // response. This test-only handler is not registered by the application binary.
  var caller transport.Caller
@@ -39,7 +39,7 @@ func TestBrowserWireDraftCASOnAdmittedScratchSession(t *testing.T){
  }
  const tab="synthetic-browser-tab-0001"
  if status,_:=invoke("config:get",tab,[]any{});status!=200{t.Fatal(status)}
- expected,err:=manager.OpenScratchCopy(context.Background(),Owner{caller.SessionID,caller.ClientID},project,contract,t.TempDir(),32*1024*1024);if err!=nil{t.Fatal(err)}
+ expected,err:=manager.OpenScratchCopy(context.Background(),Owner{SessionID: caller.SessionID, ClientID: caller.ClientID},project,contract,t.TempDir(),32*1024*1024);if err!=nil{t.Fatal(err)}
  // ipc-client.ts appends context AFTER the original typed arguments. In
  // particular expectedContent remains argument4, not shifted by the context.
  status,result:=invoke("db:draft-get-full",tab,[]any{1,project.Path(),expected});if status!=200{t.Fatal(status,result)}

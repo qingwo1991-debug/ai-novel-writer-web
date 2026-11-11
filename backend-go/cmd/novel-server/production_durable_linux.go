@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -167,21 +168,25 @@ func (d *productionDurableOpen) Close() error {
 // tab and not the cookie session. This is a single-author browser workspace, so
 // the same author may open and edit one project from any number of tabs or
 // devices (home computer, phone). Every one of those tabs derives this same
-// owner, the single-writer project lease is therefore held once per
+// owner key, the single-writer project lease is therefore held once per
 // account+project, and a further tab ADOPTS the live lease instead of being
 // refused with PROJECT_OPEN_IN_ANOTHER_TAB. Only a genuinely different account
-// derives a different owner, and that is still refused.
+// derives a different key, and that is still refused.
 //
-// Concurrent writes are resolved by the per-resource baselines the stores
-// already enforce (draft content CAS, project_core expected patch) and by
-// SQLite's own serialization, never by refusing a sibling tab's open. The
-// per-tab ClientID still fences the SSE stream, the in-flight request counter,
-// file grants, upload staging and the generation/import-run receipt scopes -
-// through productionTabOwner below, which is a DIFFERENT identity and must never
-// be substituted for this one.
+// The returned owner also carries the request's TAB IDENTITY in its Tab half, and
+// that is load-bearing: the coordinator only lends the shared handle to a tab
+// that completed its own project:open, so adopting the account lease never makes
+// a tab that never opened the project able to read or write it. Concurrent writes
+// are resolved by the per-resource baselines the stores already enforce (draft
+// content CAS) and by SQLite's own serialization, never by refusing a sibling
+// tab's open. The per-tab ClientID still fences the SSE stream, the in-flight
+// request counter, file grants, upload staging and the generation/import-run
+// receipt scopes - through productionTabOwner below, which is a DIFFERENT
+// identity and must never be substituted for this one.
 func productionLeaseOwner(caller transport.Caller) (projectsession.Owner, error) {
 	owner := projectsession.AccountOwner(caller.Principal)
-	if !owner.Valid() {
+	owner.Tab = caller.ClientID
+	if !owner.Valid() || owner.Tab == "" || strings.ContainsAny(owner.Tab, ":\x00") {
 		// An unnamed caller is refused before any repository or lease is touched.
 		return projectsession.Owner{}, errors.New("PROJECT_SESSION_REQUIRED")
 	}

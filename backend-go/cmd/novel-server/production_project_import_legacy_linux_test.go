@@ -345,8 +345,7 @@ func TestProductionLegacyImportRefusesUngrantedSource(t *testing.T) {
 
 	// (b) A real grant, minted for another tab of the same cookie session. The
 	//     binding is the session and the tab, so this one is somebody else's.
-	other := &productionDurableClient{handler: lane.mux, tab: productionLegacyImportFixtureForeign,
-		csrf: lane.client.csrf, cookie: lane.client.cookie}
+	other := lane.client.siblingTab(productionLegacyImportFixtureForeign)
 	foreign := productionLegacyImportPick(t, other, productionPickerLegacyName, productionLegacyImportFixtureSource)
 	productionLegacyImportRefused(t, lane.invoke(t, lane.client, foreign, targetGrant),
 		productionLegacyImportPathInvalidCode)

@@ -463,6 +463,11 @@ func TestProductionEditorReadsServeAdmittedAuthorDatabase(t *testing.T) {
 	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
 	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
 	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	// The sibling tab opens the project itself before it is served: the account
+	// lease is shared, but the handle is only lent to a tab that opened it.
+	if got := sibling.openProject(t, projectPath, "open-token-editor-sibling"); got["leaseId"] != frozen["leaseId"] {
+		t.Fatalf("the sibling tab did not adopt the shared lease: %v vs %v", got["leaseId"], frozen["leaseId"])
+	}
 	stranger := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
 	for _, read := range reads {
 		productionEditorServed(t, sibling, "sibling tab", read.operation, read.args(frozen))
@@ -621,6 +626,7 @@ func TestProductionLaneServesCommittedGenerationAndModelReads(t *testing.T) {
 	stale := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath, "leaseId": "stale-lease"}
 	absent := map[string]any{"projectId": frozen["projectId"], "projectPath": projectPath}
 	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	sibling.openProject(t, projectPath, "open-token-generation-sibling")
 	stranger := newProductionDurableClientAs(t, handler, "other-author", productionEditorOtherTab)
 	for _, read := range reads {
 		productionEditorServed(t, sibling, "sibling tab", read.operation, read.args(frozen))

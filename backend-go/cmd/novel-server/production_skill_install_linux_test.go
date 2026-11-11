@@ -345,8 +345,7 @@ func TestProductionSkillInstallPublishesOnlyStagedVerifiedPackages(t *testing.T)
 	if !minted.Success || minted.Inspection.CandidateID == "" {
 		t.Fatalf("pick refused a second self-contained package: %+v", minted)
 	}
-	foreign := &productionDurableClient{handler: lane.mux, tab: productionSkillInstallForeignTab,
-		csrf: author.csrf, cookie: author.cookie}
+	foreign := author.siblingTab(productionSkillInstallForeignTab)
 	if stolen := lane.install(t, foreign, minted.Inspection.CandidateID); stolen.Success ||
 		stolen.Error != productionPickerSkillCandidateCode {
 		t.Fatalf("another tab installed this caller's candidate: %+v", stolen)

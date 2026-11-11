@@ -778,6 +778,9 @@ func TestProductionStoryStateWritesRefuseWithoutTheLiveLease(t *testing.T) {
 	// really lands, which is what "any number of tabs" has to mean. The refusals
 	// above are what remains of the fence - the different account.
 	sibling := newProductionDurableClient(t, handler, productionEditorOtherTab)
+	// The sibling tab opens the project itself first: sharing the account lease is
+	// what makes its own write possible, not a licence to skip the open.
+	sibling.openProject(t, projectPath, "open-token-storystate-sibling")
 	shared := productionStoryStateWriteCall(t, sibling, "db:log-llm-call",
 		productionStoryStateWriteArgs(t, "db:log-llm-call", frozen, projectPath))
 	if shared["success"] != true || shared["error"] != nil {

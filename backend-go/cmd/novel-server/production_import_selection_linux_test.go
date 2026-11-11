@@ -197,8 +197,7 @@ func TestProductionImportSelectionNamesWhatWasUploaded(t *testing.T) {
 	lane := newProductionImportTestLane(t)
 	// A second tab on the SAME cookie session, which is the only honest way to prove
 	// that the staging key's tab half keeps another tab's upload out of a selection.
-	other := &productionDurableClient{handler: lane.mux, tab: productionImportTestForeignTab,
-		csrf: lane.author.csrf, cookie: lane.author.cookie}
+	other := lane.author.siblingTab(productionImportTestForeignTab)
 	treeBefore := productionCloudBackupTreeDigest(t, lane.project)
 	databaseBefore := productionCloudBackupDatabaseDigest(t, lane.project)
 
@@ -323,8 +322,7 @@ func TestProductionImportSelectionRefusesStaleAndForeignContext(t *testing.T) {
 
 	// A caller with no lease at all cannot import, even though the project is open
 	// and something is staged: the proof is per caller, not per project.
-	stranger := &productionDurableClient{handler: lane.mux, tab: productionImportTestForeignTab,
-		csrf: lane.author.csrf, cookie: lane.author.cookie}
+	stranger := lane.author.siblingTab(productionImportTestForeignTab)
 	if _, release, err := lane.selection.BeginImportSelection(context.Background(),
 		lane.caller(stranger), request, copyProductionImportContext(lane.frozen)); err == nil {
 		if release != nil {

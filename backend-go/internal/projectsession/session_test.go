@@ -29,7 +29,7 @@ func sessionFixture(t *testing.T)(*projectfs.Project,admission.SchemaContract,st
 }
 func TestScratchSessionCASRefreshAndSourceNeverWritten(t *testing.T){
  project,contract,path:=sessionFixture(t);before,err:=os.ReadFile(path);if err!=nil{t.Fatal(err)}
- manager:=New();t.Cleanup(func(){if err:=manager.Close();err!=nil{t.Error(err)}});scratch:=t.TempDir();owner:=Owner{"cookie-session","browser-tab"};ctx:=context.Background()
+ manager:=New();t.Cleanup(func(){if err:=manager.Close();err!=nil{t.Error(err)}});scratch:=t.TempDir();owner:=Owner{SessionID: "cookie-session", ClientID: "browser-tab"};ctx:=context.Background()
  lease,err:=manager.OpenScratchCopy(ctx,owner,project,contract,scratch,32*1024*1024);if err!=nil{t.Fatal(err)}
  drafts,done,err:=manager.Begin(ctx,owner,lease);if err!=nil{t.Fatal(err)}
  full,err:=drafts.GetFull(ctx,1);if err!=nil||full==nil{t.Fatal(full,err)};baseline:=full.Content
@@ -46,9 +46,9 @@ func TestScratchSessionCASRefreshAndSourceNeverWritten(t *testing.T){
  if _,_,err:=manager.Begin(ctx,owner,lease);!errors.Is(err,novelruntime.ErrNotOwned){t.Fatal("stale context",err)}
 }
 func TestScratchSessionFrozenContextAndSingleOwner(t *testing.T){
- project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();scratch:=t.TempDir();owner:=Owner{"session-a","tab-a"};ctx:=context.Background()
+ project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();scratch:=t.TempDir();owner:=Owner{SessionID: "session-a", ClientID: "tab-a"};ctx:=context.Background()
  lease,err:=manager.OpenScratchCopy(ctx,owner,project,contract,scratch,32*1024*1024);if err!=nil{t.Fatal(err)}
- for _,other:=range []Owner{{"session-a","tab-b"},{"session-b","tab-a"},{"","tab-a"}}{
+ for _,other:=range []Owner{{SessionID: "session-a", ClientID: "tab-b"}, {SessionID: "session-b", ClientID: "tab-a"}, {SessionID: "", ClientID: "tab-a"}}{
   if _,err:=manager.OpenScratchCopy(ctx,other,project,contract,scratch,32*1024*1024);err==nil{t.Fatal("ownership stolen",other)}
   if _,done,err:=manager.Begin(ctx,other,lease);err==nil{done();t.Fatal("context stolen",other)}
  }
@@ -60,10 +60,10 @@ func TestScratchSessionFrozenContextAndSingleOwner(t *testing.T){
  entries,err:=os.ReadDir(scratch);if err!=nil||len(entries)!=1{t.Fatal("duplicate scratch mount",len(entries),err)}
 }
 func TestScratchFailedAdmissionRollsBackAndContextParsing(t *testing.T){
- project,contract,_:=sessionFixture(t);manager:=New();scratch:=t.TempDir();ctx:=context.Background();owner:=Owner{"s","t"}
+ project,contract,_:=sessionFixture(t);manager:=New();scratch:=t.TempDir();ctx:=context.Background();owner:=Owner{SessionID: "s", ClientID: "t"}
  if _,err:=manager.OpenScratchCopy(ctx,owner,project,contract,scratch,1);err==nil{t.Fatal("small budget accepted")}
  entries,err:=os.ReadDir(scratch);if err!=nil||len(entries)!=0{t.Fatal("failed open leaked",entries,err)}
- other:=Owner{"other-session","other-tab"};if _,err:=manager.OpenScratchCopy(ctx,other,project,contract,scratch,32*1024*1024);err!=nil{t.Fatal("failed opener retained lease",err)}
+ other:=Owner{SessionID: "other-session", ClientID: "other-tab"};if _,err:=manager.OpenScratchCopy(ctx,other,project,contract,scratch,32*1024*1024);err!=nil{t.Fatal("failed opener retained lease",err)}
  if err:=manager.Close();err!=nil{t.Fatal(err)};if err:=manager.Close();err!=nil{t.Fatal(err)}
  if _,err:=manager.OpenScratchCopy(ctx,owner,project,contract,scratch,32*1024*1024);!errors.Is(err,ErrClosed){t.Fatal(err)}
  for _,value:=range []any{nil,"/path",map[string]any{},map[string]any{"projectId":"p","leaseId":"l","projectPath":"/x","extra":true}}{if _,err:=ParseContext(value);!errors.Is(err,ErrContext){t.Fatal(value,err)}}

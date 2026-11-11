@@ -35,7 +35,11 @@ func newProductionGenerationReads(durable *productionDurableOpen) *transport.Gen
 	if closed || lifecycle == nil {
 		return provider
 	}
-	reads := &syntheticGeneration{lifecycle: lifecycle}
+	// The reads resolve the caller's frozen session context against the live
+	// account lease, so they need the same LEASE OWNER derivation the lifecycle
+	// uses; the per-tab half of that owner is what keeps a tab which never opened
+	// the project refused.
+	reads := &syntheticGeneration{lifecycle: lifecycle, leaseOwner: productionLeaseOwner}
 	provider.Read = reads.ReadCommitted
 	provider.List = reads.List
 	return provider

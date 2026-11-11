@@ -146,7 +146,7 @@ func newProductionUploadTestLane(t *testing.T, limits uploadstore.Limits) *produ
 // sibling is a second tab on the SAME cookie session, which is the only way to
 // prove the tab half of the staging key and the shared tab cap.
 func (l *productionUploadTestLane) sibling(tab string) *productionDurableClient {
-	return &productionDurableClient{handler: l.mux, tab: tab, csrf: l.author.csrf, cookie: l.author.cookie}
+	return l.author.siblingTab(tab)
 }
 
 // send is one upload request with exactly the headers the renderer sets

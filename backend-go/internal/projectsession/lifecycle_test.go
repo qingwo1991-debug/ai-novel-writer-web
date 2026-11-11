@@ -11,7 +11,7 @@ import (
  novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
 )
 func TestScratchRefreshRejectsPhysicalSameUUIDReplacement(t *testing.T){
- project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();owner:=Owner{"session","tab"};scratch:=t.TempDir()
+ project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();owner:=Owner{SessionID: "session", ClientID: "tab"};scratch:=t.TempDir()
  if _,err:=manager.OpenScratchCopy(context.Background(),owner,project,contract,scratch,32*1024*1024);err!=nil{t.Fatal(err)}
  path:=project.Path();old:=path+"-moved";if err:=os.Rename(path,old);err!=nil{t.Fatal(err)}
  storage:=filepath.Join(path,".ai-novel");if err:=os.MkdirAll(storage,0700);err!=nil{t.Fatal(err)}
@@ -21,7 +21,7 @@ func TestScratchRefreshRejectsPhysicalSameUUIDReplacement(t *testing.T){
 }
 func TestScratchCleanupFailureRetainsRetryUntilSuccess(t *testing.T){
  for _,action:=range []string{"release","close"}{t.Run(action,func(t *testing.T){
-  project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();owner:=Owner{"s","t"};scratch:=t.TempDir()
+  project,contract,_:=sessionFixture(t);manager:=New();defer manager.Close();owner:=Owner{SessionID: "s", ClientID: "t"};scratch:=t.TempDir()
   lease,err:=manager.OpenScratchCopy(context.Background(),owner,project,contract,scratch,32*1024*1024);if err!=nil{t.Fatal(err)}
   failure:=errors.New("synthetic cleanup denied");manager.removeAll=func(string)error{return failure}
   if action=="release"{err=manager.Release(owner,lease)}else{err=manager.Close()};if !errors.Is(err,failure){t.Fatal("cleanup error hidden",err)}

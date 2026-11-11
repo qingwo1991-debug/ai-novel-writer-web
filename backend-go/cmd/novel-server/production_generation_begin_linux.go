@@ -148,13 +148,13 @@ func newProductionGeneration(open *productionOpen, server *transport.Server, dis
 		return generationowner.Profile{}, false, nil
 	}
 	// The live lease is the durable project session this process still owns for
-	// this caller's ACCOUNT. A stale, foreign or closed one refuses here, before
-	// any ledger row is written, which is the same fence the generation reads
-	// already use. It is looked up under the LEASE OWNER the begin captured, not
-	// under the per-tab receipt identity: two tabs of one account share this
-	// lease, and each still keeps its own receipts.
+	// this caller's ACCOUNT, and the call reaches it through the TAB that captured
+	// the scope: the account key names the shared lease, while the tab half is what
+	// proves this tab opened the project itself. A stale, foreign or unopened one
+	// refuses here, before any ledger row is written, which is the same fence the
+	// generation reads already use.
 	current := func(ctx context.Context, scope generationowner.Scope) error {
-		value, found, err := lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient})
+		value, found, err := lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient, Tab: scope.Tab})
 		if err != nil {
 			return err
 		}

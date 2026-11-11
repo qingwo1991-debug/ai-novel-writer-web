@@ -37,6 +37,38 @@ type activeSlot struct {
 	idle               chan struct{}
 	switching          bool
 	committing         bool
+	// tabs records the TAB IDENTITIES that have completed their own Open against
+	// this slot. The slot's lease key may be account-level (so every tab of one
+	// author shares one handle and one project context), but the handle is only
+	// lent to a tab that opened the project itself: a browser tab that never
+	// opened it holds no session context and stays refused exactly as it was when
+	// the lease was keyed per tab. A lane that never records a tab here (its owners
+	// leave Owner.Tab empty) is not fenced by this set at all.
+	tabs map[string]struct{}
+}
+
+// admitTab records one completed Open for this tab. An owner that carries no tab
+// identity is not tracked: such a lane keeps its previous behaviour.
+func (s *activeSlot) admitTab(tab string) {
+	if s == nil || tab == "" {
+		return
+	}
+	if s.tabs == nil {
+		s.tabs = make(map[string]struct{})
+	}
+	s.tabs[tab] = struct{}{}
+}
+
+// admitsTab reports whether one borrow may use this slot's handle. It is the
+// per-tab half of the fence: a slot that has recorded tabs serves only those
+// tabs, while a caller (or a whole lane) that carries no tab identity is left
+// unfenced, so a lane which never tracks tabs behaves as it always did.
+func (s *activeSlot) admitsTab(tab string) bool {
+	if s == nil || tab == "" || len(s.tabs) == 0 {
+		return true
+	}
+	_, admitted := s.tabs[tab]
+	return admitted
 }
 
 // ActiveCoordinator owns one continuously held legacy writer lock. It only
@@ -133,6 +165,9 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 		stale := c.closed || state.latest != request
 		if !stale {
 			state.admittedGeneration = request
+			// A sibling tab of the same account adopts the live lease here, and
+			// records its own tab so only IT may borrow the shared handle.
+			state.admitTab(owner.Tab)
 		}
 		c.mu.Unlock()
 		if stale {
@@ -213,6 +248,7 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 	state.handle = candidate
 	state.key = key
 	state.admittedGeneration = request
+	state.admitTab(owner.Tab)
 	adopted = true
 	c.mu.Unlock()
 	if previous != nil {
@@ -221,6 +257,7 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 			state.handle = nil
 			state.key = ""
 			state.admittedGeneration = 0
+			state.tabs = nil
 			state.switching = false
 			c.closed = true
 			c.poisoned = true
@@ -253,6 +290,12 @@ func (c *ActiveCoordinator) Begin(ctx context.Context, owner Owner, expected Con
 	}
 	state := c.slots[owner.key()]
 	if state == nil || state.handle == nil || !sameContext(state.handle.Context(), expected) {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	// The account lease is shared by every tab of one author, but the handle is
+	// only lent to a tab that opened this project itself: a tab that never opened
+	// it holds no session context of its own and is refused exactly as before.
+	if !state.admitsTab(owner.Tab) {
 		return nil, nil, novelruntime.ErrNotOwned
 	}
 	if state.switching {
@@ -298,6 +341,12 @@ func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, 
 		c.mu.Unlock()
 		return Context{}, false, nil
 	}
+	// A sibling tab that never opened the project reports no live context, exactly
+	// as it did when the lease was keyed per tab and it had no slot at all.
+	if !state.admitsTab(owner.Tab) {
+		c.mu.Unlock()
+		return Context{}, false, nil
+	}
 	handle := state.handle
 	current := handle.Context()
 	c.mu.Unlock()
@@ -328,6 +377,12 @@ func (c *ActiveCoordinator) CloseProject(ctx context.Context, owner Owner, expec
 	}
 	state := c.slots[owner.key()]
 	if state == nil || state.handle == nil || !sameContext(state.handle.Context(), expected) {
+		c.mu.Unlock()
+		return novelruntime.ErrNotOwned
+	}
+	// Closing is a project operation like any other: a tab that never opened this
+	// project cannot close the account's shared handle out from under it.
+	if !state.admitsTab(owner.Tab) {
 		c.mu.Unlock()
 		return novelruntime.ErrNotOwned
 	}
