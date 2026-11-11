@@ -264,19 +264,37 @@ func cleanRelative(requested string) (string, error) {
 	if strings.HasPrefix(requested, "/") || filepath.IsAbs(requested) || windowsDrive(requested) {
 		return "", ErrPathAbsolute
 	}
+	// The shipped renderer lists and reads its own project skills and prompt
+	// templates under the storage directory, so those two subtrees stay
+	// addressable; every other hidden component - the database, the manifest and
+	// the knowledge store - remains out of reach.
+	authorVisible := authorVisibleLibraryPath(requested)
 	for _, part := range strings.Split(requested, "/") {
 		switch {
 		case part == "..":
 			return "", ErrPathTraversal
 		case part == "" || part == ".":
 			return "", ErrPathInvalid
-		case strings.HasPrefix(part, "."):
+		case strings.HasPrefix(part, ".") && !authorVisible:
 			return "", ErrPathHidden
 		case len(part) > maxNameBytes:
 			return "", ErrPathInvalid
 		}
 	}
 	return requested, nil
+}
+
+// authorVisibleLibraryPath reports whether a relative path names the two
+// storage subtrees the shipped renderer addresses by path: the author's project
+// skills and prompt templates. The literal must match projectfs.StorageDirectory.
+func authorVisibleLibraryPath(relative string) bool {
+	for _, name := range []string{"skills", "prompts"} {
+		prefix := ".ai-novel/" + name
+		if relative == prefix || strings.HasPrefix(relative, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // smuggledPathEscape reports a percent escape that decodes to a separator or a

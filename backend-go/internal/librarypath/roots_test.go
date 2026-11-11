@@ -315,3 +315,38 @@ func TestProjectManifestNameMatchesProjectFS(t *testing.T) {
 			ProjectManifestName, projectfs.ManifestName)
 	}
 }
+
+// TestCleanRelativeAllowsAuthorVisibleStorage pins the two storage subtrees the
+// shipped renderer addresses by path. The writing-skill loader and the prompt
+// catalog list and read `.ai-novel/skills/**` and `.ai-novel/prompts/**` through
+// fs:list-dir; before this allowlist every one of those calls answered 403
+// PROJECT_CONTEXT_REQUIRED, which stopped the architecture workflow at its first
+// step. Every other hidden component stays refused.
+func TestCleanRelativeAllowsAuthorVisibleStorage(t *testing.T) {
+	allowed := []string{
+		".ai-novel/skills",
+		".ai-novel/skills/story-long-write/SKILL.md",
+		".ai-novel/prompts",
+		".ai-novel/prompts/plot-outline.zh-CN.json",
+	}
+	for _, requested := range allowed {
+		if _, err := cleanRelative(requested); err != nil {
+			t.Fatalf("cleanRelative(%q) refused an author-visible path: %v", requested, err)
+		}
+	}
+	refused := []string{
+		".ai-novel",
+		".ai-novel/project.db",
+		".ai-novel/knowledge-snapshot.json",
+		".ai-novel/knowledge-copies/copy.json",
+		".ai-novel/skills-private/secret.md",
+		".ai-novel/prompts-private/secret.json",
+		".git/config",
+		".env",
+	}
+	for _, requested := range refused {
+		if _, err := cleanRelative(requested); err == nil {
+			t.Fatalf("cleanRelative(%q) allowed a hidden path the browser must not reach", requested)
+		}
+	}
+}
