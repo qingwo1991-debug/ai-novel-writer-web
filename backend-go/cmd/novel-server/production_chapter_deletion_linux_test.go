@@ -592,9 +592,15 @@ func testProductionChapterDeletionRemovesKnowledgeDocument(t *testing.T) {
 		productionChapterDeletionSeedOptions{
 			targetFileName:      productionChapterDeletionTargetFile,
 			knowledgeDocumentID: productionChapterDeletionKnowledgeID,
-			knowledgeDocument:   true,
+			knowledgeDocument:   false,
 			manuscript:          true,
 		}))
+	// The author imports the document while the project is open; the seed hook
+	// above must not write the knowledge copy before the writer lease, because
+	// the open-time preflight refuses a project whose knowledge copies predate
+	// its own canonical snapshot. Seed after the lane is open, exactly like the
+	// real import flow.
+	productionChapterDeletionSeedKnowledge(t, lane.projectPath, productionChapterDeletionKnowledgeID)
 	// The fixture's document is really there before the delete, so a passing
 	// assertion afterwards cannot be satisfied by a store that was empty all along.
 	productionChapterDeletionAssertKnowledgeDocument(t, lane.projectPath, true)

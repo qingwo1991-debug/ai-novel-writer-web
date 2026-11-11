@@ -40,6 +40,11 @@ const ERROR_KEYS = {
   PROJECT_OPEN_RECENT_IDENTITY_CHANGED: 'error.projectRecentIdentityChanged',
   PROJECT_MIGRATION_NOT_QUALIFIED: 'error.projectMigrationNotQualified',
   PROJECT_MIGRATION_DUAL_ROOT: 'error.projectMigrationNotQualified',
+  // 项目打开前置校验：服务端配置/文件系统/打开期间变化，以及桌面版知识库未证明。
+  AUTHOR_PREFLIGHT_CONFIGURATION_INVALID: 'error.authorPreflightConfigurationInvalid',
+  AUTHOR_PREFLIGHT_FILESYSTEM_UNSAFE: 'error.authorPreflightFilesystemUnsafe',
+  AUTHOR_PREFLIGHT_SOURCE_CHANGED: 'error.authorPreflightSourceChanged',
+  AUTHOR_WRITE_KNOWLEDGE_UNPROVED: 'error.authorWriteKnowledgeUnproved',
   PROJECT_MIGRATION_RECOVERY_REQUIRED: 'error.projectMigrationNotQualified',
   UNRECOGNIZED_SCHEMA: 'error.projectSchemaUnrecognized',
   CORRUPT_SCHEMA: 'error.projectSchemaCorrupt',

@@ -58,15 +58,19 @@ services:
       - "127.0.0.1:6081:16082"
     volumes:
       - /root/AI/ai-novel-writer-data:/data
+      # Staging must sit OUTSIDE NOVEL_DATA_ROOT (the project preflight validates
+      # exactly that); putting it under /data made every project:open fail with
+      # AUTHOR_PREFLIGHT_CONFIGURATION_INVALID. Use a dedicated host directory.
+      - /root/AI/ai-novel-writer-scratch:/scratch
     environment:
       NOVEL_DATA_ROOT: /data
       NOVEL_ALLOWED_ORIGINS: "${NOVEL_ALLOWED_ORIGINS:-http://192.168.1.15:8093,https://192.168.1.15:8445}"
       # Every staging copy this lane takes - project admission, export/archive,
       # cloud backup - is as large as the biggest admitted book, and SQLite's own
       # row-sort temp files are too. They must not share the small /tmp tmpfs, so
-      # both roots move onto the data volume, whose whole point is holding books.
-      NOVEL_SCRATCH_ROOT: /data/.scratch
-      TMPDIR: /data/.scratch
+      # both roots move to the dedicated /scratch mount, outside the data root.
+      NOVEL_SCRATCH_ROOT: /scratch
+      TMPDIR: /scratch
     restart: unless-stopped
     # The single-writer lease is released on a clean stop; give the process the
     # same grace the Node service had so an in-flight commit is not cut in half.
@@ -77,8 +81,8 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      # Staging no longer lands here (NOVEL_SCRATCH_ROOT/TMPDIR point at /data),
-      # but keep a writable /tmp with headroom for anything else that needs it.
+      # Staging no longer lands here (NOVEL_SCRATCH_ROOT/TMPDIR point at
+      # /scratch), but keep a writable /tmp for anything else that needs it.
       - /tmp:rw,nosuid,nodev,size=256m,mode=1777
     healthcheck:
       test:
