@@ -94,7 +94,7 @@ func (p *Project) ProveCanonicalKnowledge(ctx context.Context) (CanonicalKnowled
 	if err := p.checkIdentityLocked(); err != nil {
 		return proof, portableAuthorityIdentityError(err)
 	}
-	raw, err := readBounded(p.storage, CanonicalKnowledgeName, int64(knowledgedomain.HardMaxTextBytes))
+	raw, _, err := readBounded(p.storage, CanonicalKnowledgeName, int64(knowledgedomain.HardMaxTextBytes))
 	if err != nil {
 		return CanonicalKnowledge{}, nil
 	}
