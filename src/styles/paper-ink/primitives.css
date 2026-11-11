@@ -401,6 +401,27 @@
 .pi-dialog--legacy .pi-dialog-head { flex-direction: column; gap: 2px; padding-right: 56px; }
 .pi-dialog--legacy .pi-dialog-foot { justify-content: revert-layer; }
 
+/* ================= 手机（≤560px） ================= */
+/*
+ * 窄屏上浮层改用整幅纸面：侧页与对话框满宽，对话框落成贴底的抽屉，圆角只留上方。
+ * 锚定的弹层与菜单按触发按钮落位（宽度见 use-anchored-layer），宽过手机就会溢出屏幕，一律用 max-width 收住。
+ */
+@media (max-width: 560px) {
+  .pi-sheet, .pi-sheet--wide { width: 100%; max-width: 100%; }
+
+  .pi-popover, .pi-menu { max-width: calc(100vw - 16px); }
+
+  /* 基点规则用 top/left 50% 加 translate 居中，这里必须一起让开，否则 margin 贴不到底 */
+  .pi-dialog, .pi-dialog--legacy {
+    inset: auto 0 0 0; transform: none;
+    width: 100%; max-width: 100%; margin: auto 0 0;
+    border-radius: 16px 16px 0 0;
+    max-height: calc(100dvh - 48px);
+  }
+  /* 底栏避开 iPhone 的主屏指示条；桌面与 Electron 里 env() 为 0，排法不变 */
+  .pi-dialog .pi-dialog-foot { padding-bottom: max(var(--s-3), env(safe-area-inset-bottom)); }
+}
+
 /* ================= 命令式浮层的宿主与提示栈 ================= */
 /*
  * alertError()/confirm()/toast 在 body 下建的宿主带 .paper-ink 与 data-theme，才取得到令牌与深色。

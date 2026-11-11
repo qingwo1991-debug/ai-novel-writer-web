@@ -496,6 +496,37 @@ button.run-step-row:hover {
   white-space: nowrap;
 }
 
+/* 手机宽度：标题与完成数一节放不下，状态点、标题、箭头占第一行，完成数换到标题下面 */
+/* 运行侧页的宽度是固定的 --sheet-w，窄的是视口而不是内容区，所以用视口断点。 */
+@media (max-width: 560px) {
+  .run-history-row {
+    grid-template-columns: 18px minmax(0, 1fr) 14px;
+    row-gap: 2px;
+  }
+
+  .run-history-row > .run-step-icon {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .run-history-row > .run-history-title {
+    grid-row: 1;
+    grid-column: 2;
+    white-space: normal;
+  }
+
+  .run-history-row > .run-history-meta {
+    grid-row: 2;
+    grid-column: 2 / -1;
+    white-space: normal;
+  }
+
+  .run-history-row > .run-step-chevron {
+    grid-row: 1;
+    grid-column: 3;
+  }
+}
+
 .run-history-detail {
   display: flex;
   flex-direction: column;

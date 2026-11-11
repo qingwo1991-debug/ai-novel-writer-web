@@ -346,13 +346,54 @@
   }
 }
 
-/* 1280 宽且运行侧页开着时内容区约 610px：资料列与原文的边距都收一些，原文仍有可读的宽度 */
+/* 1280 宽且运行侧页开着时内容区约 610px：原文的边距收一些，资料列退回 1040 断点给的 240px */
 @container (max-width: 680px) {
+  .stage-kb-reader {
+    padding: var(--s-5) var(--s-5) var(--s-8);
+  }
+}
+
+/* 手机宽度：三栏改为上（资料）中（原文）下（查找）单列，整页一起滚，查找框仍是整宽 */
+@container (max-width: 560px) {
+  .stage-kb-frame {
+    overflow: auto;
+  }
+
   .stage-kb {
-    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
+    min-height: 100%;
+  }
+
+  /* 资料列限高、列表自己滚，选中的原文不用滑过整份资料表才看得到 */
+  .stage-kb-docs {
+    grid-row: auto;
+    max-height: 42cqh;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* 「我导入的 / 定稿章节」在整宽里排成一行，就是手机上的资料来源切换器 */
+  .stage-kb-docs .pi-seg {
+    flex-wrap: nowrap;
+  }
+
+  .stage-kb-docs .pi-seg-item {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .stage-kb-reader {
-    padding: var(--s-5) var(--s-5) var(--s-8);
+    padding: var(--s-5) var(--s-4) var(--s-8);
+  }
+
+  .stage-kb-search {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .stage-kb-search-box {
+    width: 100%;
   }
 }

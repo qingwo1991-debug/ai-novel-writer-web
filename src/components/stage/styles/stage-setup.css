@@ -307,6 +307,7 @@
 
 .stage-setup-adv-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s-4);
 }
@@ -412,5 +413,35 @@
 
   .stage-setup-outline-input {
     min-height: 68px;
+  }
+}
+
+/* ---------- 手机宽度：版心占满整宽，底部操作栏改竖排 ---------- */
+@media (max-width: 560px) {
+  /* 760 的版心在手机上等于没有，左右留白收到 20px；大纲卡的内边距同步收窄，输入框仍是整宽 */
+  .stage-setup-inner {
+    max-width: none;
+    padding: var(--s-5) var(--s-5) var(--s-10);
+    gap: var(--s-5);
+  }
+
+  .stage-setup-outline {
+    padding-inline: var(--s-4);
+  }
+
+  .stage-setup-outline-input {
+    width: 100%;
+  }
+
+  /* 提示与操作按钮各占一行，按钮不被提示文字挤到半行 */
+  .stage-setup-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stage-setup-hint {
+    flex: none;
+    margin-left: 0;
+    text-align: left;
   }
 }

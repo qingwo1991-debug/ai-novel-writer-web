@@ -46,7 +46,9 @@ type Label = readonly [string, string]
 
 function clampBubbleLeft(centerLeft: number, halfWidth: number): number {
   if (!halfWidth) return centerLeft
-  return Math.min(Math.max(centerLeft, halfWidth + 8), window.innerWidth - halfWidth - 8)
+  // 手机软键盘弹起后，可见宽度由 visualViewport 决定；只看 innerWidth 会把气泡推到键盘底下
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth
+  return Math.min(Math.max(centerLeft, halfWidth + 8), viewportWidth - halfWidth - 8)
 }
 
 function clampBubbleTop(bottom: number, height: number): number {

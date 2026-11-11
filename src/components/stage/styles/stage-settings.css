@@ -554,3 +554,30 @@
   top: 50%;
   transform: translateY(-50%);
 }
+
+/* ---------- 手机宽度：表单与控件占满整宽 ---------- */
+/* 设置页既可能开在 .stage-body 里（容器查询可用），也可能从书架直接开在 .stage-panel 下，按视口断点写才两边都生效。 */
+/* 左侧 232px 的导航由 browser.css 在 760 断点改成可横滚的顶部横条，这一页不用再写一遍。 */
+@media (max-width: 560px) {
+  /* 网络代理一行三段在手机上排成三行，输入框仍占整宽 */
+  .stage-set-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stage-set-row-ctl {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .stage-set-row-ctl .stage-select {
+    width: 100%;
+  }
+
+  .stage-set-themes {
+    flex-wrap: wrap;
+  }
+
+  .stage-set-theme {
+    width: 100%;
+  }
+}

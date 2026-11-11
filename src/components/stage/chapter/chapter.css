@@ -128,7 +128,7 @@
 }
 
 .stage-ch-options {
-  width: 300px;
+  width: min(300px, calc(100vw - 32px));
   gap: 10px;
 }
 
@@ -744,6 +744,31 @@
   .stage-ch-titlerow {
     flex-wrap: wrap;
   }
+
+  /* 纸面在手机上一行只剩三十来字：纸边从 72px 收到 20px，滚动区左右留白也一起收 */
+  .stage-ch-page {
+    padding: var(--s-4) var(--s-5) var(--s-10);
+  }
+
+  /* 定稿步骤的四列放不下：状态点单占一列，标签、说明与重试按钮依次换行 */
+  .stage-ch-post-step {
+    grid-template-columns: 10px minmax(0, 1fr);
+    align-items: start;
+    row-gap: 2px;
+  }
+
+  .stage-ch-post-step > b,
+  .stage-ch-post-step > .stage-ch-post-detail,
+  .stage-ch-post-step > .pi-btn {
+    grid-column: 2;
+  }
+}
+
+/* 滚动区的留白按 chapter 容器收：page 容器就是它自己，容器查询不能改写自己 */
+@container chapter (max-width: 620px) {
+  .stage-ch-scroll {
+    padding: var(--s-5) var(--s-6) var(--s-12);
+  }
 }
 
 /* ================= 选区工具条（架构文档页的编辑器也用它，自带纸墨作用域） ================= */
@@ -753,6 +778,9 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* 工具条按视区定位：手机竖屏时 360px 的预览/意见框会伸出屏幕，先由工具条自己封顶 */
+  max-width: calc(100vw - 16px);
+  min-width: 0;
   padding: var(--s-1);
   border-radius: 11px;
   background: var(--surface);
@@ -784,6 +812,8 @@
   flex-direction: column;
   gap: var(--s-2);
   width: 360px;
+  max-width: calc(100vw - 16px);
+  min-width: 0;
   max-height: 280px;
   overflow: auto;
 }
@@ -831,6 +861,8 @@
   flex-direction: column;
   gap: var(--s-2);
   width: 360px;
+  max-width: calc(100vw - 16px);
+  min-width: 0;
   padding: var(--s-2);
 }
 

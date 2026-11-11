@@ -393,6 +393,30 @@ tr[data-role='subplot'] .stage-plot-cell[data-inside]::before {
   }
 }
 
+/* 手机宽度：线索一行放不下名字、路线与菜单三栏，改为上下排；路线三步排成两列 */
+@container (max-width: 560px) {
+  .stage-thread {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    row-gap: var(--s-3);
+  }
+
+  .stage-thread-route {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: var(--s-3);
+  }
+
+  /* 两列时第一行只有两个点，连接线从栏心到栏心；第三步换到第二行，不再画线 */
+  .stage-thread-route::before {
+    left: 25%;
+    right: 25%;
+  }
+
+  .stage-thread-route li {
+    white-space: normal;
+  }
+}
+
 .stage-threads-plans,
 .stage-threads-side {
   display: flex;

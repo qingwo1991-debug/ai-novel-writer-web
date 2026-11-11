@@ -368,3 +368,33 @@
     padding: var(--s-4) var(--s-3) var(--s-8);
   }
 }
+
+/* 手机宽度：148px 的章节栏连章号都要折行，三栏改为上下排，整页一起滚 */
+@container (max-width: 560px) {
+  .stage-hist-frame {
+    overflow: auto;
+  }
+
+  .stage-hist {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    height: auto;
+    min-height: 100%;
+  }
+
+  /* 章节与各稿各自限高、列表自己滚，对比留在下面整段展开 */
+  .stage-hist-chapters {
+    grid-row: auto;
+    max-height: 32cqh;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .stage-hist-versions {
+    border-right: 0;
+  }
+
+  .stage-hist-diff {
+    padding: var(--s-4) var(--s-3) var(--s-8);
+  }
+}

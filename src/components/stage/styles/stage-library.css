@@ -652,3 +652,30 @@
       0 0 0 8px var(--accent);
   }
 }
+
+/* ---------- 手机宽度：书架单列，概览统计算两列 ---------- */
+/* 空书架页直接挂在 .stage-panel 下（没有 .stage-body 这个容器），所以按视口断点写。 */
+@media (max-width: 560px) {
+  .stage-lib {
+    padding: var(--s-5) var(--s-5) var(--s-8);
+  }
+
+  /* 两栏各自占满一行（.stage-lib 已是 flex-wrap: wrap 的横排），主栏 basis 560px 时才会并排挤扁 */
+  .stage-lib-main,
+  .stage-lib-aside {
+    flex: 1 1 100%;
+  }
+
+  .stage-ov-bars {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stage-ov .pi-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 首屏不再靠 14vh 的顶留白，空书房的标题与两个入口仍在首屏内 */
+  .stage-library-empty {
+    padding: 8vh var(--s-5) var(--s-10);
+  }
+}

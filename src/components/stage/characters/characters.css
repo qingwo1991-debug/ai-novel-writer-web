@@ -517,10 +517,6 @@
 
 /* ================= 窄宽度（按角色页自身的宽度，运行侧页并排时也成立） ================= */
 @container (width < 760px) {
-  .cast-body {
-    grid-template-columns: 224px minmax(0, 1fr);
-  }
-
   .cast-profile-head {
     padding: 24px 24px 16px;
   }

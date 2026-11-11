@@ -247,9 +247,18 @@
   }
 }
 
+/* 手机上侧页槽满宽：侧页成为盖住内容区的整幅纸面，不再只占右缘的 --sheet-w */
+@media (max-width: 560px) {
+  :root[data-runtime='web'] .stage-sheet-slot,
+  :root[data-runtime='web'] .stage-sheet-slot[data-wide] {
+    width: 100%;
+  }
+}
+
 @media (pointer: coarse) {
+  /* 44px 是触摸目标的下限：手指点流程、章节、搜索与设置链接都要够得着 */
   :root[data-runtime='web'] :is(.stage-row, .stage-chapter, .stage-search, .stage-set-link) {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   :root[data-runtime='web'] .stage-tab-close {

@@ -50,13 +50,22 @@ export function useAnchoredLayer(align: 'start' | 'end'): {
     const rect = trigger.getBoundingClientRect()
     placedAt.current = anchorRef.current?.getBoundingClientRect() ?? null
     const { clientWidth, clientHeight } = document.documentElement
-    const below = clientHeight - rect.bottom - GAP - MARGIN
-    const above = rect.top - GAP - MARGIN
+    /* 软键盘弹出时只有 visualViewport 那一块还看得见：按它算可用空间，浮层才不会落到键盘底下。
+       没有 visualViewport 或它没被推起（桌面、未弹键盘）时，取值与视口一致，落位和以前完全相同。 */
+    const view = window.visualViewport
+    const viewTop = view?.offsetTop ?? 0
+    const viewHeight = view?.height ?? clientHeight
+    const below = viewTop + viewHeight - rect.bottom - GAP - MARGIN
+    const above = rect.top - viewTop - GAP - MARGIN
     const upward = layer.offsetHeight > below && above > below
     layer.style.maxHeight = `${upward ? above : below}px`
     layer.toggleAttribute('data-upward', upward)
-    if (upward) layer.style.bottom = `${clientHeight - rect.top + GAP}px`
-    else layer.style.top = `${rect.bottom + GAP}px`
+    /* 两个方向都用 top 落位再夹回可见区：bottom 定位在可见区被键盘推起时不好换算。夹子只在可见区
+       上沿之下、下沿之上各留 MARGIN，桌面下算出的值与原来一致 */
+    layer.style.top = upward
+      ? `${Math.max(viewTop + MARGIN, rect.top - GAP - layer.offsetHeight)}px`
+      : `${Math.min(rect.bottom + GAP, viewTop + viewHeight - MARGIN - layer.offsetHeight)}px`
+    layer.style.removeProperty('bottom')
     const widest = clientWidth - layer.offsetWidth - MARGIN
     if (align === 'end') layer.style.right = `${Math.min(Math.max(MARGIN, clientWidth - rect.right), widest)}px`
     else layer.style.left = `${Math.min(Math.max(MARGIN, rect.left), widest)}px`
