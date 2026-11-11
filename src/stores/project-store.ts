@@ -332,6 +332,11 @@ async function detachProjectBindings(options: {
   )
 }
 
+/**
+ * A live database is identified by readiness and the project root. The lease is
+ * deliberately not compared here: an acknowledged sibling save rotates it in
+ * place, and that rotation is not a project switch or a lost session.
+ */
 function projectDatabaseMatchesRenderer(
   runtimeContext: ProjectChannels['project:get-runtime-context']['return'],
   rendererProjectPath: string | null,
@@ -1422,6 +1427,36 @@ function startLostProjectSessionRecovery(): Promise<boolean> {
   lostProjectSessionRecoveryOfferedFor = sessionKey
   const recovery = (async () => {
     try {
+      // A sibling tab's acknowledged draft save rotates the shared account lease
+      // in place. That is not a lost session. Probe the live project first and
+      // adopt the tab's own fresh lease, never the "重新打开项目" prompt, while
+      // the same project is still ready for this tab. A restarted service
+      // reports no ready project and still falls through to the offer below.
+      let runtimeContext: ProjectChannels['project:get-runtime-context']['return'] | null = null
+      try {
+        runtimeContext = await ipc.invoke('project:get-runtime-context')
+      } catch {
+        // A failed probe is not proof of a live session; keep the explicit offer.
+      }
+      const liveProjectId = typeof runtimeContext?.projectId === 'string'
+        ? runtimeContext.projectId
+        : project.id
+      if (runtimeContext && runtimeContext.dbReady && liveProjectId === project.id
+        && sameProjectPathKey(runtimeContext.activeProjectPath, project.path)) {
+        const currentSession = projectSessionContextFromProject(project)
+        const freshLease = typeof runtimeContext.leaseId === 'string' ? runtimeContext.leaseId : ''
+        if (currentSession && freshLease && freshLease !== currentSession.leaseId
+          && runtimeContext.projectId === currentSession.projectId
+          && sameProjectPathKey(runtimeContext.projectPath, currentSession.projectPath)) {
+          useProjectStore.getState().adoptCommittedProjectSession(currentSession, {
+            projectId: currentSession.projectId,
+            leaseId: freshLease,
+            projectPath: currentSession.projectPath,
+          })
+        }
+        lostProjectSessionRecoveryOfferedFor = null
+        return false
+      }
       const approved = await confirm(
         projectText(
           '服务已不再持有这个项目的会话，自动保存暂时写不进去。现在重新打开项目吗？未保存的编辑会照常让你选择保存或放弃。',

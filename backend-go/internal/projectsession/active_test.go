@@ -176,6 +176,167 @@ func TestActiveAccountLeaseServesOnlyTheTabsThatOpenedIt(t *testing.T) {
 	}
 }
 
+// TestActiveSiblingLeaseRotationKeepsBeginAndCloseAdmitted is the regression
+// this fix exists for: after one tab acknowledges a draft save, the shared
+// account lease rotates in place, but a sibling tab that opened the project
+// still owns the same project and must be able to write and close with the
+// older lease it was issued.
+func TestActiveSiblingLeaseRotationKeepsBeginAndCloseAdmitted(t *testing.T) {
+	active := activeFixture(t)
+	account := func(tab string) Owner {
+		return Owner{SessionID: "author", ClientID: "account", Tab: tab}
+	}
+	tabA, tabB := account("tab-a"), account("tab-b")
+	handle := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), tabA, "catalog-A", "open-a", stageAdmitted(handle)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := active.Open(context.Background(), tabB, "catalog-A", "open-b", func(context.Context, *writerlock.Lock) (Admitted, error) {
+		t.Fatal("a sibling tab staged a second handle")
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := Context{ProjectID: "A", ProjectPath: "/trusted/A", LeaseID: "lease-A"}
+	rotated := old
+	rotated.LeaseID = "lease-A-rotated"
+	// One tab's acknowledged draft save rotates the shared handle in place.
+	handle.identity.LeaseID = rotated.LeaseID
+	if err := active.AdoptCommittedLease(tabA, old, rotated); err != nil {
+		t.Fatal(err)
+	}
+	// Current reports each tab's own view: the saver sees the fresh lease, the
+	// sibling keeps the old one it actually received.
+	if current, present, err := active.Current(context.Background(), tabA); err != nil || !present || current != rotated {
+		t.Fatalf("saver's current view = %+v %v %v", current, present, err)
+	}
+	if current, present, err := active.Current(context.Background(), tabB); err != nil || !present || current != old {
+		t.Fatalf("sibling's current view = %+v %v %v", current, present, err)
+	}
+	// The sibling's next write does not need a reopen.
+	if _, done, err := active.Begin(context.Background(), tabB, old); err != nil {
+		t.Fatalf("sibling write refused after a peer rotated the lease: %v", err)
+	} else {
+		done()
+	}
+	// Closing from the sibling with its older lease is still its own project.
+	if err := active.CloseProject(context.Background(), tabB, old); err != nil {
+		t.Fatalf("sibling close refused after a peer rotated the lease: %v", err)
+	}
+	if _, present, err := active.Current(context.Background(), tabB); err != nil || present {
+		t.Fatalf("closed project still reports current: %v %v", present, err)
+	}
+}
+
+// TestActiveSiblingLeaseRotationStillRefusesUnopenedAndForeign proves the
+// relaxation is limited to tabs that opened this project under this account:
+// a never-opened tab and a different account remain refused even when the
+// shared lease has rotated to a value they do not hold.
+func TestActiveSiblingLeaseRotationStillRefusesUnopenedAndForeign(t *testing.T) {
+	active := activeFixture(t)
+	account := func(tab string) Owner {
+		return Owner{SessionID: "author", ClientID: "account", Tab: tab}
+	}
+	handle := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), account("tab-a"), "catalog-A", "open-a", stageAdmitted(handle)); err != nil {
+		t.Fatal(err)
+	}
+	old := Context{ProjectID: "A", ProjectPath: "/trusted/A", LeaseID: "lease-A"}
+	rotated := old
+	rotated.LeaseID = "lease-A-rotated"
+	handle.identity.LeaseID = rotated.LeaseID
+	if err := active.AdoptCommittedLease(account("tab-a"), old, rotated); err != nil {
+		t.Fatal(err)
+	}
+	// A tab that did open may use its own older lease, but not a lease it was
+	// never shown: the per-tab record is not a blanket project-only pass.
+	forged := old
+	forged.LeaseID = "forged-never-issued"
+	if _, done, err := active.Begin(context.Background(), account("tab-a"), forged); !errors.Is(err, novelruntime.ErrNotOwned) {
+		if done != nil {
+			done()
+		}
+		t.Fatal("a lease this tab never held borrowed the project", err)
+	}
+	unopened := account("tab-never-opened")
+	if _, done, err := active.Begin(context.Background(), unopened, old); !errors.Is(err, novelruntime.ErrNotOwned) {
+		if done != nil {
+			done()
+		}
+		t.Fatal("a tab that never opened the project borrowed it after a lease rotation", err)
+	}
+	if _, present, err := active.Current(context.Background(), unopened); err != nil || present {
+		t.Fatal("a tab that never opened the project reported current", err, present)
+	}
+	if err := active.CloseProject(context.Background(), unopened, old); !errors.Is(err, novelruntime.ErrNotOwned) {
+		t.Fatal("a tab that never opened the project closed it", err)
+	}
+	foreign := Owner{SessionID: "intruder", ClientID: "account", Tab: "tab-foreign"}
+	if _, done, err := active.Begin(context.Background(), foreign, rotated); !errors.Is(err, novelruntime.ErrNotOwned) {
+		if done != nil {
+			done()
+		}
+		t.Fatal("a different account borrowed the project after a lease rotation", err)
+	}
+	if err := active.CloseProject(context.Background(), foreign, rotated); !errors.Is(err, novelruntime.ErrNotOwned) {
+		t.Fatal("a different account closed the project after a lease rotation", err)
+	}
+	candidate := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), foreign, "catalog-A", "foreign-open", stageAdmitted(candidate)); !errors.Is(err, novelruntime.ErrOwned) {
+		t.Fatal("a different account opened the project after a lease rotation", err)
+	}
+	if candidate.closed.Load() != 1 {
+		t.Fatal("refused foreign candidate was not closed")
+	}
+}
+
+// TestActiveClosedProjectRequiresReopenAfterSiblingRotation proves a real close
+// still ends the session: the old sibling lease cannot write into the handle a
+// later Open installs, even though the project path and id are unchanged.
+func TestActiveClosedProjectRequiresReopenAfterSiblingRotation(t *testing.T) {
+	active := activeFixture(t)
+	account := func(tab string) Owner {
+		return Owner{SessionID: "author", ClientID: "account", Tab: tab}
+	}
+	tabA, tabB := account("tab-a"), account("tab-b")
+	handle := admitted("A", "/trusted/A")
+	if _, err := active.Open(context.Background(), tabA, "catalog-A", "open-a", stageAdmitted(handle)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := active.Open(context.Background(), tabB, "catalog-A", "open-b", func(context.Context, *writerlock.Lock) (Admitted, error) {
+		t.Fatal("a sibling tab staged a second handle")
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := Context{ProjectID: "A", ProjectPath: "/trusted/A", LeaseID: "lease-A"}
+	rotated := old
+	rotated.LeaseID = "lease-A-rotated"
+	handle.identity.LeaseID = rotated.LeaseID
+	if err := active.AdoptCommittedLease(tabA, old, rotated); err != nil {
+		t.Fatal(err)
+	}
+	if err := active.CloseProject(context.Background(), tabB, old); err != nil {
+		t.Fatal(err)
+	}
+	reopened := admitted("A", "/trusted/A")
+	reopened.identity.LeaseID = "lease-A-reopened"
+	if _, err := active.Open(context.Background(), tabA, "catalog-A", "reopen", stageAdmitted(reopened)); err != nil {
+		t.Fatal(err)
+	}
+	if _, done, err := active.Begin(context.Background(), tabB, old); !errors.Is(err, novelruntime.ErrNotOwned) {
+		if done != nil {
+			done()
+		}
+		t.Fatal("the old sibling lease survived a real close", err)
+	}
+	if _, done, err := active.Begin(context.Background(), tabA, reopened.identity); err != nil {
+		t.Fatal(err)
+	} else {
+		done()
+	}
+}
+
 func TestActiveRefreshAndExactCloseWaitForInFlight(t *testing.T) {
 	active := activeFixture(t)
 	owner := Owner{SessionID: "browser", ClientID: "tab"}

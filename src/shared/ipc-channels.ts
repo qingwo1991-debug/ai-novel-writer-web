@@ -337,6 +337,10 @@ export interface ProjectChannels {
     return: {
       activeProjectPath: string | null
       dbReady: boolean
+      /** The caller's own adopted view, when the backend can report one. */
+      projectId?: string | null
+      leaseId?: string | null
+      projectPath?: string | null
     }
   }
   'project:create': {

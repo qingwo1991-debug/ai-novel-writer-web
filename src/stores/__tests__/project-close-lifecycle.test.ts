@@ -1582,6 +1582,31 @@ it('keeps the current project when another account already holds its lease', asy
   )
 })
 
+it('a rotated lease from a sibling save does not detach', async () => {
+  useProjectStore.setState({ currentProject: { ...project('A'), sessionLease: 'lease-A-opened' } })
+  mocks.invoke.mockImplementation(async (channel: string) => {
+    if (channel === 'project:get-runtime-context') {
+      return {
+        activeProjectPath: project('A').path,
+        dbReady: true,
+        projectId: project('A').id,
+        projectPath: project('A').path,
+        leaseId: 'lease-A-sibling-rotated',
+      }
+    }
+    return { success: true }
+  })
+
+  await expect(useProjectStore.getState().recoverLostProjectSession()).resolves.toBe(false)
+
+  expect(mocks.confirm).not.toHaveBeenCalled()
+  expect(useProjectStore.getState().currentProject?.path).toBe(project('A').path)
+  expect(useProjectStore.getState().currentProject?.sessionLease).toBe('lease-A-sibling-rotated')
+  expect(useEditorStore.getState().tabs[0]?.id).toBe('a-tab')
+  expect(mocks.disableProjectBindingsPreservingDrafts).not.toHaveBeenCalled()
+  expect(mocks.onProjectClosed).not.toHaveBeenCalled()
+})
+
 it('reopens the same project when the author accepts the lost-session offer', async () => {
   useProjectStore.setState({ currentProject: { ...project('A'), sessionLease: 'lease-offer-reopen' } })
   mocks.confirm.mockResolvedValueOnce(true)

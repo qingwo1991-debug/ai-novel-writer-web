@@ -147,23 +147,18 @@ func TestProductionMultiTabDraftCASLosesExactlyOneSave(t *testing.T) {
 		t.Fatalf("the winning tab's body did not persist: %q", body)
 	}
 
-	// The second tab now re-adopts the live lease (a successful save rotates it,
-	// which is the lane's session-freshness rule and not a refusal of the tab) and
-	// replays the baseline it read BEFORE the first tab saved. The CAS refuses it,
-	// so exactly one of the two saves wins.
-	var refreshed productionDurableOpenWire
-	second.decode(t, "project:open", []any{projectPath, "open-token-second-refresh", projectPath}, &refreshed)
-	if !refreshed.Success {
-		t.Fatalf("the second tab could not re-adopt the live lease: %+v", refreshed)
-	}
-	if refreshed.Project["sessionLease"] != saved.ProjectSession["leaseId"] {
-		t.Fatalf("the refreshed tab did not adopt the rotated lease: %v vs %v",
-			refreshed.Project["sessionLease"], saved.ProjectSession["leaseId"])
+	// The second tab must NOT need a project:open refresh after the first tab's
+	// acknowledged save rotated the shared lease. Current reports this tab's own
+	// view, and the next save reaches the CAS with the old frozen context.
+	var currentContext map[string]any
+	second.decode(t, "project:get-runtime-context", []any{}, &currentContext)
+	if currentContext["dbReady"] != true || currentContext["leaseId"] != baseline["leaseId"] {
+		t.Fatalf("a sibling tab was shown a lease it never saw: %+v", currentContext)
 	}
 	current := map[string]any{
 		"projectId":   baseline["projectId"],
 		"projectPath": baseline["projectPath"],
-		"leaseId":     refreshed.Project["sessionLease"],
+		"leaseId":     baseline["leaseId"],
 	}
 	var lost productionDurableSaveWire
 	second.decode(t, "db:draft-update-content", []any{int64(1), "第三章：抢写。", int64(6), projectPath, productionDurableSeed, current}, &lost)

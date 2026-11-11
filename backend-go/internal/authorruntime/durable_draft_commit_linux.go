@@ -41,33 +41,46 @@ func (l *ReadLifecycle) CommitDraftCASDurable(ctx context.Context, owner project
 	if !ok {
 		return zero, ErrDurableInvalid
 	}
-	author.mu.Lock()
-	defer author.mu.Unlock()
-	if author.closed || author.handle == nil || author.permit == nil {
-		return zero, ErrDurableClosed
-	}
-	if err := author.permit.Verify(ctx, author.project); err != nil {
+	fresh, err := func() (projectsession.Context, error) {
+		author.mu.Lock()
+		defer author.mu.Unlock()
+		if author.closed || author.handle == nil || author.permit == nil {
+			return zero, ErrDurableClosed
+		}
+		if err := author.permit.Verify(ctx, author.project); err != nil {
+			return zero, err
+		}
+		if err := author.handle.Verify(ctx); err != nil {
+			return zero, err
+		}
+		if err := store.NewDrafts(author.handle.DB()).UpdateContentIfCurrent(ctx, draftID, content, wordCount, expectedContent); err != nil {
+			return zero, err
+		}
+		// The commit changed the database content, so adopt the new committed
+		// content identity before re-proving the handle, otherwise the post-write
+		// verify would treat our own write as a stale replacement (mirrors SaveCore).
+		if err := author.permit.Refresh(ctx); err != nil {
+			return zero, err
+		}
+		if err := author.handle.Verify(ctx); err != nil {
+			return zero, err
+		}
+		var nonce [24]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return zero, err
+		}
+		author.context.LeaseID = base64.RawURLEncoding.EncodeToString(nonce[:])
+		return author.context, nil
+	}()
+	if err != nil {
 		return zero, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	// Keep the owning tab's own view on the fresh lease. Begin/Close accept the
+	// shared project context, but Current must never show this tab a lease it
+	// did not receive from its own acknowledged save. The lock is released first:
+	// AdoptCommittedLease reads the handle's Context under author.mu.
+	if err := l.active.AdoptCommittedLease(owner, expected, fresh); err != nil {
 		return zero, err
 	}
-	if err := store.NewDrafts(author.handle.DB()).UpdateContentIfCurrent(ctx, draftID, content, wordCount, expectedContent); err != nil {
-		return zero, err
-	}
-	// The commit changed the database content, so adopt the new committed
-	// content identity before re-proving the handle, otherwise the post-write
-	// verify would treat our own write as a stale replacement (mirrors SaveCore).
-	if err := author.permit.Refresh(ctx); err != nil {
-		return zero, err
-	}
-	if err := author.handle.Verify(ctx); err != nil {
-		return zero, err
-	}
-	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return zero, err
-	}
-	author.context.LeaseID = base64.RawURLEncoding.EncodeToString(nonce[:])
-	return author.context, nil
+	return fresh, nil
 }

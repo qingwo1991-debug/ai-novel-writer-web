@@ -42,7 +42,10 @@ func (l *ReadLifecycle) BeginKnowledgeRead(ctx context.Context, owner projectses
 		}
 	}()
 	admitted, ok := handle.(*admittedRead)
-	if !ok || admitted.context != expected || admitted.reader == nil {
+	// The lease may have rotated under a sibling tab's acknowledged save; the
+	// stable project identity is what this borrow actually fences.
+	if !ok || admitted.reader == nil || admitted.context.ProjectID != expected.ProjectID ||
+		admitted.context.ProjectPath != expected.ProjectPath {
 		return KnowledgeBorrow{}, ErrInvalid
 	}
 	admitted.knowledgeMu.Lock()

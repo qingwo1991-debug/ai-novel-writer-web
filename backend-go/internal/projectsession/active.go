@@ -38,25 +38,37 @@ type activeSlot struct {
 	switching          bool
 	committing         bool
 	// tabs records the TAB IDENTITIES that have completed their own Open against
-	// this slot. The slot's lease key may be account-level (so every tab of one
-	// author shares one handle and one project context), but the handle is only
-	// lent to a tab that opened the project itself: a browser tab that never
-	// opened it holds no session context and stays refused exactly as it was when
-	// the lease was keyed per tab. A lane that never records a tab here (its owners
-	// leave Owner.Tab empty) is not fenced by this set at all.
-	tabs map[string]struct{}
+	// this slot and the last lease each of those tabs was shown. The slot's lease
+	// key may be account-level (so every tab of one author shares one handle and
+	// one project context), but the handle is only lent to a tab that opened the
+	// project itself: a browser tab that never opened it holds no session context
+	// and stays refused exactly as it was when the lease was keyed per tab. A lane
+	// that never records a tab here (its owners leave Owner.Tab empty) is not
+	// fenced by this map at all.
+	tabs map[string]string
 }
 
-// admitTab records one completed Open for this tab. An owner that carries no tab
-// identity is not tracked: such a lane keeps its previous behaviour.
-func (s *activeSlot) admitTab(tab string) {
+// admitTab records one completed Open for this tab together with the lease this
+// tab was shown. An owner that carries no tab identity is not tracked: such a
+// lane keeps its previous behaviour.
+func (s *activeSlot) admitTab(tab, lease string) {
 	if s == nil || tab == "" {
 		return
 	}
 	if s.tabs == nil {
-		s.tabs = make(map[string]struct{})
+		s.tabs = make(map[string]string)
 	}
-	s.tabs[tab] = struct{}{}
+	s.tabs[tab] = lease
+}
+
+// tabLease returns the lease this tab was last shown. Only a tracked tab has an
+// own view; an untracked lane has none and keeps using the slot's lease.
+func (s *activeSlot) tabLease(tab string) (string, bool) {
+	if s == nil || tab == "" {
+		return "", false
+	}
+	lease, ok := s.tabs[tab]
+	return lease, ok && lease != ""
 }
 
 // admitsTab reports whether one borrow may use this slot's handle. It is the
@@ -97,6 +109,34 @@ func NewActiveCoordinator(root string, held *writerlock.Lock) (*ActiveCoordinato
 
 func sameContext(a, b Context) bool {
 	return a.ProjectID == b.ProjectID && a.ProjectPath == b.ProjectPath && a.LeaseID == b.LeaseID && a.ProjectID != "" && a.ProjectPath != "" && a.LeaseID != ""
+}
+
+// sameProjectContext compares the stable project identity only. The account
+// lease is shared by every tab of one author and rotates in place when any of
+// them acknowledges a draft save; that rotation must not revoke a sibling tab's
+// already-admitted project session. Callers that need the exact lease (commit,
+// publish and open-generation paths) keep using sameContext.
+func sameProjectContext(a, b Context) bool {
+	return a.ProjectID != "" && a.ProjectPath != "" && a.ProjectID == b.ProjectID && a.ProjectPath == b.ProjectPath
+}
+
+// admitsFrozenContext is the Begin/Close fence. A lane that tracks tab
+// identities (Owner.Tab non-empty) accepts the project context while requiring
+// the lease this particular tab was last shown, so a sibling tab's in-place
+// rotation does not revoke it and a lease this tab never held is still refused.
+// A lane that does not track tabs keeps the exact lease comparison it always had.
+func admitsFrozenContext(state *activeSlot, owner Owner, expected Context) bool {
+	if state == nil || state.handle == nil {
+		return false
+	}
+	if owner.Tab == "" {
+		return sameContext(state.handle.Context(), expected)
+	}
+	if !sameProjectContext(state.handle.Context(), expected) {
+		return false
+	}
+	lease, ok := state.tabLease(owner.Tab)
+	return ok && lease == expected.LeaseID
 }
 
 func validActiveContext(value Context) bool {
@@ -161,19 +201,22 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 		if err := current.Verify(ctx); err != nil {
 			return Context{}, err
 		}
+		var refreshed Context
 		c.mu.Lock()
 		stale := c.closed || state.latest != request
 		if !stale {
+			refreshed = current.Context()
 			state.admittedGeneration = request
 			// A sibling tab of the same account adopts the live lease here, and
-			// records its own tab so only IT may borrow the shared handle.
-			state.admitTab(owner.Tab)
+			// records the exact value it is about to receive so only IT may borrow
+			// the shared handle and Current never reports an unseen lease.
+			state.admitTab(owner.Tab, refreshed.LeaseID)
 		}
 		c.mu.Unlock()
 		if stale {
 			return Context{}, ErrStaleOpen
 		}
-		return current.Context(), nil
+		return refreshed, nil
 	}
 
 	candidate, err := stage(ctx, c.lock)
@@ -248,7 +291,10 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 	state.handle = candidate
 	state.key = key
 	state.admittedGeneration = request
-	state.admitTab(owner.Tab)
+	// A new handle (including a project switch) starts a new tab generation:
+	// tabs admitted to the previous handle must Open this one before borrowing it.
+	state.tabs = nil
+	state.admitTab(owner.Tab, identity.LeaseID)
 	adopted = true
 	c.mu.Unlock()
 	if previous != nil {
@@ -271,8 +317,10 @@ func (c *ActiveCoordinator) Open(ctx context.Context, owner Owner, key, requestT
 	return identity, nil
 }
 
-// Begin fences a complete repository operation using the exact frozen context.
-// A switching or closing slot cannot issue new operations. done is idempotent.
+// Begin fences a complete repository operation using the frozen project
+// context. A sibling tab's acknowledged save may rotate the shared account lease
+// in place; that does not revoke this tab. A switching or closing slot cannot
+// issue new operations. done is idempotent.
 func (c *ActiveCoordinator) Begin(ctx context.Context, owner Owner, expected Context) (Admitted, func(), error) {
 	if ctx == nil || !owner.valid() {
 		return nil, nil, ErrContext
@@ -289,7 +337,7 @@ func (c *ActiveCoordinator) Begin(ctx context.Context, owner Owner, expected Con
 		return nil, nil, err
 	}
 	state := c.slots[owner.key()]
-	if state == nil || state.handle == nil || !sameContext(state.handle.Context(), expected) {
+	if !admitsFrozenContext(state, owner, expected) {
 		return nil, nil, novelruntime.ErrNotOwned
 	}
 	// The account lease is shared by every tab of one author, but the handle is
@@ -320,6 +368,9 @@ func (c *ActiveCoordinator) Begin(ctx context.Context, owner Owner, expected Con
 }
 
 // Current reports the actually admitted handle for one exact browser owner.
+// For a tab-tracked lane it returns that tab's own last-seen lease: a sibling
+// tab's acknowledged save may rotate the shared lease in place, and advertising
+// the newer value would make this tab look stale for a context it never held.
 // The transition lock prevents a concurrent switch or close while Verify runs;
 // a mere slot entry is never treated as database readiness.
 func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, bool, error) {
@@ -349,6 +400,12 @@ func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, 
 	}
 	handle := state.handle
 	current := handle.Context()
+	// Report this tab's own view. A sibling tab's acknowledged save rotates the
+	// slot lease in place; showing that lease here would make the caller look
+	// stale for a context it never held.
+	if lease, ok := state.tabLease(owner.Tab); ok {
+		current.LeaseID = lease
+	}
 	c.mu.Unlock()
 	if err := c.lock.VerifyLegacy(c.root); err != nil {
 		return Context{}, false, err
@@ -359,8 +416,32 @@ func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, 
 	return current, true, nil
 }
 
-// CloseProject first fences new calls, then waits for all exact-context calls
-// to finish. Cancellation restores the old handle and its ability to serve.
+// AdoptCommittedLease records the fresh lease one tab received from an
+// acknowledged in-place draft commit. The admitted handle has already adopted
+// next.LeaseID; this method only updates the calling tab's own view so Current
+// keeps reporting a lease that tab actually saw. A sibling's old lease stays
+// valid for Begin/Close because those compare the project context.
+func (c *ActiveCoordinator) AdoptCommittedLease(owner Owner, expected, next Context) error {
+	if c == nil || !owner.valid() || !validActiveContext(next) ||
+		!sameProjectContext(expected, next) || next.LeaseID == expected.LeaseID {
+		return ErrContext
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrActiveClosed
+	}
+	state := c.slots[owner.key()]
+	if state == nil || state.handle == nil || !sameContext(state.handle.Context(), next) || !state.admitsTab(owner.Tab) {
+		return novelruntime.ErrNotOwned
+	}
+	state.admitTab(owner.Tab, next.LeaseID)
+	return nil
+}
+
+// CloseProject first fences new calls, then waits for all project-context calls
+// to finish. A tab that opened the project may close it with an older lease after
+// a sibling save rotated the shared one. Cancellation restores the old handle.
 func (c *ActiveCoordinator) CloseProject(ctx context.Context, owner Owner, expected Context) error {
 	if ctx == nil || !owner.valid() {
 		return ErrContext
@@ -376,7 +457,7 @@ func (c *ActiveCoordinator) CloseProject(ctx context.Context, owner Owner, expec
 		return ErrActiveClosed
 	}
 	state := c.slots[owner.key()]
-	if state == nil || state.handle == nil || !sameContext(state.handle.Context(), expected) {
+	if !admitsFrozenContext(state, owner, expected) {
 		c.mu.Unlock()
 		return novelruntime.ErrNotOwned
 	}
