@@ -18,9 +18,11 @@ import (
 // The two names this file binds take the frozen project session as their only
 // wire argument (request arity zero), and they project only rows this lane can
 // read: the batches and editors buckets reuse the served sibling projections,
-// and find-blueprint-recovery answers null because the ledger refuses to open
-// every glPlanning operation that could write a planning continuation
-// (internal/store/generation_ledger.go), so no run here carries one.
+// the planning bucket carries the directory recovery contexts, and
+// find-blueprint-recovery answers the newest unavailable or continued context.
+// A proved planning continuation short-circuits to 'continued' before any
+// fingerprint compare (main-generation-owner.ts:787); the remaining writeState
+// arms still need the rebuildBinding comparison this lane does not port.
 
 const (
 	productionGenerationRecoveryList      = "generation:list-recovery"

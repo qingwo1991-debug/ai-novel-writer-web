@@ -14,17 +14,16 @@ import (
 //
 //	editors   REAL  projected by editor-inline:read-recovery (the served sibling)
 //	batches   REAL  projected by generation:list-batches (the served sibling)
-//	planning  []    its receipt is absent in this lane
+//	planning  REAL  projected by this family's readContext port (continued and
+//	                unavailable directory contexts)
 //	drafts    []    its receipt is absent in this lane
 //	reviews   []    its receipt is absent in this lane
 //
-// planning/drafts/reviews are [] because the receipts they would project cannot
-// exist here - the ledger refuses every glPlanning operation and the drafts and
-// reviews ports the reference reads are unbound - not because the reads failed,
-// so the list's own partial flag stays false.
+// drafts/reviews are [] because the ports the reference reads are unbound, not
+// because the reads failed, so the list's own partial flag stays false for them.
 
-// The two reasons a bucket can carry. They are this file's own vocabulary, in the
-// symbolic shape the lane publishes, and they never reach a renderer.
+// The three reasons a bucket can carry. They are this file's own vocabulary, in
+// the symbolic shape the lane publishes, and they never reach a renderer.
 const (
 	// productionRecoveryBucketReasonServed is a bucket a sibling name already
 	// answers: the list copies that projection, not an invented one.
@@ -32,11 +31,14 @@ const (
 	// productionRecoveryBucketReasonAbsent is a bucket answered as an empty array
 	// because the receipt it would project is absent in this lane.
 	productionRecoveryBucketReasonAbsent = "EMPTY_BY_ABSENCE"
+	// productionRecoveryBucketReasonContext is a bucket projected by this family's
+	// own recovery-context reader rather than by a sibling operation.
+	productionRecoveryBucketReasonContext = "SERVED_BY_RECOVERY_CONTEXT"
 )
 
 // productionGenerationRecoveryBucket is one bucket of GenerationRecoveryList,
-// whether a sibling name projects it, and which kind of answer it is. Evidence
-// holds one declaration per claim.
+// whether the list serves it, and which kind of answer it is. Evidence holds one
+// declaration per claim.
 type productionGenerationRecoveryBucket struct {
 	Name     string
 	Served   bool
@@ -49,7 +51,8 @@ type productionGenerationRecoveryBucket struct {
 // as a new kind of answer.
 func productionRecoveryBucketReasonKnown(reason string) bool {
 	switch reason {
-	case productionRecoveryBucketReasonServed, productionRecoveryBucketReasonAbsent:
+	case productionRecoveryBucketReasonServed, productionRecoveryBucketReasonAbsent,
+		productionRecoveryBucketReasonContext:
 		return true
 	}
 	return false
@@ -77,12 +80,12 @@ func productionGenerationRecoveryBuckets() []productionGenerationRecoveryBucket 
 		},
 		{
 			Name:   "planning",
-			Served: false,
-			Reason: productionRecoveryBucketReasonAbsent,
+			Served: true,
+			Reason: productionRecoveryBucketReasonContext,
 			Evidence: []productionGenerationRecoveryLine{
-				{Path: "production_generation_recovery_serve3_linux.go", Line: 78, Marker: "Planning: []map[string]any{}"},
-				{Path: "../../internal/store/planning_continuation.go", Line: 85,
-					Marker: "func readPlanningContinuation(ctx context.Context, conn *sql.Conn, runID string) (*PlanningContinuationReceipt, error)"},
+				{Path: "production_generation_recovery_serve3_linux.go", Line: 118, Marker: "planning, partial, err := r.planning(ctx, caller, args[0], expected.ProjectID, expected.LeaseID)"},
+				{Path: "../../internal/store/planning_continuation.go", Line: 63,
+					Marker: "func ListDirectoryRecoveryNeeds(ctx context.Context, db *sql.DB, projectID string) ([]*DirectoryRecoveryNeed, bool, error)"},
 			},
 		},
 		{
@@ -106,8 +109,8 @@ func productionGenerationRecoveryBuckets() []productionGenerationRecoveryBucket 
 
 // bindProductionGenerationRecoveryReads verifies the bucket table against the
 // lane that is actually built. It installs nothing: the two names are bound by
-// bindProductionGenerationRecoveryServed, and the two real buckets stay served by
-// their sibling names rather than being claimed twice here.
+// bindProductionGenerationRecoveryServed, editors and batches stay served by
+// their sibling names, and planning is projected by the recovery context reader.
 func bindProductionGenerationRecoveryReads(server *transport.Server) error {
 	if server == nil {
 		return errors.New("TRANSPORT_SERVER_REQUIRED")

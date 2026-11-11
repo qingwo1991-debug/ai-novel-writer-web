@@ -59,7 +59,8 @@ func TestProductionGenerationRecoveryServe2Answers(t *testing.T) {
 			t.Fatalf("the settled claim %s is missing", name)
 		}
 	}
-	// The bucket table: two real sibling projections, three empty-by-absence.
+	// The bucket table: two real sibling projections, one recovery-context
+	// projection (planning), and two empty-by-absence.
 	served, absent := 0, 0
 	for _, bucket := range productionGenerationRecoveryBuckets() {
 		if !productionRecoveryBucketReasonKnown(bucket.Reason) {
@@ -67,7 +68,8 @@ func TestProductionGenerationRecoveryServe2Answers(t *testing.T) {
 		}
 		if bucket.Served {
 			served++
-			if bucket.Reason != productionRecoveryBucketReasonServed {
+			if bucket.Reason != productionRecoveryBucketReasonServed &&
+				bucket.Reason != productionRecoveryBucketReasonContext {
 				t.Fatalf("the served %s bucket is recorded as %s", bucket.Name, bucket.Reason)
 			}
 			continue
@@ -77,8 +79,8 @@ func TestProductionGenerationRecoveryServe2Answers(t *testing.T) {
 			t.Fatalf("the %s bucket is empty but recorded as %s", bucket.Name, bucket.Reason)
 		}
 	}
-	if served != 2 || absent != 3 {
-		t.Fatalf("the bucket table holds %d served and %d empty buckets, want 2 and 3", served, absent)
+	if served != 3 || absent != 2 {
+		t.Fatalf("the bucket table holds %d served and %d empty buckets, want 3 and 2", served, absent)
 	}
 }
 

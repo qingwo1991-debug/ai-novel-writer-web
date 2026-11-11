@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strconv"
+	"strings"
 )
 
 // This file is the read-only planner-continuation arm of the recovery family.
@@ -38,15 +40,21 @@ type DirectoryRecoveryRun struct {
 	SelectedBlueprintChapterNumbers []int64
 }
 
-// DirectoryRecoveryNeed is the find-blueprint-recovery scan result. Exactly one
-// of Unavailable and Continuation is meaningful: a run whose blueprint recovery
-// is unavailable (the reference's writeState:'unavailable' branch) or one that
-// carries a proved planning continuation (the reference's continued branch).
+// DirectoryRecoveryNeed is one directory run that readContext would put in the
+// recovery list: a run whose blueprint recovery is unavailable (the reference's
+// writeState:'unavailable' branch) or one that carries a proved planning
+// continuation (the reference's continued branch). AuthorEdit, RemainingRange
+// and TargetUnits are the values planningContinuation/readContext read for the
+// continued branch; AuthorEdit is the receipt readBlueprintRecovery returns as
+// authorEdit (generation-run-repository.ts:564).
 type DirectoryRecoveryNeed struct {
-	Run          DirectoryRecoveryRun
-	Unavailable  bool
-	Diagnostic   BlueprintRecoveryDiagnostic
-	Continuation *PlanningContinuationReceipt
+	Run            DirectoryRecoveryRun
+	Unavailable    bool
+	Diagnostic     BlueprintRecoveryDiagnostic
+	Continuation   *PlanningContinuationReceipt
+	AuthorEdit     *BlueprintAuthorEditReceipt
+	RemainingRange *BlueprintRange
+	TargetUnits    int64
 }
 
 // FindDirectoryRecoveryNeed walks the chapter-blueprint-directory runs of one
@@ -65,25 +73,15 @@ func FindDirectoryRecoveryNeed(ctx context.Context, db *sql.DB, projectID string
 		for _, run := range runs {
 			// The unavailable branch wins over the continuation branch, exactly as
 			// readContext checks blueprint.kind !== 'available' first
-			// (main-generation-owner.ts:935-937).
-			kind, diagnostic, err := readDirectoryRecoveryKind(ctx, conn, run.RunID)
-			if err != nil {
-				return err
-			}
-			if kind != "available" {
-				need = &DirectoryRecoveryNeed{Run: run, Unavailable: true, Diagnostic: diagnostic}
-				return nil
-			}
-			// readPlanningContinuation's invalid-receipt refusal is the reference's
-			// readContext throw, which findBlueprintRecovery catches and skips
-			// (main-generation-owner.ts:1069). A proved continuation is the
-			// continued branch, whose writeState needs the unbuildable comparison.
-			continuation, err := readPlanningContinuation(ctx, conn, run.RunID)
+			// (main-generation-owner.ts:935-937). readPlanningContinuation's
+			// invalid-receipt refusal is the reference's readContext throw, which
+			// findBlueprintRecovery catches and skips (main-generation-owner.ts:1069).
+			candidate, err := directoryRecoveryNeed(ctx, conn, run)
 			if err != nil {
 				continue
 			}
-			if continuation != nil {
-				need = &DirectoryRecoveryNeed{Run: run, Continuation: continuation}
+			if candidate != nil {
+				need = candidate
 				return nil
 			}
 		}
@@ -92,6 +90,128 @@ func FindDirectoryRecoveryNeed(ctx context.Context, db *sql.DB, projectID string
 		return nil, err
 	}
 	return need, nil
+}
+
+// ListDirectoryRecoveryNeeds is the planning bucket of listRecovery
+// (main-generation-owner.ts:1021-1024): every chapter-blueprint-directory run of
+// the project whose readContext would push a context. A per-run read failure is
+// the reference's catch setting partial=true, not a failure of the list.
+func ListDirectoryRecoveryNeeds(ctx context.Context, db *sql.DB, projectID string) ([]*DirectoryRecoveryNeed, bool, error) {
+	needs := []*DirectoryRecoveryNeed{}
+	partial := false
+	if err := bpRead(ctx, db, func(conn *sql.Conn) error {
+		runs, err := listDirectoryRecoveryRuns(ctx, conn, projectID)
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			need, err := directoryRecoveryNeed(ctx, conn, run)
+			if err != nil {
+				partial = true
+				continue
+			}
+			if need != nil {
+				needs = append(needs, need)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, false, err
+	}
+	return needs, partial, nil
+}
+
+// directoryRecoveryNeed reduces one directory run the way readContext does. An
+// unavailable blueprint recovery is the one non-continuation need. An available
+// recovery without a proved continuation is skipped: readContext does not set
+// blueprintRecovery for it (main-generation-owner.ts:938-943).
+func directoryRecoveryNeed(ctx context.Context, conn *sql.Conn, run DirectoryRecoveryRun) (*DirectoryRecoveryNeed, error) {
+	recovery, err := bpRecovery(ctx, conn, run.RunID, map[string]bool{})
+	if err != nil {
+		return nil, err
+	}
+	if recovery.kind != "available" {
+		return &DirectoryRecoveryNeed{Run: run, Unavailable: true, Diagnostic: recovery.diagnostic}, nil
+	}
+	continuation, err := readPlanningContinuation(ctx, conn, run.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if continuation == nil {
+		return nil, nil
+	}
+	remaining, err := directoryPlanningRemainingRange(run, recovery)
+	if err != nil {
+		return nil, err
+	}
+	targetUnits, err := directoryPlanningTargetUnits(run)
+	if err != nil {
+		return nil, err
+	}
+	return &DirectoryRecoveryNeed{
+		Run:            run,
+		Continuation:   continuation,
+		AuthorEdit:     recovery.authorEdit,
+		RemainingRange: remaining,
+		TargetUnits:    targetUnits,
+	}, nil
+}
+
+// directoryPlanningRemainingRange is the remainingRange planningContinuation
+// derives (main-generation-owner.ts:776-784): the author-edit receipt's own
+// remainingRange when one is saved, else the single directory progress receipt's
+// remaining range, else the requested scope itself when the run has no progress.
+func directoryPlanningRemainingRange(run DirectoryRecoveryRun, recovery bpRecoveryResult) (*BlueprintRange, error) {
+	if recovery.authorEdit != nil {
+		return recovery.authorEdit.RemainingRange, nil
+	}
+	// planningContinuation refuses more than one progress receipt
+	// (main-generation-owner.ts:779-780).
+	if len(recovery.progress) > 1 {
+		return nil, glError("GENERATION_DIRECTORY_PROGRESS_INVALID")
+	}
+	if len(recovery.progress) == 1 {
+		remaining := recovery.progress[0].RemainingRange
+		if remaining == nil {
+			return nil, nil
+		}
+		return &BlueprintRange{From: remaining.StartChapter, To: remaining.EndChapter}, nil
+	}
+	for _, input := range run.AuthorInputs {
+		if input.ID != "directory:requested-range" {
+			continue
+		}
+		value, err := glParse(input.Text)
+		if err != nil {
+			return nil, err
+		}
+		scope, ok := bpRangeObject(value)
+		if !ok {
+			return nil, glError("GENERATION_DIRECTORY_PROGRESS_INVALID")
+		}
+		return &BlueprintRange{From: scope.StartChapter, To: scope.EndChapter}, nil
+	}
+	// Without a directory scope planningContinuation is undefined, so a run that
+	// carries a continuation but no scope is not projectable.
+	return nil, glError("GENERATION_DIRECTORY_PROGRESS_INVALID")
+}
+
+// directoryPlanningTargetUnits is parsePlanningTargetUnits on the frozen
+// planning:target-units input (main-generation-owner.ts:785,
+// src/shared/plot-outline-contract.ts:13-18): absent means 600, and anything
+// that is not a safe integer in 1..1000 throws GENERATION_PLANNING_TARGET_INVALID.
+func directoryPlanningTargetUnits(run DirectoryRecoveryRun) (int64, error) {
+	for _, input := range run.AuthorInputs {
+		if input.ID != "planning:target-units" {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(input.Text), 64)
+		if err != nil || value != float64(int64(value)) || int64(value) < 1 || int64(value) > 1000 {
+			return 0, glError("GENERATION_PLANNING_TARGET_INVALID")
+		}
+		return int64(value), nil
+	}
+	return 600, nil
 }
 
 // readPlanningContinuation reads binding_json['$runEffects']['planningContinuation']

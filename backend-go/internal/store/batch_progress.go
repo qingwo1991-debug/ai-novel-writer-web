@@ -91,6 +91,32 @@ type BatchChapterRange struct {
 	EndChapter   int64 `json:"endChapter"`
 }
 
+// BlueprintRange is the {from,to} range the planning contract uses
+// (src/shared/plot-outline-contract.ts:39, generation-owner-contract.ts:176-184).
+// It is deliberately not BatchChapterRange: a blueprint author-edit receipt and
+// a planning continuation both spell their ranges from/to, and reusing the
+// startChapter/endChapter accessor would drop a real receipt.
+type BlueprintRange struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
+}
+
+// BlueprintAuthorEditReceipt is BlueprintAuthorEditReceipt
+// (src/shared/generation-owner-contract.ts:176-184): the frozen effect
+// readBlueprintAuthorEdit proves and readBlueprintRecovery returns as its
+// authorEdit (generation-run-repository.ts:194-214, :564). The recovery context
+// projects it as blueprintRecovery.saved
+// (main-generation-owner.ts:932, :941).
+type BlueprintAuthorEditReceipt struct {
+	Kind           string          `json:"kind"`
+	OperationID    string          `json:"operationId"`
+	SourceHandle   BatchRunHandle  `json:"sourceHandle"`
+	RequestedRange BlueprintRange  `json:"requestedRange"`
+	CommittedRange BlueprintRange  `json:"committedRange"`
+	RemainingRange *BlueprintRange `json:"remainingRange"`
+	PayloadHash    string          `json:"payloadHash"`
+}
+
 // BatchAuthorInput is one raw author input frozen into a run's source manifest.
 type BatchAuthorInput struct {
 	ID   string `json:"id"`
@@ -947,6 +973,7 @@ func bpAuthorInputs(value any) []BatchAuthorInput {
 type bpRecoveryResult struct {
 	kind       string
 	progress   []DirectoryGenerationProgress
+	authorEdit *BlueprintAuthorEditReceipt
 	diagnostic BlueprintRecoveryDiagnostic
 }
 
@@ -992,6 +1019,10 @@ func bpRecovery(ctx context.Context, conn *sql.Conn, runID string, visiting map[
 	if code := bpAuthorEditCode(ctx, conn, run); code != "" {
 		return bpDiagnostic(runID, "invalid", code), nil
 	}
+	// readBlueprintRecovery itself returns the proved receipt as authorEdit
+	// (:564). The validation above proves it; this read exposes the value the
+	// recovery context projects as blueprintRecovery.saved.
+	authorEdit := bpBlueprintAuthorEdit(run)
 	parents, err := rrMaps(ctx, conn, `SELECT DISTINCT t.run_id FROM generation_attempts t
  JOIN generation_runs r ON r.run_id=t.run_id WHERE r.root_action_id=?
  AND json_extract(t.usage_receipt_json,'$.directoryProgress.continuationHandle.runId')=?`, run.rootID, runID)
@@ -1022,7 +1053,7 @@ func bpRecovery(ctx context.Context, conn *sql.Conn, runID string, visiting map[
 			return bpDiagnostic(runID, "invalid", "GENERATION_DIRECTORY_PROGRESS_INVALID"), nil
 		}
 	}
-	return bpRecoveryResult{kind: "available", progress: progress}, nil
+	return bpRecoveryResult{kind: "available", progress: progress, authorEdit: authorEdit}, nil
 }
 
 // bpDirectoryProof is readDirectoryProgressProof (generation-run-repository.ts:
@@ -1291,6 +1322,45 @@ func bpAuthorEditCode(ctx context.Context, conn *sql.Conn, run *bpRun) string {
 		return code
 	}
 	return ""
+}
+
+// bpBlueprintAuthorEdit returns the receipt bpAuthorEditCode just proved. It is
+// the value half of readBlueprintAuthorEdit (generation-run-repository.ts:194-214),
+// which readBlueprintRecovery returns as its authorEdit (:564) and readContext
+// projects as blueprintRecovery.saved (main-generation-owner.ts:932, :941).
+// Callers must run bpAuthorEditCode first; this function only decodes what that
+// proof accepted.
+func bpBlueprintAuthorEdit(run *bpRun) *BlueprintAuthorEditReceipt {
+	effects := glMap(run.binding["$runEffects"])
+	if effects == nil {
+		return nil
+	}
+	value, present := effects["blueprintAuthorEdit"]
+	if !present || value == nil {
+		return nil
+	}
+	receipt := glMap(value)
+	if receipt == nil {
+		return nil
+	}
+	sourceHandle, _ := bpCompleteHandle(receipt["sourceHandle"])
+	requested, _ := bpFromToRange(receipt["requestedRange"])
+	committed, _ := bpFromToRange(receipt["committedRange"])
+	edit := &BlueprintAuthorEditReceipt{
+		Kind:           "blueprint-author-edit",
+		OperationID:    glText(receipt["operationId"]),
+		SourceHandle:   sourceHandle,
+		RequestedRange: BlueprintRange{From: requested.StartChapter, To: requested.EndChapter},
+		CommittedRange: BlueprintRange{From: committed.StartChapter, To: committed.EndChapter},
+		PayloadHash:    glText(receipt["payloadHash"]),
+	}
+	if remaining := glMap(receipt["remainingRange"]); remaining != nil {
+		edit.RemainingRange = &BlueprintRange{
+			From: bpFirstInt(remaining, "from", -1),
+			To:   bpFirstInt(remaining, "to", -1),
+		}
+	}
+	return edit
 }
 
 // bpFirstInt reads one integer field of a {from,to} range object without

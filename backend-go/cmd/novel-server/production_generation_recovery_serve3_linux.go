@@ -15,31 +15,31 @@ import (
 
 // This file SERVES the last two recovery names. The earlier passes refused them
 // because three of list-recovery's five buckets had no port and find-blueprint-
-// recovery's context had no port. This pass settles both with the answer the
-// reference itself gives for a lane that cannot carry a planning continuation:
+// recovery's context had no port. This pass settles the planning continuation:
 //
 //	generation:list-recovery            SERVED  five required buckets; editors and
-//	                                            batches real, planning/drafts/
-//	                                            reviews [], partial false
-//	generation:find-blueprint-recovery  SERVED  null, because no run carries a
-//	                                            non-complete planning continuation
+//	                                            batches sibling projections, planning
+//	                                            the directory recovery contexts,
+//	                                            drafts/reviews [], partial false
+//	generation:find-blueprint-recovery  SERVED  the newest unavailable or continued
+//	                                            directory recovery context, else null
 //
 // The decisive reader is store.FindDirectoryRecoveryNeed
 // (internal/store/planning_continuation.go): it reads
 // binding_json['$runEffects']['planningContinuation'] the way the reference does
-// and reports absent when the run has none. In this lane no run can carry one -
-// the ledger refuses every glPlanning operation that could write the effect
-// (internal/store/generation_ledger.go) - so the honest answer for every run is
-// absent, and that answer is a real SELECT of the stored binding, never a
-// hardcoded false.
+// and reports absent when the run has none. A proved continuation short-circuits
+// planningContinuation to state 'continued' BEFORE any fingerprint compare
+// (main-generation-owner.ts:787), so this lane can project it from the stored
+// receipts alone: the planning continuation, its remaining range, and the
+// blueprint author-edit receipt readBlueprintRecovery returns as authorEdit.
 //
 // # Editors and batches are the served sibling projections
 //
 // editors reuses productionEditorInline.recovery per editor-inline run, and
 // batches reuses store.ListGenerationBatchHistory per project - the two names the
 // bucket table in production_generation_recovery_reads_linux.go already recorded
-// as served by siblings. planning/drafts/reviews stay [] because their receipts
-// are absent, not because the reads failed, so partial is false.
+// as served by siblings. drafts/reviews stay [] because their ports are absent,
+// not because the reads failed, so partial stays false for them.
 
 // productionGenerationRecoveryOwner is the one generation owner the editors
 // bucket projects through. It is set inside the owner block of
@@ -112,6 +112,15 @@ func (r *productionGenerationRecoveryServe) list() transport.Operation {
 			Drafts:   []map[string]any{},
 			Partial:  false,
 		}
+		// The planning bucket is the reference's listRecovery collection
+		// (main-generation-owner.ts:1021-1024): contexts whose blueprint recovery
+		// is unavailable or whose planning continuation is not complete.
+		planning, partial, err := r.planning(ctx, caller, args[0], expected.ProjectID, expected.LeaseID)
+		if err != nil {
+			return productionBatchFailure(err)
+		}
+		out.Planning = planning
+		out.Partial = partial
 		// The batches bucket is the served generation:list-batches projection.
 		batches, err := r.batches(ctx, caller, args[0], expected.ProjectID)
 		if err != nil {
@@ -129,10 +138,11 @@ func (r *productionGenerationRecoveryServe) list() transport.Operation {
 }
 
 // find answers generation:find-blueprint-recovery. It returns null when no
-// chapter-blueprint-directory run carries a non-complete planning continuation,
-// which is every run this lane can read, and it honors the reference's
-// writeState:'unavailable' branch (main-generation-owner.ts:935-937) instead of
-// skipping it into null.
+// chapter-blueprint-directory run has an unavailable blueprint recovery or a
+// proved planning continuation, and otherwise returns the newest matching
+// context. The continued arm is the reference's own short-circuit
+// (main-generation-owner.ts:787); the writeState arms that need the nine-field
+// rebuildBinding comparison are deliberately not attempted.
 func (r *productionGenerationRecoveryServe) find() transport.Operation {
 	return func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
 		if r == nil || r.durable == nil {
@@ -169,12 +179,50 @@ func (r *productionGenerationRecoveryServe) find() transport.Operation {
 			// live-candidate draft is the empty text a directory run carries.
 			return productionFindUnavailableContext(need, expected.LeaseID), nil
 		}
-		// A proved planning continuation would need the continued writeState,
-		// which is decided after the rebuildBinding comparison this lane has no
-		// port of (production_generation_recovery_serve_linux.go). Refuse rather
-		// than project a state this lane cannot derive.
-		return nil, errors.New("GENERATION_PLANNING_CONTINUATION_UNPROJECTABLE")
+		if need.Continuation == nil {
+			// A non-continuation need is not a shape this reader produces; the
+			// writeState arms behind it are the nine-field rebuildBinding comparison
+			// this lane has no port of (production_generation_recovery_serve_linux.go).
+			// Keep the refusal symbolic instead of inventing a state.
+			return nil, errors.New("GENERATION_PLANNING_CONTINUATION_UNPROJECTABLE")
+		}
+		// planningContinuation short-circuits a proved receipt to 'continued'
+		// before any fingerprint compare (main-generation-owner.ts:787), so the
+		// continued context is projectable from the stored receipts alone.
+		return productionFindContinuedContext(need, expected.LeaseID), nil
 	}
+}
+
+// planning is the reference's listRecovery planning bucket
+// (main-generation-owner.ts:1021-1024): every directory run whose readContext
+// sets blueprintRecovery and whose planning continuation is not complete. The
+// unavailable branch and the proved-continuation branch are the two this lane can
+// derive; a per-run failure is reported as partial, exactly like the reference's
+// catch, and does not stop the list.
+func (r *productionGenerationRecoveryServe) planning(ctx context.Context, caller transport.Caller, raw any, projectID, leaseEpoch string) ([]map[string]any, bool, error) {
+	db, release, err := r.durable.borrowAuthorDatabase(ctx, caller, raw)
+	if release != nil {
+		defer release()
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if db == nil || release == nil {
+		return nil, false, errors.New("PRODUCTION_DURABLE_INVALID")
+	}
+	needs, partial, err := store.ListDirectoryRecoveryNeeds(ctx, db, projectID)
+	if err != nil {
+		return nil, false, err
+	}
+	planning := make([]map[string]any, 0, len(needs))
+	for _, need := range needs {
+		if need.Unavailable {
+			planning = append(planning, productionFindUnavailableContext(need, leaseEpoch))
+			continue
+		}
+		planning = append(planning, productionFindContinuedContext(need, leaseEpoch))
+	}
+	return planning, partial, nil
 }
 
 // batches is store.ListGenerationBatchHistory, the served generation:list-batches
@@ -266,6 +314,60 @@ func productionFindUnavailableContext(need *store.DirectoryRecoveryNeed, leaseEp
 			"saved":        nil,
 			"writeState":   "unavailable",
 			"diagnostic":   need.Diagnostic,
+		},
+	}
+}
+
+// productionFindContinuedContext builds the reference's continued context
+// (main-generation-owner.ts:786-787, :938-942). planningContinuation is the
+// short-circuit value: state 'continued', the child handle and the remaining
+// range derived from the run's own receipts. blueprintRecovery carries that same
+// range as editRange, the author-edit receipt as saved, and writeState
+// 'author-saved' when the receipt exists, else 'continued'
+// (:942: blueprintSaved ? 'author-saved' : continuation.state).
+func productionFindContinuedContext(need *store.DirectoryRecoveryNeed, leaseEpoch string) map[string]any {
+	handle := map[string]any{
+		"projectId":    need.Run.ProjectID,
+		"epoch":        need.Run.Epoch,
+		"rootActionId": need.Run.RootActionID,
+		"runId":        need.Run.RunID,
+	}
+	nextHandle := map[string]any{
+		"projectId":    need.Continuation.NextHandle.ProjectID,
+		"epoch":        need.Continuation.NextHandle.Epoch,
+		"rootActionId": need.Continuation.NextHandle.RootActionID,
+		"runId":        need.Continuation.NextHandle.RunID,
+	}
+	writeState := "continued"
+	if need.AuthorEdit != nil {
+		writeState = "author-saved"
+	}
+	return map[string]any{
+		"modelId":   need.Run.ModelID,
+		"handle":    handle,
+		"operation": "chapter-blueprint-directory",
+		"authorInputs":               need.Run.AuthorInputs,
+		"selectedDraftIds":           []int64{},
+		"selectedFinalizedDraftIds":  []int64{},
+		"selectedBlueprintChapterNumbers": need.Run.SelectedBlueprintChapterNumbers,
+		"composition":                nil,
+		"lastCompositionFinishReason": nil,
+		"attemptedPurposes":          []string{},
+		"draftSave":                  map[string]any{"kind": "absent"},
+		"planningContinuation": map[string]any{
+			"sourceHandle":   handle,
+			"remainingRange": need.RemainingRange,
+			"targetUnits":    need.TargetUnits,
+			"state":          "continued",
+			"nextHandle":     nextHandle,
+		},
+		"blueprintRecovery": map[string]any{
+			"sourceHandle": handle,
+			"leaseEpoch":   leaseEpoch,
+			"draft":        "",
+			"editRange":    need.RemainingRange,
+			"saved":        need.AuthorEdit,
+			"writeState":   writeState,
 		},
 	}
 }
