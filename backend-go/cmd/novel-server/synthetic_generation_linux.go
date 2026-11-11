@@ -430,6 +430,16 @@ type syntheticSelection struct {
 	MaterialDecision          map[string]any
 	ParentRootActionID        string
 	ReviewRevisionContextID   string
+	// Frozen, not interpreted: this lane has no directory-range, batch or agent
+	// registration registry, so these four ids and the batch intent are recorded
+	// in the run's source manifest exactly as the renderer froze them. The run's
+	// identity still comes from the operation, the model lease, the context
+	// snapshot and the author inputs.
+	ContinueDirectoryOperationID string
+	BatchID                      string
+	BatchIntent                  map[string]any
+	FinalizedCharacterContextID  string
+	AgentWorkflowRegistrationID  string
 	// ImportSlot and ImportExecution are the two fields an import begin sends
 	// (src/shared/generation-owner-contract.ts:266-268); productionImportGenerationSelect
 	// fills them only for the stage operation that owns the slot, so no other
@@ -454,6 +464,14 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 		"promptKeys": true, "skillStages": true, "authorInputs": true, "output": true,
 		"outputOverrides": true, "parentRootActionId": true, "preparationId": true, "materialDecision": true,
 		"reviewRevisionContextId": true, "importSlot": true, "importExecution": true,
+		// Five keys the renderer spreads into every begin
+		// (src/shared/generation-owner-contract.ts:284-294, sent through
+		// src/services/workflows/workflow-main-generation.ts:125 `{ ...intent }`).
+		// A fail-closed allowlist that omits them refused the whole begin, which is
+		// why blueprint directory continue/append and agent-registered runs never
+		// opened. They are frozen below instead of ignored.
+		"continueDirectoryOperationId": true, "batchId": true, "batchIntent": true,
+		"finalizedCharacterContextId": true, "agentWorkflowRegistrationId": true,
 	}
 	for key := range object {
 		if !allowed[key] {
@@ -537,6 +555,11 @@ func syntheticParseSelection(value any) (syntheticSelection, error) {
 		selection.MaterialDecision = validated
 	}
 	selection.ParentRootActionID = syntheticString(object["parentRootActionId"])
+	selection.ContinueDirectoryOperationID = syntheticString(object["continueDirectoryOperationId"])
+	selection.BatchID = syntheticString(object["batchId"])
+	selection.BatchIntent = syntheticMap(object["batchIntent"])
+	selection.FinalizedCharacterContextID = syntheticString(object["finalizedCharacterContextId"])
+	selection.AgentWorkflowRegistrationID = syntheticString(object["agentWorkflowRegistrationId"])
 	// The opaque handle `review-revision:prepare` minted. It is never inspected
 	// here: the begin admission resolves it against the process registry and
 	// refuses the run before any row when it does not resolve
@@ -803,6 +826,27 @@ func syntheticManifest(selection syntheticSelection, scope generationowner.Scope
 	}
 	if selection.MaterialDecision != nil {
 		manifest["materialDecision"] = selection.MaterialDecision
+	}
+	for key, value := range map[string]any{
+		"continueDirectoryOperationId": selection.ContinueDirectoryOperationID,
+		"batchId":                      selection.BatchID,
+		"batchIntent":                  selection.BatchIntent,
+		"finalizedCharacterContextId":  selection.FinalizedCharacterContextID,
+		"agentWorkflowRegistrationId":  selection.AgentWorkflowRegistrationID,
+	} {
+		switch typed := value.(type) {
+		case nil:
+			continue
+		case map[string]any:
+			if len(typed) == 0 {
+				continue
+			}
+		case string:
+			if typed == "" {
+				continue
+			}
+		}
+		manifest[key] = value
 	}
 	if selection.ImportSlotKey != "" {
 		// The three members the reference freezes for an import run
