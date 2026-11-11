@@ -444,6 +444,16 @@ func TestStatusRedirectPolicyAndNoCredentialLeak(t *testing.T) {
 			want = egress.ErrRedirectForbidden
 		}
 		assertNilError(t, got, err, want)
+		// A non-2xx provider reply keeps its own status readable while still
+		// answering EMBEDDING_REQUEST_FAILED; a redirect, an empty 204 and a
+		// policy refusal carry none.
+		if status == 400 || status == 401 || status == 500 {
+			if reported, ok := HTTPStatus(err); !ok || reported != status {
+				t.Fatalf("status %d was reported as %d/%v", status, reported, ok)
+			}
+		} else if reported, ok := HTTPStatus(err); ok {
+			t.Fatalf("status %d was reported as an HTTP status %d", status, reported)
+		}
 		if err != nil && (strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), server.URL) || strings.Contains(err.Error(), "private")) {
 			t.Fatal("error reflected private data")
 		}

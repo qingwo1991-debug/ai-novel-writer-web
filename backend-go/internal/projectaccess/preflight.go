@@ -37,12 +37,20 @@ type Config struct {
 // key or mutation handle. An optional native summary proves only this bounded
 // copied-table domain, not arbitrary author compatibility, writable authority,
 // portable restore support, populated legacy migration or production readiness.
+//
+// CanonicalKnowledgeProved reports that .ai-novel holds this lane's own knowledge
+// store: a decodable canonical knowledge-snapshot.json whose reference-format
+// copies name documents of that snapshot
+// (internal/projectfs.ProveCanonicalKnowledge). It is the one fact that separates
+// knowledge this lane wrote and can manage from a desktop asset it cannot, so a
+// knowledge-copy footprint is refused only when this is false.
 type Report struct {
-	ProjectID             string                    `json:"projectId"`
-	SQLite                admission.Evidence        `json:"sqlite"`
-	LegacyGatewayExcluded bool                      `json:"legacyGatewayExcluded"`
-	CanonicalAssets       projectfs.CanonicalAssets `json:"canonicalAssetEntries"`
-	Knowledge             *KnowledgeEvidence        `json:"knowledge,omitempty"`
+	ProjectID                string                    `json:"projectId"`
+	SQLite                   admission.Evidence        `json:"sqlite"`
+	LegacyGatewayExcluded    bool                      `json:"legacyGatewayExcluded"`
+	CanonicalAssets          projectfs.CanonicalAssets `json:"canonicalAssetEntries"`
+	Knowledge                *KnowledgeEvidence        `json:"knowledge,omitempty"`
+	CanonicalKnowledgeProved bool                      `json:"canonicalKnowledgeProved"`
 }
 
 func canonical(path string) bool {
@@ -261,7 +269,20 @@ func preflightReadWithLock(ctx context.Context, config Config, afterStage stageH
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
-	report = Report{ProjectID: project.ProjectID(), SQLite: evidence, LegacyGatewayExcluded: true, CanonicalAssets: assets.Summary()}
+	// The canonical knowledge proof is taken last, after every earlier check has
+	// verified the source, so the decision rests on the freshest state this
+	// preflight can observe under the continuously held legacy lock.
+	canonicalKnowledge, err := project.ProveCanonicalKnowledge(ctx)
+	if err != nil {
+		return report, redact(err)
+	}
+	report = Report{
+		ProjectID:                project.ProjectID(),
+		SQLite:                   evidence,
+		LegacyGatewayExcluded:    true,
+		CanonicalAssets:          assets.Summary(),
+		CanonicalKnowledgeProved: canonicalKnowledge.Proved(),
+	}
 	if knowledge != nil {
 		value := knowledge.evidence
 		report.Knowledge = &value

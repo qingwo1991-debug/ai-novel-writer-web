@@ -46,10 +46,13 @@ type AdmittedAuthor struct {
 //
 //   - the schema to be exactly the current supported version;
 //   - the legacy gateway to be excluded from cooperating writers;
-//   - no present LanceDB/embedding-registry/knowledge-copy canonical asset, and
-//     when knowledge staging was configured, no legacy knowledge receipt or
-//     registry/copy footprint — a durable native writer for those is not yet
-//     proven, and degrading them would destroy author data.
+//   - no present LanceDB or embedding-registry canonical asset, and no
+//     knowledge-copy footprint that does not belong to a decodable canonical
+//     knowledge snapshot this lane wrote — a durable native writer for the
+//     desktop's assets is not yet proven, and degrading them would destroy author
+//     data, while the lane's own store must stay openable;
+//   - when knowledge staging was configured, no legacy knowledge receipt or
+//     registry footprint either.
 //
 // It does not open the database, write any source file, or grant a lease; those
 // are the caller's next steps through projectfs.OpenAuthorDatabase.
@@ -80,12 +83,27 @@ func AdmitAuthor(ctx context.Context, config Config, project *projectfs.Project,
 	// fixed asset directory as absent when it holds no entries, because the shipped
 	// gateway leaves an empty .ai-novel/lancedb behind after the knowledge base is
 	// cleared. Anything with bytes in it still refuses here.
-	if assets.LanceDB || assets.EmbeddingRegistry || assets.KnowledgeCopies {
+	//
+	// LanceDB and the embedding-space registry have no Go writer at all, so they
+	// refuse unconditionally. A knowledge-copy footprint is different: this lane's
+	// own knowledge operations write copies beside a canonical
+	// knowledge-snapshot.json that its served reads decode, so copies that belong
+	// to that snapshot are knowledge this writer can leave alone rather than
+	// degrade. Copies WITHOUT such a snapshot (the desktop footprint, which has no
+	// canonical JSON store) stay exactly as unproved as before.
+	if assets.LanceDB || assets.EmbeddingRegistry {
+		return nil, ErrAuthorKnowledgeUnproved
+	}
+	if assets.KnowledgeCopies && !report.CanonicalKnowledgeProved {
 		return nil, ErrAuthorKnowledgeUnproved
 	}
 	if knowledge := report.Knowledge; knowledge != nil {
-		if knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry || knowledge.Physical.KnowledgeCopies ||
-			knowledge.Physical.LegacyReceipt || knowledge.Metadata.RegistryPresent || knowledge.Metadata.CopiesPresent {
+		if knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry ||
+			knowledge.Physical.LegacyReceipt || knowledge.Metadata.RegistryPresent {
+			return nil, ErrAuthorKnowledgeUnproved
+		}
+		if (knowledge.Physical.KnowledgeCopies || knowledge.Metadata.CopiesPresent) &&
+			!report.CanonicalKnowledgeProved {
 			return nil, ErrAuthorKnowledgeUnproved
 		}
 	}

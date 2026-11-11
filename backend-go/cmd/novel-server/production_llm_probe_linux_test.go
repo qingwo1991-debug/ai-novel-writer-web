@@ -364,6 +364,161 @@ func TestProductionLLMProbeRefusesAnOriginOutsideTheCommittedAllowlist(t *testin
 	}
 }
 
+// productionProbeEmbeddingProfile is the settings form for a vector model: the
+// same shape as a chat profile, with the embedding purpose the desktop switches
+// the connection test on (electron/controllers/llm-controller.ts:495-499).
+func productionProbeEmbeddingProfile(baseURL, key string) map[string]any {
+	profile := productionProbeTypedProfile(baseURL, key)
+	profile["purposes"] = []any{"embedding"}
+	return profile
+}
+
+// TestProductionLLMProbeTestsAWorkingEmbeddingConnection is the settings screen's
+// happy path for a vector model: one embedding of the fixed probe word through
+// the lane's own embedding dispatch, bearing the credential, and the renderer's
+// own success shape back. Before this existed the embedding profile was refused
+// outright, so the model retrieval depends on could not be tested at all.
+func TestProductionLLMProbeTestsAWorkingEmbeddingConnection(t *testing.T) {
+	provider, recorder := productionProbeFakeProvider(t, http.StatusOK,
+		`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"model":"ci-story-model","usage":{"prompt_tokens":1,"total_tokens":1}}`)
+	fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+	var wire productionProbeTestWire
+	fixture.client.decode(t, "llm:test-connection",
+		[]any{productionProbeEmbeddingProfile(provider.URL+"/v1", productionTestModelSecret)}, &wire)
+	if !wire.Success {
+		t.Fatalf("a working embedding endpoint was reported as a failure: %v", wire.Error)
+	}
+	if recorder.count() != 1 {
+		t.Fatalf("the probe dispatched %v requests, want exactly one", recorder.count())
+	}
+	if path := recorder.lastPath(); path != "POST /v1/embeddings" {
+		t.Fatalf("the probe dialed %v", path)
+	}
+	if auth := recorder.lastAuth(); auth != "Bearer "+productionTestModelSecret {
+		t.Fatal("the probe did not send the credential as a bearer token")
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(recorder.lastBody()), &body); err != nil {
+		t.Fatalf("the probe sent a body that is not JSON: %v", err)
+	}
+	if body["model"] != "ci-story-model" {
+		t.Fatalf("the probe named the model %v", body["model"])
+	}
+	input, ok := body["input"].([]any)
+	if !ok || len(input) != 1 || input[0] != "hello" {
+		t.Fatalf("the probe embedded %v, want the single fixed probe word", body["input"])
+	}
+	if _, present := body["messages"]; present {
+		t.Fatal("the probe sent a chat body for an embedding profile")
+	}
+}
+
+// TestProductionLLMProbeReportsTheEmbeddingProviderStatusWhenTheCredentialIsRefused
+// keeps "the embedding provider answered and said no" apart from "we never
+// reached the provider". The status is the provider's own; the body it sent is
+// not repeated, because a provider that echoes the submitted key back would then
+// be published.
+func TestProductionLLMProbeReportsTheEmbeddingProviderStatusWhenTheCredentialIsRefused(t *testing.T) {
+	provider, recorder := productionProbeFakeProvider(t, http.StatusUnauthorized,
+		`{"error":{"message":"Incorrect API key provided: `+productionTestModelSecret+`","type":"invalid_request_error"}}`)
+	fixture := newProductionProbeFixture(t, []string{provider.URL}, "")
+	var wire productionProbeTestWire
+	fixture.client.decode(t, "llm:test-connection",
+		[]any{productionProbeEmbeddingProfile(provider.URL+"/v1", productionTestModelSecret)}, &wire)
+	if recorder.count() != 1 {
+		t.Fatalf("the probe dispatched %v requests, want exactly one", recorder.count())
+	}
+	if wire.Success {
+		t.Fatal("a refused embedding credential was reported as a working connection")
+	}
+	if wire.Error != productionProbeRefusedMessage(http.StatusUnauthorized) {
+		t.Fatalf("the refusal read %v", wire.Error)
+	}
+	if wire.Status != http.StatusUnauthorized {
+		t.Fatalf("the provider status was reported as %v, want %v", wire.Status, http.StatusUnauthorized)
+	}
+	if !strings.Contains(wire.Error, "401") {
+		t.Fatal("the refusal does not name the provider's status")
+	}
+	if wire.Error == productionProbeNotReachedMessage {
+		t.Fatal("a real embedding provider answer was reported as an unreachable host")
+	}
+	if strings.Contains(wire.Error, productionTestModelSecret) || strings.Contains(wire.Error, "Incorrect API key provided") {
+		t.Fatal("the refusal repeated the provider body or the credential")
+	}
+}
+
+// TestProductionLLMProbeReportsAnUnreachableEmbeddingProvider is the other half of
+// that distinction for the embedding dispatch: nothing answered, so no status
+// exists to report and no chat sentence may be borrowed.
+func TestProductionLLMProbeReportsAnUnreachableEmbeddingProvider(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "http://" + listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newProductionProbeFixture(t, []string{origin}, "")
+	var wire productionProbeTestWire
+	fixture.client.decode(t, "llm:test-connection",
+		[]any{productionProbeEmbeddingProfile(origin+"/v1", productionTestModelSecret)}, &wire)
+	if wire.Success {
+		t.Fatal("an unreachable embedding provider was reported as a working connection")
+	}
+	if wire.Error != productionProbeNotReachedMessage {
+		t.Fatalf("the failure read %v", wire.Error)
+	}
+	if wire.Status != 0 {
+		t.Fatalf("the failure reported HTTP status %v although no response arrived", wire.Status)
+	}
+	if strings.Contains(wire.Error, productionTestModelSecret) {
+		t.Fatal("the failure message carried the credential")
+	}
+}
+
+// TestProductionLLMProbeRefusesAnEmbeddingOriginOutsideTheCommittedAllowlist
+// proves the embedding branch sits behind the same wall as the chat branch: the
+// probe refuses before building anything, and the foreign endpoint sees nothing.
+func TestProductionLLMProbeRefusesAnEmbeddingOriginOutsideTheCommittedAllowlist(t *testing.T) {
+	declared, declaredRecorder := productionProbeFakeProvider(t, http.StatusOK, `{"object":"list","data":[]}`)
+	outside, outsideRecorder := productionProbeFakeProvider(t, http.StatusOK,
+		`{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1]}]}`)
+	fixture := newProductionProbeFixture(t, []string{declared.URL}, "")
+	var wire productionProbeTestWire
+	fixture.client.decode(t, "llm:test-connection",
+		[]any{productionProbeEmbeddingProfile(outside.URL+"/v1", productionTestModelSecret)}, &wire)
+	if wire.Success {
+		t.Fatal("an origin outside the committed allowlist was probed for embeddings")
+	}
+	if wire.Error != productionProbeOriginRefusedMessage(egress.ErrNotAllowed) {
+		t.Fatalf("the refusal read %v", wire.Error)
+	}
+	// The embedding branch names the same state and the same remedy the chat
+	// branch does, which is the discovery surface's endpoint_not_allowed.
+	if !strings.Contains(wire.Error, "Save this model") {
+		t.Fatalf("the embedding connection test did not name the remedy: %v", wire.Error)
+	}
+	if wire.Error == productionProbeUnavailableMessage || wire.Error == productionProbeNotReachedMessage {
+		t.Fatalf("an allowlist refusal fell back to a generic sentence: %v", wire.Error)
+	}
+	// The same state carries the same code name on the discovery surface, which is
+	// where the settings form reads endpoint_not_allowed from.
+	var discovery productionProbeDiscoveryWire
+	fixture.client.decode(t, "llm:discover-models",
+		[]any{productionProbeEmbeddingProfile(outside.URL+"/v1", productionTestModelSecret)}, &discovery)
+	if discovery.Success || discovery.ErrorCode != "endpoint_not_allowed" {
+		t.Fatalf("embedding discovery from an outside origin answered %v / %v", discovery.Success, discovery.ErrorCode)
+	}
+	if outsideRecorder.count() != 0 {
+		t.Fatalf("the foreign endpoint received %v requests", outsideRecorder.count())
+	}
+	if declaredRecorder.count() != 0 {
+		t.Fatalf("the declared endpoint received %v requests", declaredRecorder.count())
+	}
+}
+
 // TestProductionLLMProbeDiscoversTheProvidersModelList is the discover happy path:
 // three published models arrive in the renderer's DiscoveredModel shape.
 func TestProductionLLMProbeDiscoversTheProvidersModelList(t *testing.T) {
@@ -569,26 +724,36 @@ func TestProductionLLMProbeNamesAnUnavailablePolicy(t *testing.T) {
 		t.Fatalf("binding the two llm names over an unavailable policy failed: %v", err)
 	}
 	client := newProductionDurableClient(t, server, productionTestTab)
-	embedding := productionProbeTypedProfile("https://vector.example/v1", productionTestModelSecret)
-	embedding["purposes"] = []any{"embedding"}
+	embedding := productionProbeEmbeddingProfile("https://vector.example/v1", productionTestModelSecret)
 	var discovery productionProbeDiscoveryWire
 	client.decode(t, "llm:discover-models", []any{embedding}, &discovery)
 	if discovery.Success || discovery.ErrorCode != "endpoint_not_allowed" {
 		t.Fatalf("an unavailable policy answered success=%v errorCode=%q", discovery.Success, discovery.ErrorCode)
 	}
-	var test productionProbeTestWire
-	client.decode(t, "llm:test-connection", []any{productionProbeTypedProfile("https://vector.example/v1", productionTestModelSecret)}, &test)
-	if test.Success {
-		t.Fatal("an unavailable policy reported a working connection")
-	}
-	if !strings.Contains(test.Error, "no usable model-egress policy") {
-		t.Fatalf("the connection test did not name the policy refusal: %v", test.Error)
-	}
-	if !strings.Contains(test.Error, "rebuilds the allowed origins") {
-		t.Fatalf("the connection test did not name the remedy the discovery surface states: %v", test.Error)
-	}
-	if test.Error == productionProbeUnavailableMessage {
-		t.Fatal("a policy refusal fell back to the generic probe-unavailable sentence")
+	// The connection test names the same remedy for both kinds of profile. An
+	// embedding profile is no longer refused with its own "only chat completions
+	// are probed" sentence, which told the author nothing about the policy.
+	for name, profile := range map[string]map[string]any{
+		"chat":      productionProbeTypedProfile("https://vector.example/v1", productionTestModelSecret),
+		"embedding": embedding,
+	} {
+		var test productionProbeTestWire
+		client.decode(t, "llm:test-connection", []any{profile}, &test)
+		if test.Success {
+			t.Fatalf("an unavailable policy reported a working %s connection", name)
+		}
+		if !strings.Contains(test.Error, "no usable model-egress policy") {
+			t.Fatalf("the %s connection test did not name the policy refusal: %v", name, test.Error)
+		}
+		if !strings.Contains(test.Error, "rebuilds the allowed origins") {
+			t.Fatalf("the %s connection test did not name the remedy the discovery surface states: %v", name, test.Error)
+		}
+		if test.Error == productionProbeUnavailableMessage {
+			t.Fatalf("a %s policy refusal fell back to the generic probe-unavailable sentence", name)
+		}
+		if test.Error == productionProbeNotReachedMessage {
+			t.Fatalf("a %s policy refusal was reported as an unreachable host", name)
+		}
 	}
 }
 
@@ -737,6 +902,48 @@ func TestProductionLLMProbeStopsAtItsDeadline(t *testing.T) {
 	}
 	if strings.Contains(wire.Error, productionTestModelSecret) {
 		t.Fatal("the deadline message carried the credential")
+	}
+	if recorder.count() != 1 {
+		t.Fatalf("the provider received %v requests", recorder.count())
+	}
+}
+
+// TestProductionLLMProbeStopsAnEmbeddingProfileAtItsDeadline: the embedding
+// branch owns the same budget. A silent embedding endpoint is abandoned and the
+// failure names the deadline; it must never be reported as a cancellation, which
+// is what reading a still-live probe context would produce.
+func TestProductionLLMProbeStopsAnEmbeddingProfileAtItsDeadline(t *testing.T) {
+	silent, recorder := productionProbeSilentProvider(t)
+	fixture := newProductionProbeFixture(t, []string{silent.URL}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	value, err := fixture.probe.testConnection(ctx, transportCallerForTest(),
+		[]any{productionProbeEmbeddingProfile(silent.URL+"/v1", productionTestModelSecret)})
+	if err != nil {
+		t.Fatalf("a silent embedding provider was reported as a request error: %v", err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire productionProbeTestWire
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Success {
+		t.Fatal("a silent embedding provider was reported as a working connection")
+	}
+	// 127.0.0.1 is a local endpoint, so the local budget applies to the embedding
+	// branch exactly as it does to the chat branch
+	// (electron/controllers/llm-controller.ts:51-58).
+	if wire.Error != productionProbeTimeoutMessage(productionProbeLocalTimeoutSec) {
+		t.Fatalf("the embedding deadline was reported as %v", wire.Error)
+	}
+	if wire.Error == productionProbeCancelledMessage {
+		t.Fatal("an expired embedding deadline was reported as a cancellation")
+	}
+	if strings.Contains(wire.Error, productionTestModelSecret) {
+		t.Fatal("the embedding deadline message carried the credential")
 	}
 	if recorder.count() != 1 {
 		t.Fatalf("the provider received %v requests", recorder.count())

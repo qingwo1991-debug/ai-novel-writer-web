@@ -47,6 +47,31 @@ var (
 	ErrOllamaNativeURL = errors.New("EMBEDDING_OLLAMA_NATIVE_URL")
 )
 
+// HTTPError carries the provider's own status for a non-2xx embedding reply. It
+// formats nothing but the fixed ErrRequestFailed symbol and stays wrapped by it,
+// so every existing classifier keeps answering EMBEDDING_REQUEST_FAILED while a
+// caller that must tell "the provider answered and refused" apart from "the
+// provider was never reached" can still read the status. No body, URL or
+// credential is ever carried.
+type HTTPError struct {
+	Status int
+}
+
+func (e *HTTPError) Error() string { return ErrRequestFailed.Error() }
+
+func (e *HTTPError) Unwrap() error { return ErrRequestFailed }
+
+// HTTPStatus returns the provider's own HTTP status when the failure was a
+// non-2xx reply. A transport, policy, deadline or decode failure has none and
+// answers false.
+func HTTPStatus(err error) (int, bool) {
+	var response *HTTPError
+	if errors.As(err, &response) && response != nil && response.Status > 0 {
+		return response.Status, true
+	}
+	return 0, false
+}
+
 type Model struct {
 	BaseURL   string
 	APIKey    string
@@ -182,7 +207,7 @@ func (c *Client) EmbedBatch(ctx context.Context, protocol Protocol, model Model,
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, ErrRequestFailed
+		return nil, &HTTPError{Status: response.StatusCode}
 	}
 	if response.ContentLength > MaxResponseBytes {
 		return nil, ErrTooLarge

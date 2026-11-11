@@ -38,9 +38,19 @@ func (reader *Reader) AssessSQLiteWriteCandidate(ctx context.Context, schema adm
 	}
 	assets := reader.report.CanonicalAssets
 	knowledge := reader.report.Knowledge
-	if assets.LanceDB || assets.EmbeddingRegistry || assets.KnowledgeCopies ||
-		knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry || knowledge.Physical.KnowledgeCopies || knowledge.Physical.LegacyReceipt ||
-		knowledge.Metadata.RegistryPresent || knowledge.Metadata.CopiesPresent {
+	// LanceDB, the embedding-space registry and a legacy receipt have no Go
+	// writer in this lane, so they always refuse. A knowledge-copy footprint
+	// refuses only when the project carries no decodable canonical
+	// knowledge-snapshot.json the copies belong to: copies this lane's own
+	// knowledge operations wrote beside their snapshot are not knowledge this
+	// write fence would degrade.
+	if assets.LanceDB || assets.EmbeddingRegistry ||
+		knowledge.Physical.LanceDB || knowledge.Physical.EmbeddingRegistry || knowledge.Physical.LegacyReceipt ||
+		knowledge.Metadata.RegistryPresent {
+		return admission.Evidence{}, ErrWriteKnowledgeUnproved
+	}
+	if (assets.KnowledgeCopies || knowledge.Physical.KnowledgeCopies || knowledge.Metadata.CopiesPresent) &&
+		!reader.report.CanonicalKnowledgeProved {
 		return admission.Evidence{}, ErrWriteKnowledgeUnproved
 	}
 	// VerifySnapshotWithDomain opens by pathname. Check that this private

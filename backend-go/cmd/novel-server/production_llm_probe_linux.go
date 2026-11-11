@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/egress"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/embedding"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/globalconfig"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/llm"
@@ -26,8 +27,10 @@ import (
 // The two llm names whose absence leaves the settings screen unusable in a
 // browser are served here:
 //
-//   - llm:test-connection sends one tiny chat request to prove that a key and a
-//     base URL work (electron/controllers/llm-controller.ts:486-528);
+//   - llm:test-connection sends one tiny request to prove that a key and a base
+//     URL work - a chat completion for a generation profile, one embedding of a
+//     single fixed word for an embedding profile, exactly as the desktop chooses
+//     between the two (electron/controllers/llm-controller.ts:495-521);
 //   - llm:discover-models lists the models the endpoint publishes
 //     (electron/services/model-discovery-service.ts:183-300).
 //
@@ -93,7 +96,6 @@ const (
 	productionProbeProtocolMessage           = "This deployment can only probe the openai and gemini protocols."
 	productionProbeUnavailableMessage        = "The connection probe is unavailable in this deployment."
 	productionProbeNotReachedMessage         = "The provider was not reached: the request failed before any HTTP response came back. Check the Base URL, the network, and this deployment's allowed model origins."
-	productionProbeEmbeddingMessage          = "Only chat completions are probed here, so an embedding profile's connection test is not served by this deployment."
 	productionProbeCancelledMessage          = "The probe was cancelled before the endpoint answered."
 )
 
@@ -105,7 +107,6 @@ var (
 	errProductionProbeConfigUnavailable   = errors.New("MODEL_CONFIG_UNAVAILABLE")
 	errProductionProbeProtocolUnsupported = errors.New("LLM_PROTOCOL_UNSUPPORTED")
 	errProductionProbeResponseTooLarge    = errors.New("LLM_RESPONSE_TOO_LARGE")
-	errProductionProbeEmbeddingPurpose    = errors.New("LLM_EMBEDDING_PROBE_UNSUPPORTED")
 	errProductionProbeNotReached          = errors.New("LLM_PROVIDER_UNREACHABLE")
 )
 
@@ -225,7 +226,12 @@ func (p *productionLLMProbe) testConnection(ctx context.Context, caller transpor
 		return productionProbeTestFailure(errProductionProbeRequestInvalid)
 	}
 	if productionProbePurpose(form.purposes) == "embedding" {
-		return productionProbeTestFailure(errProductionProbeEmbeddingPurpose)
+		// An embedding profile is probed with the lane's own embedding dispatch,
+		// over the same committed egress client and the same deadline, exactly as
+		// the desktop switches between the two paths
+		// (electron/controllers/llm-controller.ts:495-499). The chat body below is
+		// never built for it.
+		return p.testEmbeddingConnection(ctx, form, key)
 	}
 	client, err := p.egress()
 	if err != nil {
@@ -288,6 +294,94 @@ func (p *productionLLMProbe) testConnection(ctx context.Context, caller transpor
 		return productionProbeTestFailure(productionProbeRefusalError(result.HTTPFailure.Status))
 	}
 	return productionProbeTestFailure(productionProbeUnusableError(result))
+}
+
+// testEmbeddingConnection probes one embedding-purpose profile. The desktop
+// answers the very same name by calling generateEmbeddings(['hello'], ...) for a
+// profile whose purposes include 'embedding'
+// (electron/controllers/llm-controller.ts:495-499), so this is the same round
+// trip through the lane's committed embedding dispatch: the same egress client
+// the chat path dispatches through, the same deadline, and the same outcome
+// sentences. Only the request differs - one fixed word instead of a chat body.
+func (p *productionLLMProbe) testEmbeddingConnection(ctx context.Context, form productionProbeForm, key string) (any, error) {
+	protocol, ok := productionKnowledgeEmbeddingProtocol(form.protocol)
+	if !ok {
+		// admit already refused every other protocol; this arm keeps the branch
+		// total so a future protocol cannot dispatch by accident.
+		return productionProbeTestFailure(errProductionProbeProtocolUnsupported)
+	}
+	client, err := p.egress()
+	if err != nil {
+		return productionProbeTestFailure(err)
+	}
+	if err := client.CheckBaseURL(form.baseURL); err != nil {
+		return productionProbeTestFailure(productionProbeRefusedOrigin(err))
+	}
+	budget := productionProbeDeadline(form)
+	deadline, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	target := productionKnowledgeEmbedding{
+		Protocol: protocol,
+		Model: embedding.Model{
+			BaseURL:   form.baseURL,
+			APIKey:    key,
+			ModelName: form.modelName,
+		},
+	}
+	// The vector lane's own dispatch: it embeds the fixed probe word through the
+	// passed-in egress client and returns no partial result on any failure.
+	if _, err := productionKnowledgeEmbeddingDispatch(deadline, client, target, []string{"hello"}); err != nil {
+		return productionProbeTestFailure(productionProbeEmbeddingFailure(deadline, budget, err))
+	}
+	return map[string]any{"success": true}, nil
+}
+
+// productionProbeEmbeddingFailure classifies one embedding round trip with the
+// same vocabulary the chat path answers with, so the settings screen reads one
+// story whichever kind of profile it probes. The lane's embedding client keeps
+// the provider's own status on a non-2xx reply
+// (internal/embedding/provider.go HTTPError) while collapsing every transport
+// failure into a statusless fixed symbol, which is exactly what keeps "the
+// provider answered and refused the key" apart from "the provider was never
+// reached".
+func productionProbeEmbeddingFailure(deadline context.Context, budget time.Duration, err error) error {
+	// A deadline that fired is a timeout, never a cancellation - whichever of the
+	// two bounds fired. The embedding client owns a per-request bound
+	// (internal/embedding requestTimeout) tighter than a local endpoint's probe
+	// budget, so its own deadline can expire while this probe's context is still
+	// live; productionProbeDeadlineError would then read that live context and
+	// answer "cancelled", which is the one thing that did not happen.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &productionProbeText{text: productionProbeTimeoutMessage(int(budget / time.Second))}
+	}
+	if errors.Is(err, context.Canceled) || deadline.Err() != nil {
+		return productionProbeDeadlineError(deadline, budget)
+	}
+	if productionProbeEgressRefusal(err) {
+		return productionProbeDispatchFailure(err)
+	}
+	if status, ok := embedding.HTTPStatus(err); ok {
+		// A real provider answer: the status is published, the body is not. Some
+		// providers echo the submitted key in an error body.
+		return productionProbeRefusalError(status)
+	}
+	if errors.Is(err, embedding.ErrRequestFailed) || errors.Is(err, egress.ErrRequestFailed) {
+		// No HTTP response ever arrived, so no provider status exists to report.
+		return errProductionProbeNotReached
+	}
+	for _, known := range []error{
+		embedding.ErrResponseInvalid,
+		embedding.ErrTooLarge,
+		embedding.ErrRequestInvalid,
+		embedding.ErrOllamaNativeURL,
+	} {
+		if errors.Is(err, known) {
+			// The provider answered, but the reply or the resolved endpoint was
+			// unusable. The symbolic code is the only detail published.
+			return &productionProbeText{text: productionProbeUnusableMessage(known.Error())}
+		}
+	}
+	return errProductionProbeUnavailable
 }
 
 // discoverModels answers llm:discover-models. It returns the provider's list in
@@ -910,10 +1004,9 @@ func productionProbeDiscoveryFailure(err error) (any, error) {
 		// A credential could not be resolved or restored, which the settings form
 		// reads as "check the API key".
 		return map[string]any{"success": false, "errorCode": "auth"}, nil
-	case errors.Is(err, errProductionProbeProtocolUnsupported), errors.Is(err, errProductionProbeEmbeddingPurpose):
-		// The only genuine feature lacks: a protocol internal/llm has no list URL
-		// resolver for, and an embedding profile whose list this lane does not
-		// serve.
+	case errors.Is(err, errProductionProbeProtocolUnsupported):
+		// The only genuine feature lack: a protocol internal/llm has no list URL
+		// resolver for.
 		return map[string]any{"success": false, "errorCode": "unsupported"}, nil
 	case productionProbeEndpointNotAdmitted(err):
 		// Every way the committed policy can refuse an endpoint, including a policy
@@ -943,8 +1036,6 @@ func productionProbeMessage(err error) string {
 		return productionProbeConfigMessage
 	case errors.Is(err, errProductionProbeProtocolUnsupported):
 		return productionProbeProtocolMessage
-	case errors.Is(err, errProductionProbeEmbeddingPurpose):
-		return productionProbeEmbeddingMessage
 	case errors.Is(err, errProductionProbeNotReached):
 		return productionProbeNotReachedMessage
 	case errors.Is(err, context.DeadlineExceeded):
