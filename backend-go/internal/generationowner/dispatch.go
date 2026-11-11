@@ -2,6 +2,8 @@ package generationowner
 
 import (
  "context"
+ "errors"
+ "log"
  "net/http"
  "unicode/utf8"
 
@@ -62,21 +64,42 @@ func (e *Executor) Prepare(ctx context.Context,scope Scope,leaseID string,task T
 // expiry, scope, revision/credential and optional bound-source checks under the
 // REQUIRED shared revision/project gate. Exact-origin egress is the sole client.
 // reserve/mark/settle/write belong to the existing durable generation service.
+// refused logs the symbolic refusal code only. Paths, endpoints and credentials
+// never enter it, exactly like the lane's egress refusal. Without it a failed
+// dispatch reached the author as one opaque provider code.
+func refused(code string) error {
+ err := failure(code)
+ log.Printf("novel-server: generation dispatch refused (%s)", err.Error())
+ return err
+}
+
+// egressRefusal names the reason without echoing the endpoint a transport error
+// would carry: the policy's own sentinels are symbolic, anything else is the
+// transport.
+func egressRefusal(err error) string {
+ for _, known := range []error{egress.ErrNotAllowed, egress.ErrBaseURLInvalid, egress.ErrPolicyInvalid, egress.ErrRedirectForbidden} {
+  if errors.Is(err, known) {
+   return known.Error()
+  }
+ }
+ return "EGRESS_TRANSPORT"
+}
+
 func (e *Executor) Dispatch(ctx context.Context,request any,callbacks generation.Callbacks)(generation.DispatchResult,error){
- if e==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
+ if e==nil{return generation.DispatchResult{},refused("MODEL_EXECUTION_CONFIG_REQUIRED")}
  if e.DispatchFunc!=nil{return e.DispatchFunc(ctx,request,callbacks)}
- frozen,ok:=request.(*Frozen);if !ok||frozen==nil||e.Registry==nil||frozen.registry!=e.Registry{return generation.DispatchResult{},failure("GENERATION_DISPATCH_AUTHORITY_INVALID")};if e.Registry.options.AuthorityLock==nil||e.Egress==nil||e.SecretStorage==nil{return generation.DispatchResult{},failure("MODEL_EXECUTION_CONFIG_REQUIRED")}
+ frozen,ok:=request.(*Frozen);if !ok||frozen==nil||e.Registry==nil||frozen.registry!=e.Registry{return generation.DispatchResult{},refused("GENERATION_DISPATCH_AUTHORITY_INVALID")};if e.Registry.options.AuthorityLock==nil||e.Egress==nil||e.SecretStorage==nil{return generation.DispatchResult{},refused("MODEL_EXECUTION_CONFIG_REQUIRED")}
  dispatch:=func(req *http.Request)(*http.Response,error){
-  unlock,err:=e.Registry.options.AuthorityLock(ctx,frozen.scope);if err!=nil||unlock==nil{return nil,failure("GENERATION_EPOCH_STALE")};defer unlock()
-  checked,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return nil,err};if frozen.binding!=nil{if err:=frozen.binding.validate(ctx);err!=nil{return nil,err}}
+  unlock,err:=e.Registry.options.AuthorityLock(ctx,frozen.scope);if err!=nil||unlock==nil{return nil,refused("GENERATION_EPOCH_STALE")};defer unlock()
+  checked,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return nil,err};if frozen.binding!=nil{if err:=frozen.binding.validate(ctx);err!=nil{log.Printf("novel-server: generation dispatch refused (%s)",err.Error());return nil,err}}
   // Serialize Close/RevokeScope with actual request start as well. No external
   // injected callback runs under this registry mutex; only the owned egress.
   e.Registry.mu.Lock();defer e.Registry.mu.Unlock()
-  if _,live:=e.Registry.records[frozen.leaseID];!live{return nil,failure("MODEL_EXECUTION_LEASE_INVALID")}
-  if e.Registry.options.Now().UnixMilli()>=checked.receipt.ExpiresAt{return nil,failure("MODEL_EXECUTION_LEASE_EXPIRED")}
-  return e.Egress.Do(req)
+  if _,live:=e.Registry.records[frozen.leaseID];!live{return nil,refused("MODEL_EXECUTION_LEASE_INVALID")}
+  if e.Registry.options.Now().UnixMilli()>=checked.receipt.ExpiresAt{return nil,refused("MODEL_EXECUTION_LEASE_EXPIRED")}
+  response,err:=e.Egress.Do(req);if err!=nil{return nil,refused(egressRefusal(err))};return response,nil
  }
- record,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{return generation.DispatchResult{},err};key,err:=e.SecretStorage.DecryptString(record.profile.EncryptedCredential);if err!=nil{return generation.DispatchResult{},failure("MODEL_CREDENTIAL_UNAVAILABLE")}
+ record,err:=e.Registry.resolve(ctx,frozen.leaseID,frozen.scope,frozen.purpose);if err!=nil{log.Printf("novel-server: generation dispatch refused (%s)",err.Error());return generation.DispatchResult{},err};key,err:=e.SecretStorage.DecryptString(record.profile.EncryptedCredential);if err!=nil{return generation.DispatchResult{},refused("MODEL_CREDENTIAL_UNAVAILABLE")}
  model:=llm.Model{Provider:record.profile.Provider,ModelName:record.profile.ModelName,BaseURL:record.profile.BaseURL,APIKey:key,MaxTokens:record.profile.MaxTokens}
  options:=clone(frozen.plan.Options);options.VisibleOnly=true
  // Reuse the round25 native provider adapter: preserve raw Gemini candidates
