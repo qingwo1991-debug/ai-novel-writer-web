@@ -1469,11 +1469,20 @@ func syntheticOutcome(receipt map[string]any) map[string]any {
 	if artifact != nil {
 		content = syntheticString(artifact["text"])
 	}
+	// The browser reads outcome.receipt.finishReason beside outcome.finishReason
+	// (generation-runtime.ts: INVALID_MAIN_OUTCOME) and the ledger receipt nests
+	// the settled value under result.finishReason, so surface it at the receipt's
+	// top level too. The rest of the raw ledger receipt stays as extra context.
+	projected := make(map[string]any, len(receipt)+1)
+	for key, value := range receipt {
+		projected[key] = value
+	}
+	projected["finishReason"] = finish
 	outcome := map[string]any{
 		"status":       status,
 		"content":      content,
 		"finishReason": finish,
-		"receipt":      receipt,
+		"receipt":      projected,
 	}
 	return outcome
 }

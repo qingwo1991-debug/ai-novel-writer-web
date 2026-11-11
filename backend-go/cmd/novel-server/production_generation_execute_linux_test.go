@@ -162,6 +162,12 @@ func TestProductionLaneExecutesAdmittedRunThroughTheCommittedAllowlist(t *testin
 	if outcome["status"] != "completed" || outcome["finishReason"] != "stop" || outcome["content"] != generated {
 		t.Fatalf("generation:execute outcome = %v", outcome)
 	}
+	// The renderer compares outcome.receipt.finishReason with outcome.finishReason
+	// (generation-runtime.ts INVALID_MAIN_OUTCOME); the projected receipt must
+	// carry the settled value at its top level, not only under result.
+	if receipt, ok := outcome["receipt"].(map[string]any); !ok || receipt["finishReason"] != "stop" {
+		t.Fatalf("generation:execute receipt does not surface finishReason: %v", outcome["receipt"])
+	}
 	if seam.dispatched() != 1 {
 		t.Fatalf("the admitted run dispatched %d times through the seam; want exactly 1", seam.dispatched())
 	}
