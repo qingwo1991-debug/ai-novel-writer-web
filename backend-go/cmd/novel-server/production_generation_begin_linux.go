@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generationowner"
@@ -168,6 +169,8 @@ func newProductionGeneration(open *productionOpen, server *transport.Server, dis
 		Current:   current,
 		AuthorityLock: func(ctx context.Context, scope generationowner.Scope) (func(), error) {
 			if err := current(ctx, scope); err != nil {
+				// The symbolic reason only; the scope itself never enters the log.
+				log.Printf("novel-server: generation authority lock refused (%v)", err)
 				return nil, err
 			}
 			return func() {}, nil
