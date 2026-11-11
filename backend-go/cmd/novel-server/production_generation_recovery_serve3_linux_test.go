@@ -167,7 +167,7 @@ func productionRecoveryServe3StampAuthorEdit(t *testing.T, database, sourceRoot,
 		"remainingRange": remaining,
 		"payloadHash":    payloadHash,
 	}
-	effect, err := json.Marshal(map[string]any{"blueprintAuthorEdit": receipt})
+	effect, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
