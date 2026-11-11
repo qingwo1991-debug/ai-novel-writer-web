@@ -511,6 +511,14 @@ func productionFSParseFileRequest(args []any) (productionFSFileRequest, string) 
 	if !ok || !utf8.ValidString(path) {
 		return productionFSFileRequest{}, "PROJECT_FILE_PATH_REFUSED"
 	}
+	// The shipped renderer builds an ABSOLUTE path from the project root for the
+	// three things it keeps under the storage directory (`${projectPath}/.ai-novel/skills`,
+	// writing-skill-bindings and the prompt catalog). Accept exactly that form by
+	// making it relative to the frozen root this request already proved; every
+	// other absolute path stays refused.
+	if strings.HasPrefix(path, expected.ProjectPath+"/") {
+		path = strings.TrimPrefix(path, expected.ProjectPath+"/")
+	}
 	// The browser path is confined BEFORE the project is borrowed: an absolute
 	// path, a traversal, a hidden component or a storage-reserved name never
 	// reaches a filesystem call (internal/projectfs/browser_files.go:73-91).

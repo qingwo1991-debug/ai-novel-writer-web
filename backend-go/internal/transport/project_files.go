@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"net/http"
 	"reflect"
-	"strings"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -129,15 +128,6 @@ func (s *Server) BindProjectFiles(provider ProjectFileProvider) error {
 			path, ok := args[0].(string)
 			if !ok {
 				return fail("PROJECT_FILE_PATH_REFUSED")
-			}
-			// The shipped renderer builds an ABSOLUTE path from the project root
-			// (`${projectPath}/.ai-novel/skills`, writing-skill-bindings and the
-			// prompt catalog in src). Accept exactly that form by making it
-			// relative to the frozen root this request already proved; every
-			// other absolute path stays refused, and a traversal still fails the
-			// relative-path filter below.
-			if strings.HasPrefix(path, root+"/") {
-				path = strings.TrimPrefix(path, root+"/")
 			}
 			// Validate the browser path before the provider borrows anything, so
 			// an absolute path or a traversal never reaches a filesystem call.
