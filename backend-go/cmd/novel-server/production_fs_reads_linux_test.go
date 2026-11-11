@@ -223,6 +223,22 @@ func TestProductionFSReadsServeConfinedProjectFiles(t *testing.T) {
 			[]any{"escape.md", projectPath, frozen}, "PROJECT_FILE_UNSAFE")
 		productionFSRefused(t, author, productionFSCheckExistsName, "directory symlink",
 			[]any{"escape-dir/outside-secret.txt", projectPath, frozen}, "PROJECT_FILE_UNSAFE")
+		// The shipped renderer builds an ABSOLUTE path from the project root for
+		// the three things it keeps under the storage directory: the project
+		// skills, the project prompt templates and the writing-skill binding
+		// file. Every workflow start freezes a skill snapshot through
+		// fs:check-exists on that first path, so refusing the form left the
+		// generate buttons doing nothing at all.
+		for _, storagePath := range []string{
+			filepath.Join(projectPath, projectfs.StorageDirectory, "skills"),
+			filepath.Join(projectPath, projectfs.StorageDirectory, "prompts"),
+			filepath.Join(projectPath, projectfs.StorageDirectory, "writing-skills.json"),
+		} {
+			if response := author.call(t, productionFSCheckExistsName, []any{storagePath, projectPath, frozen}); response.Code != http.StatusOK {
+				t.Fatalf("fs:check-exists refused the renderer's own storage path %q: %d %s",
+					storagePath, response.Code, response.Body.String())
+			}
+		}
 		// fs:read-json serves ONE derived storage path: any other file - an
 		// outside path, the manifest beside the marker, a traversal out of the
 		// storage directory - is refused before the runtime is asked for anything.
