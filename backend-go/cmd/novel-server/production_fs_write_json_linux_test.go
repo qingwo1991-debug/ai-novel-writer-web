@@ -133,10 +133,21 @@ func TestProductionFSWriteJSONServesConfinedDocument(t *testing.T) {
 			refused(t, "a traversal", []any{"../escape.json", document, projectPath, frozen}, "PROJECT_FILE_PATH_REFUSED")
 		})
 		t.Run("storage-marker", func(t *testing.T) {
-			// The one document the desktop callers wrote is inside the storage
-			// directory, which the browser contract keeps out of reach.
+			// The architecture checkpoint is served through its own fixed-name
+			// writer, like fs:read-json serves it read-only. It must never go
+			// through the general browser-file allowlist.
 			marker := projectfs.StorageDirectory + "/" + productionJSONMarkerName
-			refused(t, "the storage marker", []any{marker, document, projectPath, frozen}, "PROJECT_FILE_PATH_REFUSED")
+			raw := productionEditorCall(t, author, productionFSWriteJSONName, []any{marker, document, projectPath, frozen})
+			var wire productionJSONWriteWire
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatalf("the storage marker: %v %s", err, raw)
+			}
+			if !wire.Success || wire.Error != "" {
+				t.Fatalf("the storage marker: success is %v and the code is %s; want success", wire.Success, wire.Error)
+			}
+			if _, err := os.Stat(filepath.Join(projectPath, marker)); err != nil {
+				t.Fatalf("the storage marker was not written: %v", err)
+			}
 		})
 		t.Run("symlink-escape", func(t *testing.T) {
 			refused(t, "a symlink out of the project", []any{"escape-dir/owned.json", document, projectPath, frozen}, "PROJECT_FILE_UNSAFE")

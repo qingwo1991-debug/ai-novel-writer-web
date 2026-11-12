@@ -448,6 +448,62 @@ func (r *productionFSReads) readArchCheckpoint(ctx context.Context, caller trans
 // (internal/projectfs/project.go:356-396) and refuses a database name, a
 // non-regular or multi-link file (project.go:218-238), so a symlink planted at
 // that name is refused rather than followed.
+// productionFSArchCheckpointParse validates the write-side wire shape for the one
+// fixed-name storage document the lane writes itself: .ai-novel/partial_arch.json.
+// It is called with the same [path, claimedRoot, context] triple the general file
+// parser takes, and answers either the frozen context plus the storage-relative
+// marker name, or a symbolic refusal code (empty marker means "not the marker",
+// so callers fall through to their general path).
+func productionFSArchCheckpointParse(args []any) (projectsession.Context, string, string) {
+	if len(args) != productionFSArity {
+		return projectsession.Context{}, "", "INVALID_ARGUMENTS"
+	}
+	expected, err := projectsession.ParseContext(args[productionFSContextPos])
+	if err != nil || !productionFSCanonicalPath(expected.ProjectPath) {
+		return projectsession.Context{}, "", "PROJECT_SESSION_REQUIRED"
+	}
+	claimed, ok := args[productionFSRootPos].(string)
+	if !ok || !productionFSCanonicalPath(claimed) {
+		return projectsession.Context{}, "", "PROJECT_CONTEXT_REQUIRED"
+	}
+	if claimed != expected.ProjectPath {
+		return projectsession.Context{}, "", "PROJECT_CONTEXT_CHANGED"
+	}
+	path, ok := args[productionFSPathPos].(string)
+	if !ok || !utf8.ValidString(path) {
+		return projectsession.Context{}, "", "PROJECT_FILE_PATH_REFUSED"
+	}
+	if strings.HasPrefix(path, expected.ProjectPath+"/") {
+		path = strings.TrimPrefix(path, expected.ProjectPath+"/")
+	}
+	if path != projectfs.StorageDirectory+"/"+productionFSStorageMarkerName {
+		return projectsession.Context{}, "", ""
+	}
+	return expected, productionFSStorageMarkerName, ""
+}
+
+// writeArchCheckpoint writes the architecture checkpoint through the pinned
+// storage tree under the caller's live lease, bypassing the browser-file
+// allowlist. The document was already bounded and proved to be JSON by the
+// caller, exactly like the read side's readArchCheckpoint pair.
+func (r *productionFSReads) writeArchCheckpoint(ctx context.Context, caller transport.Caller, expected projectsession.Context, document []byte) error {
+	return r.withProjectFile(ctx, caller, expected, func(project *projectfs.Project) error {
+		if err := project.WriteStorageFile(ctx, productionFSStorageMarkerName, document); err != nil {
+			return err
+		}
+		// Read back and compare, so success means the tree really holds these
+		// bytes, the same discipline the browser-file write applies.
+		first, firstFound, err := productionFSMarkerBytes(ctx, project)
+		if err != nil {
+			return err
+		}
+		if !firstFound || !bytes.Equal(first, document) {
+			return errors.New("PROJECT_FILE_CHANGED")
+		}
+		return nil
+	})
+}
+
 func productionFSMarkerBytes(ctx context.Context, project *projectfs.Project) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err

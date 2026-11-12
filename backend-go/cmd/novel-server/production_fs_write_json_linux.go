@@ -167,6 +167,30 @@ func (w *productionFSWriteJSON) writeJSON(ctx context.Context, caller transport.
 	if len(args) != productionFSWriteJSONArity {
 		return productionJSONWriteFailure("INVALID_ARGUMENTS"), nil
 	}
+	// The architecture checkpoint is the one storage document the renderer writes
+	// by path but the browser-file allowlist deliberately excludes. Serve it
+	// through the fixed-name storage writer, exactly as fs:read-json serves it
+	// read-only through the same fixed name.
+	if expected, marker, code := productionFSArchCheckpointParse([]any{
+		args[productionFSWriteJSONPathPos],
+		args[productionFSWriteJSONRootPos],
+		args[productionFSWriteJSONCtxPos],
+	}); marker != "" {
+		if code != "" {
+			return productionJSONWriteFailure(code), nil
+		}
+		document, err := productionJSONDocument(args[productionFSWriteJSONDataPos])
+		if err != nil {
+			return productionJSONWriteFailure(productionFSCode(err)), nil
+		}
+		if int64(len(document)) > productionJSONMaxBytes {
+			return productionJSONWriteFailure("PROJECT_FILE_TOO_LARGE"), nil
+		}
+		if err := w.reads.writeArchCheckpoint(ctx, caller, expected, document); err != nil {
+			return productionJSONWriteFailure(productionJSONWriteCode(err)), nil
+		}
+		return map[string]any{"success": true}, nil
+	}
 	request, code := productionFSParseFileRequest([]any{
 		args[productionFSWriteJSONPathPos],
 		args[productionFSWriteJSONRootPos],

@@ -395,3 +395,51 @@ func (p *Project) OpenFileRead(path string) (*os.File, error) {
 	}
 	return file, nil
 }
+
+// WriteStorageFile atomically replaces (or creates) one storage-relative file
+// through the pinned storage tree, bypassing the browser-file allowlist. It is
+// for the lane's own fixed-name documents - the architecture checkpoint - not
+// for renderer-chosen paths, which must go through WriteBrowserFile.
+func (p *Project) WriteStorageFile(ctx context.Context, path string, data []byte) error {
+	if p == nil || ctx == nil {
+		return ErrInvalidPath
+	}
+	if !validRelative(path) {
+		return ErrInvalidPath
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == DatabaseName || strings.HasPrefix(part, DatabaseName+"-") {
+			return ErrDatabaseSnapshotRequired
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.library.mu.Lock()
+	defer p.library.mu.Unlock()
+	if err := p.checkIdentityLocked(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	parts := strings.Split(path, "/")
+	current := p.storage
+	var opened []*os.Root
+	defer func() {
+		for _, root := range opened {
+			root.Close()
+		}
+	}()
+	for _, part := range parts[:len(parts)-1] {
+		next, _, err := openChild(current, part)
+		if err != nil {
+			return err
+		}
+		opened = append(opened, next)
+		current = next
+	}
+	if err := replaceBrowserFile(current, parts[len(parts)-1], data); err != nil {
+		return err
+	}
+	return p.checkIdentityLocked()
+}
