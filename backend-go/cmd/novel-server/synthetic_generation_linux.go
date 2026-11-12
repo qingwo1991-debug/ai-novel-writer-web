@@ -2281,7 +2281,7 @@ func (s *syntheticGeneration) snapshotOf(ctx context.Context, db *sql.DB, receip
 		"runId":             run["runId"],
 		"artifactId":        artifact["artifactId"],
 		"attemptId":         artifact["attemptId"],
-		"revision":          s.nextSnapshotSeq(syntheticString(artifact["attemptId"])),
+		"revision":          artifact["revision"],
 		"durableRevision":   artifact["revision"],
 		"text":              artifact["text"],
 		"textHash":          artifact["textHash"],
