@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
@@ -129,10 +130,21 @@ func (s *Server) BindProjectFiles(provider ProjectFileProvider) error {
 			if !ok {
 				return fail("PROJECT_FILE_PATH_REFUSED")
 			}
-			// Validate the browser path before the provider borrows anything, so
-			// an absolute path or a traversal never reaches a filesystem call.
-			if _, err := projectfs.BrowserRelativePath(path); err != nil {
-				return fail("PROJECT_FILE_PATH_REFUSED")
+			// The architecture checkpoint is the one storage document the renderer
+			// writes by path but the browser-file allowlist excludes. fs:write-file
+			// admits it through a fixed-name route; the provider resolves the
+			// project root here, so only the exact marker name may pass.
+			archMarker := strings.TrimPrefix(path, root+"/")
+			if name == "fs:write-file" && archMarker == projectfs.StorageDirectory+"/"+projectfs.ArchCheckpointName {
+				// The checkpoint is admitted through its own fixed-name route;
+				// hand the provider the relative form it writes by fixed name.
+				path = archMarker
+			} else {
+				// Validate the browser path before the provider borrows anything, so
+				// an absolute path or a traversal never reaches a filesystem call.
+				if _, err := projectfs.BrowserRelativePath(path); err != nil {
+					return fail("PROJECT_FILE_PATH_REFUSED")
+				}
 			}
 			if ctx == nil {
 				return fail("FS_PROJECT_FILE_FAILED")

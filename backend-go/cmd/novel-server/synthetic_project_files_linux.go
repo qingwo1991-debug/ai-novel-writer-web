@@ -150,6 +150,11 @@ func (s *syntheticDurableOpen) WriteProjectFile(ctx context.Context, caller tran
 
 func (s *syntheticDurableOpen) writeProjectFileAs(ctx context.Context, owner projectsession.Owner, expected projectsession.Context, relative string, data []byte) error {
 	if err := s.withProjectFileLease(ctx, owner, expected, func(project *projectfs.Project) error {
+		if relative == projectfs.StorageDirectory+"/"+projectfs.ArchCheckpointName {
+			// The architecture checkpoint is a storage document, not a browser
+			// file: write it by its fixed storage-relative name.
+			return project.WriteStorageFile(ctx, projectfs.ArchCheckpointName, data)
+		}
 		return project.WriteBrowserFile(ctx, relative, data)
 	}); err != nil {
 		return err

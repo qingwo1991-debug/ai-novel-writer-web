@@ -86,10 +86,12 @@ func BrowserRelativePath(path string) (string, error) {
 
 // authorVisibleStoragePath reports whether a project-relative path names one of
 // the things the shipped renderer keeps under the storage directory and reads
-// back by path: the author's project skills, the project prompt templates, the
-// writing-skill binding file and the architecture checkpoint. The storage
-// directory itself, the author databases, the knowledge snapshot and every other
-// hidden component stay out of the browser's reach.
+// back by path: the author's project skills, the project prompt templates and
+// the writing-skill binding file. The storage directory itself, the author
+// databases, the knowledge snapshot and every other hidden component stay out
+// of the browser's reach. The architecture checkpoint is deliberately absent
+// here: it is served by its own fixed-name writer, never through the general
+// browser-file allowlist.
 func authorVisibleStoragePath(relative string) bool {
 	for _, name := range []string{"skills", "prompts"} {
 		prefix := StorageDirectory + "/" + name
@@ -97,8 +99,14 @@ func authorVisibleStoragePath(relative string) bool {
 			return true
 		}
 	}
-	return relative == StorageDirectory+"/writing-skills.json" || relative == StorageDirectory+"/partial_arch.json"
+	return relative == StorageDirectory+"/writing-skills.json"
 }
+
+// ArchCheckpointName is the fixed storage-relative name of the architecture
+// checkpoint. fs:read-json serves it read-only and the two write names admit it
+// through their own fixed-name routes; the general browser-file allowlist never
+// opens it.
+const ArchCheckpointName = "partial_arch.json"
 
 // reservedStorageName refuses the names the project storage owns. The dot rule
 // above already keeps .ai-novel out of reach; this keeps the refusal true even
