@@ -24,6 +24,11 @@ type GenerationLedger struct {
 	now    func() int64
 	id     func() (string, error)
 	frozen func(string, string) bool
+	// onWrite runs after every committed ledger write. The lane that writes the
+	// author database through this ledger's raw handle uses it to adopt the new
+	// committed content identity immediately, so another tab's borrow never sees
+	// the pre-write digest. Configure only before sharing the ledger.
+	onWrite func()
 }
 
 func NewGenerationLedger(db *sql.DB, now func() int64, uuid func() string) *GenerationLedger {
@@ -35,6 +40,17 @@ func NewGenerationLedger(db *sql.DB, now func() int64, uuid func() string) *Gene
 		id = func() (string, error) { return uuid(), nil }
 	}
 	return &GenerationLedger{db: db, now: now, id: id}
+}
+
+// WithWriteHook installs a callback that runs after every committed write, so a
+// caller that writes the database through this ledger's raw handle can adopt the
+// new content identity before any other borrow observes it.
+// Configure only before sharing the ledger with concurrent callers.
+func (g *GenerationLedger) WithWriteHook(hook func()) *GenerationLedger {
+	if g != nil {
+		g.onWrite = hook
+	}
+	return g
 }
 
 // Configure only before sharing the ledger with concurrent callers.
@@ -272,6 +288,9 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	var result any
 	if write {
 		err = NewReviewRevisions(g.db).immediate(ctx, func(conn *sql.Conn) error { var e error; result, e = g.call(ctx, conn, method, args); return e })
+		if err == nil && g.onWrite != nil {
+			g.onWrite()
+		}
 	} else {
 		conn, e := g.db.Conn(ctx)
 		if e != nil {

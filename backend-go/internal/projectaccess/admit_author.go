@@ -115,23 +115,25 @@ func AdmitAuthor(ctx context.Context, config Config, project *projectfs.Project,
 // appeared, and that the original database is still the hashable author file
 // this permit admits.
 //
-// It then ADOPTS the content identity it just read instead of refusing a change.
-// The exclusive legacy lock is what protects the database: while this process
-// holds it, every content change on disk came from this process's own committed
-// write, so a digest comparison can only refuse a change the lane itself made.
-// That refusal is what answered concurrent reads (and the writer's own next
-// borrow) with AUTHOR_WRITE_STALE while a generation was mid-write, hiding rows
-// that were already durably committed. Callers that need the older strict
-// comparison use VerifyStrict.
+// A changed content identity is refused, because a caller that froze a source
+// under this permit must not be handed a file it can no longer prove it owns.
+// Callers that serve an unfrozen view use VerifyAdopt.
 func (a *AdmittedAuthor) Verify(ctx context.Context, project *projectfs.Project) error {
-	return a.verify(ctx, project, true)
+	return a.verify(ctx, project, false)
 }
 
-// VerifyStrict is Verify without adopting a changed content identity: a
-// database whose on-disk identity no longer matches the admitted one is refused
-// with ErrAuthorStale.
-func (a *AdmittedAuthor) VerifyStrict(ctx context.Context, project *projectfs.Project) error {
-	return a.verify(ctx, project, false)
+// VerifyAdopt is Verify for a borrow that does not depend on a frozen source: it
+// proves the same live invariants (legacy lock still held, no portable
+// authority, the database still the hashable author file) and then ADOPTS the
+// content identity it read instead of refusing a change.
+//
+// The exclusive legacy lock is what protects the database: while this process
+// holds it, every content change on disk came from this process's own committed
+// write. Refusing the change is what answered concurrent reads with
+// AUTHOR_WRITE_STALE while a generation was mid-write, hiding rows that were
+// already durably committed.
+func (a *AdmittedAuthor) VerifyAdopt(ctx context.Context, project *projectfs.Project) error {
+	return a.verify(ctx, project, true)
 }
 
 func (a *AdmittedAuthor) verify(ctx context.Context, project *projectfs.Project, adopt bool) error {

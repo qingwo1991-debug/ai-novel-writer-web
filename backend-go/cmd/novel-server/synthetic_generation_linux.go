@@ -402,6 +402,15 @@ func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller
 		}
 		done()
 	}
+	// The ledger writes the author database through the raw handle, so its
+	// committed rows move the permit's content identity. Adopt each new identity
+	// as soon as the write commits: waiting until release leaves every other
+	// borrow for the whole dispatch comparing against the pre-write digest and
+	// refusing a database that already holds the writer's committed rows.
+	if ledger != nil && refresh != nil {
+		writeCtx := ctx
+		ledger.WithWriteHook(func() { _ = refresh(writeCtx) })
+	}
 	scope := generationowner.Scope{
 		Caller:       caller.SessionID,
 		Session:      caller.SessionID,
