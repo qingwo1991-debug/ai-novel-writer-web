@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/authorruntime"
@@ -46,6 +47,29 @@ type syntheticGeneration struct {
 	// the migration scaffold passes syntheticLeaseOwner (per tab). The run's
 	// RECEIPT scope stays per-tab either way: see the Scope built in admit.
 	leaseOwner func(transport.Caller) (projectsession.Owner, error)
+	// snapshotSeq is the per-attempt VISIBLE snapshot revision. The durable
+	// revision only advances on a flush, but the visible text advances on every
+	// delta; the browser's snapshot regression check rejects two snapshots that
+	// share a revision with different text, so the event stream needs its own
+	// strictly increasing counter. The final read projection reuses it so the
+	// settled snapshot's revision stays above every event it followed.
+	snapshotSeq sync.Map
+}
+
+// nextSnapshotSeq returns the next visible snapshot revision for one attempt. It
+// is called once per published event and once per projected snapshot, so the
+// same artifact's revision is strictly increasing in delivery order.
+func (s *syntheticGeneration) nextSnapshotSeq(attemptID string) int64 {
+	if s == nil || attemptID == "" {
+		return 0
+	}
+	for {
+		value, _ := s.snapshotSeq.LoadOrStore(attemptID, int64(0))
+		current := value.(int64)
+		if s.snapshotSeq.CompareAndSwap(attemptID, current, current+1) {
+			return current + 1
+		}
+	}
 }
 
 const (
@@ -2257,7 +2281,7 @@ func (s *syntheticGeneration) snapshotOf(ctx context.Context, db *sql.DB, receip
 		"runId":             run["runId"],
 		"artifactId":        artifact["artifactId"],
 		"attemptId":         artifact["attemptId"],
-		"revision":          artifact["revision"],
+		"revision":          s.nextSnapshotSeq(syntheticString(artifact["attemptId"])),
 		"durableRevision":   artifact["revision"],
 		"text":              artifact["text"],
 		"textHash":          artifact["textHash"],
@@ -2389,7 +2413,7 @@ func (s *syntheticGeneration) publishSnapshot(caller transport.Caller, expected 
 	}
 	snapshot["text"] = event.VisibleText
 	snapshot["textHash"] = syntheticHash(event.VisibleText)
-	snapshot["revision"] = event.DurableRevision
+	snapshot["revision"] = s.nextSnapshotSeq(event.AttemptID)
 	snapshot["durableRevision"] = event.DurableRevision
 	if event.Diagnostics != nil {
 		snapshot["diagnostics"] = event.Diagnostics
