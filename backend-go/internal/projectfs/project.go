@@ -1,6 +1,7 @@
 package projectfs
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"io"
