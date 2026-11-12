@@ -27,6 +27,11 @@ import (
 // verification locks the project itself, so a concurrent call would self-deadlock.
 type AuthorPermit interface {
 	Verify(context.Context, *Project) error
+	// VerifyAdopt proves the same live invariants and adopts the current
+	// committed content identity. A borrow that does not depend on a source
+	// frozen earlier uses it, so a concurrent admitted write cannot refuse a
+	// database that already holds that writer's committed rows.
+	VerifyAdopt(context.Context, *Project) error
 }
 
 // AuthorDatabase is a write-capable handle to an existing author project.db.
@@ -161,6 +166,26 @@ func (a *AuthorDatabase) DB() *sql.DB {
 // identity, the database inode we opened, and the safety of any sidecars. The
 // final permit re-check runs without the project mutex held to avoid a
 // self-deadlock, mirroring OpenAuthorDatabase.
+// VerifyAdopt is Verify for a caller that does not depend on a source frozen
+// earlier: it adopts the identity the permit reads instead of refusing a change
+// this process's own admitted write produced.
+func (a *AuthorDatabase) VerifyAdopt(ctx context.Context) error {
+	if a == nil || ctx == nil {
+		return ErrInvalidPath
+	}
+	a.mu.Lock()
+	if a.closed || a.db == nil {
+		a.mu.Unlock()
+		return ErrInvalidPath
+	}
+	permit, project := a.permit, a.project
+	a.mu.Unlock()
+	if permit == nil || project == nil {
+		return ErrInvalidPath
+	}
+	return permit.VerifyAdopt(ctx, project)
+}
+
 func (a *AuthorDatabase) Verify(ctx context.Context) error {
 	if a == nil || ctx == nil {
 		return ErrInvalidPath

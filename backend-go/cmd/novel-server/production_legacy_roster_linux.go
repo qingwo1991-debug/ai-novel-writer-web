@@ -378,7 +378,10 @@ func (l *productionLegacyRoster) Bind(server *transport.Server) error {
 			if ctx == nil {
 				return nil, security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS")
 			}
-			db, release, err := l.durable.borrowAuthorDatabase(ctx, caller, args[0])
+			// read-source answers with the source a run froze, so a database
+			// that changed under the run must be refused rather than
+			// described: this borrow keeps the strict content-identity check.
+			db, release, err := l.durable.borrowAuthorDatabaseStrict(ctx, caller, args[0])
 			if err != nil {
 				// Already symbolic: a lease, ownership or closed-lane refusal.
 				return nil, err

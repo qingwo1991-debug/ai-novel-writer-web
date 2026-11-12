@@ -22,6 +22,18 @@ import (
 // pure read leaves the identity unchanged and refresh is then a no-op
 // re-verification.
 func (l *ReadLifecycle) DurableRepository(ctx context.Context, owner projectsession.Owner, expected projectsession.Context) (*sql.DB, func(context.Context) error, func(), error) {
+	return l.durableRepository(ctx, owner, expected, true)
+}
+
+// DurableRepositoryStrict is DurableRepository without adopting a changed
+// content identity: a borrow whose answer must be provably the source a run
+// froze uses it, so a database that changed under the run is refused instead of
+// described.
+func (l *ReadLifecycle) DurableRepositoryStrict(ctx context.Context, owner projectsession.Owner, expected projectsession.Context) (*sql.DB, func(context.Context) error, func(), error) {
+	return l.durableRepository(ctx, owner, expected, false)
+}
+
+func (l *ReadLifecycle) durableRepository(ctx context.Context, owner projectsession.Owner, expected projectsession.Context, adopt bool) (*sql.DB, func(context.Context) error, func(), error) {
 	if l == nil || l.active == nil || ctx == nil {
 		return nil, nil, nil, ErrInvalid
 	}
@@ -38,9 +50,16 @@ func (l *ReadLifecycle) DurableRepository(ctx context.Context, owner projectsess
 	closed := author.closed || author.handle == nil || author.permit == nil
 	var verifyErr error
 	if !closed {
-		verifyErr = author.permit.Verify(ctx, author.project)
-		if verifyErr == nil {
-			verifyErr = author.handle.Verify(ctx)
+		if adopt {
+			verifyErr = author.permit.VerifyAdopt(ctx, author.project)
+			if verifyErr == nil {
+				verifyErr = author.handle.VerifyAdopt(ctx)
+			}
+		} else {
+			verifyErr = author.permit.Verify(ctx, author.project)
+			if verifyErr == nil {
+				verifyErr = author.handle.Verify(ctx)
+			}
 		}
 	}
 	author.mu.Unlock()

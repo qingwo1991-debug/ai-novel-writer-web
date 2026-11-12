@@ -361,6 +361,17 @@ func (d *productionDurableOpen) CommitDraftContent(ctx context.Context, caller t
 // trusting a handle whose bytes changed underneath it. A read commits nothing,
 // so its refresh is only a re-verification.
 func (d *productionDurableOpen) borrowAuthorDatabase(ctx context.Context, caller transport.Caller, raw any) (*sql.DB, func(), error) {
+	return d.borrowAuthorDatabaseMode(ctx, caller, raw, true)
+}
+
+// borrowAuthorDatabaseStrict is borrowAuthorDatabase for a caller whose answer
+// must be provably the source a run froze: a database that changed under the run
+// is refused rather than described.
+func (d *productionDurableOpen) borrowAuthorDatabaseStrict(ctx context.Context, caller transport.Caller, raw any) (*sql.DB, func(), error) {
+	return d.borrowAuthorDatabaseMode(ctx, caller, raw, false)
+}
+
+func (d *productionDurableOpen) borrowAuthorDatabaseMode(ctx context.Context, caller transport.Caller, raw any, adopt bool) (*sql.DB, func(), error) {
 	if d == nil || ctx == nil {
 		return nil, nil, errors.New("PRODUCTION_CLOSED")
 	}
@@ -385,7 +396,11 @@ func (d *productionDurableOpen) borrowAuthorDatabase(ctx context.Context, caller
 	if !known {
 		return nil, nil, errors.New("PROJECT_NOT_OPEN")
 	}
-	db, refresh, done, err := lifecycle.DurableRepository(ctx, owner, expected)
+	borrow := lifecycle.DurableRepository
+	if !adopt {
+		borrow = lifecycle.DurableRepositoryStrict
+	}
+	db, refresh, done, err := borrow(ctx, owner, expected)
 	if err != nil {
 		return nil, nil, err
 	}
