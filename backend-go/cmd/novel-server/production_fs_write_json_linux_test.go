@@ -132,23 +132,7 @@ func TestProductionFSWriteJSONServesConfinedDocument(t *testing.T) {
 		t.Run("traversal", func(t *testing.T) {
 			refused(t, "a traversal", []any{"../escape.json", document, projectPath, frozen}, "PROJECT_FILE_PATH_REFUSED")
 		})
-		t.Run("storage-marker", func(t *testing.T) {
-			// The architecture checkpoint is served through its own fixed-name
-			// writer, like fs:read-json serves it read-only. It must never go
-			// through the general browser-file allowlist.
-			marker := projectfs.StorageDirectory + "/" + productionJSONMarkerName
-			raw := productionEditorCall(t, author, productionFSWriteJSONName, []any{marker, document, projectPath, frozen})
-			var wire productionJSONWriteWire
-			if err := json.Unmarshal(raw, &wire); err != nil {
-				t.Fatalf("the storage marker: %v %s", err, raw)
-			}
-			if !wire.Success || wire.Error != "" {
-				t.Fatalf("the storage marker: success is %v and the code is %s; want success", wire.Success, wire.Error)
-			}
-			if _, err := os.Stat(filepath.Join(projectPath, marker)); err != nil {
-				t.Fatalf("the storage marker was not written: %v", err)
-			}
-		})
+
 		t.Run("symlink-escape", func(t *testing.T) {
 			refused(t, "a symlink out of the project", []any{"escape-dir/owned.json", document, projectPath, frozen}, "PROJECT_FILE_UNSAFE")
 			if _, statErr := os.Stat(filepath.Join(outside, "owned.json")); statErr == nil {
@@ -176,6 +160,24 @@ func TestProductionFSWriteJSONServesConfinedDocument(t *testing.T) {
 		}
 		if after := productionFSSnapshot(t, outside); !reflect.DeepEqual(outsideBefore, after) {
 			t.Fatal("a refused write changed the tree outside the project")
+		}
+	})
+
+	t.Run("storage-marker", func(t *testing.T) {
+		// The architecture checkpoint is served through its own fixed-name
+		// writer, like fs:read-json serves it read-only. It must never go
+		// through the general browser-file allowlist.
+		marker := projectfs.StorageDirectory + "/" + productionJSONMarkerName
+		raw := productionEditorCall(t, author, productionFSWriteJSONName, []any{marker, document, projectPath, frozen})
+		var wire productionJSONWriteWire
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatalf("the storage marker: %v %s", err, raw)
+		}
+		if !wire.Success || wire.Error != "" {
+			t.Fatalf("the storage marker: success is %v and the code is %s; want success", wire.Success, wire.Error)
+		}
+		if _, err := os.Stat(filepath.Join(projectPath, marker)); err != nil {
+			t.Fatalf("the storage marker was not written: %v", err)
 		}
 	})
 
