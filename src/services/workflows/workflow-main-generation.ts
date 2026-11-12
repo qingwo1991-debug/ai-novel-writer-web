@@ -207,7 +207,12 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         // replayable under the epoch it was frozen with while the workflow keeps using
         // it for its next step. Resume it under the current lease and retry once instead
         // of failing the step with a bare server error.
-        if (errorCodeOf(error) === 'MAIN_RUN_NON_REPLAYABLE') {
+        // MAIN_RUN_NON_REPLAYABLE is the runtime's own read refusal; the main
+        // process refuses the same stale handle with GENERATION_EPOCH_STALE.
+        // Both mean the run outlived the lease it was frozen under.
+        const staleEpoch = errorCodeOf(error)
+        if (staleEpoch === 'MAIN_RUN_NON_REPLAYABLE' || staleEpoch === 'GENERATION_EPOCH_STALE'
+          || staleEpoch === 'GENERATION_RUN_MISSING') {
           const frozen = context.mainGenerationRunHandle
           if (frozen) {
             try {

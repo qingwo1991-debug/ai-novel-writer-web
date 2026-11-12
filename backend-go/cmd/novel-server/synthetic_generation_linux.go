@@ -358,6 +358,7 @@ func syntheticArgs(values ...any) (json.RawMessage, error) {
 	return raw, nil
 }
 
+
 // syntheticCall invokes a ledger method with marshaled positional arguments.
 func syntheticCall(ctx context.Context, ledger *store.GenerationLedger, method string, values ...any) (any, error) {
 	args, err := syntheticArgs(values...)
@@ -1402,16 +1403,28 @@ func (s *syntheticGeneration) newService(ctx context.Context, caller transport.C
 			s.publishSnapshot(caller, expected, handle, ledger, db, snapshot)
 		},
 		ValidateRecovery: func(ctx context.Context, previous, next map[string]any) (bool, error) {
-			// Resume in this lane stores the current frozen binding unchanged.
-			// Compare canonical JSON: the ledger's stored map carries
-			// json.Number values while the decoded next map carries float64,
-			// so a value-level DeepEqual would wrongly refuse.
-			prev, aErr := json.Marshal(previous)
-			nextValue, bErr := json.Marshal(next)
+			// A resume adopts the caller's current lease, so the epoch is the
+			// one field allowed to differ; every other binding field must be
+			// byte-identical. The ledger's stored map carries json.Number while
+			// the decoded next map carries float64, so compare canonical JSON.
+			prev := make(map[string]any, len(previous))
+			for key, item := range previous {
+				if key != "epoch" {
+					prev[key] = item
+				}
+			}
+			nextValue := make(map[string]any, len(next))
+			for key, item := range next {
+				if key != "epoch" {
+					nextValue[key] = item
+				}
+			}
+			prevRaw, aErr := json.Marshal(prev)
+			nextRaw, bErr := json.Marshal(nextValue)
 			if aErr != nil || bErr != nil {
 				return false, nil
 			}
-			return bytes.Equal(prev, nextValue), nil
+			return bytes.Equal(prevRaw, nextRaw), nil
 		},
 	})
 	if err != nil {
@@ -1897,8 +1910,11 @@ func (s *syntheticGeneration) stopRun(ctx context.Context, caller transport.Call
 	return s.viewOf(ctx, ledger, db, current)
 }
 
-// Resume continues a paused run by storing the current (unchanged) frozen
-// binding; the ordinary service's ValidateRecovery accepts exactly that.
+// Resume re-freezes a run under the caller's current lease. A committed run
+// outlives the lease it was frozen under (every save rotates the account
+// lease), so this must admit a running run too: the architecture workflow
+// resumes its main run between steps after a save, not just a paused run. The
+// binding's identity fields are unchanged; only the epoch is adopted.
 func (s *syntheticGeneration) Resume(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
 	handle, err := syntheticParseHandle(arg)
 	if err != nil {
@@ -1909,14 +1925,30 @@ func (s *syntheticGeneration) Resume(ctx context.Context, caller transport.Calle
 		return nil, err
 	}
 	defer done()
-	run, _, _, err := syntheticRequireRun(ctx, ledger, scope, handle)
+	args, err := syntheticArgs(handle.RunID)
+	if err != nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	value, err := ledger.CallJSON(ctx, "get", args)
 	if err != nil {
 		return nil, err
 	}
-	if run["status"] != "paused" {
-		return nil, errors.New("GENERATION_RESUME_UNAVAILABLE")
+	run := syntheticMap(value)
+	if run == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
 	}
-	nextRaw, err := json.Marshal(run["binding"])
+	binding := syntheticMap(run["binding"])
+	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
+		binding["projectId"] != scope.Project || binding["epoch"] != handle.Epoch ||
+		syntheticMap(binding["sourceManifest"]) == nil {
+		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	next := make(map[string]any, len(binding))
+	for key, item := range binding {
+		next[key] = item
+	}
+	next["epoch"] = scope.Epoch
+	nextRaw, err := json.Marshal(next)
 	if err != nil {
 		return nil, errors.New("GENERATION_RECOVERY_UNAUTHORIZED")
 	}

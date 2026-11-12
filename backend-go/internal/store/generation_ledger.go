@@ -1398,7 +1398,11 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 					live = true
 				}
 			}
-			if live || root["status"] != "paused" || phTruthy(budget["blockedCode"]) || !glScalarSame(next["projectId"], glMap(run["binding"])["projectId"]) {
+			// A committed run outlives the lease it was frozen under, so the
+			// lane re-freezes a running root too (the architecture workflow
+			// resumes its main run between steps after a save), not only a
+			// paused one. A live dispatch still refuses.
+			if live || (root["status"] != "paused" && root["status"] != "active") || phTruthy(budget["blockedCode"]) || !glScalarSame(next["projectId"], glMap(run["binding"])["projectId"]) {
 				return nil, glError("GENERATION_RESUME_REFUSED")
 			}
 			row, err := glOne(ctx, conn, "SELECT action_json FROM generation_roots WHERE root_action_id=?", "GENERATION_ROOT_MISSING", run["rootActionId"])
