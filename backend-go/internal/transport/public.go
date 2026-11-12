@@ -35,6 +35,9 @@ func(s *Server) writePublicError(w http.ResponseWriter,err error)error {
   text:=err.Error();symbolic:=len(text)>=2&&text[0]>='A'&&text[0]<='Z'
   for i:=1;i<len(text)&&symbolic;i++ {b:=text[i];symbolic=(b>='A'&&b<='Z')||(b>='0'&&b<='9')||b=='_'}
   if symbolic {code=text}
+  // A project-level request is already in flight is a retryable contention, not
+  // a server failure. The browser maps this status to a friendly busy message.
+  if code=="PROJECT_REQUEST_IN_FLIGHT" {status=http.StatusConflict}
  }
  return security.WriteJSON(w,status,s.public.Sanitize(map[string]any{"error":map[string]any{"code":code,"message":message}}))
 }

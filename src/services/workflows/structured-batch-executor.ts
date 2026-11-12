@@ -49,6 +49,7 @@ export type StructuredGenerationFailureReason =
   | 'deadline'
   | 'context_length'
   | 'unknown'
+  | 'busy'
 
 export interface StructuredBatchLimits {
   /** Product/contract boundary for one semantic batch; never a model capability. */
@@ -68,7 +69,7 @@ export interface StructuredBatchReceipt {
 }
 
 export interface StructuredBatchFailure {
-  code: 'generation_failed' | 'invalid_output' | 'limit_exceeded' | 'cancelled' | 'deadline'
+  code: 'generation_failed' | 'invalid_output' | 'limit_exceeded' | 'cancelled' | 'deadline' | 'busy'
   message: string
   reason?: StructuredGenerationFailureReason
     | 'missing_item'
@@ -581,8 +582,17 @@ export function createStructuredBatchExecutor<TInput, TOutput>(dependencies: {
         } else {
           // 只保留稳定错误码，不转出主进程以外的原文（可能带凭据或提示词）；没有登记说明的码只进诊断。
           const errorCode = errorCodeOf(error)
-          const message = errorCode && knownAppErrorMessage(writingLanguage, errorCode) ? errorCode : '结构化生成失败'
-          failure = { code: 'generation_failed', reason: 'server_error', message, ...(errorCode ? { errorCode } : {}) }
+          if (errorCode === 'PROJECT_REQUEST_IN_FLIGHT') {
+            failure = {
+              code: 'busy', reason: 'busy', errorCode,
+              message: writingLanguage === 'en-US'
+                ? 'Another generation is already running for this project. Please wait and try again.'
+                : '当前有另一个生成任务正在进行，请稍候再试。',
+            }
+          } else {
+            const message = errorCode && knownAppErrorMessage(writingLanguage, errorCode) ? errorCode : '结构化生成失败'
+            failure = { code: 'generation_failed', reason: 'server_error', message, ...(errorCode ? { errorCode } : {}) }
+          }
         }
         return { ok: false, failure, receipt, validatedItems: [...validated] }
       }
