@@ -84,12 +84,12 @@ func BrowserRelativePath(path string) (string, error) {
 	return path, nil
 }
 
-// authorVisibleStoragePath reports whether a project-relative path names the
-// three things the shipped renderer keeps under the storage directory and reads
-// back by path: the author's project skills, the project prompt templates and
-// the writing-skill binding file. The storage directory itself, the author
-// databases, the knowledge snapshot and every other hidden component stay out
-// of the browser's reach.
+// authorVisibleStoragePath reports whether a project-relative path names one of
+// the things the shipped renderer keeps under the storage directory and reads
+// back by path: the author's project skills, the project prompt templates, the
+// writing-skill binding file and the architecture checkpoint. The storage
+// directory itself, the author databases, the knowledge snapshot and every other
+// hidden component stay out of the browser's reach.
 func authorVisibleStoragePath(relative string) bool {
 	for _, name := range []string{"skills", "prompts"} {
 		prefix := StorageDirectory + "/" + name
@@ -97,7 +97,7 @@ func authorVisibleStoragePath(relative string) bool {
 			return true
 		}
 	}
-	return relative == StorageDirectory+"/writing-skills.json"
+	return relative == StorageDirectory+"/writing-skills.json" || relative == StorageDirectory+"/partial_arch.json"
 }
 
 // reservedStorageName refuses the names the project storage owns. The dot rule
