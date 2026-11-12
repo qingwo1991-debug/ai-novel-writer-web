@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -282,11 +283,26 @@ func snapshotPath(path string) (string, error) {
 // entry must not change while it is being read. It is used to re-prove that an
 // author database opened for writing still matches the admission-time digest.
 func ContentIdentityOf(ctx context.Context, path string) (ContentIdentity, error) {
-	identity, err := snapshotIdentity(ctx, path)
-	if err != nil {
-		return ContentIdentity{}, err
+	// The legacy writer lock is held exclusively by this process, so a member
+	// observed changing while it is read is this process's own in-flight SQLite
+	// write. Wait for it to settle and re-read instead of failing: refusing here
+	// only turns a concurrent generation's committed write into a spurious
+	// AUTHOR_WRITE_STALE for every other borrow. A stable mismatch still fails.
+	for attempt := 0; ; attempt++ {
+		identity, err := snapshotIdentity(ctx, path)
+		if err == nil {
+			return ContentIdentity{Database: identity.database, WAL: identity.wal}, nil
+		}
+		var admissionErr *Error
+		if !errors.As(err, &admissionErr) || admissionErr.Code != CodeSnapshotChanged || attempt >= 6 {
+			return ContentIdentity{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return ContentIdentity{}, err
+		case <-time.After(time.Duration(attempt+1) * 5 * time.Millisecond):
+		}
 	}
-	return ContentIdentity{Database: identity.database, WAL: identity.wal}, nil
 }
 
 func snapshotIdentity(ctx context.Context, path string) (physicalIdentity, error) {
