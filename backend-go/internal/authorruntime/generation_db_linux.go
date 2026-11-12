@@ -10,6 +10,37 @@ import (
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
+// BeginGenerationLedgerRead is BeginGenerationLedgerDB for read-only generation
+// views. Reads never change the database, so the content-identity verify is
+// skipped: a concurrent write by another tab legitimately moves the digest
+// between this read's admission and its borrow, and refusing the read with
+// AUTHOR_WRITE_STALE only hides data the writer already committed. Liveness
+// (closed handle) and the session fence remain enforced by active.Begin.
+func (l *ReadLifecycle) BeginGenerationLedgerRead(ctx context.Context, owner projectsession.Owner, expected projectsession.Context) (*store.GenerationLedger, *sql.DB, func(), error) {
+	if l == nil || l.active == nil || ctx == nil {
+		return nil, nil, nil, ErrInvalid
+	}
+	handle, done, err := l.active.Begin(ctx, owner, expected)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	author, ok := handle.(*admittedAuthor)
+	if !ok {
+		done()
+		return nil, nil, nil, ErrDurableInvalid
+	}
+	author.mu.Lock()
+	closed := author.closed || author.handle == nil
+	author.mu.Unlock()
+	if closed {
+		done()
+		return nil, nil, nil, ErrDurableClosed
+	}
+	db := author.handle.DB()
+	return store.NewGenerationLedger(db, nil, nil), db, done, nil
+}
+
+
 // BeginGenerationLedgerDB is BeginGenerationLedger plus the admitted author's
 // own database handle. The reduced synthetic generation lane needs both under a
 // single single-writer admission: the ledger writes the durable run rows while

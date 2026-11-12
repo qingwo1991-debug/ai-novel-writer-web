@@ -414,6 +414,39 @@ func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller
 	return contextValue, scope, ledger, db, release, nil
 }
 
+// admitRead is admit for read-only generation views. It borrows the same
+// single-writer fence without re-verifying the author database's content
+// identity, because a read never changes it: the digest can legitimately move
+// while another tab's generation is mid-write, and refusing the read with
+// AUTHOR_WRITE_STALE hides rows the writer already committed.
+func (s *syntheticGeneration) admitRead(ctx context.Context, caller transport.Caller, expected any) (projectsession.Context, generationowner.Scope, *store.GenerationLedger, *sql.DB, func(), error) {
+	contextValue, err := projectsession.ParseContext(expected)
+	if err != nil {
+		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, err
+	}
+	if s.leaseOwner == nil {
+		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, projectsession.ErrContext
+	}
+	leaseOwner, err := s.leaseOwner(caller)
+	if err != nil || !leaseOwner.Valid() {
+		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, projectsession.ErrContext
+	}
+	ledger, db, done, err := s.lifecycle.BeginGenerationLedgerRead(ctx, leaseOwner, contextValue)
+	if err != nil {
+		return projectsession.Context{}, generationowner.Scope{}, nil, nil, nil, err
+	}
+	scope := generationowner.Scope{
+		Caller:       caller.SessionID,
+		Session:      caller.SessionID,
+		Tab:          caller.ClientID,
+		LeaseSession: leaseOwner.SessionID,
+		LeaseClient:  leaseOwner.ClientID,
+		Project:      contextValue.ProjectID,
+		Epoch:        contextValue.LeaseID,
+	}
+	return contextValue, scope, ledger, db, done, nil
+}
+
 // syntheticHandle is the browser run handle (projectId/epoch/rootActionId/runId).
 type syntheticHandle struct {
 	ProjectID    string
@@ -1717,7 +1750,7 @@ func (s *syntheticGeneration) Read(ctx context.Context, caller transport.Caller,
 	if err != nil {
 		return nil, err
 	}
-	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	_, scope, ledger, db, done, err := s.admitRead(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
@@ -1747,7 +1780,7 @@ func (s *syntheticGeneration) ReadCommitted(ctx context.Context, caller transpor
 	if err != nil {
 		return nil, err
 	}
-	_, scope, ledger, db, done, err := s.admit(ctx, caller, expected)
+	_, scope, ledger, db, done, err := s.admitRead(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
@@ -1783,7 +1816,7 @@ func (s *syntheticGeneration) ReadCommitted(ctx context.Context, caller transpor
 // List returns MainGenerationRunSummary entries (newest first) for the frozen
 // project. It is read-only and only ever projects runs of this project.
 func (s *syntheticGeneration) List(ctx context.Context, caller transport.Caller, expected map[string]any) (any, error) {
-	_, scope, ledger, _, done, err := s.admit(ctx, caller, expected)
+	_, scope, ledger, _, done, err := s.admitRead(ctx, caller, expected)
 	if err != nil {
 		return nil, err
 	}
