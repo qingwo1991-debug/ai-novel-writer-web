@@ -47,10 +47,10 @@ func (l *ReadLifecycle) CommitDraftCASDurable(ctx context.Context, owner project
 		if author.closed || author.handle == nil || author.permit == nil {
 			return zero, ErrDurableClosed
 		}
-		if err := author.permit.Verify(ctx, author.project); err != nil {
+		if err := author.permit.VerifyAdopt(ctx, author.project); err != nil {
 			return zero, err
 		}
-		if err := author.handle.Verify(ctx); err != nil {
+		if err := author.handle.VerifyAdopt(ctx); err != nil {
 			return zero, err
 		}
 		if err := store.NewDrafts(author.handle.DB()).UpdateContentIfCurrent(ctx, draftID, content, wordCount, expectedContent); err != nil {
@@ -62,7 +62,7 @@ func (l *ReadLifecycle) CommitDraftCASDurable(ctx context.Context, owner project
 		if err := author.permit.Refresh(ctx); err != nil {
 			return zero, err
 		}
-		if err := author.handle.Verify(ctx); err != nil {
+		if err := author.handle.VerifyAdopt(ctx); err != nil {
 			return zero, err
 		}
 		var nonce [24]byte

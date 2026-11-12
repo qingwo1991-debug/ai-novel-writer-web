@@ -71,9 +71,9 @@ func (l *ReadLifecycle) BeginGenerationLedgerDB(ctx context.Context, owner proje
 	closed := author.closed || author.handle == nil || author.permit == nil
 	var verifyErr error
 	if !closed {
-		verifyErr = author.permit.Verify(ctx, author.project)
+		verifyErr = author.permit.VerifyAdopt(ctx, author.project)
 		if verifyErr == nil {
-			verifyErr = author.handle.Verify(ctx)
+			verifyErr = author.handle.VerifyAdopt(ctx)
 		}
 	}
 	author.mu.Unlock()

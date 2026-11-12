@@ -82,10 +82,10 @@ func (l *ReadLifecycle) readAdmittedAuthorJSON(ctx context.Context, owner projec
 	if author.closed || author.handle == nil || author.permit == nil {
 		return nil, ErrDurableClosed
 	}
-	if err := author.permit.Verify(ctx, author.project); err != nil {
+	if err := author.permit.VerifyAdopt(ctx, author.project); err != nil {
 		return nil, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	if err := author.handle.VerifyAdopt(ctx); err != nil {
 		return nil, err
 	}
 	tx, err := author.handle.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -94,7 +94,7 @@ func (l *ReadLifecycle) readAdmittedAuthorJSON(ctx context.Context, owner projec
 	}
 	wire, readErr := read(ctx, tx)
 	rollbackErr := tx.Rollback()
-	verifyErr := author.handle.Verify(ctx)
+	verifyErr := author.handle.VerifyAdopt(ctx)
 	if err := errors.Join(readErr, rollbackErr, verifyErr); err != nil {
 		return nil, err
 	}

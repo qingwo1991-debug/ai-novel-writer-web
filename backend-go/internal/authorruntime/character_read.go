@@ -95,10 +95,10 @@ func (l *ReadLifecycle) ReadCharactersJSONDurable(ctx context.Context, owner pro
 	if author.closed || author.handle == nil || author.permit == nil {
 		return nil, ErrDurableClosed
 	}
-	if err := author.permit.Verify(ctx, author.project); err != nil {
+	if err := author.permit.VerifyAdopt(ctx, author.project); err != nil {
 		return nil, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	if err := author.handle.VerifyAdopt(ctx); err != nil {
 		return nil, err
 	}
 	repository := store.NewCharacters(author.handle.DB())
@@ -115,7 +115,7 @@ func (l *ReadLifecycle) ReadCharactersJSONDurable(ctx context.Context, owner pro
 	if err == nil {
 		wire, err = json.Marshal(result)
 	}
-	if err := errors.Join(err, author.handle.Verify(ctx)); err != nil {
+	if err := errors.Join(err, author.handle.VerifyAdopt(ctx)); err != nil {
 		return nil, err
 	}
 	return wire, nil

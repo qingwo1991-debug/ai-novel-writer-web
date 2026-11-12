@@ -101,7 +101,7 @@ func (a *admittedAuthor) Verify(ctx context.Context) error {
 	if err := a.permit.Verify(ctx, a.project); err != nil {
 		return err
 	}
-	return a.handle.Verify(ctx)
+	return a.handle.VerifyAdopt(ctx)
 }
 
 // Close releases the write handle and the admission permit but never the legacy
@@ -315,10 +315,10 @@ func (l *ReadLifecycle) SaveCore(ctx context.Context, owner projectsession.Owner
 	if author.closed || author.handle == nil || author.core == nil {
 		return nil, ErrDurableClosed
 	}
-	if err := author.permit.Verify(ctx, author.project); err != nil {
+	if err := author.permit.VerifyAdopt(ctx, author.project); err != nil {
 		return nil, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	if err := author.handle.VerifyAdopt(ctx); err != nil {
 		return nil, err
 	}
 	if err := author.core.Update(ctx, patch); err != nil {
@@ -330,7 +330,7 @@ func (l *ReadLifecycle) SaveCore(ctx context.Context, owner projectsession.Owner
 	if err := author.permit.Refresh(ctx); err != nil {
 		return nil, err
 	}
-	if err := author.handle.Verify(ctx); err != nil {
+	if err := author.handle.VerifyAdopt(ctx); err != nil {
 		return nil, err
 	}
 	return author.core.Get(ctx)
