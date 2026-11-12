@@ -12,6 +12,7 @@ import { projectSessionContextFromProject, sameProjectSessionContext } from '../
 import { useProjectStore } from '../../stores/project-store'
 import { useWorkflowReasoningStore } from '../../stores/workflow-reasoning-store'
 import { PLOT_OUTLINE_PROTOCOL, plotOutlineSourceInvalidText } from '../../shared/plot-outline-contract'
+import { errorCodeOf } from '../../i18n/app-errors'
 
 export interface WorkflowMainGenerationSelection extends Omit<BeginGenerationRequest, 'operation' | 'uiActionNonce' | 'modelId' | 'parentRootActionId' | 'selectedDraftIds' | 'selectedFinalizedDraftIds'> {
   operation: GenerationOperation
@@ -158,6 +159,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
       throw error
     }
   }
+  let lastSelection = request.selection
   try { await open(request.selection) }
   catch (error) { context.requestMainGenerationCancellation = previousCancellation; throw error }
   const unsubscribeProject = useProjectStore.subscribe(state => {
@@ -201,6 +203,24 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         if (outcome.receipt.diagnostics) callbacks.setGenerationActivity?.({ operation, diagnostics: outcome.receipt.diagnostics })
         return outcome
       } catch (error) {
+        // Every save rotates the project lease, so a committed main run stops being
+        // replayable under the epoch it was frozen with while the workflow keeps using
+        // it for its next step. Resume it under the current lease and retry once instead
+        // of failing the step with a bare server error.
+        if (errorCodeOf(error) === 'MAIN_RUN_NON_REPLAYABLE') {
+          const frozen = context.mainGenerationRunHandle
+          if (frozen) {
+            try {
+              await inner?.close(); inner = undefined
+              await open({ ...lastSelection, resumeHandle: frozen, restartHandle: undefined })
+              const resumed = await inner!.execute(({ session: owned }) => owned.complete(task, { invocationNonce }))
+              if (resumed.receipt.diagnostics) callbacks.setGenerationActivity?.({ operation, diagnostics: resumed.receipt.diagnostics })
+              return resumed
+            } catch (resumeError) {
+              error = resumeError
+            }
+          }
+        }
         if ((error instanceof GenerationAttemptError || error instanceof TerminalProviderFailureError) && error.receipt.diagnostics) {
           callbacks.setGenerationActivity?.({ operation, diagnostics: error.receipt.diagnostics })
         }
@@ -216,6 +236,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
       if (closed || busy || cancelPromise || readOnlyOutline) throw new Error('GENERATION_WORKFLOW_ADVANCE_REFUSED')
       unsubscribeReasoning?.(); unsubscribeReasoning = undefined; clearReasoning()
       await inner?.close(); inner = undefined
+      lastSelection = selection
       await open(selection)
     },
   }

@@ -1213,6 +1213,9 @@ export class GenerateCharactersCommand extends BaseWorkflowCommand<string> {
       const failureReceipt = [
         `code=${detailExecution.failure.code}`,
         `reason=${detailExecution.failure.reason ?? 'unknown'}`,
+        // The stable code the main process (or the workflow runtime) refused with.
+        // Without it every unmapped failure reads as a bare "server_error".
+        ...(detailExecution.failure.errorCode ? [`errorCode=${detailExecution.failure.errorCode}`] : []),
         ...(diagnostic
           ? [`diagnosticCode=${diagnostic.code} diagnosticPath=${diagnostic.path} diagnosticField=${diagnostic.field}`]
           : []),
