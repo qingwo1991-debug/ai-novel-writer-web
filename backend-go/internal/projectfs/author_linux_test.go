@@ -33,6 +33,12 @@ func (p *staticPermit) Verify(ctx context.Context, project *Project) error {
 	return p.err
 }
 
+// VerifyAdopt is the adopting half of the real permit. This stub admits the
+// same way, so the borrow the test exercises is unchanged.
+func (p *staticPermit) VerifyAdopt(ctx context.Context, project *Project) error {
+	return p.Verify(ctx, project)
+}
+
 func (p *staticPermit) count() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
