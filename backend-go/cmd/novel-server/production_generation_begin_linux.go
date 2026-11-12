@@ -155,7 +155,11 @@ func newProductionGeneration(open *productionOpen, server *transport.Server, dis
 	// refuses here, before any ledger row is written, which is the same fence the
 	// generation reads already use.
 	current := func(ctx context.Context, scope generationowner.Scope) error {
-		value, found, err := lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient, Tab: scope.Tab})
+		// Session-only liveness: the generation writes its own ledger rows
+		// mid-dispatch, so the full digest check would refuse the lane's own
+		// writes as AUTHOR_WRITE_STALE. Entry admission (admit -> Begin) already
+		// verified the content digest before any write.
+		value, found, err := lifecycle.CurrentProjectSession(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient, Tab: scope.Tab})
 		if err != nil {
 			// The durable error itself is symbolic; no path, owner or lease enters
 			// the log. It is usually a cancelled/expired provider context or a lost

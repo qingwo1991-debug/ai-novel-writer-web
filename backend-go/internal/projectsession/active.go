@@ -416,6 +416,46 @@ func (c *ActiveCoordinator) Current(ctx context.Context, owner Owner) (Context, 
 	return current, true, nil
 }
 
+// CurrentSession is the session-only half of Current: the slot, the tab fence
+// and the retained writer lock, WITHOUT re-hashing the author database digest.
+// The digest legitimately changes while a generation dispatches (the lane writes
+// its own ledger rows), so a full Current would answer AUTHOR_WRITE_STALE for the
+// lane's own writes. Entry points keep using Begin, which verifies the digest
+// before any write, so nothing is widened.
+func (c *ActiveCoordinator) CurrentSession(ctx context.Context, owner Owner) (Context, bool, error) {
+	if c == nil || ctx == nil || !owner.valid() {
+		return Context{}, false, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return Context{}, false, err
+	}
+	c.transition.Lock()
+	defer c.transition.Unlock()
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return Context{}, false, ErrActiveClosed
+	}
+	state := c.slots[owner.key()]
+	if state == nil || state.handle == nil {
+		c.mu.Unlock()
+		return Context{}, false, nil
+	}
+	if !state.admitsTab(owner.Tab) {
+		c.mu.Unlock()
+		return Context{}, false, nil
+	}
+	current := state.handle.Context()
+	if lease, ok := state.tabLease(owner.Tab); ok {
+		current.LeaseID = lease
+	}
+	c.mu.Unlock()
+	if err := c.lock.VerifyLegacy(c.root); err != nil {
+		return Context{}, false, err
+	}
+	return current, true, nil
+}
+
 // AdoptCommittedLease records the fresh lease one tab received from an
 // acknowledged in-place draft commit. The admitted handle has already adopted
 // next.LeaseID; this method only updates the calling tab's own view so Current

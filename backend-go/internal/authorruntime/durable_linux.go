@@ -279,6 +279,19 @@ func (l *ReadLifecycle) CurrentProjectDurable(ctx context.Context, owner project
 	return l.active.Current(ctx, owner)
 }
 
+// CurrentProjectSession is the generation lane's session check: the durable slot,
+// the per-tab fence and the retained writer lock, without the database content
+// digest. The digest changes while a generation writes its own ledger rows
+// mid-dispatch, so the full Current would report AUTHOR_WRITE_STALE for the
+// lane's own writes. Generation entry points still use Begin, which verifies the
+// digest before any write.
+func (l *ReadLifecycle) CurrentProjectSession(ctx context.Context, owner projectsession.Owner) (projectsession.Context, bool, error) {
+	if l == nil || l.active == nil {
+		return projectsession.Context{}, false, ErrDurableInvalid
+	}
+	return l.active.CurrentSession(ctx, owner)
+}
+
 // SaveCore writes an allowlisted project_core patch under the frozen context.
 // It verifies admission and content identity before the write, performs the
 // update, then re-verifies and adopts the new committed digest so the same
