@@ -590,6 +590,30 @@ func (w *productionFileWrites) writeFile(ctx context.Context, caller transport.C
 	if len(args) != productionFSWriteFileArity {
 		return productionFSWriteFileFailure("INVALID_ARGUMENTS", "not_committed"), nil
 	}
+	// The architecture checkpoint is admitted through its own fixed-name writer,
+	// exactly like fs:write-json serves it. The clear flow writes `{}` into it
+	// after the final section, so it must not go through the browser-file allowlist.
+	if expected, marker, code := productionFSArchCheckpointParse([]any{
+		args[productionFSWritePathPos],
+		args[productionFSWriteRootPos],
+		args[productionFSWriteCtxPos],
+	}); marker != "" {
+		if code != "" {
+			return productionFSWriteFileFailure(code, "not_committed"), nil
+		}
+		content, ok := args[productionFSWriteBodyPos].(string)
+		if !ok {
+			return productionFSWriteFileFailure("INVALID_ARGUMENTS", "not_committed"), nil
+		}
+		if int64(len(content)) > projectfs.BrowserFileMaxBytes {
+			return productionFSWriteFileFailure("PROJECT_FILE_TOO_LARGE", "not_committed"), nil
+		}
+		if err := w.reads.writeArchCheckpoint(ctx, caller, expected, []byte(content)); err != nil {
+			code, commitState := productionFSWriteCode(err)
+			return productionFSWriteFileFailure(code, commitState), nil
+		}
+		return map[string]any{"success": true, "commitState": "committed"}, nil
+	}
 	request, code := productionFSParseFileRequest([]any{
 		args[productionFSWritePathPos],
 		args[productionFSWriteRootPos],
