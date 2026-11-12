@@ -83,7 +83,10 @@ func (l *ReadLifecycle) durableRepository(ctx context.Context, owner projectsess
 		if err := author.permit.Refresh(refreshCtx); err != nil {
 			return err
 		}
-		return author.handle.Verify(refreshCtx)
+		// The post-refresh check adopts: another admitted write may have
+		// committed between the refresh and this check, and that change is the
+		// lane's own, not a source the caller must refuse.
+		return author.handle.VerifyAdopt(refreshCtx)
 	}
 	return author.handle.DB(), refresh, done, nil
 }

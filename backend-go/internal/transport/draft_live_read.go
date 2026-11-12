@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"reflect"
 	"unicode/utf8"
@@ -125,6 +126,7 @@ func draftLiveReadError(err error) error {
 			"PROJECT_SESSION_STALE", "PROJECT_SESSION_ROOT_MISMATCH", "PROJECT_NOT_OPEN":
 			return errors.New(err.Error())
 		}
+		log.Printf("novel-server: draft read failed: %v", err)
 	}
 	return errors.New("DRAFT_READ_FAILED")
 }
