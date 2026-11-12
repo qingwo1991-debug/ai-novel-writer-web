@@ -163,24 +163,6 @@ func TestProductionFSWriteJSONServesConfinedDocument(t *testing.T) {
 		}
 	})
 
-	t.Run("storage-marker", func(t *testing.T) {
-		// The architecture checkpoint is served through its own fixed-name
-		// writer, like fs:read-json serves it read-only. It must never go
-		// through the general browser-file allowlist.
-		marker := projectfs.StorageDirectory + "/" + productionJSONMarkerName
-		raw := productionEditorCall(t, author, productionFSWriteJSONName, []any{marker, document, projectPath, frozen})
-		var wire productionJSONWriteWire
-		if err := json.Unmarshal(raw, &wire); err != nil {
-			t.Fatalf("the storage marker: %v %s", err, raw)
-		}
-		if !wire.Success || wire.Error != "" {
-			t.Fatalf("the storage marker: success is %v and the code is %s; want success", wire.Success, wire.Error)
-		}
-		if _, err := os.Stat(filepath.Join(projectPath, marker)); err != nil {
-			t.Fatalf("the storage marker was not written: %v", err)
-		}
-	})
-
 	t.Run("write-and-read-back", func(t *testing.T) {
 		var wire productionJSONWriteWire
 		productionEditorDecode(t, author, productionFSWriteJSONName,
@@ -222,6 +204,24 @@ func TestProductionFSWriteJSONServesConfinedDocument(t *testing.T) {
 		added, changed, removed := productionJSONSnapshotDiff(before, productionFSSnapshot(t, projectPath))
 		if !reflect.DeepEqual(added, []string{productionJSONWritePath}) || len(changed)+len(removed) != 0 {
 			t.Fatalf("the write changed more than the one document: added %v, changed %v, removed %v", added, changed, removed)
+		}
+	})
+
+	t.Run("storage-marker", func(t *testing.T) {
+		// The architecture checkpoint is served through its own fixed-name
+		// writer, like fs:read-json serves it read-only. It must never go
+		// through the general browser-file allowlist.
+		marker := projectfs.StorageDirectory + "/" + productionJSONMarkerName
+		raw := productionEditorCall(t, author, productionFSWriteJSONName, []any{marker, document, projectPath, frozen})
+		var wire productionJSONWriteWire
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatalf("the storage marker: %v %s", err, raw)
+		}
+		if !wire.Success || wire.Error != "" {
+			t.Fatalf("the storage marker: success is %v and the code is %s; want success", wire.Success, wire.Error)
+		}
+		if _, err := os.Stat(filepath.Join(projectPath, marker)); err != nil {
+			t.Fatalf("the storage marker was not written: %v", err)
 		}
 	})
 
