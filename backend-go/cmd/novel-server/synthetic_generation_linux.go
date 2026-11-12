@@ -47,27 +47,32 @@ type syntheticGeneration struct {
 	// the migration scaffold passes syntheticLeaseOwner (per tab). The run's
 	// RECEIPT scope stays per-tab either way: see the Scope built in admit.
 	leaseOwner func(transport.Caller) (projectsession.Owner, error)
-	// snapshotSeq is the per-attempt VISIBLE snapshot revision. The durable
-	// revision only advances on a flush, but the visible text advances on every
-	// delta; the browser's snapshot regression check rejects two snapshots that
-	// share a revision with different text, so the event stream needs its own
-	// strictly increasing counter. The final read projection reuses it so the
-	// settled snapshot's revision stays above every event it followed.
+	// snapshotSeq records, per attempt, the last DURABLE revision whose text was
+	// published as a generation:snapshot event. Events and the settled read
+	// projection must share one revision space: the browser orders an artifact's
+	// snapshots by revision and rejects a delivery whose durableRevision falls
+	// behind the one it already holds, so a visible-only counter would let a late
+	// event look newer by revision while lagging on the durable half. Publishing
+	// at most once per durable revision keeps every delivered revision unique, and
+	// the durable text only grows, so the browser's append check holds too.
 	snapshotSeq sync.Map
 }
 
-// nextSnapshotSeq returns the next visible snapshot revision for one attempt. It
-// is called once per published event and once per projected snapshot, so the
-// same artifact's revision is strictly increasing in delivery order.
-func (s *syntheticGeneration) nextSnapshotSeq(attemptID string) int64 {
+// publishDurableRevision reports whether this attempt's snapshot at this durable
+// revision still needs publishing. It is true exactly once per durable revision,
+// so no two events share a revision with different text.
+func (s *syntheticGeneration) publishDurableRevision(attemptID string, durable int64) bool {
 	if s == nil || attemptID == "" {
-		return 0
+		return false
 	}
 	for {
-		value, _ := s.snapshotSeq.LoadOrStore(attemptID, int64(0))
-		current := value.(int64)
-		if s.snapshotSeq.CompareAndSwap(attemptID, current, current+1) {
-			return current + 1
+		value, _ := s.snapshotSeq.LoadOrStore(attemptID, int64(-1))
+		last := value.(int64)
+		if durable <= last {
+			return false
+		}
+		if s.snapshotSeq.CompareAndSwap(attemptID, last, durable) {
+			return true
 		}
 	}
 }
@@ -2411,9 +2416,14 @@ func (s *syntheticGeneration) publishSnapshot(caller transport.Caller, expected 
 	if !ok {
 		return
 	}
+	if !s.publishDurableRevision(event.AttemptID, event.DurableRevision) {
+		// The durable revision already went out; a second event at the same
+		// revision with newer text is exactly the regression the browser rejects.
+		return
+	}
 	snapshot["text"] = event.VisibleText
 	snapshot["textHash"] = syntheticHash(event.VisibleText)
-	snapshot["revision"] = s.nextSnapshotSeq(event.AttemptID)
+	snapshot["revision"] = event.DurableRevision
 	snapshot["durableRevision"] = event.DurableRevision
 	if event.Diagnostics != nil {
 		snapshot["diagnostics"] = event.Diagnostics
