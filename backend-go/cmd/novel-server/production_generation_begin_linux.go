@@ -157,6 +157,10 @@ func newProductionGeneration(open *productionOpen, server *transport.Server, dis
 	current := func(ctx context.Context, scope generationowner.Scope) error {
 		value, found, err := lifecycle.CurrentProjectDurable(ctx, projectsession.Owner{SessionID: scope.LeaseSession, ClientID: scope.LeaseClient, Tab: scope.Tab})
 		if err != nil {
+			// The durable error itself is symbolic; no path, owner or lease enters
+			// the log. It is usually a cancelled/expired provider context or a lost
+			// writer lock, and GENERATION_EPOCH_STALE would hide which one.
+			log.Printf("novel-server: generation current: durable error (%v)", err)
 			return err
 		}
 		if !found {
