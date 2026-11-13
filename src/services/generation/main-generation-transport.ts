@@ -43,6 +43,11 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
     return session
   }
   function bindView(view: MainGenerationRunView, session: ProjectSessionContext, historical = false): MainGenerationRunView {
+    // A view must always carry a handle. When the lane answered something else,
+    // show the raw payload instead of dereferencing view.handle.projectId into a
+    // TypeError nobody can diagnose.
+    if (!view || typeof view.handle !== 'object' || view.handle === null)
+      throw new Error('INVALID_MAIN_VIEW_WITHOUT_HANDLE: ' + JSON.stringify(view).slice(0, 400))
     assertHandle(session, view.handle, historical)
     sessions.set(handleKey(view.handle), session)
     return view
