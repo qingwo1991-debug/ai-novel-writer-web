@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"log"
  "errors"
  "net/http"
 
@@ -39,5 +40,6 @@ func(s *Server) writePublicError(w http.ResponseWriter,err error)error {
   // a server failure. The browser maps this status to a friendly busy message.
   if code=="PROJECT_REQUEST_IN_FLIGHT" {status=http.StatusConflict}
  }
+ log.Printf("novel-server: operation failed %d %s", status, code)
  return security.WriteJSON(w,status,s.public.Sanitize(map[string]any{"error":map[string]any{"code":code,"message":message}}))
 }

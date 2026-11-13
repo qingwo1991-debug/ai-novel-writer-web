@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"log"
 	"context"
 	"encoding/json"
 	"errors"
@@ -236,5 +237,6 @@ func draftSaveFailure(err error) map[string]any {
 			break
 		}
 	}
+	log.Printf("novel-server: mutation refused (%s)", code)
 	return map[string]any{"success": false, "error": "Error: " + code}
 }
