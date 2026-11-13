@@ -33,7 +33,13 @@ function freezeSession(session: ProjectSessionContext | null): ProjectSessionCon
   return Object.freeze({ ...session })
 }
 function assertHandle(session: ProjectSessionContext, handle: MainGenerationRunHandle, historical = false): void {
-  if (!handle || ![handle.projectId, handle.epoch, handle.rootActionId, handle.runId].every(value => typeof value === 'string' && Boolean(value.trim()))
+  if (!handle) {
+    // Native TypeError source: a caller passed undefined as a handle. Log the
+    // originating path and emit a coded refusal instead of crashing.
+    if (typeof console !== 'undefined') console.trace('ASSERT_HANDLE_CALLED_WITH_UNDEFINED', { session })
+    throw new Error('GENERATION_PROJECT_SESSION_MISMATCH: handle=undefined')
+  }
+  if (![handle.projectId, handle.epoch, handle.rootActionId, handle.runId].every(value => typeof value === 'string' && Boolean(value.trim()))
     || handle.projectId !== session.projectId || !historical && handle.epoch !== session.leaseId) {
     throw new Error('GENERATION_PROJECT_SESSION_MISMATCH: handle=' + JSON.stringify(handle).slice(0, 200) + ' session.projectId=' + String(session.projectId))
   }
