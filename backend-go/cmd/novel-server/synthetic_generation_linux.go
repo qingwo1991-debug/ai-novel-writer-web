@@ -1956,6 +1956,15 @@ func (s *syntheticGeneration) Resume(ctx context.Context, caller transport.Calle
 		next[key] = item
 	}
 	next["epoch"] = scope.Epoch
+	// GLBinding requires every sourceRef to carry the same epoch as the binding,
+	// so the re-freeze adopts the new lease there too.
+	if refs, ok := next["sourceRefs"].([]any); ok {
+		for _, item := range refs {
+			if ref, ok := item.(map[string]any); ok {
+				ref["epoch"] = scope.Epoch
+			}
+		}
+	}
 	nextRaw, err := json.Marshal(next)
 	if err != nil {
 		return nil, errors.New("GENERATION_RECOVERY_UNAUTHORIZED")
