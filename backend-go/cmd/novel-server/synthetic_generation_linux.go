@@ -1403,28 +1403,31 @@ func (s *syntheticGeneration) newService(ctx context.Context, caller transport.C
 			s.publishSnapshot(caller, expected, handle, ledger, db, snapshot)
 		},
 		ValidateRecovery: func(ctx context.Context, previous, next map[string]any) (bool, error) {
-			// A resume adopts the caller's current lease, so the epoch is the
-			// one field allowed to differ; every other binding field must be
-			// byte-identical. The ledger's stored map carries json.Number while
-			// the decoded next map carries float64, so compare canonical JSON.
-			prev := make(map[string]any, len(previous))
-			for key, item := range previous {
-				if key != "epoch" {
-					prev[key] = item
+			// A re-freeze adopts the caller's current lease in both the binding
+			// and its sourceRefs, so only the lease-independent identity may be
+			// compared: the project, the frozen source fingerprint, the context
+			// snapshot and the source manifest. The ledger's stored map carries
+			// json.Number while the decoded next map carries float64, so compare
+			// canonical JSON.
+			keys := []string{"projectId", "fingerprint", "contextSnapshotId", "sourceManifest"}
+			canonical := func(v any) string {
+				b, err := json.Marshal(v)
+				if err != nil {
+					return ""
+				}
+				var plain any
+				if json.Unmarshal(b, &plain) != nil {
+					return ""
+				}
+				b, _ = json.Marshal(plain)
+				return string(b)
+			}
+			for _, key := range keys {
+				if canonical(previous[key]) != canonical(next[key]) {
+					return false, nil
 				}
 			}
-			nextValue := make(map[string]any, len(next))
-			for key, item := range next {
-				if key != "epoch" {
-					nextValue[key] = item
-				}
-			}
-			prevRaw, aErr := json.Marshal(prev)
-			nextRaw, bErr := json.Marshal(nextValue)
-			if aErr != nil || bErr != nil {
-				return false, nil
-			}
-			return bytes.Equal(prevRaw, nextRaw), nil
+			return true, nil
 		},
 	})
 	if err != nil {
