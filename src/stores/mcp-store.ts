@@ -183,9 +183,5 @@ export const useMCPStore = create<MCPState>()((set, get) => ({
       }
       toolRegistry.register(agentTool)
     }
-
-    if (tools.length > 0) {
-      console.log(`[MCP] 已注册 ${tools.length} 个 MCP Tool 到 ToolRegistry`)
-    }
   },
 }))

@@ -103,8 +103,8 @@ func TestProductionProjectLifecycleDeletesAdmittedProject(t *testing.T) {
 		},
 		{
 			label: "frozen session disagrees with its own scalars",
-			args: []any{projectPath, productionProjectDeleteUnknownID, lease, frozen},
-			code: "PROJECT_CONTEXT_CHANGED",
+			args:  []any{projectPath, productionProjectDeleteUnknownID, lease, frozen},
+			code:  "PROJECT_CONTEXT_CHANGED",
 		},
 	}
 	for _, refusal := range refusals {
@@ -201,4 +201,3 @@ func TestProductionProjectLifecycleDeletesAdmittedProject(t *testing.T) {
 		t.Fatalf("project:delete answered a repeat call with %+v", again)
 	}
 }
-

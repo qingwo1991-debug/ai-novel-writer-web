@@ -3,8 +3,8 @@
 package main
 
 import (
-	"strings"
 	"os"
+	"strings"
 )
 
 // This file is the WIRING RECORD for the import-run receipt pair, and it

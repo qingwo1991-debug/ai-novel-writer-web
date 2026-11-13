@@ -91,10 +91,13 @@ import (
 // # The allowlist per request
 //
 // library root  - always, while the lane is open; it is the configured root every
-//                 project directory is a child of.
+//
+//	project directory is a child of.
+//
 // project root  - only while this caller's cookie session and tab still hold a
-//                 live durable lease (productionFSGrantProject), and only for a
-//                 project the startup inventory issued a catalog key for.
+//
+//	live durable lease (productionFSGrantProject), and only for a
+//	project the startup inventory issued a catalog key for.
 //
 // A closed lane, a missing lifecycle or a lease naming an unknown project is a
 // refusal, never an empty allowlist that happens to answer "not found".

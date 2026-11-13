@@ -6,22 +6,22 @@
 package projectsession
 
 import (
- "context"
- "database/sql"
- "errors"
- "os"
- "path/filepath"
- "sync"
- "strings"
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
- novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
- "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/admission"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	novelruntime "github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/runtime"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
-var ErrClosed=errors.New("PROJECT_SESSION_MANAGER_CLOSED")
-var ErrContext=errors.New("PROJECT_SESSION_CONTEXT_REQUIRED")
+var ErrClosed = errors.New("PROJECT_SESSION_MANAGER_CLOSED")
+var ErrContext = errors.New("PROJECT_SESSION_CONTEXT_REQUIRED")
 
 // Owner is one caller's identity over one project, and it carries the two
 // identities this product keeps apart.
@@ -39,17 +39,25 @@ var ErrContext=errors.New("PROJECT_SESSION_CONTEXT_REQUIRED")
 // borrows the slot's handle, so sharing the account lease never lets a tab that
 // never opened the project use it. A lane that leaves Tab empty does not track
 // per-tab admission at all and behaves exactly as it did before.
-type Owner struct {SessionID string; ClientID string; Tab string}
-func(o Owner) key()string{return o.SessionID+":"+o.ClientID}
-func(o Owner) valid()bool{return o.SessionID!=""&&o.ClientID!=""&&!strings.ContainsAny(o.SessionID+o.ClientID,":\x00")}
+type Owner struct {
+	SessionID string
+	ClientID  string
+	Tab       string
+}
+
+func (o Owner) key() string { return o.SessionID + ":" + o.ClientID }
+func (o Owner) valid() bool {
+	return o.SessionID != "" && o.ClientID != "" && !strings.ContainsAny(o.SessionID+o.ClientID, ":\x00")
+}
+
 // Valid is the exported half of valid(), for the lanes that build an owner from
 // trusted request identity before handing it to this package.
-func(o Owner) Valid()bool{return o.valid()}
+func (o Owner) Valid() bool { return o.valid() }
 
 // AccountClientID is the ClientID half of an ACCOUNT-level LEASE OWNER. It is
 // deliberately not a browser tab identity: it is the marker that says "this
 // owner names the account, not the tab".
-const AccountClientID="account"
+const AccountClientID = "account"
 
 // AccountOwner returns the account-level LEASE OWNER for one authenticated
 // principal. Every browser tab that authenticated as the same account derives
@@ -65,23 +73,51 @@ const AccountClientID="account"
 // between two tabs of one account therefore rests on the per-resource baselines
 // the stores already enforce (draft content CAS, project_core expected patch),
 // never on this owner.
-func AccountOwner(principal string) Owner { return Owner{SessionID: principal, ClientID: AccountClientID} }
+func AccountOwner(principal string) Owner {
+	return Owner{SessionID: principal, ClientID: AccountClientID}
+}
 
 type Context struct {
- ProjectID string `json:"projectId"`
- LeaseID string `json:"leaseId"`
- ProjectPath string `json:"projectPath"`
+	ProjectID   string `json:"projectId"`
+	LeaseID     string `json:"leaseId"`
+	ProjectPath string `json:"projectPath"`
 }
-func ParseContext(value any)(Context,error){
- object,ok:=value.(map[string]any);if !ok||len(object)!=3{return Context{},ErrContext}
- id,okID:=object["projectId"].(string);lease,okLease:=object["leaseId"].(string);path,okPath:=object["projectPath"].(string)
- if !okID||!okLease||!okPath||id==""||lease==""||path==""{return Context{},ErrContext}
- return Context{ProjectID:id,LeaseID:lease,ProjectPath:path},nil
+
+func ParseContext(value any) (Context, error) {
+	object, ok := value.(map[string]any)
+	if !ok || len(object) != 3 {
+		return Context{}, ErrContext
+	}
+	id, okID := object["projectId"].(string)
+	lease, okLease := object["leaseId"].(string)
+	path, okPath := object["projectPath"].(string)
+	if !okID || !okLease || !okPath || id == "" || lease == "" || path == "" {
+		return Context{}, ErrContext
+	}
+	return Context{ProjectID: id, LeaseID: lease, ProjectPath: path}, nil
 }
-func(l Context) lease(o Owner)novelruntime.Lease{return novelruntime.Lease{ProjectID:l.ProjectID,LeaseID:l.LeaseID,ProjectPath:l.ProjectPath,Owner:o.key()}}
-type mounted struct {lease novelruntime.Lease;db *sql.DB;directory string;identity projectfs.Identity}
-type Manager struct {mu sync.Mutex;leases *novelruntime.Leases;mounts map[string]*mounted;pending map[string]*mounted;closed bool;removeAll func(string)error}
-func New()*Manager{return &Manager{leases:novelruntime.NewLeases(),mounts:make(map[string]*mounted),pending:make(map[string]*mounted),removeAll:os.RemoveAll}}
+func (l Context) lease(o Owner) novelruntime.Lease {
+	return novelruntime.Lease{ProjectID: l.ProjectID, LeaseID: l.LeaseID, ProjectPath: l.ProjectPath, Owner: o.key()}
+}
+
+type mounted struct {
+	lease     novelruntime.Lease
+	db        *sql.DB
+	directory string
+	identity  projectfs.Identity
+}
+type Manager struct {
+	mu        sync.Mutex
+	leases    *novelruntime.Leases
+	mounts    map[string]*mounted
+	pending   map[string]*mounted
+	closed    bool
+	removeAll func(string) error
+}
+
+func New() *Manager {
+	return &Manager{leases: novelruntime.NewLeases(), mounts: make(map[string]*mounted), pending: make(map[string]*mounted), removeAll: os.RemoveAll}
+}
 
 // OpenScratchCopy requires caller exclusion of source writers/checkpointers for
 // its entire duration, plus a trusted private scratch parent. No source SQLite
@@ -89,169 +125,445 @@ func New()*Manager{return &Manager{leases:novelruntime.NewLeases(),mounts:make(m
 // outlive a successful copy. Same-owner refresh retains the SAME scratch DB and
 // lease, never overwrites edits by copying the source again. This is NOT durable
 // author-project opening or migration publication.
-func(m *Manager)OpenScratchCopy(ctx context.Context,owner Owner,project *projectfs.Project,contract admission.SchemaContract,scratchParent string,maxBytes int64)(Context,error){
- if ctx==nil||!owner.valid()||project==nil{return Context{},ErrContext}
- if err:=ctx.Err();err!=nil{return Context{},err}
- m.mu.Lock();defer m.mu.Unlock()
- if m.closed{return Context{},ErrClosed}
- root,id:=project.Path(),project.ProjectID()
- if mounted:=m.mounts[root];mounted!=nil{
-  if mounted.lease.Owner!=owner.key(){return Context{},novelruntime.ErrOwned}
-  if mounted.lease.ProjectID!=id{return Context{},novelruntime.ErrNotOwned}
-  if !mounted.identity.Same(project.Identity()){return Context{},projectfs.ErrChanged}
-  // Validate the supplied capability still names the same physical project.
-  // Never read source SQLite merely to refresh an already-mounted scratch copy.
-  manifest,err:=project.OpenFileRead(projectfs.ManifestName);if err!=nil{return Context{},err};if err:=manifest.Close();err!=nil{return Context{},err}
-  return fromLease(mounted.lease),nil
- }
- lease,fresh,err:=m.leases.Acquire(root,id,owner.key());if err!=nil{return Context{},err}
- committed:=false;defer func(){if !committed{_ = m.leases.RollbackAcquire(lease,fresh)}}()
- directory,err:=os.MkdirTemp(scratchParent,"novel-go-session-");if err!=nil{return Context{},err}
- keep:=false;defer func(){if !keep{_ = os.RemoveAll(directory)}}()
- if err:=os.Chmod(directory,0700);err!=nil{return Context{},err}
- destination,err:=os.OpenRoot(directory);if err!=nil{return Context{},err};defer destination.Close()
- proof,err:=project.StageDatabase(ctx,destination,maxBytes);if err!=nil{return Context{},err}
- path:=filepath.Join(directory,"snapshot.db")
- if _,err:=admission.VerifySnapshot(ctx,path,contract);err!=nil{return Context{},err}
- if err:=proof.VerifyUnchanged(ctx);err!=nil{return Context{},err}
- dsn,err:=store.ExistingDSN(path);if err!=nil{return Context{},err}
- db,err:=sql.Open("sqlite3",dsn);if err!=nil{return Context{},err}
- db.SetMaxOpenConns(4)
- owned:=false;defer func(){if !owned{_ = db.Close()}}()
- if err:=db.PingContext(ctx);err!=nil{return Context{},err}
- if err:=ctx.Err();err!=nil{return Context{},err}
- if err:=m.leases.CommitAcquire(lease);err!=nil{return Context{},err}
- m.mounts[root]=&mounted{lease:lease,db:db,directory:directory,identity:project.Identity()}
- committed=true;owned=true;keep=true
- return fromLease(lease),nil
+func (m *Manager) OpenScratchCopy(ctx context.Context, owner Owner, project *projectfs.Project, contract admission.SchemaContract, scratchParent string, maxBytes int64) (Context, error) {
+	if ctx == nil || !owner.valid() || project == nil {
+		return Context{}, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return Context{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Context{}, ErrClosed
+	}
+	root, id := project.Path(), project.ProjectID()
+	if mounted := m.mounts[root]; mounted != nil {
+		if mounted.lease.Owner != owner.key() {
+			return Context{}, novelruntime.ErrOwned
+		}
+		if mounted.lease.ProjectID != id {
+			return Context{}, novelruntime.ErrNotOwned
+		}
+		if !mounted.identity.Same(project.Identity()) {
+			return Context{}, projectfs.ErrChanged
+		}
+		// Validate the supplied capability still names the same physical project.
+		// Never read source SQLite merely to refresh an already-mounted scratch copy.
+		manifest, err := project.OpenFileRead(projectfs.ManifestName)
+		if err != nil {
+			return Context{}, err
+		}
+		if err := manifest.Close(); err != nil {
+			return Context{}, err
+		}
+		return fromLease(mounted.lease), nil
+	}
+	lease, fresh, err := m.leases.Acquire(root, id, owner.key())
+	if err != nil {
+		return Context{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = m.leases.RollbackAcquire(lease, fresh)
+		}
+	}()
+	directory, err := os.MkdirTemp(scratchParent, "novel-go-session-")
+	if err != nil {
+		return Context{}, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.RemoveAll(directory)
+		}
+	}()
+	if err := os.Chmod(directory, 0700); err != nil {
+		return Context{}, err
+	}
+	destination, err := os.OpenRoot(directory)
+	if err != nil {
+		return Context{}, err
+	}
+	defer destination.Close()
+	proof, err := project.StageDatabase(ctx, destination, maxBytes)
+	if err != nil {
+		return Context{}, err
+	}
+	path := filepath.Join(directory, "snapshot.db")
+	if _, err := admission.VerifySnapshot(ctx, path, contract); err != nil {
+		return Context{}, err
+	}
+	if err := proof.VerifyUnchanged(ctx); err != nil {
+		return Context{}, err
+	}
+	dsn, err := store.ExistingDSN(path)
+	if err != nil {
+		return Context{}, err
+	}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return Context{}, err
+	}
+	db.SetMaxOpenConns(4)
+	owned := false
+	defer func() {
+		if !owned {
+			_ = db.Close()
+		}
+	}()
+	if err := db.PingContext(ctx); err != nil {
+		return Context{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Context{}, err
+	}
+	if err := m.leases.CommitAcquire(lease); err != nil {
+		return Context{}, err
+	}
+	m.mounts[root] = &mounted{lease: lease, db: db, directory: directory, identity: project.Identity()}
+	committed = true
+	owned = true
+	keep = true
+	return fromLease(lease), nil
 }
-func fromLease(lease novelruntime.Lease)Context{return Context{ProjectID:lease.ProjectID,LeaseID:lease.LeaseID,ProjectPath:lease.ProjectPath}}
+func fromLease(lease novelruntime.Lease) Context {
+	return Context{ProjectID: lease.ProjectID, LeaseID: lease.LeaseID, ProjectPath: lease.ProjectPath}
+}
 
 // Begin holds the exact session/tab lease through the whole repository call. A
 // release/manager close refuses while this hold exists. Returned cleanup is
 // idempotent. An unknown path never causes a filesystem open or DB creation.
-func(m *Manager)Begin(ctx context.Context,owner Owner,expected Context)(*store.Drafts,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewDrafts(mounted.db),done,nil
+func (m *Manager) Begin(ctx context.Context, owner Owner, expected Context) (*store.Drafts, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewDrafts(mounted.db), done, nil
 }
+
 // BeginProjectCore shares the exact lease fence with draft operations, while
 // returning a domain repository rather than exposing a raw DB capability.
-func(m *Manager)BeginProjectCore(ctx context.Context,owner Owner,expected Context)(*store.ProjectCore,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewProjectCore(mounted.db),done,nil
+func (m *Manager) BeginProjectCore(ctx context.Context, owner Owner, expected Context) (*store.ProjectCore, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewProjectCore(mounted.db), done, nil
 }
+
 // BeginReviewRevisions keeps the same project capability held until every source
 // check, content allocation, metadata write and merge receipt has finished.
-func(m *Manager)BeginReviewRevisions(ctx context.Context,owner Owner,expected Context)(*store.ReviewRevisions,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewReviewRevisions(mounted.db),done,nil
+func (m *Manager) BeginReviewRevisions(ctx context.Context, owner Owner, expected Context) (*store.ReviewRevisions, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewReviewRevisions(mounted.db), done, nil
 }
+
 // BeginPostHistory fences ledger/history operations with the exact project
 // owner. Ledger success is not proof that an external post-process effect ran.
-func(m *Manager)BeginPostHistory(ctx context.Context,owner Owner,expected Context)(*store.PostHistory,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewPostHistory(mounted.db),done,nil
+func (m *Manager) BeginPostHistory(ctx context.Context, owner Owner, expected Context) (*store.PostHistory, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewPostHistory(mounted.db), done, nil
 }
+
 // BeginNarrative lends author plan/evidence storage under the whole-call lease.
-func(m *Manager)BeginNarrative(ctx context.Context,owner Owner,expected Context)(*store.Narrative,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewNarrative(mounted.db),done,nil
+func (m *Manager) BeginNarrative(ctx context.Context, owner Owner, expected Context) (*store.Narrative, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewNarrative(mounted.db), done, nil
 }
+
 // BeginPlotTree lends source aggregation and explicit clear under exact lease.
-func(m *Manager)BeginPlotTree(ctx context.Context,owner Owner,expected Context)(*store.PlotTree,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewPlotTree(mounted.db),done,nil
+func (m *Manager) BeginPlotTree(ctx context.Context, owner Owner, expected Context) (*store.PlotTree, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewPlotTree(mounted.db), done, nil
 }
+
 // BeginBlueprints lends ordinary blueprint facts and pending receipts only.
-func(m *Manager)BeginBlueprints(ctx context.Context,owner Owner,expected Context)(*store.Blueprints,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewBlueprints(mounted.db),done,nil
+func (m *Manager) BeginBlueprints(ctx context.Context, owner Owner, expected Context) (*store.Blueprints, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewBlueprints(mounted.db), done, nil
 }
+
 // BeginRecovery lends candidate storage under the same exact scratch lease.
 // Candidate continuation metadata is not proof of an AI generation or draft commit.
-func(m *Manager)BeginRecovery(ctx context.Context,owner Owner,expected Context)(*store.Recovery,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewRecovery(mounted.db),done,nil
+func (m *Manager) BeginRecovery(ctx context.Context, owner Owner, expected Context) (*store.Recovery, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewRecovery(mounted.db), done, nil
 }
+
 // BeginSummary lends only continuity reads and legacy, non-source-bound snapshots.
 // It confers no finalization/generation admission or durable author write authority.
-func(m *Manager)BeginSummary(ctx context.Context,owner Owner,expected Context)(*store.Summary,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewSummary(mounted.db),done,nil
+func (m *Manager) BeginSummary(ctx context.Context, owner Owner, expected Context) (*store.Summary, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewSummary(mounted.db), done, nil
 }
+
 // BeginCharacters lends only roster/identity reads under the exact scratch lease.
 // Author roster commits and generated identity effects need their own proven owner.
-func(m *Manager)BeginCharacters(ctx context.Context,owner Owner,expected Context)(*store.Characters,func(),error){
-  if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
-  m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
-  mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
-  done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
-  return store.NewCharacters(mounted.db),done,nil
+func (m *Manager) BeginCharacters(ctx context.Context, owner Owner, expected Context) (*store.Characters, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewCharacters(mounted.db), done, nil
 }
+
 // BeginGenerationLedger lends an internal ordinary-run ledger in the private copy.
 // The lease is not generation epoch/source admission or author-write authority.
 // No renderer handler exposes this primitive; planning/effects require separate owners.
-func(m *Manager)BeginGenerationLedger(ctx context.Context,owner Owner,expected Context)(*store.GenerationLedger,func(),error){
- if ctx==nil||!owner.valid(){return nil,nil,ErrContext};if err:=ctx.Err();err!=nil{return nil,nil,err}
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return nil,nil,ErrClosed}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return nil,nil,novelruntime.ErrNotOwned}
- done,err:=m.leases.Begin(expected.lease(owner));if err!=nil{return nil,nil,err}
- return store.NewGenerationLedger(mounted.db,nil,nil),done,nil
+func (m *Manager) BeginGenerationLedger(ctx context.Context, owner Owner, expected Context) (*store.GenerationLedger, func(), error) {
+	if ctx == nil || !owner.valid() {
+		return nil, nil, ErrContext
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, nil, ErrClosed
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return nil, nil, novelruntime.ErrNotOwned
+	}
+	done, err := m.leases.Begin(expected.lease(owner))
+	if err != nil {
+		return nil, nil, err
+	}
+	return store.NewGenerationLedger(mounted.db, nil, nil), done, nil
 }
-func(m *Manager)Release(owner Owner,expected Context)error{
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return ErrClosed};if !owner.valid(){return ErrContext}
- mounted:=m.mounts[expected.ProjectPath];if mounted==nil{return novelruntime.ErrNotOwned}
- if err:=m.leases.Release(expected.lease(owner));err!=nil{return err}
- delete(m.mounts,expected.ProjectPath)
- m.pending[mounted.directory]=mounted
- return m.cleanupLocked()
+func (m *Manager) Release(owner Owner, expected Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	if !owner.valid() {
+		return ErrContext
+	}
+	mounted := m.mounts[expected.ProjectPath]
+	if mounted == nil {
+		return novelruntime.ErrNotOwned
+	}
+	if err := m.leases.Release(expected.lease(owner)); err != nil {
+		return err
+	}
+	delete(m.mounts, expected.ProjectPath)
+	m.pending[mounted.directory] = mounted
+	return m.cleanupLocked()
 }
+
 // Cleanup retries private-file removal failures after release/shutdown. Revoked
 // mounts are never returned to callers, even when filesystem cleanup needs retry.
-func(m *Manager)Cleanup()error{m.mu.Lock();defer m.mu.Unlock();return m.cleanupLocked()}
-func(m *Manager)cleanupLocked()error{
- var joined error
- for directory,mounted:=range m.pending{
-  if mounted.db!=nil{if err:=mounted.db.Close();err!=nil{joined=errors.Join(joined,err);continue};mounted.db=nil}
-  if err:=m.removeAll(directory);err!=nil{joined=errors.Join(joined,err);continue}
-  delete(m.pending,directory)
- }
- return joined
+func (m *Manager) Cleanup() error { m.mu.Lock(); defer m.mu.Unlock(); return m.cleanupLocked() }
+func (m *Manager) cleanupLocked() error {
+	var joined error
+	for directory, mounted := range m.pending {
+		if mounted.db != nil {
+			if err := mounted.db.Close(); err != nil {
+				joined = errors.Join(joined, err)
+				continue
+			}
+			mounted.db = nil
+		}
+		if err := m.removeAll(directory); err != nil {
+			joined = errors.Join(joined, err)
+			continue
+		}
+		delete(m.pending, directory)
+	}
+	return joined
 }
+
 // Close refuses atomically if ANY operation is active. It cannot revoke or close
 // a DB underneath an in-flight repository operation. Retry only after holds end.
-func(m *Manager)Close()error{
- m.mu.Lock();defer m.mu.Unlock();if m.closed{return m.cleanupLocked()}
- // All-or-nothing active-operation probe before revoking any project.
- if err:=m.leases.ReleaseAll();err!=nil{return err}
- m.closed=true
- for root,mounted:=range m.mounts{m.pending[mounted.directory]=mounted;delete(m.mounts,root)}
- return m.cleanupLocked()
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return m.cleanupLocked()
+	}
+	// All-or-nothing active-operation probe before revoking any project.
+	if err := m.leases.ReleaseAll(); err != nil {
+		return err
+	}
+	m.closed = true
+	for root, mounted := range m.mounts {
+		m.pending[mounted.directory] = mounted
+		delete(m.mounts, root)
+	}
+	return m.cleanupLocked()
 }

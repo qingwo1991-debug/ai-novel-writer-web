@@ -61,7 +61,7 @@ func TestOriginConfiguration(t *testing.T) {
 	}
 	for _, test := range []struct {
 		configured string
-		origin string
+		origin     string
 	}{
 		{" HTTPS://ExAmPlE.TeSt:00443/ ", "https://example.test"},
 		{"HTTP://LOCALHOST:00080", "http://localhost"},
@@ -239,11 +239,16 @@ func TestAllRedirectStatusesDeniedWithoutAnotherDispatch(t *testing.T) {
 		}
 		status := 302
 		switch r.URL.Path {
-		case "/300": status = 300
-		case "/304": status = 304
-		case "/307": status = 307
-		case "/308": status = 308
-		case "/399": status = 399
+		case "/300":
+			status = 300
+		case "/304":
+			status = 304
+		case "/307":
+			status = 307
+		case "/308":
+			status = 308
+		case "/399":
+			status = 399
 		}
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, "redirect body must not escape")
@@ -305,7 +310,7 @@ func TestRequestMutationCannotChangeSnapshot(t *testing.T) {
 	request = request.WithContext(ctx)
 	type result struct {
 		response *http.Response
-		err error
+		err      error
 	}
 	resultCh := make(chan result, 1)
 	go func() {

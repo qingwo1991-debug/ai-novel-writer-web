@@ -14,8 +14,8 @@ const (
 	PlotTreeRoleMain    = "main"
 	PlotTreeRoleSubplot = "subplot"
 
-	PlotTreeEventStatusPlanned   = "planned"
-	PlotTreeEventStatusOccurred  = "occurred"
+	PlotTreeEventStatusPlanned  = "planned"
+	PlotTreeEventStatusOccurred = "occurred"
 
 	PlotTreeReferenceBlueprint        = "blueprint"
 	PlotTreeReferenceFinalizedChapter = "finalized-chapter"
@@ -148,8 +148,8 @@ const (
 // PlotTreeDerivation mirrors PlotTreeDerivation
 // (plot-tree-generation-pure.ts:351).
 type PlotTreeDerivation struct {
-	Snapshot PlotTreeSnapshot        `json:"snapshot"`
-	Kind     PlotTreeDerivationKind  `json:"kind"`
+	Snapshot PlotTreeSnapshot       `json:"snapshot"`
+	Kind     PlotTreeDerivationKind `json:"kind"`
 }
 
 // plotTreeFencePattern mirrors /^```json\s*([\s\S]*?)\s*```$/iu
@@ -241,11 +241,11 @@ func parsePlotTreeJSON(content string) (map[string]any, error) {
 // bundle, so validation always compares against the current project.
 func strictSnapshot(tracks any, sources PlotTreeSourceBundle, generatedAt string) (PlotTreeSnapshot, error) {
 	return AssertPlotTreeSnapshot(map[string]any{
-		"version":          float64(1),
-		"generatedAt":      generatedAt,
-		"writingLanguage":  sources.WritingLanguage,
-		"sourceRevision":   sources.SourceRevision,
-		"tracks":           tracks,
+		"version":         float64(1),
+		"generatedAt":     generatedAt,
+		"writingLanguage": sources.WritingLanguage,
+		"sourceRevision":  sources.SourceRevision,
+		"tracks":          tracks,
 	}, sources)
 }
 
@@ -868,12 +868,12 @@ func exactEventSource(
 	generatedAt string,
 ) (PlotTreeSourceReference, error) {
 	synthetic := map[string]any{
-		"id":            "source-check",
-		"title":         "source-check",
-		"role":          PlotTreeRoleMain,
-		"startChapter":  float64(chapterNumber),
-		"endChapter":    float64(chapterNumber),
-		"summary":       "source-check",
+		"id":           "source-check",
+		"title":        "source-check",
+		"role":         PlotTreeRoleMain,
+		"startChapter": float64(chapterNumber),
+		"endChapter":   float64(chapterNumber),
+		"summary":      "source-check",
 		"events": []any{map[string]any{
 			"status":        status,
 			"chapterNumber": float64(chapterNumber),

@@ -83,8 +83,8 @@ const (
 	// turned out to be reproducible from counters the store already had, and the
 	// recovery read is one deferred transaction. The two names are kept here only
 	// because the family's served list below names them.
-	productionReviewRevisionRevision  = "review-revision:commit-revision"
-	productionReviewRevisionRecovery  = "review-revision:read-recovery"
+	productionReviewRevisionRevision = "review-revision:commit-revision"
+	productionReviewRevisionRecovery = "review-revision:read-recovery"
 )
 
 // productionInlineResidualEditorServed is the editor-inline family in the order

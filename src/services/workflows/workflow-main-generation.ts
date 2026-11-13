@@ -203,6 +203,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         if (outcome.receipt.diagnostics) callbacks.setGenerationActivity?.({ operation, diagnostics: outcome.receipt.diagnostics })
         return outcome
       } catch (error) {
+        let failure = error
         // Every save rotates the project lease, so a committed main run stops being
         // replayable under the epoch it was frozen with while the workflow keeps using
         // it for its next step. Resume it under the current lease and retry once instead
@@ -222,14 +223,14 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
               if (resumed.receipt.diagnostics) callbacks.setGenerationActivity?.({ operation, diagnostics: resumed.receipt.diagnostics })
               return resumed
             } catch (resumeError) {
-              error = resumeError
+              failure = resumeError
             }
           }
         }
-        if ((error instanceof GenerationAttemptError || error instanceof TerminalProviderFailureError) && error.receipt.diagnostics) {
-          callbacks.setGenerationActivity?.({ operation, diagnostics: error.receipt.diagnostics })
+        if ((failure instanceof GenerationAttemptError || failure instanceof TerminalProviderFailureError) && failure.receipt.diagnostics) {
+          callbacks.setGenerationActivity?.({ operation, diagnostics: failure.receipt.diagnostics })
         }
-        throw error
+        throw failure
       } finally { busy = false; options?.signal?.removeEventListener('abort', abort) }
     },
   }

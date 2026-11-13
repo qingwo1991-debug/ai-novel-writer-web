@@ -1,25 +1,169 @@
 package projectfs
-import("context";"errors";"io";"io/fs";"os")
+
+import (
+	"context"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+)
+
 // CanonicalAssets records fixed-entry membership only. It is deliberately NOT a
 // Lance manifest/version/table/row proof; in-place descendant changes may leave
 // directory metadata unchanged. No asset content is read or opened by this API.
-type CanonicalAssets struct{LanceDB bool `json:"lancedb"`;EmbeddingRegistry bool `json:"embeddingRegistry"`;KnowledgeCopies bool `json:"knowledgeCopies"`}
-type AssetInventory struct{source *Project;entries map[string]fs.FileInfo;summary CanonicalAssets}
-func(p *Project)InventoryCanonicalAssets(ctx context.Context)(*AssetInventory,error){if ctx==nil{return nil,ErrInvalidPath};if err:=ctx.Err();err!=nil{return nil,err};if p==nil||p.library==nil{return nil,ErrClosed};p.mu.Lock();defer p.mu.Unlock();p.library.mu.Lock();defer p.library.mu.Unlock();if err:=p.checkIdentityLocked();err!=nil{return nil,portableAuthorityIdentityError(err)};entries,summary,err:=p.inventoryLocked(ctx);if err!=nil{return nil,err};proof:=&AssetInventory{source:p,entries:entries,summary:summary};if err:=proof.verifyLocked(ctx);err!=nil{return nil,err};return proof,nil}
-func(p *Project)inventoryLocked(ctx context.Context)(map[string]fs.FileInfo,CanonicalAssets,error){entries:=map[string]fs.FileInfo{};var summary CanonicalAssets;for _,item:=range []struct{name string;dir bool;present *bool}{{"lancedb",true,&summary.LanceDB},{"embedding-spaces.json",false,&summary.EmbeddingRegistry},{"knowledge-copies",true,&summary.KnowledgeCopies}}{if err:=ctx.Err();err!=nil{return nil,summary,err};info,err:=p.storage.Lstat(item.name);if errors.Is(err,fs.ErrNotExist){entries[item.name]=nil;continue};if err!=nil||info.Mode()&os.ModeSymlink!=0{return nil,summary,ErrUnsafeFile};if item.dir{if !directory(info){return nil,summary,ErrUnsafeDirectory}}else{if !info.Mode().IsRegular()||!singleLink(info){return nil,summary,ErrUnsafeFile}};entries[item.name]=info;if item.dir{
- empty,emptyErr:=directoryHasEntries(p.storage,item.name)
- if emptyErr!=nil{return nil,summary,emptyErr}
- if !empty{continue}
- }
- *item.present=true};return entries,summary,nil}
+type CanonicalAssets struct {
+	LanceDB           bool `json:"lancedb"`
+	EmbeddingRegistry bool `json:"embeddingRegistry"`
+	KnowledgeCopies   bool `json:"knowledgeCopies"`
+}
+type AssetInventory struct {
+	source  *Project
+	entries map[string]fs.FileInfo
+	summary CanonicalAssets
+}
+
+func (p *Project) InventoryCanonicalAssets(ctx context.Context) (*AssetInventory, error) {
+	if ctx == nil {
+		return nil, ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil || p.library == nil {
+		return nil, ErrClosed
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.library.mu.Lock()
+	defer p.library.mu.Unlock()
+	if err := p.checkIdentityLocked(); err != nil {
+		return nil, portableAuthorityIdentityError(err)
+	}
+	entries, summary, err := p.inventoryLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	proof := &AssetInventory{source: p, entries: entries, summary: summary}
+	if err := proof.verifyLocked(ctx); err != nil {
+		return nil, err
+	}
+	return proof, nil
+}
+func (p *Project) inventoryLocked(ctx context.Context) (map[string]fs.FileInfo, CanonicalAssets, error) {
+	entries := map[string]fs.FileInfo{}
+	var summary CanonicalAssets
+	for _, item := range []struct {
+		name    string
+		dir     bool
+		present *bool
+	}{{"lancedb", true, &summary.LanceDB}, {"embedding-spaces.json", false, &summary.EmbeddingRegistry}, {"knowledge-copies", true, &summary.KnowledgeCopies}} {
+		if err := ctx.Err(); err != nil {
+			return nil, summary, err
+		}
+		info, err := p.storage.Lstat(item.name)
+		if errors.Is(err, fs.ErrNotExist) {
+			entries[item.name] = nil
+			continue
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return nil, summary, ErrUnsafeFile
+		}
+		if item.dir {
+			if !directory(info) {
+				return nil, summary, ErrUnsafeDirectory
+			}
+		} else {
+			if !info.Mode().IsRegular() || !singleLink(info) {
+				return nil, summary, ErrUnsafeFile
+			}
+		}
+		entries[item.name] = info
+		if item.dir {
+			empty, emptyErr := directoryHasEntries(p.storage, item.name)
+			if emptyErr != nil {
+				return nil, summary, emptyErr
+			}
+			if !empty {
+				continue
+			}
+		}
+		*item.present = true
+	}
+	return entries, summary, nil
+}
+
 // directoryHasEntries reports whether a fixed asset directory holds anything at
 // all. An EMPTY asset directory is not an asset: the shipped gateway leaves
 // .ai-novel/lancedb behind after clearing the knowledge base, and treating that
 // footprint as author data refused every write admission for a project with
 // nothing in it (projectaccess.ErrAuthorKnowledgeUnproved). The entry stays in
 // the inventory map either way, so Create/Replace/Remove detection is unchanged.
-func directoryHasEntries(root *os.Root,name string)(bool,error){sub,err:=root.OpenRoot(name);if err!=nil{return false,ErrUnsafeDirectory};defer sub.Close();handle,err:=sub.OpenFile(".",readFlags(),0);if err!=nil{return false,ErrUnsafeDirectory};defer handle.Close();names,err:=handle.ReadDir(1);if err!=nil&&err!=io.EOF{return false,ErrUnsafeDirectory};return len(names)>0,nil}
-func(a *AssetInventory)Summary()CanonicalAssets{if a==nil{return CanonicalAssets{}};return a.summary}
-func(a *AssetInventory)VerifyUnchanged(ctx context.Context)error{if ctx==nil{return ErrInvalidPath};if err:=ctx.Err();err!=nil{return err};if a==nil||a.source==nil||len(a.entries)!=3{return ErrInvalidPath};p:=a.source;p.mu.Lock();defer p.mu.Unlock();p.library.mu.Lock();defer p.library.mu.Unlock();return a.verifyLocked(ctx)}
-func sameAssetEntry(a,b fs.FileInfo)bool{return os.SameFile(a,b)&&a.Mode()==b.Mode()&&a.Size()==b.Size()&&a.ModTime().Equal(b.ModTime())&&sameChangeTime(a,b)&&(a.IsDir()||singleLink(a)&&singleLink(b))}
-func(a *AssetInventory)verifyLocked(ctx context.Context)error{p:=a.source;if err:=p.checkIdentityLocked();err!=nil{return portableAuthorityIdentityError(err)};current,_,err:=p.inventoryLocked(ctx);if err!=nil{return err};for name,before:=range a.entries{after:=current[name];if before==nil&&after==nil{continue};if before==nil||after==nil||!sameAssetEntry(before,after){return ErrChanged}};if err:=ctx.Err();err!=nil{return err};if err:=p.checkIdentityLocked();err!=nil{return portableAuthorityIdentityError(err)};return nil}
+func directoryHasEntries(root *os.Root, name string) (bool, error) {
+	sub, err := root.OpenRoot(name)
+	if err != nil {
+		return false, ErrUnsafeDirectory
+	}
+	defer sub.Close()
+	handle, err := sub.OpenFile(".", readFlags(), 0)
+	if err != nil {
+		return false, ErrUnsafeDirectory
+	}
+	defer handle.Close()
+	names, err := handle.ReadDir(1)
+	if err != nil && err != io.EOF {
+		return false, ErrUnsafeDirectory
+	}
+	return len(names) > 0, nil
+}
+func (a *AssetInventory) Summary() CanonicalAssets {
+	if a == nil {
+		return CanonicalAssets{}
+	}
+	return a.summary
+}
+func (a *AssetInventory) VerifyUnchanged(ctx context.Context) error {
+	if ctx == nil {
+		return ErrInvalidPath
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a == nil || a.source == nil || len(a.entries) != 3 {
+		return ErrInvalidPath
+	}
+	p := a.source
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.library.mu.Lock()
+	defer p.library.mu.Unlock()
+	return a.verifyLocked(ctx)
+}
+func sameAssetEntry(a, b fs.FileInfo) bool {
+	return os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime()) && sameChangeTime(a, b) && (a.IsDir() || singleLink(a) && singleLink(b))
+}
+func (a *AssetInventory) verifyLocked(ctx context.Context) error {
+	p := a.source
+	if err := p.checkIdentityLocked(); err != nil {
+		return portableAuthorityIdentityError(err)
+	}
+	current, _, err := p.inventoryLocked(ctx)
+	if err != nil {
+		return err
+	}
+	for name, before := range a.entries {
+		after := current[name]
+		if before == nil && after == nil {
+			continue
+		}
+		if before == nil || after == nil || !sameAssetEntry(before, after) {
+			return ErrChanged
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := p.checkIdentityLocked(); err != nil {
+		return portableAuthorityIdentityError(err)
+	}
+	return nil
+}

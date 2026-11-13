@@ -10,7 +10,7 @@ import (
 // are filtered; provider protocol reasoning fields must never enter this filter.
 // Like the TypeScript original, the zero value is ready to use.
 type VisibleFilter struct {
-	stream thinkStream
+	stream  thinkStream
 	visible []uint16
 }
 
@@ -40,7 +40,7 @@ func (f *VisibleFilter) Text() string {
 // at most one nonempty concatenated reasoning chunk per Push, without tag text.
 type InBandReasoning struct {
 	stream thinkStream
-	emit func(string)
+	emit   func(string)
 }
 
 func NewInBandReasoning(emit func(string)) *InBandReasoning {
@@ -58,7 +58,7 @@ func (r *InBandReasoning) Push(text string) {
 
 type thinkStream struct {
 	pending []uint16
-	depth int
+	depth   int
 }
 
 // Use UTF-16 units, not Go byte offsets: the original slices the eight-unit tag

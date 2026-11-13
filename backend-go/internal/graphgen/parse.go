@@ -72,13 +72,13 @@ type NarrativeThreadStoredEvent struct {
 // NarrativeThreadView mirrors NarrativeThreadView (src/shared/narrative-thread.ts:39-48).
 type NarrativeThreadView struct {
 	NarrativeThreadPlan
-	ID              int                         `json:"id"`
-	Status          string                      `json:"status"`
-	DormantChapters int                         `json:"dormantChapters"`
-	Overdue         bool                        `json:"overdue"`
+	ID              int                          `json:"id"`
+	Status          string                       `json:"status"`
+	DormantChapters int                          `json:"dormantChapters"`
+	Overdue         bool                         `json:"overdue"`
 	Events          []NarrativeThreadStoredEvent `json:"events"`
-	CreatedAt       string                      `json:"createdAt"`
-	UpdatedAt       string                      `json:"updatedAt"`
+	CreatedAt       string                       `json:"createdAt"`
+	UpdatedAt       string                       `json:"updatedAt"`
 }
 
 // NarrativeThreadEventCandidate mirrors NarrativeThreadEventCandidate
@@ -352,7 +352,7 @@ func isJSWhitespace(character rune) bool {
 	return character >= 0x2000 && character <= 0x200A
 }
 
-// removeJSWhitespace mirrors String.prototype.replace(/\s+/gu, '')
+// removeJSWhitespace mirrors String.prototype.replace(/\s+/gu, ”)
 // (narrative-thread-generation-pure.ts:109,116).
 func removeJSWhitespace(value string) string {
 	var builder strings.Builder

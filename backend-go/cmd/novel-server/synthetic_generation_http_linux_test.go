@@ -206,26 +206,26 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		return builder.String()[:64]
 	}
 	beginRequest := map[string]any{
-		"operation":             "chapter-draft",
-		"uiActionNonce":         "nonce-1",
-		"modelId":               modelID,
-		"chapterNumber":         1,
-		"selectedDraftIds":      []any{float64(draftID)},
-		"selectedFinalizedDraftIds": []any{},
+		"operation":                       "chapter-draft",
+		"uiActionNonce":                   "nonce-1",
+		"modelId":                         modelID,
+		"chapterNumber":                   1,
+		"selectedDraftIds":                []any{float64(draftID)},
+		"selectedFinalizedDraftIds":       []any{},
 		"selectedBlueprintChapterNumbers": []any{},
-		"promptKeys":            []any{"opening"},
-		"skillStages":           []any{},
-		"authorInputs":          []any{},
-		"output":                "visible-text",
+		"promptKeys":                      []any{"opening"},
+		"skillStages":                     []any{},
+		"authorInputs":                    []any{},
+		"output":                          "visible-text",
 		"materialDecision": map[string]any{
-			"version":                  1,
-			"verdict":                  "admitted",
-			"promptHash":               hex64("a"),
-			"shortOutlinePromptHash":   hex64("b"),
-			"capacity":                 map[string]any{"maxInputUnits": 4096, "methodVersion": "utf8-bytes-v1", "admittedUnits": 4096},
-			"coverage":                 map[string]any{"required": 1, "included": 1, "complete": true},
-			"included": []any{map[string]any{"sourceId": "draft:" + strconv.FormatInt(draftID, 10), "revision": 1, "contentHash": hex64("c"), "category": "author", "required": true, "units": 100}},
-			"omitted":                 []any{},
+			"version":                1,
+			"verdict":                "admitted",
+			"promptHash":             hex64("a"),
+			"shortOutlinePromptHash": hex64("b"),
+			"capacity":               map[string]any{"maxInputUnits": 4096, "methodVersion": "utf8-bytes-v1", "admittedUnits": 4096},
+			"coverage":               map[string]any{"required": 1, "included": 1, "complete": true},
+			"included":               []any{map[string]any{"sourceId": "draft:" + strconv.FormatInt(draftID, 10), "revision": 1, "contentHash": hex64("c"), "category": "author", "required": true, "units": 100}},
+			"omitted":                []any{},
 		},
 	}
 	begin := rpc("generation:begin", []any{beginRequest, expected})
@@ -327,7 +327,7 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 		"reconciliationPromptHash": hex64("e"),
 		"capacity":                 map[string]any{"maxInputUnits": 4096, "methodVersion": "utf8-bytes-v1", "admittedUnits": 4096},
 		"coverage":                 map[string]any{"required": 1, "included": 1, "complete": true},
-		"included": []any{map[string]any{"sourceId": "draft:" + strconv.FormatInt(draftID, 10), "revision": 1, "contentHash": hex64("c"), "category": "author", "required": true, "units": 100}},
+		"included":                 []any{map[string]any{"sourceId": "draft:" + strconv.FormatInt(draftID, 10), "revision": 1, "contentHash": hex64("c"), "category": "author", "required": true, "units": 100}},
 		"omitted":                  []any{},
 	}
 	bind := rpc("generation:bind-material-decision", []any{map[string]any{"handle": handleB, "materialDecision": decision}, expected})
@@ -340,10 +340,10 @@ func TestSyntheticGenerationHTTPDurableLane(t *testing.T) {
 	}
 	conflictDecision := map[string]any{
 		"version": 1, "verdict": "admitted", "promptHash": hex64("f"),
-		"capacity":                 map[string]any{"maxInputUnits": 4096, "methodVersion": "utf8-bytes-v1", "admittedUnits": 4096},
-		"coverage":                 map[string]any{"required": 1, "included": 1, "complete": true},
+		"capacity": map[string]any{"maxInputUnits": 4096, "methodVersion": "utf8-bytes-v1", "admittedUnits": 4096},
+		"coverage": map[string]any{"required": 1, "included": 1, "complete": true},
 		"included": []any{map[string]any{"sourceId": "draft:" + strconv.FormatInt(draftID, 10), "revision": 1, "contentHash": hex64("c"), "category": "author", "required": true, "units": 100}},
-		"omitted":                  []any{},
+		"omitted":  []any{},
 	}
 	conflict := rpc("generation:bind-material-decision", []any{map[string]any{"handle": handleB, "materialDecision": conflictDecision}, expected})
 	if !strings.Contains(conflict.Body.String(), "GENERATION_MATERIAL_DECISION_CONFLICT") {

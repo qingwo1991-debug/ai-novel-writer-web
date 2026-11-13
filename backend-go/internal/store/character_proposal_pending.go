@@ -1355,7 +1355,7 @@ func pfSpace(r rune) bool {
 
 func pfTrim(value string) string { return strings.TrimFunc(value, pfSpace) }
 
-// pfLeadingFence is replace(/^```(?:json)?\s*\n?/i, '').
+// pfLeadingFence is replace(/^```(?:json)?\s*\n?/i, ”).
 func pfLeadingFence(text string) string {
 	if !strings.HasPrefix(text, "```") {
 		return text
@@ -1367,7 +1367,7 @@ func pfLeadingFence(text string) string {
 	return strings.TrimLeftFunc(rest, pfSpace)
 }
 
-// pfTrailingFence is replace(/\n?```\s*$/, '').
+// pfTrailingFence is replace(/\n?```\s*$/, ”).
 func pfTrailingFence(text string) string {
 	fence := strings.LastIndex(text, "```")
 	if fence < 0 || pfTrim(text[fence+3:]) != "" {

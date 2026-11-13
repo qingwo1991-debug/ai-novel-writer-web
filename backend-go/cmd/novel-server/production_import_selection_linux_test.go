@@ -157,9 +157,9 @@ func (l *productionImportTestLane) stage(t *testing.T, client *productionDurable
 // (src/components/dialogs/ImportNovelDialog.tsx:214-219). It cannot name a file.
 func (l *productionImportTestLane) request() map[string]any {
 	return map[string]any{
-		"runId":               "production-import-run-1",
-		"purpose":             string(importsource.AuthorManuscript),
-		"locale":              "zh-CN",
+		"runId":   "production-import-run-1",
+		"purpose": string(importsource.AuthorManuscript),
+		"locale":  "zh-CN",
 		// The path the operation opened, so a fixture path and the runtime's own
 		// spelling of it can never disagree here.
 		"expectedProjectPath": l.frozen["projectPath"],

@@ -37,16 +37,16 @@ const (
 	productionStoryStateWriteFinalizationID = "ci-storystate-finalization-1"
 	// The evidence is a substring of productionEditorSeed after the store's
 	// whitespace compaction, so it is real prose from the frozen snapshot.
-	productionStoryStateWriteEvidence = "他推开门"
-	productionStoryStateWritePlanTitle = "线索：门后的信"
-	productionStoryStateWritePlanTitleChanged = "线索：门后的信·改"
-	productionStoryStateWritePlanIntent = "作者决定回收时机"
-	productionStoryStateWritePlanIntentChanged = "作者改期"
-	productionStoryStateWriteExemptionKey = "stable:fact:door"
-	productionStoryStateWriteExemptionReason = "作者说明"
+	productionStoryStateWriteEvidence               = "他推开门"
+	productionStoryStateWritePlanTitle              = "线索：门后的信"
+	productionStoryStateWritePlanTitleChanged       = "线索：门后的信·改"
+	productionStoryStateWritePlanIntent             = "作者决定回收时机"
+	productionStoryStateWritePlanIntentChanged      = "作者改期"
+	productionStoryStateWriteExemptionKey           = "stable:fact:door"
+	productionStoryStateWriteExemptionReason        = "作者说明"
 	productionStoryStateWriteExemptionReasonChanged = "作者再次确认"
-	productionStoryStateWriteRunSource = "ci-storystate-write-source"
-	productionStoryStateWriteCallPurpose = "chapter-draft"
+	productionStoryStateWriteRunSource              = "ci-storystate-write-source"
+	productionStoryStateWriteCallPurpose            = "chapter-draft"
 	// productionStoryStateWritePlotSnapshot is a stored plot tree snapshot for
 	// db:plot-tree-clear to blank. Its exact shape is not load-bearing: the
 	// before/after assertion is on the stored column, and the bound read is only
@@ -621,7 +621,7 @@ func TestProductionStoryStateWritesServeAdmittedAuthorDatabase(t *testing.T) {
 	t.Run("db:log-llm-call", func(t *testing.T) {
 		logged := productionStoryStateWriteCall(t, author, "db:log-llm-call", []any{map[string]any{
 			"modelId": productionTestModelID, "modelName": "ci-story-model",
-			"purpose": productionStoryStateWriteCallPurpose,
+			"purpose":      productionStoryStateWriteCallPurpose,
 			"promptTokens": float64(12), "completionTokens": float64(5), "totalTokens": float64(17),
 			"durationMs": float64(42), "success": true,
 		}, projectPath, frozen})

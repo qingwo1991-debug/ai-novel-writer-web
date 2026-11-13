@@ -84,7 +84,7 @@ const (
 	// is the manifest's free text for the protagonist, carried through the parser and
 	// the commit unchanged.
 	productionCharacterProposalAppearance = "瘦高，左眉有一道旧疤"
-	productionCharacterProposalLocation = "门内"
+	productionCharacterProposalLocation   = "门内"
 	// Each slot carries its own location: the detail document is per-character, so a
 	// single shared string would only ever describe the first one.
 	productionCharacterProposalLocationTwo   = "钥匙铺"
@@ -137,8 +137,8 @@ type productionCharacterProposalRun struct {
 	RunID        string
 	RootActionID string
 	Epoch        string
-	Manifest    productionCharacterProposalArtifact
-	Detail      productionCharacterProposalArtifact
+	Manifest     productionCharacterProposalArtifact
+	Detail       productionCharacterProposalArtifact
 }
 
 // productionCharacterProposalArtifact is one settled artifact as the ledger stored
@@ -447,8 +447,8 @@ func testProductionCharacterProposalUnknownBatch(t *testing.T) {
 	unknown := "cpb:" + strings.Repeat("0", 64)
 	response := lane.author.call(t, productionCharacterProposalApproveName,
 		[]any{map[string]any{
-			productionCharacterProposalBatchKey:    unknown,
-			productionCharacterProposalRevisionKey: 0,
+			productionCharacterProposalBatchKey:     unknown,
+			productionCharacterProposalRevisionKey:  0,
 			productionCharacterProposalOperationKey: productionCharacterProposalApproveID,
 			productionCharacterProposalSelectionsKey: []any{
 				productionCharacterProposalCreate(productionCharacterProposalSlotOne),

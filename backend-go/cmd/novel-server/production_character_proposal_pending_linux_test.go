@@ -240,12 +240,12 @@ func productionCharacterProposalPendingSeed(t *testing.T, projectPath string) {
 		return fmt.Sprintf("production-character-proposal-pending-%02d", ordinal)
 	})
 	request, err := json.Marshal(map[string]any{
-		"projectId":        productionEditorProjectID,
-		"epoch":            productionCharacterProposalPendingEpoch,
-		"operation":        "finalized-character-state",
-		"uiActionNonce":    productionCharacterProposalPendingRunNonce,
-		"frozenInputHash":  strings.Repeat("a", 64),
-		"fingerprint":      productionCharacterProposalPendingFingerprint(),
+		"projectId":         productionEditorProjectID,
+		"epoch":             productionCharacterProposalPendingEpoch,
+		"operation":         "finalized-character-state",
+		"uiActionNonce":     productionCharacterProposalPendingRunNonce,
+		"frozenInputHash":   strings.Repeat("a", 64),
+		"fingerprint":       productionCharacterProposalPendingFingerprint(),
 		"contextSnapshotId": productionCharacterProposalPendingSnapshot,
 		"sourceManifest": map[string]any{
 			"operation": "finalized-character-state",
@@ -254,7 +254,7 @@ func productionCharacterProposalPendingSeed(t *testing.T, projectPath string) {
 				"text": string(serialized),
 			}},
 			"finalizedCharacterContextHash": sha256Hex(string(serialized)),
-			"selectedFinalizedDraftIds":    []any{productionCharacterProposalPendingDraftID},
+			"selectedFinalizedDraftIds":     []any{productionCharacterProposalPendingDraftID},
 			"modelReceipt": map[string]any{
 				"modelRevision": productionCharacterProposalPendingModelRevision,
 			},

@@ -717,7 +717,7 @@ func textList(value any, separator string) any {
 	return strings.Join(joined, separator)
 }
 
-// textValue is the reference's `typeof value === 'string' ? value.trim() : ''`.
+// textValue is the reference's `typeof value === 'string' ? value.trim() : ”`.
 func textValue(value any) string {
 	text, ok := value.(string)
 	if !ok {

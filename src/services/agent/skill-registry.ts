@@ -249,10 +249,7 @@ class SkillRegistryImpl {
     registerBuiltinSkills({ register: skill => staged.set(skill.skillId, skill) })
 
     // 用户 Skill 路径只能由主进程的固定应用数据服务访问。
-    const userCount = await this.loadUserSkills(staged)
-    if (userCount > 0) {
-      console.log(`[Skills] 加载了 ${userCount} 个用户 Skill`)
-    }
+    await this.loadUserSkills(staged)
 
     // 加载项目 Skill（项目/.ai-novel/skills/）
     if (
@@ -264,22 +261,17 @@ class SkillRegistryImpl {
       )
     ) {
       const projectSkillsDir = `${projectSession.projectPath}/${CANONICAL_PROJECT_DIRECTORY}/skills`
-      const projectCount = await this.loadProjectSkills(
+      await this.loadProjectSkills(
         projectSkillsDir,
         projectSession.projectPath,
         projectSession,
         staged,
       )
-      if (projectCount > 0) {
-        console.log(`[Skills] 加载了 ${projectCount} 个项目 Skill`)
-      }
     }
 
     this.skills = staged
     // 将所有 Skill 注册为 Agent Tool
     this.registerToToolRegistry()
-
-    console.log(`[Skills] 共加载 ${this.size} 个 Skill`)
   }
 
   /**

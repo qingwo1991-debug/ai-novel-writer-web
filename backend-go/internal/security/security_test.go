@@ -261,8 +261,8 @@ func TestOrigins(t *testing.T) {
 func TestBodiesAndJSON(t *testing.T) {
 	for _, tc := range []struct {
 		name, media, body, code string
-		limit                  int64
-		status                 int
+		limit                   int64
+		status                  int
 	}{
 		{"valid", "Application/JSON ; charset=utf-8", `{"args":["x",1,true,null]}`, "", 1024, 0},
 		{"primitive", "application/json", `null`, "", 1024, 0},

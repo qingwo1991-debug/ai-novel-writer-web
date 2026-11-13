@@ -30,22 +30,22 @@ func TestManifestCanonicalContract(t *testing.T) {
 
 func TestManifestRejectsInvalidAndDuplicateKeys(t *testing.T) {
 	cases := map[string]string{
-		"null": "null",
-		"array": "[]",
-		"trailing": fixtureManifest + `{}`,
-		"extra": strings.Replace(fixtureManifest, `"schemaVersion":1`, `"extra":true,"schemaVersion":1`, 1),
-		"missing": strings.Replace(fixtureManifest, `"schemaVersion":1,`, "", 1),
-		"duplicate": strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":1,"schemaVersion":1`, 1),
-		"escaped duplicate": strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":1,"schema\u0056ersion":1`, 1),
-		"wrong UUID version": strings.Replace(fixtureManifest, "-4234-", "-6234-", 1),
-		"wrong UUID variant": strings.Replace(fixtureManifest, "-8234-", "-7234-", 1),
-		"wrong kind": strings.Replace(fixtureManifest, "ai-novel-project", "vela-project", 1),
-		"string version": strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":"1"`, 1),
-		"null version": strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":null`, 1),
-		"null date": strings.Replace(fixtureManifest, `"2026-01-02T03:04:05.123Z"`, "null", 1),
-		"rollover date": strings.Replace(fixtureManifest, "2026-01-02T03:04:05.123Z", "2026-02-30", 1),
+		"null":                               "null",
+		"array":                              "[]",
+		"trailing":                           fixtureManifest + `{}`,
+		"extra":                              strings.Replace(fixtureManifest, `"schemaVersion":1`, `"extra":true,"schemaVersion":1`, 1),
+		"missing":                            strings.Replace(fixtureManifest, `"schemaVersion":1,`, "", 1),
+		"duplicate":                          strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":1,"schemaVersion":1`, 1),
+		"escaped duplicate":                  strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":1,"schema\u0056ersion":1`, 1),
+		"wrong UUID version":                 strings.Replace(fixtureManifest, "-4234-", "-6234-", 1),
+		"wrong UUID variant":                 strings.Replace(fixtureManifest, "-8234-", "-7234-", 1),
+		"wrong kind":                         strings.Replace(fixtureManifest, "ai-novel-project", "vela-project", 1),
+		"string version":                     strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":"1"`, 1),
+		"null version":                       strings.Replace(fixtureManifest, `"schemaVersion":1`, `"schemaVersion":null`, 1),
+		"null date":                          strings.Replace(fixtureManifest, `"2026-01-02T03:04:05.123Z"`, "null", 1),
+		"rollover date":                      strings.Replace(fixtureManifest, "2026-01-02T03:04:05.123Z", "2026-02-30", 1),
 		"locale date intentionally stricter": strings.Replace(fixtureManifest, "2026-01-02T03:04:05.123Z", "Jan 2 2026", 1),
-		"bad date": strings.Replace(fixtureManifest, "2026-01-02T03:04:05.123Z", "not-a-date", 1),
+		"bad date":                           strings.Replace(fixtureManifest, "2026-01-02T03:04:05.123Z", "not-a-date", 1),
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

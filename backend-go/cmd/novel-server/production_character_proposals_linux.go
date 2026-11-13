@@ -316,9 +316,9 @@ type productionCharacterProposalArtifactRef struct {
 type productionCharacterProposalSource struct {
 	Kind               string                                   `json:"kind"`
 	InputKind          string                                   `json:"inputKind,omitempty"`
-	Handle             *productionCharacterProposalHandle        `json:"handle,omitempty"`
-	Artifacts          []productionCharacterProposalArtifactRef  `json:"artifacts,omitempty"`
-	ManifestArtifactID string                                    `json:"manifestArtifactId,omitempty"`
+	Handle             *productionCharacterProposalHandle       `json:"handle,omitempty"`
+	Artifacts          []productionCharacterProposalArtifactRef `json:"artifacts,omitempty"`
+	ManifestArtifactID string                                   `json:"manifestArtifactId,omitempty"`
 }
 
 // productionCharacterProposalRef is SourceRef (src/shared/source-ref.ts).
@@ -335,8 +335,8 @@ type productionCharacterProposalRef struct {
 // omitted when the run's model receipt carries none, exactly the way an absent
 // JavaScript property is dropped.
 type productionCharacterProposalProvenance struct {
-	Kind          string                        `json:"kind"`
-	ModelRevision string                        `json:"modelRevision,omitempty"`
+	Kind          string                         `json:"kind"`
+	ModelRevision string                         `json:"modelRevision,omitempty"`
 	Source        productionCharacterProposalRef `json:"source"`
 }
 
@@ -391,12 +391,12 @@ type productionCharacterProposalItem struct {
 // (src/shared/character-proposal.ts): the only body shape stage/read/cancel answer,
 // and the `batch` half of approve's answer.
 type productionCharacterProposalBatch struct {
-	ProposalBatchID     string                           `json:"proposalBatchId"`
-	Revision            int64                            `json:"revision"`
-	Status              string                           `json:"status"`
-	Items               []productionCharacterProposalItem `json:"items"`
+	ProposalBatchID     string                             `json:"proposalBatchId"`
+	Revision            int64                              `json:"revision"`
+	Status              string                             `json:"status"`
+	Items               []productionCharacterProposalItem  `json:"items"`
 	Source              *productionCharacterProposalSource `json:"source"`
-	ApprovalOperationID string                           `json:"approvalOperationId,omitempty"`
+	ApprovalOperationID string                             `json:"approvalOperationId,omitempty"`
 }
 
 // productionCharacterProposalSelection is one ApproveCharacterProposalRequest
@@ -422,12 +422,12 @@ type productionCharacterProposalRelationship struct {
 // repeated approve is compared against (:232-235), so every key the reference
 // stores has to survive here with the same presence rule.
 type productionCharacterProposalDecision struct {
-	ProposalBatchID  string                                       `json:"proposalBatchId"`
-	ExpectedRevision *int64                                       `json:"expectedRevision,omitempty"`
-	OperationID      string                                       `json:"operationId"`
-	Selections       []productionCharacterProposalSelection       `json:"selections"`
-	Relationships    *[]productionCharacterProposalRelationship   `json:"relationships,omitempty"`
-	Edits            json.RawMessage                              `json:"edits,omitempty"`
+	ProposalBatchID  string                                     `json:"proposalBatchId"`
+	ExpectedRevision *int64                                     `json:"expectedRevision,omitempty"`
+	OperationID      string                                     `json:"operationId"`
+	Selections       []productionCharacterProposalSelection     `json:"selections"`
+	Relationships    *[]productionCharacterProposalRelationship `json:"relationships,omitempty"`
+	Edits            json.RawMessage                            `json:"edits,omitempty"`
 }
 
 // productionCharacterProposalApproveRequest is the request as the body carries it,
@@ -437,12 +437,12 @@ type productionCharacterProposalDecision struct {
 // stale revision. Raw keeps the body itself, because a repeated approve is compared
 // with the stored decision as values (:233).
 type productionCharacterProposalApproveRequest struct {
-	ProposalBatchID string
+	ProposalBatchID  string
 	ExpectedRevision *int64
-	OperationID     string
-	Selections      []any
-	Edits           json.RawMessage
-	Raw             map[string]any
+	OperationID      string
+	Selections       []any
+	Edits            json.RawMessage
+	Raw              map[string]any
 }
 
 // productionCharacterProposalCreated is one created identity of the approval
@@ -457,15 +457,15 @@ type productionCharacterProposalCreated struct {
 // reference still decodes; this lane never writes either, and readEnvelope refuses
 // one it finds.
 type productionCharacterProposalEnvelope struct {
-	Version                       int64                              `json:"version"`
-	ArchitectureDerivationVersion *int64                             `json:"architectureDerivationVersion,omitempty"`
-	ProjectID                     string                             `json:"projectId"`
-	Proof                         *productionCharacterProposalProof `json:"proof"`
-	Batch                         *productionCharacterProposalBatch `json:"batch"`
-	Decision                      json.RawMessage                    `json:"decision,omitempty"`
+	Version                       int64                                 `json:"version"`
+	ArchitectureDerivationVersion *int64                                `json:"architectureDerivationVersion,omitempty"`
+	ProjectID                     string                                `json:"projectId"`
+	Proof                         *productionCharacterProposalProof     `json:"proof"`
+	Batch                         *productionCharacterProposalBatch     `json:"batch"`
+	Decision                      json.RawMessage                       `json:"decision,omitempty"`
 	Created                       *[]productionCharacterProposalCreated `json:"created,omitempty"`
-	AuthorEditProof               json.RawMessage                    `json:"authorEditProof,omitempty"`
-	ApprovalProof                 json.RawMessage                    `json:"approvalProof,omitempty"`
+	AuthorEditProof               json.RawMessage                       `json:"authorEditProof,omitempty"`
+	ApprovalProof                 json.RawMessage                       `json:"approvalProof,omitempty"`
 }
 
 // productionCharacterProposalAlias is ScopedCharacterAlias
@@ -481,7 +481,7 @@ type productionCharacterProposalAlias struct {
 // productionCharacterProposalReceipt is the part of the approval receipt the caller
 // receives (character-proposal-service.ts:284, :312-320).
 type productionCharacterProposalReceipt struct {
-	Revision int64                            `json:"revision"`
+	Revision int64                                `json:"revision"`
 	Created  []productionCharacterProposalCreated `json:"created"`
 }
 
@@ -494,7 +494,7 @@ type productionCharacterProposalFieldOrigin struct {
 // productionCharacterProposalStaticProvenance is the stored static_provenance
 // object: a row-level kind and, for an edited row, a per-field kind that wins.
 type productionCharacterProposalStaticProvenance struct {
-	Kind   string                                        `json:"kind"`
+	Kind   string                                            `json:"kind"`
 	Fields map[string]productionCharacterProposalFieldOrigin `json:"fields"`
 }
 
@@ -1941,14 +1941,14 @@ type productionCharacterProposalCommitField struct {
 
 // productionCharacterProposalCommitChange is one change of the canonical encoding.
 type productionCharacterProposalCommitChange struct {
-	CharacterID string                                `json:"characterId"`
+	CharacterID string                                   `json:"characterId"`
 	Fields      []productionCharacterProposalCommitField `json:"fields"`
 }
 
 // productionCharacterProposalCommitCreation is one creation of the canonical encoding.
 type productionCharacterProposalCommitCreation struct {
-	SelectionKey string                                `json:"selectionKey"`
-	Fields      []productionCharacterProposalCommitField `json:"fields"`
+	SelectionKey string                                   `json:"selectionKey"`
+	Fields       []productionCharacterProposalCommitField `json:"fields"`
 }
 
 // productionCharacterProposalCommitRelationship is one relationship of the
@@ -1981,9 +1981,9 @@ type productionCharacterProposalCommitApproval struct {
 // productionCharacterProposalCommitProvenance is the provenance of the canonical
 // encoding.
 type productionCharacterProposalCommitProvenance struct {
-	Kind          string                        `json:"kind"`
+	Kind          string                         `json:"kind"`
 	Source        productionCharacterProposalRef `json:"source"`
-	ModelRevision string                        `json:"modelRevision"`
+	ModelRevision string                         `json:"modelRevision"`
 }
 
 // productionCharacterProposalCommitRequest is the canonical encoding of one
@@ -1995,7 +1995,7 @@ type productionCharacterProposalCommitRequest struct {
 	Approval      productionCharacterProposalCommitApproval       `json:"approval"`
 	Changes       []productionCharacterProposalCommitChange       `json:"changes"`
 	Creations     []productionCharacterProposalCommitCreation     `json:"creations"`
-	RetireIDs     []string                                       `json:"retireIds"`
+	RetireIDs     []string                                        `json:"retireIds"`
 	Relationships []productionCharacterProposalCommitRelationship `json:"relationships"`
 	Resolutions   []productionCharacterProposalCommitResolution   `json:"resolutions"`
 }

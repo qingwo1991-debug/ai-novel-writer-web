@@ -18,6 +18,7 @@ let container: HTMLDivElement
 let invoke: ReturnType<typeof vi.spyOn>
 let on: ReturnType<typeof vi.spyOn>
 
+// eslint-disable-next-line react-refresh/only-export-components
 function Guard({ settingsDirty = false }: { settingsDirty?: boolean }) {
   useUnsavedSettings(settingsDirty)
   useWindowCloseGuard()

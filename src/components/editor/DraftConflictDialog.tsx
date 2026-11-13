@@ -48,6 +48,7 @@ function getConflictSnapshot(): ActiveDraftConflict | null {
  * Binder-free 回调注册表：`use-draft-actions.ts` 调它打开对话框，并 await 作者的选择。
  * 对话框组件订阅同一个模块级状态渲染。一次只挂一个冲突，覆盖写入失败重试也是先 await 再重开。
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function openDraftConflictDialog(
   prompt: DraftConflictPrompt,
 ): Promise<DraftConflictResolution> {

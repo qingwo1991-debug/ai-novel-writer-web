@@ -24,8 +24,8 @@ import (
 // is absent.
 
 const (
-	productionFinalizationServeSlotID = "finalization-serve-owned"
-	productionFinalizationServeDraft  = 7
+	productionFinalizationServeSlotID  = "finalization-serve-owned"
+	productionFinalizationServeDraft   = 7
 	productionFinalizationServeChapter = 3
 )
 

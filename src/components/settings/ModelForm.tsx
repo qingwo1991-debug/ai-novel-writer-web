@@ -65,13 +65,13 @@ export function ModelForm({
   // A redacted credential belongs to the endpoint at which this form opened.
   // Metadata is never a key and may not follow provider/endpoint edits. The
   // server repeats this check before restoring any stored secret.
-  const credentialBinding = useRef(model.hasCredential === true ? {
+  const [credentialBinding] = useState(() => model.hasCredential === true ? {
     id: model.id,
     provider: model.provider,
     protocol: model.protocol,
     baseUrl: model.baseUrl.trim(),
   } : null)
-  const binding = credentialBinding.current
+  const binding = credentialBinding
   const canUseSavedCredential = model.hasCredential === true && binding !== null
     && binding.id === model.id && binding.provider === model.provider
     && binding.protocol === model.protocol && binding.baseUrl === model.baseUrl.trim()

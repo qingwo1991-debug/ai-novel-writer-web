@@ -191,10 +191,10 @@ func newSyntheticGeneration(durable *syntheticDurableOpen, server *transport.Ser
 		return nil, err
 	}
 	executor := &generationowner.Executor{
-		Registry:       registry,
-		SecretStorage:  generationowner.PlaintextCredential{},
-		Egress:         endpoints,
-		DispatchFunc:   config.Dispatch,
+		Registry:      registry,
+		SecretStorage: generationowner.PlaintextCredential{},
+		Egress:        endpoints,
+		DispatchFunc:  config.Dispatch,
 	}
 	return &syntheticGeneration{
 		lifecycle:  durable.lifecycle,
@@ -357,7 +357,6 @@ func syntheticArgs(values ...any) (json.RawMessage, error) {
 	}
 	return raw, nil
 }
-
 
 // syntheticCall invokes a ledger method with marshaled positional arguments.
 func syntheticCall(ctx context.Context, ledger *store.GenerationLedger, method string, values ...any) (any, error) {
@@ -785,9 +784,9 @@ func syntheticBuildSources(ctx context.Context, db *sql.DB, selection syntheticS
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNSUPPORTED")
 		}
 		text, err := syntheticCanonical(map[string]any{
-			"key":            key.ID,
+			"key":             key.ID,
 			"writingLanguage": parts[1],
-			"content":        "synthetic:" + key.ID,
+			"content":         "synthetic:" + key.ID,
 		})
 		if err != nil {
 			return generationowner.SourceValue{}, errors.New("GENERATION_SOURCE_UNAVAILABLE")
@@ -880,17 +879,17 @@ func syntheticAuthorInputs(inputs []map[string]any) []map[string]any {
 // same sources at execute time; modelLeaseId is the only model secret handle.
 func syntheticManifest(selection syntheticSelection, scope generationowner.Scope, leaseID, fingerprint string) map[string]any {
 	manifest := map[string]any{
-		"operation":                  selection.Operation,
-		"modelId":                    selection.ModelID,
-		"modelLeaseId":               leaseID,
-		"goOwnerSourceFingerprint":   fingerprint,
-		"purpose":                    syntheticPurpose(selection.Operation),
-		"output":                     selection.Output,
-		"promptKeys":                 selection.PromptKeys,
-		"skillStages":                selection.SkillStages,
-		"authorInputs":               syntheticAuthorInputs(selection.AuthorInputs),
-		"selectedDraftIds":           selection.SelectedDraftIDs,
-		"selectedFinalizedDraftIds":  selection.SelectedFinalizedDraftIDs,
+		"operation":                       selection.Operation,
+		"modelId":                         selection.ModelID,
+		"modelLeaseId":                    leaseID,
+		"goOwnerSourceFingerprint":        fingerprint,
+		"purpose":                         syntheticPurpose(selection.Operation),
+		"output":                          selection.Output,
+		"promptKeys":                      selection.PromptKeys,
+		"skillStages":                     selection.SkillStages,
+		"authorInputs":                    syntheticAuthorInputs(selection.AuthorInputs),
+		"selectedDraftIds":                selection.SelectedDraftIDs,
+		"selectedFinalizedDraftIds":       selection.SelectedFinalizedDraftIDs,
 		"selectedBlueprintChapterNumbers": selection.SelectedBlueprintChapters,
 	}
 	if selection.HasChapterNumber {
@@ -1109,16 +1108,16 @@ func (s *syntheticGeneration) openRun(ctx context.Context, ledger *store.Generat
 		manifest[key] = value
 	}
 	request := map[string]any{
-		"projectId":        scope.Project,
-		"epoch":            scope.Epoch,
-		"fingerprint":      fingerprint,
+		"projectId":         scope.Project,
+		"epoch":             scope.Epoch,
+		"fingerprint":       fingerprint,
 		"contextSnapshotId": syntheticHash(set.CoreText),
-		"sourceManifest":   manifest,
-		"sourceRefs":       refs,
-		"operation":        selection.Operation,
-		"uiActionNonce":    selection.UIActionNonce,
-		"frozenInputHash":  syntheticHash(frozenInput),
-		"budget":           budget,
+		"sourceManifest":    manifest,
+		"sourceRefs":        refs,
+		"operation":         selection.Operation,
+		"uiActionNonce":     selection.UIActionNonce,
+		"frozenInputHash":   syntheticHash(frozenInput),
+		"budget":            budget,
 	}
 	if selection.ParentRootActionID != "" {
 		request["parentRootActionId"] = selection.ParentRootActionID
@@ -2321,17 +2320,17 @@ func (s *syntheticGeneration) viewFor(ctx context.Context, ledger *store.Generat
 		"runId":        runID,
 	}
 	return map[string]any{
-		"handle":             handle,
-		"status":             run["status"],
-		"operation":          manifest["operation"],
-		"budgetDiagnostics":  diagnostics,
-		"inFlight":           inFlightValue == true,
-		"nonReplayable":      nonReplayable,
+		"handle":            handle,
+		"status":            run["status"],
+		"operation":         manifest["operation"],
+		"budgetDiagnostics": diagnostics,
+		"inFlight":          inFlightValue == true,
+		"nonReplayable":     nonReplayable,
 		"budget": map[string]any{
-			"maxAttempts":                       policy["maxPhysicalRequests"],
-			"maxRequestedOutputTokens":          policy["maxTokenLiability"],
+			"maxAttempts":                        policy["maxPhysicalRequests"],
+			"maxRequestedOutputTokens":           policy["maxTokenLiability"],
 			"maxRequestedOutputTokensPerAttempt": policy["maxOutputPerRequest"],
-			"deadlineAt":                        time.Now().UnixMilli() + remaining,
+			"deadlineAt":                         time.Now().UnixMilli() + remaining,
 		},
 		"ledger": map[string]any{
 			"policy":           policy,
@@ -2340,7 +2339,7 @@ func (s *syntheticGeneration) viewFor(ctx context.Context, ledger *store.Generat
 			"activeElapsedMs":  elapsed,
 			"blockedCode":      blocked,
 		},
-		"artifacts": artifacts,
+		"artifacts":  artifacts,
 		"candidates": candidates,
 	}, nil
 }
@@ -2381,17 +2380,17 @@ func (s *syntheticGeneration) snapshotOf(ctx context.Context, db *sql.DB, receip
 		}
 	}
 	snapshot := map[string]any{
-		"projectId":         binding["projectId"],
-		"epoch":             artifact["epoch"],
-		"rootActionId":      run["rootActionId"],
-		"runId":             run["runId"],
-		"artifactId":        artifact["artifactId"],
-		"attemptId":         artifact["attemptId"],
-		"revision":          artifact["revision"],
-		"durableRevision":   artifact["revision"],
-		"text":              artifact["text"],
-		"textHash":          artifact["textHash"],
-		"status":            status,
+		"projectId":           binding["projectId"],
+		"epoch":               artifact["epoch"],
+		"rootActionId":        run["rootActionId"],
+		"runId":               run["runId"],
+		"artifactId":          artifact["artifactId"],
+		"attemptId":           artifact["attemptId"],
+		"revision":            artifact["revision"],
+		"durableRevision":     artifact["revision"],
+		"text":                artifact["text"],
+		"textHash":            artifact["textHash"],
+		"status":              status,
 		"compositionEligible": compositionEligible,
 	}
 	if diagnostics := receipt["diagnostics"]; diagnostics != nil {
@@ -2454,8 +2453,8 @@ func syntheticBudgetDiagnostic(receipt map[string]any, budget map[string]any) ma
 		actualState = "reserved"
 	}
 	entry := map[string]any{
-		"attemptId":            syntheticString(attempt["attemptId"]),
-		"runId":                syntheticString(syntheticMap(receipt["run"])["runId"]),
+		"attemptId":             syntheticString(attempt["attemptId"]),
+		"runId":                 syntheticString(syntheticMap(receipt["run"])["runId"]),
 		"requestedOutputTokens": syntheticNumber(attempt["requestedOutputTokens"]),
 		"reservedTokens":        syntheticNumber(attempt["reservedTokens"]),
 		"actualState":           actualState,

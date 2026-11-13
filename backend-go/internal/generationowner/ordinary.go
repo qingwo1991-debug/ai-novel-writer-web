@@ -86,8 +86,8 @@ func verifyOrdinaryRun(result any, frozen *Frozen) error {
 }
 
 type OrdinaryCallbacks struct {
-	OnSnapshot       func(generation.Snapshot)
-	OnReasoning      func(generation.ReasoningEvent)
+	OnSnapshot  func(generation.Snapshot)
+	OnReasoning func(generation.ReasoningEvent)
 	// ValidateRecovery authorizes generation:resume. When nil the service
 	// remains default-deny, so a durable lane that wants resume must supply it.
 	ValidateRecovery func(context.Context, map[string]any, map[string]any) (bool, error)

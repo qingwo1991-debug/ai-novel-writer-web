@@ -40,7 +40,6 @@ func (l *ReadLifecycle) BeginGenerationLedgerRead(ctx context.Context, owner pro
 	return store.NewGenerationLedger(db, nil, nil), db, done, nil
 }
 
-
 // BeginGenerationLedgerDB is BeginGenerationLedger plus the admitted author's
 // own database handle. The reduced synthetic generation lane needs both under a
 // single single-writer admission: the ledger writes the durable run rows while

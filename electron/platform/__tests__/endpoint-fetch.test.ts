@@ -94,8 +94,7 @@ describe('native web endpoint dispatch policy', () => {
 })
 
 describe('cross-provider actual dispatch coverage', () => {
-  it.each<ModelProfile['provider']>(['openai', 'deepseek', 'ollama', 'bigmodel', 'novelai', 'xai', 'siliconflow', 'custom'])
-  ('covers OpenAI-compatible %s generation and streaming without restricting desktop provider mappings', async provider => {
+  it.each<ModelProfile['provider']>(['openai', 'deepseek', 'ollama', 'bigmodel', 'novelai', 'xai', 'siliconflow', 'custom'])('covers OpenAI-compatible %s generation and streaming without restricting desktop provider mappings', async provider => {
     const dispatch = vi.fn<typeof fetch>().mockImplementation(async () => response({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }))
     vi.stubGlobal('fetch', dispatch)
     const profile = model(provider), instance = LLMFactory.getProvider(profile)

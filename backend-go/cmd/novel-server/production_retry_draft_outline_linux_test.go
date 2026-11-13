@@ -68,12 +68,12 @@ func (s *productionRetrySeam) dispatched() int {
 func productionRetryBeginRequest(nonce, shortOutlinePromptHash string) map[string]any {
 	request := productionEditorBeginRequest(nonce)
 	request["materialDecision"] = map[string]any{
-		"version":               float64(1),
-		"verdict":               "admitted",
-		"promptHash":            strings.Repeat("a1", 32),
+		"version":                float64(1),
+		"verdict":                "admitted",
+		"promptHash":             strings.Repeat("a1", 32),
 		"shortOutlinePromptHash": shortOutlinePromptHash,
-		"capacity":              map[string]any{"maxInputUnits": float64(4096), "methodVersion": "ci-material-1"},
-		"coverage":              map[string]any{"complete": true},
+		"capacity":               map[string]any{"maxInputUnits": float64(4096), "methodVersion": "ci-material-1"},
+		"coverage":               map[string]any{"complete": true},
 		"included": []any{map[string]any{
 			"sourceId": "draft:1", "category": "draft", "contentHash": strings.Repeat("b2", 32),
 		}},

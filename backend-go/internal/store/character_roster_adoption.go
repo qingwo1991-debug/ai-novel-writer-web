@@ -41,11 +41,11 @@ const (
 
 // LegacyRosterAdoptionRequest is AdoptLegacyCardsRequest (legacy-roster-source.ts:20-26).
 type LegacyRosterAdoptionRequest struct {
-	OperationID             string
-	ExpectedRevision        int64
-	ExpectedLegacyHash      string
+	OperationID              string
+	ExpectedRevision         int64
+	ExpectedLegacyHash       string
 	ExpectedIdentityRevision int64
-	ExpectedFactsHash       string
+	ExpectedFactsHash        string
 }
 
 // LegacyRosterAdoptionSource is the subset of LegacyRosterSource the adoption

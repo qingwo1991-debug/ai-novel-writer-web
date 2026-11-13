@@ -9,9 +9,9 @@ import (
 
 func TestLogicalKnowledgeRequiresNativeAdmission(t *testing.T) {
 	config := KnowledgeConfig{
-		Copy: projectfs.KnowledgeBudget{MaxBytes: 1024, MaxEntries: 10, MaxDepth: 3},
+		Copy:     projectfs.KnowledgeBudget{MaxBytes: 1024, MaxEntries: 10, MaxDepth: 3},
 		Metadata: knowledgecopy.Budget{MaxMetadataBytes: 1024, MaxCopies: 10},
-		Logical: true,
+		Logical:  true,
 	}
 	if validKnowledgeConfig(config) {
 		t.Fatal("logical hash accepted without native typed and source-copy admission")

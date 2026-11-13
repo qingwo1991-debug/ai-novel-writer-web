@@ -197,15 +197,15 @@ func (s *Store) Directory(bookID, generationID string) (string, error) {
 // snapshot: Publish hashes what it reads and refuses when the bytes do not match
 // the declared digest and size, so a caller cannot publish a changing file.
 type PublishInput struct {
-	BookID                     string
-	GenerationID               string
-	OriginProjectID            string
-	SnapshotGeneration         string
-	ParentGenerationIDs        []string
-	CreatedAt                  string
-	Archive                    io.Reader
-	ArchiveSHA256              string
-	ArchiveByteSize            int64
+	BookID              string
+	GenerationID        string
+	OriginProjectID     string
+	SnapshotGeneration  string
+	ParentGenerationIDs []string
+	CreatedAt           string
+	Archive             io.Reader
+	ArchiveSHA256       string
+	ArchiveByteSize     int64
 }
 
 // Publish writes one generation, proves it from the published bytes, and returns
@@ -280,8 +280,8 @@ func (s *Store) Publish(ctx context.Context, input PublishInput) (webdav.Generat
 	}
 	manifestDigest := digestHex(manifestBytes)
 	completion := webdav.Completion{
-		Version:     1,
-		CloudBookID: input.BookID,
+		Version:      1,
+		CloudBookID:  input.BookID,
 		GenerationID: input.GenerationID,
 		Manifest: webdav.ManifestDescriptor{
 			File:     manifestName,

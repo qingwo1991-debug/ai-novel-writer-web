@@ -54,12 +54,12 @@ type FinalizedContinuityFact struct {
 // SaveFinalizedContinuityRequest mirrors SaveFinalizedContinuityRequest
 // (src/shared/finalized-continuity.ts:248-257).
 type SaveFinalizedContinuityRequest struct {
-	DraftID             int64
-	ChapterNumber       int64
-	ChapterNotes        string
-	Facts               []FinalizedContinuityFact
+	DraftID              int64
+	ChapterNumber        int64
+	ChapterNotes         string
+	Facts                []FinalizedContinuityFact
 	ProjectionGeneration int64
-	Source              FinalizedCharacterSourceIdentity
+	Source               FinalizedCharacterSourceIdentity
 }
 
 var finalizedContinuityFactCategories = regexp.MustCompile(`(?i)(?:角色|状态|持有|受伤|位于|死亡|身亡|牺牲|去世|character|holds?|injur|location|dead|died|deceased)`)

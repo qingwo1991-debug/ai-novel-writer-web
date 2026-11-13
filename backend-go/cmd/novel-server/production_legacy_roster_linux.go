@@ -396,9 +396,9 @@ func (l *productionLegacyRoster) Bind(server *transport.Server) error {
 			}
 			return answer, nil
 		}); err != nil {
-			return err
-		}
-		return server.Bind(productionLegacyRosterAdoptExistingName, l.adoptExisting)
+		return err
+	}
+	return server.Bind(productionLegacyRosterAdoptExistingName, l.adoptExisting)
 }
 
 // productionLegacyRosterQuerier is the query surface the source proof runs over.

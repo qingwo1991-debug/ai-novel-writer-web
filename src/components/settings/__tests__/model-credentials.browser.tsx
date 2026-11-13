@@ -21,8 +21,8 @@ let root: Root | undefined
 let container: HTMLDivElement | undefined
 
 async function renderForm() {
-  const discoverModels = vi.fn(async (_request: ModelDiscoveryRequest) => ({ success: true as const, models: [] }))
-  const testConnection = vi.fn(async (_model: ModelProfile) => ({ success: true }))
+  const discoverModels = vi.fn(async (_request: ModelDiscoveryRequest) => { void _request; return { success: true as const, models: [] } })
+  const testConnection = vi.fn(async (_model: ModelProfile) => { void _model; return { success: true } })
   const save = vi.fn()
   useLocaleStore.setState({ locale: 'zh-CN' })
   useLLMStore.setState({ discoverModels, testConnection })

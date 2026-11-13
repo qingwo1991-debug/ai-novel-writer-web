@@ -1759,9 +1759,9 @@ func productionPortabilityAuthorityDocument(projectID, generation, databaseDiges
 		return nil, "", errors.New(productionPortabilityCodeInvalid)
 	}
 	payload := struct {
-		OriginProjectID        string                                `json:"originProjectId"`
-		SnapshotGeneration     string                                `json:"snapshotGeneration"`
-		PortableDatabaseSHA256 string                                `json:"portableDatabaseSha256"`
+		OriginProjectID        string                                 `json:"originProjectId"`
+		SnapshotGeneration     string                                 `json:"snapshotGeneration"`
+		PortableDatabaseSHA256 string                                 `json:"portableDatabaseSha256"`
 		Finalizations          []archiveformat.FinalizationAuthority  `json:"finalizations"`
 		SummarySources         []archiveformat.SummarySourceAuthority `json:"summarySources"`
 	}{

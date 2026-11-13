@@ -509,8 +509,8 @@ func TestProductionPortabilityPeekReadsWithoutLeaseOrWrite(t *testing.T) {
 		ProjectID         string `json:"projectId"`
 		Name              string `json:"name"`
 		Revision          string `json:"revision"`
-		FinalizedChapters int   `json:"finalizedChapters"`
-		PlannedChapters   int64 `json:"plannedChapters"`
+		FinalizedChapters int    `json:"finalizedChapters"`
+		PlannedChapters   int64  `json:"plannedChapters"`
 		Stages            []struct {
 			ID    string `json:"id"`
 			Count int    `json:"count"`

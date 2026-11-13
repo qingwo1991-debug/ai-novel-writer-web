@@ -91,10 +91,10 @@ type rosterAuthorEntry struct {
 }
 
 type rosterAuthorRequest struct {
-	operationID            string
-	expectedRevision       int64
+	operationID              string
+	expectedRevision         int64
 	expectedIdentityRevision int64
-	entries                []rosterAuthorEntry
+	entries                  []rosterAuthorEntry
 }
 
 // rosterAuthorEnvelope is the saved idempotency envelope (:151-153) and this is

@@ -360,24 +360,24 @@ func (s *syntheticGeneration) GraphConfirm(ctx context.Context, caller transport
 func productionGraphGenerationExecuteServed() []productionGraphGenerationLine {
 	return []productionGraphGenerationLine{
 		{
-			Path:   "production_graph_generation_execute_linux.go", Line: 1, Marker: "func (s *syntheticGeneration) GraphExecute",
-			Note:   "execute dispatches the frozen graph task through the same lease and executor as generation:execute",
+			Path: "production_graph_generation_execute_linux.go", Line: 1, Marker: "func (s *syntheticGeneration) GraphExecute",
+			Note: "execute dispatches the frozen graph task through the same lease and executor as generation:execute",
 		},
 		{
-			Path:   "../../../electron/services/graph-generation.ts", Line: 38, Marker: "private proof(run: DurableGenerationRun",
-			Note:   "the artifact qualification confirm re-proves before it writes the plan",
+			Path: "../../../electron/services/graph-generation.ts", Line: 38, Marker: "private proof(run: DurableGenerationRun",
+			Note: "the artifact qualification confirm re-proves before it writes the plan",
 		},
 		{
-			Path:   "../../../electron/services/graph-generation.ts", Line: 130, Marker: "graphEffects: [...(usage.graphEffects as StoredGraphEffect[] ?? []), effect]",
-			Note:   "the effect stamp confirm appends inside the same transaction",
+			Path: "../../../electron/services/graph-generation.ts", Line: 130, Marker: "graphEffects: [...(usage.graphEffects as StoredGraphEffect[] ?? []), effect]",
+			Note: "the effect stamp confirm appends inside the same transaction",
 		},
 		{
-			Path:   "../../internal/store/graph_generation_confirm.go", Line: 1, Marker: "func ConfirmGraphPlan",
-			Note:   "the one BEGIN IMMEDIATE transaction that writes the plan and stamps the effect",
+			Path: "../../internal/store/graph_generation_confirm.go", Line: 1, Marker: "func ConfirmGraphPlan",
+			Note: "the one BEGIN IMMEDIATE transaction that writes the plan and stamps the effect",
 		},
 		{
-			Path:   "../../internal/graphgen/parse.go", Line: 104, Marker: "func ParseNarrativeThreadPlanCandidates",
-			Note:   "the derivation the seam claimed had no port, which now serves confirm",
+			Path: "../../internal/graphgen/parse.go", Line: 104, Marker: "func ParseNarrativeThreadPlanCandidates",
+			Note: "the derivation the seam claimed had no port, which now serves confirm",
 		},
 	}
 }

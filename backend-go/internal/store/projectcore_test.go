@@ -163,7 +163,7 @@ func TestProjectCoreExactFieldMapping(t *testing.T) {
 			keys := []string{"projectName", "genre", "subGenre", "targetAudience", "totalChapters", "wordsPerChapter", "writingLanguage", "creativeStrategy", "narrativeThreadDormantChapterThreshold", "plotStructure", "narrativePov", "writingStyle", "referenceWorks", "globalGuidance", "goldenFinger", "coreOutline", "worldSetting", "protagonistProfile", "premise", "worldbuilding", "synopsis", "characterStates"}
 			for i, column := range columns {
 				var actual any
-				if err := db.QueryRow("SELECT "+column+" FROM project_core WHERE id='main'").Scan(&actual); err != nil || !reflect.DeepEqual(actual, data[keys[i]]) {
+				if err := db.QueryRow("SELECT " + column + " FROM project_core WHERE id='main'").Scan(&actual); err != nil || !reflect.DeepEqual(actual, data[keys[i]]) {
 					t.Fatalf("%s = %#v, want %#v; err=%v", column, actual, data[keys[i]], err)
 				}
 			}

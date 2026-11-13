@@ -51,5 +51,4 @@ export const builtinTools = [
  */
 export function registerBuiltinTools(): void {
   toolRegistry.registerAll(builtinTools)
-  console.log(`[Agent] 已注册 ${builtinTools.length} 个内置 Tool`)
 }

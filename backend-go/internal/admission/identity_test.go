@@ -17,24 +17,32 @@ func identityFixture(t *testing.T) (string, *sql.DB, SchemaContract) {
 		"CREATE TABLE character_aliases (character_id TEXT, name TEXT, source_key TEXT, valid_from INTEGER, valid_through INTEGER)",
 		"INSERT INTO character_identity_meta VALUES ('main',0,0)",
 	} {
-		if _, err := db.Exec(statement); err != nil { t.Fatal(err) }
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tx, err := db.Begin()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	fingerprint, _, err := schemaFingerprint(context.Background(), tx)
 	tx.Rollback()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return path, db, SchemaContract{{Version: 7, Fingerprints: []string{fingerprint}}}
 }
 
 func TestIdentityInvariantsAllowEmptyButInitializedMetadata(t *testing.T) {
 	path, db, contract := identityFixture(t)
 	db.Close()
-	if _, err := VerifySnapshot(context.Background(), path, contract); err != nil { t.Fatal(err) }
+	if _, err := VerifySnapshot(context.Background(), path, contract); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestIdentityInvariantsRejectDamagedDomainWithoutRepair(t *testing.T) {
-	for _, test := range []struct { name, mutation string }{
+	for _, test := range []struct{ name, mutation string }{
 		{"missing_meta", "DELETE FROM character_identity_meta"},
 		{"negative_revision", "UPDATE character_identity_meta SET revision=-1"},
 		{"unsafe_revision", "UPDATE character_identity_meta SET revision=9007199254740992"},
@@ -51,12 +59,16 @@ func TestIdentityInvariantsRejectDamagedDomainWithoutRepair(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path, db, contract := identityFixture(t)
-			if _, err := db.Exec(test.mutation); err != nil { t.Fatal(err) }
+			if _, err := db.Exec(test.mutation); err != nil {
+				t.Fatal(err)
+			}
 			db.Close()
 			before := hashFile(t, path)
 			_, err := VerifySnapshot(context.Background(), path, contract)
 			requireCode(t, err, CodeDomain)
-			if hashFile(t, path) != before { t.Fatal("domain verification repaired snapshot") }
+			if hashFile(t, path) != before {
+				t.Fatal("domain verification repaired snapshot")
+			}
 		})
 	}
 }

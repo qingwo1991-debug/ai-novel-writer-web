@@ -24,24 +24,24 @@ import (
 const CurrentSchemaVersion = 7
 
 const (
-	CodeInvalidContract = "SCHEMA_CONTRACT_INVALID"
-	CodeMigrationRequired = "SCHEMA_MIGRATION_REQUIRED"
-	CodeNewerSchema = "SCHEMA_NEWER_UNSUPPORTED"
-	CodeInvalidVersion = "SCHEMA_VERSION_INVALID"
+	CodeInvalidContract    = "SCHEMA_CONTRACT_INVALID"
+	CodeMigrationRequired  = "SCHEMA_MIGRATION_REQUIRED"
+	CodeNewerSchema        = "SCHEMA_NEWER_UNSUPPORTED"
+	CodeInvalidVersion     = "SCHEMA_VERSION_INVALID"
 	CodeUnrecognizedSchema = "SCHEMA_UNRECOGNIZED"
-	CodeIntegrity = "SCHEMA_INTEGRITY_FAILED"
-	CodeForeignKey = "SCHEMA_FOREIGN_KEY_FAILED"
-	CodeDomain = "SCHEMA_DOMAIN_INVARIANT_FAILED"
-	CodeUnsafeSnapshot = "SNAPSHOT_UNSAFE_FILE"
-	CodeMissingSnapshot = "SNAPSHOT_MISSING"
-	CodeSnapshotChanged = "SNAPSHOT_CHANGED"
-	CodeSnapshotRead = "SNAPSHOT_READ_FAILED"
+	CodeIntegrity          = "SCHEMA_INTEGRITY_FAILED"
+	CodeForeignKey         = "SCHEMA_FOREIGN_KEY_FAILED"
+	CodeDomain             = "SCHEMA_DOMAIN_INVARIANT_FAILED"
+	CodeUnsafeSnapshot     = "SNAPSHOT_UNSAFE_FILE"
+	CodeMissingSnapshot    = "SNAPSHOT_MISSING"
+	CodeSnapshotChanged    = "SNAPSHOT_CHANGED"
+	CodeSnapshotRead       = "SNAPSHOT_READ_FAILED"
 )
 
 // Error exposes a stable code without leaking SQLite errors containing author
 // values or file paths. Unwrap preserves cancellation and diagnostic causes.
 type Error struct {
-	Code string
+	Code  string
 	cause error
 }
 
@@ -53,7 +53,7 @@ func failure(code string, cause error) error { return &Error{Code: code, cause: 
 // VersionContract is supplied by a trusted application contract generated from
 // the TypeScript migration registry, never by the project being admitted.
 type VersionContract struct {
-	Version int `json:"version"`
+	Version      int      `json:"version"`
 	Fingerprints []string `json:"fingerprints"`
 }
 
@@ -64,15 +64,15 @@ type SchemaContract []VersionContract
 // This is physical preservation evidence, not a logical row/content hash.
 type ContentIdentity struct {
 	Database string `json:"database"`
-	WAL string `json:"wal"`
+	WAL      string `json:"wal"`
 }
 
 type Evidence struct {
-	UserVersion int `json:"userVersion"`
-	SchemaFingerprint string `json:"schemaFingerprint"`
-	TableCounts map[string]int64 `json:"tableCounts"`
-	ContentIdentity ContentIdentity `json:"contentIdentity"`
-	Domain *DomainEvidence `json:"domain,omitempty"`
+	UserVersion       int              `json:"userVersion"`
+	SchemaFingerprint string           `json:"schemaFingerprint"`
+	TableCounts       map[string]int64 `json:"tableCounts"`
+	ContentIdentity   ContentIdentity  `json:"contentIdentity"`
+	Domain            *DomainEvidence  `json:"domain,omitempty"`
 }
 
 func validateContract(expected SchemaContract) error {
@@ -89,12 +89,18 @@ func validateContract(expected SchemaContract) error {
 			}
 			// The same DDL can legitimately be registered at two versions.
 			key := string(rune(entry.Version)) + ":" + fingerprint
-			if seen[key] { return failure(CodeInvalidContract, nil) }
+			if seen[key] {
+				return failure(CodeInvalidContract, nil)
+			}
 			seen[key] = true
-			if entry.Version == CurrentSchemaVersion { current = true }
+			if entry.Version == CurrentSchemaVersion {
+				current = true
+			}
 		}
 	}
-	if !current { return failure(CodeInvalidContract, nil) }
+	if !current {
+		return failure(CodeInvalidContract, nil)
+	}
 	return nil
 }
 
@@ -104,23 +110,32 @@ func validateContract(expected SchemaContract) error {
 // All reads share one connection/transaction; pre/post byte identities detect
 // drift. Sidecars must be regular files in this same caller-owned directory.
 func VerifySnapshot(ctx context.Context, path string, expected SchemaContract) (Evidence, error) {
- return verifySnapshot(ctx,path,expected,false)
+	return verifySnapshot(ctx, path, expected, false)
 }
+
 // VerifySnapshotWithDomain adds the original migration lane's logical row proof.
 // It is deliberately opt-in: opening current projects must not sort all author
 // text merely to inspect their schema. Logical rows use bounded sorted spill
 // runs in private temporary directories; a single encoded row is capped at64MiB.
-func VerifySnapshotWithDomain(ctx context.Context,path string,expected SchemaContract)(Evidence,error){
- return verifySnapshot(ctx,path,expected,true)
+func VerifySnapshotWithDomain(ctx context.Context, path string, expected SchemaContract) (Evidence, error) {
+	return verifySnapshot(ctx, path, expected, true)
 }
 func verifySnapshot(ctx context.Context, path string, expected SchemaContract, withDomain bool) (Evidence, error) {
 	var zero Evidence
-	if err := validateContract(expected); err != nil { return zero, err }
-	if err := ctx.Err(); err != nil { return zero, err }
+	if err := validateContract(expected); err != nil {
+		return zero, err
+	}
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	absolute, err := snapshotPath(path)
-	if err != nil { return zero, err }
+	if err != nil {
+		return zero, err
+	}
 	before, err := snapshotIdentity(ctx, absolute)
-	if err != nil { return zero, err }
+	if err != nil {
+		return zero, err
+	}
 	uri := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}
 	query := url.Values{}
 	query.Set("mode", "ro")
@@ -129,32 +144,54 @@ func verifySnapshot(ctx context.Context, path string, expected SchemaContract, w
 	query.Set("_query_only", "on")
 	uri.RawQuery = query.Encode()
 	db, err := sql.Open("sqlite3", uri.String())
-	if err != nil { return zero, failure(CodeSnapshotRead, err) }
+	if err != nil {
+		return zero, failure(CodeSnapshotRead, err)
+	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	defer db.Close()
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil { return zero, failure(CodeIntegrity, err) }
+	if err != nil {
+		return zero, failure(CodeIntegrity, err)
+	}
 	defer tx.Rollback()
 	var version int
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return zero, failure(CodeIntegrity, err)
 	}
-	if err := checkIntegrity(ctx, tx); err != nil { return zero, err }
-	if err := checkForeignKeys(ctx, tx); err != nil { return zero, err }
-	if version < 0 { return zero, failure(CodeInvalidVersion, nil) }
-	if version > CurrentSchemaVersion { return zero, failure(CodeNewerSchema, nil) }
-	if version < CurrentSchemaVersion { return zero, failure(CodeMigrationRequired, nil) }
+	if err := checkIntegrity(ctx, tx); err != nil {
+		return zero, err
+	}
+	if err := checkForeignKeys(ctx, tx); err != nil {
+		return zero, err
+	}
+	if version < 0 {
+		return zero, failure(CodeInvalidVersion, nil)
+	}
+	if version > CurrentSchemaVersion {
+		return zero, failure(CodeNewerSchema, nil)
+	}
+	if version < CurrentSchemaVersion {
+		return zero, failure(CodeMigrationRequired, nil)
+	}
 	fingerprint, tables, err := schemaFingerprint(ctx, tx)
-	if err != nil { return zero, failure(CodeIntegrity, err) }
+	if err != nil {
+		return zero, failure(CodeIntegrity, err)
+	}
 	matched := false
 	for _, entry := range expected {
-		if entry.Version != version { continue }
+		if entry.Version != version {
+			continue
+		}
 		for _, accepted := range entry.Fingerprints {
-			if fingerprint == accepted { matched = true }
+			if fingerprint == accepted {
+				matched = true
+			}
 		}
 	}
-	if !matched || len(tables) == 0 { return zero, failure(CodeUnrecognizedSchema, nil) }
+	if !matched || len(tables) == 0 {
+		return zero, failure(CodeUnrecognizedSchema, nil)
+	}
 	counts := make(map[string]int64, len(tables))
 	for _, table := range tables {
 		var count int64
@@ -164,43 +201,75 @@ func verifySnapshot(ctx context.Context, path string, expected SchemaContract, w
 		counts[table] = count
 	}
 	if _, desktop := counts["character_identity_meta"]; desktop {
-		if err := verifyCharacterIdentity(ctx, tx); err != nil { return zero, failure(CodeDomain, err) }
+		if err := verifyCharacterIdentity(ctx, tx); err != nil {
+			return zero, failure(CodeDomain, err)
+		}
 	}
- var domain *DomainEvidence
- if withDomain{proof,err:=logicalDomain(ctx,tx,tables);if err!=nil{return zero,failure(CodeDomain,err)};domain=&proof}
+	var domain *DomainEvidence
+	if withDomain {
+		proof, err := logicalDomain(ctx, tx, tables)
+		if err != nil {
+			return zero, failure(CodeDomain, err)
+		}
+		domain = &proof
+	}
 	// Closing the transaction/connection before hashing also catches any unexpected
 	// close-time persistent changes. ROLLBACK is read-only and never checkpoints.
-	if err := tx.Rollback(); err != nil { return zero, failure(CodeSnapshotRead, err) }
-	if err := db.Close(); err != nil { return zero, failure(CodeSnapshotRead, err) }
+	if err := tx.Rollback(); err != nil {
+		return zero, failure(CodeSnapshotRead, err)
+	}
+	if err := db.Close(); err != nil {
+		return zero, failure(CodeSnapshotRead, err)
+	}
 	after, err := snapshotIdentity(ctx, absolute)
-	if err != nil { return zero, err }
-	if before != after { return zero, failure(CodeSnapshotChanged, nil) }
+	if err != nil {
+		return zero, err
+	}
+	if before != after {
+		return zero, failure(CodeSnapshotChanged, nil)
+	}
 	return Evidence{UserVersion: version, SchemaFingerprint: fingerprint, TableCounts: counts,
-		ContentIdentity: ContentIdentity{Database: before.database, WAL: before.wal},Domain:domain}, nil
+		ContentIdentity: ContentIdentity{Database: before.database, WAL: before.wal}, Domain: domain}, nil
 }
 
 func checkIntegrity(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, "PRAGMA integrity_check")
-	if err != nil { return failure(CodeIntegrity, err) }
+	if err != nil {
+		return failure(CodeIntegrity, err)
+	}
 	defer rows.Close()
 	count := 0
 	for rows.Next() {
 		var result string
-		if err := rows.Scan(&result); err != nil { return failure(CodeIntegrity, err) }
-		if result != "ok" { return failure(CodeIntegrity, nil) }
+		if err := rows.Scan(&result); err != nil {
+			return failure(CodeIntegrity, err)
+		}
+		if result != "ok" {
+			return failure(CodeIntegrity, nil)
+		}
 		count++
 	}
-	if err := rows.Err(); err != nil { return failure(CodeIntegrity, err) }
-	if count != 1 { return failure(CodeIntegrity, nil) }
+	if err := rows.Err(); err != nil {
+		return failure(CodeIntegrity, err)
+	}
+	if count != 1 {
+		return failure(CodeIntegrity, nil)
+	}
 	return nil
 }
 
 func checkForeignKeys(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
-	if err != nil { return failure(CodeForeignKey, err) }
+	if err != nil {
+		return failure(CodeForeignKey, err)
+	}
 	defer rows.Close()
-	if rows.Next() { return failure(CodeForeignKey, nil) }
-	if err := rows.Err(); err != nil { return failure(CodeForeignKey, err) }
+	if rows.Next() {
+		return failure(CodeForeignKey, nil)
+	}
+	if err := rows.Err(); err != nil {
+		return failure(CodeForeignKey, err)
+	}
 	return nil
 }
 
@@ -211,7 +280,9 @@ func quoteIdentifier(value string) string { return `"` + strings.ReplaceAll(valu
 // use the identical LIKE predicate (including SQLite's '_' wildcard semantics).
 func schemaFingerprint(ctx context.Context, tx *sql.Tx) (string, []string, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
-	if err != nil { return "", nil, err }
+	if err != nil {
+		return "", nil, err
+	}
 	defer rows.Close()
 	encoded := []byte{'['}
 	var tables []string
@@ -219,11 +290,15 @@ func schemaFingerprint(ctx context.Context, tx *sql.Tx) (string, []string, error
 	for rows.Next() {
 		var kind, name, table string
 		var ddl sql.NullString
-		if err := rows.Scan(&kind, &name, &table, &ddl); err != nil { return "", nil, err }
+		if err := rows.Scan(&kind, &name, &table, &ddl); err != nil {
+			return "", nil, err
+		}
 		if !utf8.ValidString(kind) || !utf8.ValidString(name) || !utf8.ValidString(table) || !utf8.ValidString(ddl.String) {
 			return "", nil, errors.New("invalid UTF-8 in schema")
 		}
-		if !first { encoded = append(encoded, ',') }
+		if !first {
+			encoded = append(encoded, ',')
+		}
 		first = false
 		encoded = append(encoded, `{"type":`...)
 		encoded = appendJSString(encoded, kind)
@@ -232,11 +307,19 @@ func schemaFingerprint(ctx context.Context, tx *sql.Tx) (string, []string, error
 		encoded = append(encoded, `,"tbl_name":`...)
 		encoded = appendJSString(encoded, table)
 		encoded = append(encoded, `,"sql":`...)
-		if ddl.Valid { encoded = appendJSString(encoded, ddl.String) } else { encoded = append(encoded, "null"...) }
+		if ddl.Valid {
+			encoded = appendJSString(encoded, ddl.String)
+		} else {
+			encoded = append(encoded, "null"...)
+		}
 		encoded = append(encoded, '}')
-		if kind == "table" { tables = append(tables, name) }
+		if kind == "table" {
+			tables = append(tables, name)
+		}
 	}
-	if err := rows.Err(); err != nil { return "", nil, err }
+	if err := rows.Err(); err != nil {
+		return "", nil, err
+	}
 	encoded = append(encoded, ']')
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), tables, nil
@@ -250,29 +333,47 @@ func appendJSString(dst []byte, value string) []byte {
 	for i := 0; i < len(value); i++ {
 		c := value[i]
 		switch c {
-		case '"', '\\': dst = append(dst, '\\', c)
-		case '\b': dst = append(dst, '\\', 'b')
-		case '\f': dst = append(dst, '\\', 'f')
-		case '\n': dst = append(dst, '\\', 'n')
-		case '\r': dst = append(dst, '\\', 'r')
-		case '\t': dst = append(dst, '\\', 't')
+		case '"', '\\':
+			dst = append(dst, '\\', c)
+		case '\b':
+			dst = append(dst, '\\', 'b')
+		case '\f':
+			dst = append(dst, '\\', 'f')
+		case '\n':
+			dst = append(dst, '\\', 'n')
+		case '\r':
+			dst = append(dst, '\\', 'r')
+		case '\t':
+			dst = append(dst, '\\', 't')
 		default:
-			if c < 0x20 { dst = append(dst, '\\', 'u', '0', '0', digits[c>>4], digits[c&15]) } else { dst = append(dst, c) }
+			if c < 0x20 {
+				dst = append(dst, '\\', 'u', '0', '0', digits[c>>4], digits[c&15])
+			} else {
+				dst = append(dst, c)
+			}
 		}
 	}
 	return append(dst, '"')
 }
 
-type physicalIdentity struct { database, wal, journal string }
+type physicalIdentity struct{ database, wal, journal string }
 
 func snapshotPath(path string) (string, error) {
-	if path == "" || path == ":memory:" { return "", failure(CodeUnsafeSnapshot, nil) }
+	if path == "" || path == ":memory:" {
+		return "", failure(CodeUnsafeSnapshot, nil)
+	}
 	absolute, err := filepath.Abs(path)
-	if err != nil { return "", failure(CodeUnsafeSnapshot, err) }
+	if err != nil {
+		return "", failure(CodeUnsafeSnapshot, err)
+	}
 	for dir := filepath.Dir(absolute); ; dir = filepath.Dir(dir) {
 		info, err := os.Lstat(dir)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 { return "", failure(CodeUnsafeSnapshot, err) }
-		if filepath.Dir(dir) == dir { break }
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", failure(CodeUnsafeSnapshot, err)
+		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
 	}
 	return absolute, nil
 }
@@ -310,27 +411,45 @@ func snapshotIdentity(ctx context.Context, path string) (physicalIdentity, error
 	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		info, err := os.Lstat(path + suffix)
 		missing := errors.Is(err, os.ErrNotExist)
-		if missing && suffix == "" { return identity, failure(CodeMissingSnapshot, err) }
-		if err != nil && !missing { return identity, failure(CodeSnapshotRead, err) }
-		if !missing && (!info.Mode().IsRegular() || !singleLink(info)) { return identity, failure(CodeUnsafeSnapshot, nil) }
-		if suffix == "-shm" { continue } // Reader marks are private scratch state.
+		if missing && suffix == "" {
+			return identity, failure(CodeMissingSnapshot, err)
+		}
+		if err != nil && !missing {
+			return identity, failure(CodeSnapshotRead, err)
+		}
+		if !missing && (!info.Mode().IsRegular() || !singleLink(info)) {
+			return identity, failure(CodeUnsafeSnapshot, nil)
+		}
+		if suffix == "-shm" {
+			continue
+		} // Reader marks are private scratch state.
 		digest := sha256.New()
 		if !missing {
 			file, err := os.Open(path + suffix)
-			if err != nil { return identity, failure(CodeSnapshotRead, err) }
+			if err != nil {
+				return identity, failure(CodeSnapshotRead, err)
+			}
 			opened, statErr := file.Stat()
-			if statErr != nil || !os.SameFile(info, opened) { file.Close(); return identity, failure(CodeSnapshotChanged, statErr) }
+			if statErr != nil || !os.SameFile(info, opened) {
+				file.Close()
+				return identity, failure(CodeSnapshotChanged, statErr)
+			}
 			if suffix == "" {
 				var header [16]byte
 				_, headerErr := file.ReadAt(header[:], 0)
 				if headerErr != nil || info.Size() < 100 || !bytes.Equal(header[:], []byte("SQLite format 3\x00")) {
-					file.Close(); return identity, failure(CodeIntegrity, headerErr)
+					file.Close()
+					return identity, failure(CodeIntegrity, headerErr)
 				}
 			}
 			_, copyErr := io.Copy(digest, contextReader{ctx: ctx, reader: file})
 			closeErr := file.Close()
-			if copyErr != nil { return identity, failure(CodeSnapshotRead, copyErr) }
-			if closeErr != nil { return identity, failure(CodeSnapshotRead, closeErr) }
+			if copyErr != nil {
+				return identity, failure(CodeSnapshotRead, copyErr)
+			}
+			if closeErr != nil {
+				return identity, failure(CodeSnapshotRead, closeErr)
+			}
 			after, statErr := os.Lstat(path + suffix)
 			if statErr != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) || !singleLink(after) {
 				return identity, failure(CodeSnapshotChanged, statErr)
@@ -338,16 +457,25 @@ func snapshotIdentity(ctx context.Context, path string) (physicalIdentity, error
 		}
 		value := hex.EncodeToString(digest.Sum(nil))
 		switch suffix {
-		case "": identity.database = value
-		case "-wal": identity.wal = value
-		case "-journal": identity.journal = value
+		case "":
+			identity.database = value
+		case "-wal":
+			identity.wal = value
+		case "-journal":
+			identity.journal = value
 		}
 	}
 	return identity, nil
 }
 
-type contextReader struct { ctx context.Context; reader io.Reader }
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
 func (r contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil { return 0, err }
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
 	return r.reader.Read(p)
 }

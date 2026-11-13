@@ -111,7 +111,9 @@ func TestRejectProjectAndStorageSymlinks(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			library, path, storage := fixture(t)
 			l, err := OpenLibrary(library)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer l.Close()
 			if target == "project" {
 				alias := filepath.Join(library, "alias")
@@ -119,7 +121,9 @@ func TestRejectProjectAndStorageSymlinks(t *testing.T) {
 				path = alias
 			} else {
 				moved := filepath.Join(path, "actual-storage")
-				if err := os.Rename(storage, moved); err != nil { t.Fatal(err) }
+				if err := os.Rename(storage, moved); err != nil {
+					t.Fatal(err)
+				}
 				link(t, "actual-storage", storage, true)
 			}
 			if p, err := l.OpenProject(path); err == nil {
@@ -137,19 +141,31 @@ func TestRejectUnsafeManifestAndDatabase(t *testing.T) {
 				library, path, storage := fixture(t)
 				file := filepath.Join(storage, name)
 				saved := filepath.Join(storage, "saved")
-				if err := os.Rename(file, saved); err != nil { t.Fatal(err) }
+				if err := os.Rename(file, saved); err != nil {
+					t.Fatal(err)
+				}
 				switch kind {
-				case "symlink-inside": link(t, "saved", file, true)
+				case "symlink-inside":
+					link(t, "saved", file, true)
 				case "symlink-outside":
 					outside := filepath.Join(t.TempDir(), "source")
 					put(t, outside, []byte(fixtureManifest))
 					link(t, outside, file, true)
-				case "hardlink": link(t, saved, file, false)
-				case "directory": if err := os.Mkdir(file, 0700); err != nil { t.Fatal(err) }
-				case "fifo": if err := syscall.Mkfifo(file, 0600); err != nil { t.Fatal(err) }
+				case "hardlink":
+					link(t, saved, file, false)
+				case "directory":
+					if err := os.Mkdir(file, 0700); err != nil {
+						t.Fatal(err)
+					}
+				case "fifo":
+					if err := syscall.Mkfifo(file, 0600); err != nil {
+						t.Fatal(err)
+					}
 				}
 				l, err := OpenLibrary(library)
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				defer l.Close()
 				if p, err := l.OpenProject(path); err == nil {
 					p.Close()
@@ -162,7 +178,9 @@ func TestRejectUnsafeManifestAndDatabase(t *testing.T) {
 
 func TestOpenFileReadConfinement(t *testing.T) {
 	library, path, storage := fixture(t)
-	if err := os.Mkdir(filepath.Join(storage, "nested"), 0700); err != nil { t.Fatal(err) }
+	if err := os.Mkdir(filepath.Join(storage, "nested"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	put(t, filepath.Join(storage, "nested", "safe.txt"), []byte("synthetic"))
 	link(t, "nested", filepath.Join(storage, "alias"), true)
 	link(t, "nested/safe.txt", filepath.Join(storage, "file-link"), true)
@@ -173,11 +191,19 @@ func TestOpenFileReadConfinement(t *testing.T) {
 	link(t, filepath.Join(storage, "linked"), filepath.Join(storage, "linked-again"), false)
 	_, p := openFixture(t, library, path)
 	f, err := p.OpenFileRead("nested/safe.txt")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := io.ReadAll(f)
-	if err != nil { t.Fatal(err) }
-	if string(data) != "synthetic" { t.Fatal("unexpected data") }
-	if _, err := f.Write([]byte("not allowed")); err == nil { t.Fatal("descriptor writable") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "synthetic" {
+		t.Fatal("unexpected data")
+	}
+	if _, err := f.Write([]byte("not allowed")); err == nil {
+		t.Fatal("descriptor writable")
+	}
 	f.Close()
 	for _, bad := range []string{"", ".", "..", "../outside", "nested/../project.json", "nested/./safe.txt", "nested//safe.txt", "nested/safe.txt/", "/etc/passwd", "nested\\safe.txt", "nested/\x00", "alias/safe.txt", "file-link", "escape", "linked", "nested", DatabaseName, DatabaseName + "-wal", DatabaseName + "-journal"} {
 		if f, err := p.OpenFileRead(bad); err == nil {
@@ -188,7 +214,12 @@ func TestOpenFileReadConfinement(t *testing.T) {
 }
 
 func TestLegacyAndMigrationJournals(t *testing.T) {
-	cases := []struct { name string; journal string; setup string; allowed bool }{
+	cases := []struct {
+		name    string
+		journal string
+		setup   string
+		allowed bool
+	}{
 		{"absent", "", "", true},
 		{"empty control", "", "empty", true},
 		{"switched", `{"version":1,"phase":"switched","projectId":"` + fixtureID + `","extra":{"allowed":true}}`, "", true},
@@ -210,27 +241,45 @@ func TestLegacyAndMigrationJournals(t *testing.T) {
 			library, path, _ := fixture(t)
 			control := filepath.Join(path, ".ai-novel-migration")
 			switch tc.setup {
-			case "legacy": if err := os.Mkdir(filepath.Join(path, ".vela"), 0700); err != nil { t.Fatal(err) }
-			case "legacy-link": link(t, "does-not-exist", filepath.Join(path, ".vela"), true)
-			case "control-file": put(t, control, []byte("file"))
-			case "control-symlink": link(t, "does-not-exist", control, true)
+			case "legacy":
+				if err := os.Mkdir(filepath.Join(path, ".vela"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "legacy-link":
+				link(t, "does-not-exist", filepath.Join(path, ".vela"), true)
+			case "control-file":
+				put(t, control, []byte("file"))
+			case "control-symlink":
+				link(t, "does-not-exist", control, true)
 			default:
 				if tc.journal != "" || tc.setup != "" {
-					if err := os.Mkdir(control, 0700); err != nil { t.Fatal(err) }
+					if err := os.Mkdir(control, 0700); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
-			if tc.journal != "" { put(t, filepath.Join(control, "journal.json"), []byte(tc.journal)) }
-			if tc.setup == "journal-symlink" { link(t, "missing", filepath.Join(control, "journal.json"), true) }
+			if tc.journal != "" {
+				put(t, filepath.Join(control, "journal.json"), []byte(tc.journal))
+			}
+			if tc.setup == "journal-symlink" {
+				link(t, "missing", filepath.Join(control, "journal.json"), true)
+			}
 			if tc.setup == "journal-hardlink" {
-				put(t, filepath.Join(control, "source"), []byte(`{"version":1,"phase":"switched","projectId":"` + fixtureID + `"}`))
+				put(t, filepath.Join(control, "source"), []byte(`{"version":1,"phase":"switched","projectId":"`+fixtureID+`"}`))
 				link(t, filepath.Join(control, "source"), filepath.Join(control, "journal.json"), false)
 			}
 			l, err := OpenLibrary(library)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer l.Close()
 			p, err := l.OpenProject(path)
-			if p != nil { p.Close() }
-			if (err == nil) != tc.allowed { t.Fatalf("allowed=%v error=%v", tc.allowed, err) }
+			if p != nil {
+				p.Close()
+			}
+			if (err == nil) != tc.allowed {
+				t.Fatalf("allowed=%v error=%v", tc.allowed, err)
+			}
 		})
 	}
 }
@@ -241,24 +290,45 @@ func TestManifestAndDirectoryReplacementInvalidatesHandle(t *testing.T) {
 			library, path, storage := fixture(t)
 			_, p := openFixture(t, library, path)
 			switch action {
-			case "new identity": put(t, filepath.Join(storage, ManifestName), []byte(strings.Replace(fixtureManifest, fixtureID, "12345678-1234-4234-8234-aaaaaaaaaaaa", 1)))
+			case "new identity":
+				put(t, filepath.Join(storage, ManifestName), []byte(strings.Replace(fixtureManifest, fixtureID, "12345678-1234-4234-8234-aaaaaaaaaaaa", 1)))
 			case "same bytes new inode":
 				put(t, filepath.Join(storage, "replacement"), []byte(fixtureManifest))
-				if err := os.Rename(filepath.Join(storage, "replacement"), filepath.Join(storage, ManifestName)); err != nil { t.Fatal(err) }
+				if err := os.Rename(filepath.Join(storage, "replacement"), filepath.Join(storage, ManifestName)); err != nil {
+					t.Fatal(err)
+				}
 			case "storage replaced":
-				if err := os.Rename(storage, storage+"-old"); err != nil { t.Fatal(err) }
-				if err := os.Mkdir(storage, 0700); err != nil { t.Fatal(err) }
+				if err := os.Rename(storage, storage+"-old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(storage, 0700); err != nil {
+					t.Fatal(err)
+				}
 			case "project replaced":
-				if err := os.Rename(path, path+"-old"); err != nil { t.Fatal(err) }
-				if err := os.Mkdir(path, 0700); err != nil { t.Fatal(err) }
+				if err := os.Rename(path, path+"-old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
 			case "library replaced":
 				moved := filepath.Join(t.TempDir(), "moved")
-				if err := os.Rename(library, moved); err != nil { t.Fatal(err) }
-				if err := os.Mkdir(library, 0700); err != nil { t.Fatal(err) }
-			case "legacy added": put(t, filepath.Join(path, ".vela"), []byte("legacy marker"))
+				if err := os.Rename(library, moved); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(library, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "legacy added":
+				put(t, filepath.Join(path, ".vela"), []byte("legacy marker"))
 			}
-			if _, err := p.SnapshotDatabase(1024); err == nil { t.Fatal("stale identity accepted") }
-			if f, err := p.OpenFileRead(ManifestName); err == nil { f.Close(); t.Fatal("stale read accepted") }
+			if _, err := p.SnapshotDatabase(1024); err == nil {
+				t.Fatal("stale identity accepted")
+			}
+			if f, err := p.OpenFileRead(ManifestName); err == nil {
+				f.Close()
+				t.Fatal("stale read accepted")
+			}
 		})
 	}
 }
@@ -266,60 +336,108 @@ func TestManifestAndDirectoryReplacementInvalidatesHandle(t *testing.T) {
 func TestClosedHandles(t *testing.T) {
 	library, path, _ := fixture(t)
 	l, p := openFixture(t, library, path)
-	if err := p.Close(); err != nil { t.Fatal(err) }
-	if err := p.Close(); err != nil { t.Fatal(err) }
-	if _, err := p.SnapshotDatabase(1024); !errors.Is(err, ErrClosed) { t.Fatalf("closed snapshot: %v", err) }
-	if _, err := p.OpenFileRead(ManifestName); !errors.Is(err, ErrClosed) { t.Fatalf("closed read: %v", err) }
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.SnapshotDatabase(1024); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed snapshot: %v", err)
+	}
+	if _, err := p.OpenFileRead(ManifestName); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed read: %v", err)
+	}
 	p2, err := l.OpenProject(path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer p2.Close()
-	if err := l.Close(); err != nil { t.Fatal(err) }
-	if err := l.Close(); err != nil { t.Fatal(err) }
-	if _, err := l.OpenProject(path); !errors.Is(err, ErrClosed) { t.Fatalf("closed library: %v", err) }
-	if _, err := p2.SnapshotDatabase(1024); !errors.Is(err, ErrClosed) { t.Fatalf("closed library child: %v", err) }
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.OpenProject(path); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed library: %v", err)
+	}
+	if _, err := p2.SnapshotDatabase(1024); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed library child: %v", err)
+	}
 }
 
 func TestDatabaseSnapshotOwnedFullSetAndBudget(t *testing.T) {
 	library, path, storage := fixture(t)
-	for _, suffix := range databaseSuffixes[1:] { put(t, filepath.Join(storage, DatabaseName+suffix), []byte("synthetic"+suffix)) }
+	for _, suffix := range databaseSuffixes[1:] {
+		put(t, filepath.Join(storage, DatabaseName+suffix), []byte("synthetic"+suffix))
+	}
 	_, p := openFixture(t, library, path)
 	snapshot, err := p.SnapshotDatabase(1024)
-	if err != nil { t.Fatal(err) }
-	if len(snapshot.Files) != 4 { t.Fatalf("missing database set: %v", snapshot.Files) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Files) != 4 {
+		t.Fatalf("missing database set: %v", snapshot.Files)
+	}
 	var total int64
 	for suffix, data := range snapshot.Files {
 		source, err := os.ReadFile(filepath.Join(storage, DatabaseName+suffix))
-		if err != nil || !bytes.Equal(source, data) { t.Fatalf("copy %q: %v", suffix, err) }
+		if err != nil || !bytes.Equal(source, data) {
+			t.Fatalf("copy %q: %v", suffix, err)
+		}
 		total += int64(len(data))
 	}
-	if _, err := p.SnapshotDatabase(total); err != nil { t.Fatalf("exact budget: %v", err) }
-	for _, limit := range []int64{0, -1, total-1, MaxSnapshotBytes+1} {
-		if _, err := p.SnapshotDatabase(limit); !errors.Is(err, ErrTooLarge) { t.Fatalf("limit=%d: %v", limit, err) }
+	if _, err := p.SnapshotDatabase(total); err != nil {
+		t.Fatalf("exact budget: %v", err)
+	}
+	for _, limit := range []int64{0, -1, total - 1, MaxSnapshotBytes + 1} {
+		if _, err := p.SnapshotDatabase(limit); !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("limit=%d: %v", limit, err)
+		}
 	}
 	snapshot.Files[""][0] ^= 0xff
 	source, err := os.ReadFile(filepath.Join(storage, DatabaseName))
-	if err != nil { t.Fatal(err) }
-	if source[0] == snapshot.Files[""][0] { t.Fatal("snapshot aliases source") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source[0] == snapshot.Files[""][0] {
+		t.Fatal("snapshot aliases source")
+	}
 	fresh, err := p.SnapshotDatabase(1024)
-	if err != nil || !bytes.Equal(fresh.Files[""], source) { t.Fatalf("fresh independent snapshot: %v", err) }
+	if err != nil || !bytes.Equal(fresh.Files[""], source) {
+		t.Fatalf("fresh independent snapshot: %v", err)
+	}
 }
 
 func TestDatabaseSnapshotMissingSidecarsAndUnsafeSidecars(t *testing.T) {
 	library, path, storage := fixture(t)
 	_, p := openFixture(t, library, path)
 	snapshot, err := p.SnapshotDatabase(1024)
-	if err != nil || len(snapshot.Files) != 1 { t.Fatalf("absent sidecars: %#v %v", snapshot.Files, err) }
+	if err != nil || len(snapshot.Files) != 1 {
+		t.Fatalf("absent sidecars: %#v %v", snapshot.Files, err)
+	}
 	for _, suffix := range databaseSuffixes[1:] {
 		for _, kind := range []string{"dangling-symlink", "hardlink", "fifo", "directory"} {
 			t.Run(suffix+kind, func(t *testing.T) {
 				file := filepath.Join(storage, DatabaseName+suffix)
 				switch kind {
-				case "dangling-symlink": link(t, "missing", file, true)
-				case "hardlink": link(t, filepath.Join(storage, DatabaseName), file, false)
-				case "fifo": if err := syscall.Mkfifo(file, 0600); err != nil { t.Fatal(err) }
-				case "directory": if err := os.Mkdir(file, 0700); err != nil { t.Fatal(err) }
+				case "dangling-symlink":
+					link(t, "missing", file, true)
+				case "hardlink":
+					link(t, filepath.Join(storage, DatabaseName), file, false)
+				case "fifo":
+					if err := syscall.Mkfifo(file, 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "directory":
+					if err := os.Mkdir(file, 0700); err != nil {
+						t.Fatal(err)
+					}
 				}
-				if _, err := p.SnapshotDatabase(1024); err == nil { t.Fatal("unsafe sidecar copied") }
+				if _, err := p.SnapshotDatabase(1024); err == nil {
+					t.Fatal("unsafe sidecar copied")
+				}
 				remove(t, file)
 			})
 		}

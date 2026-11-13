@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { page } from 'vitest/browser'
@@ -30,8 +30,10 @@ function deferred() {
   const promise = new Promise<ProjectDirectoryGrant | null>(done => { resolve = done })
   return { promise, resolve }
 }
+// eslint-disable-next-line react-refresh/only-export-components
 function Probe({ open }: { open: boolean }) {
-  latest = useNewProjectForm(open, () => {})
+  const value = useNewProjectForm(open, () => {})
+  useEffect(() => { latest = value })
   return null
 }
 

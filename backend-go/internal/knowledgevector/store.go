@@ -131,10 +131,10 @@ type wireSpace struct {
 }
 
 type wireTable struct {
-	Name    string                 `json:"name"`
-	Version *json.Number           `json:"version"`
+	Name    string                  `json:"name"`
+	Version *json.Number            `json:"version"`
 	Schema  []knowledgedomain.Field `json:"schema"`
-	Records []wireChunk            `json:"records"`
+	Records []wireChunk             `json:"records"`
 }
 
 type wireChunk struct {

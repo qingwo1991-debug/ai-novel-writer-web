@@ -1047,7 +1047,7 @@ func productionPickerUploadSlot(operation, kind, idField string) map[string]any 
 		"maxFileBytes":    productionPickerMaxUploadBytes,
 		"maxFiles":        productionPickerMaxUploadFiles,
 		"maxCallerBytes":  productionPickerMaxCallerBytes,
-		"resume":          map[string]any{
+		"resume": map[string]any{
 			"operation": operation,
 			"idField":   idField,
 		},
@@ -1093,7 +1093,8 @@ func productionPickerKnowledgeRefusal(operation, code string) map[string]any {
 		"upload":    productionPickerUploadSlot(operation, kind, idField),
 		"grants":    []any{},
 		"files":     []any{},
-	}}
+	}
+}
 
 // productionPickerUploadedWire is one verified uploaded file. Its grantId is
 // deliberately empty and `readable` says so by name: no server file exists for it
@@ -1332,7 +1333,7 @@ func (p *productionBrowserPickers) installSkill(_ context.Context, caller transp
 	return map[string]any{
 		"success":   true,
 		"cancelled": false,
-		"skill":     promptskills.InstalledSkill{
+		"skill": promptskills.InstalledSkill{
 			Name:       inspection.Metadata.Name,
 			Source:     "user",
 			Version:    inspection.Metadata.Version,

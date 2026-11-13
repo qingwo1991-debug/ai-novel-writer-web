@@ -37,7 +37,7 @@ type geminiTestBody struct {
 }
 
 func (b *geminiTestBody) Read(p []byte) (int, error) { return b.reader.Read(p) }
-func (b *geminiTestBody) Close() error              { b.closed = true; return nil }
+func (b *geminiTestBody) Close() error               { b.closed = true; return nil }
 
 func geminiTestProvider(body *geminiTestBody, status int) *Gemini {
 	return &Gemini{Dispatch: func(*http.Request) (*http.Response, error) {
@@ -188,7 +188,7 @@ func TestGeminiVisibleLegacyReasoningAndCallbackOrder(t *testing.T) {
 func TestGeminiFramingEOFAndFinishAreIndependent(t *testing.T) {
 	for _, test := range []struct {
 		name, wire, content, finish, code string
-		visible                          bool
+		visible                           bool
 	}{
 		{"empty-eof", "", "", "unknown", "", true},
 		{"no-finish-eof", geminiTestFrame(geminiTestText("partial", "")), "partial", "unknown", "", true},

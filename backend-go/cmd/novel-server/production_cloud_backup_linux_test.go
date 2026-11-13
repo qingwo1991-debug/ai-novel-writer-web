@@ -299,14 +299,14 @@ type productionCloudBackupViewWire struct {
 }
 
 type productionCloudBackupBackupWire struct {
-	Success      bool             `json:"success"`
-	State        string           `json:"state"`
-	ErrorCode    string           `json:"errorCode"`
-	OperationID  string           `json:"operationId"`
-	BackupPoint  string           `json:"backupPoint"`
-	BindingSaved bool             `json:"bindingSaved"`
+	Success      bool              `json:"success"`
+	State        string            `json:"state"`
+	ErrorCode    string            `json:"errorCode"`
+	OperationID  string            `json:"operationId"`
+	BackupPoint  string            `json:"backupPoint"`
+	BindingSaved bool              `json:"bindingSaved"`
 	Generation   webdav.Generation `json:"generation"`
-	Binding      map[string]any   `json:"binding"`
+	Binding      map[string]any    `json:"binding"`
 }
 
 type productionCloudBackupReceiptWire struct {
@@ -319,20 +319,20 @@ type productionCloudBackupReceiptWire struct {
 }
 
 type productionCloudBackupRestoreWire struct {
-	Success              bool                           `json:"success"`
-	State                string                         `json:"state"`
-	ErrorCode            string                         `json:"errorCode"`
-	OperationID          string                         `json:"operationId"`
+	Success              bool                             `json:"success"`
+	State                string                           `json:"state"`
+	ErrorCode            string                           `json:"errorCode"`
+	OperationID          string                           `json:"operationId"`
 	Receipt              productionCloudBackupReceiptWire `json:"receipt"`
-	BindingSaved         bool                           `json:"bindingSaved"`
-	Binding              map[string]any                 `json:"binding"`
-	RecentProjectUpdated bool                           `json:"recentProjectUpdated"`
+	BindingSaved         bool                             `json:"bindingSaved"`
+	Binding              map[string]any                   `json:"binding"`
+	RecentProjectUpdated bool                             `json:"recentProjectUpdated"`
 }
 
 type productionCloudBackupListWire struct {
-	Success     bool               `json:"success"`
-	State       string             `json:"state"`
-	ErrorCode   string             `json:"errorCode"`
+	Success     bool                `json:"success"`
+	State       string              `json:"state"`
+	ErrorCode   string              `json:"errorCode"`
 	Generations []webdav.Generation `json:"generations"`
 }
 
@@ -826,10 +826,10 @@ func TestProductionCloudBackupRefusalsLeaveAuthorDatabaseIdentical(t *testing.T)
 			name:      "confirm-binding with a parent selection",
 			operation: productionCloudBackupConfirmName,
 			args: []any{map[string]any{
-				"projectSession":                 session,
-				"localEndpointAccountId":         productionCloudBackupLocalAccountID,
+				"projectSession":                  session,
+				"localEndpointAccountId":          productionCloudBackupLocalAccountID,
 				"lastSelectedParentGenerationIds": []any{backup.Generation.GenerationID},
-				"expectedRevision":               nil,
+				"expectedRevision":                nil,
 			}},
 			code: productionCloudBackupBindingReadOnly,
 		},
@@ -837,11 +837,11 @@ func TestProductionCloudBackupRefusalsLeaveAuthorDatabaseIdentical(t *testing.T)
 			name:      "confirm-binding with another book",
 			operation: productionCloudBackupConfirmName,
 			args: []any{map[string]any{
-				"projectSession":                 session,
-				"localEndpointAccountId":         productionCloudBackupLocalAccountID,
-				"cloudBookId":                    productionCloudBackupTestUUID,
+				"projectSession":                  session,
+				"localEndpointAccountId":          productionCloudBackupLocalAccountID,
+				"cloudBookId":                     productionCloudBackupTestUUID,
 				"lastSelectedParentGenerationIds": []any{},
-				"expectedRevision":               nil,
+				"expectedRevision":                nil,
 			}},
 			code: productionCloudBackupBindingConflict,
 		},
@@ -849,10 +849,10 @@ func TestProductionCloudBackupRefusalsLeaveAuthorDatabaseIdentical(t *testing.T)
 			name:      "confirm-binding at a stale revision",
 			operation: productionCloudBackupConfirmName,
 			args: []any{map[string]any{
-				"projectSession":                 session,
-				"localEndpointAccountId":         productionCloudBackupLocalAccountID,
+				"projectSession":                  session,
+				"localEndpointAccountId":          productionCloudBackupLocalAccountID,
 				"lastSelectedParentGenerationIds": []any{},
-				"expectedRevision":               7,
+				"expectedRevision":                7,
 			}},
 			code: productionCloudBackupBindingConflict,
 		},
@@ -959,21 +959,21 @@ func TestProductionCloudBackupNeverAnswersCredential(t *testing.T) {
 			name:      "confirm-binding with a smuggled account",
 			operation: productionCloudBackupConfirmName,
 			args: []any{map[string]any{
-				"projectSession":                 session,
-				"localEndpointAccountId":         secret,
+				"projectSession":                  session,
+				"localEndpointAccountId":          secret,
 				"lastSelectedParentGenerationIds": []any{},
-				"expectedRevision":               nil,
+				"expectedRevision":                nil,
 			}},
 		},
 		{
 			name:      "confirm-binding with a smuggled secret field",
 			operation: productionCloudBackupConfirmName,
 			args: []any{map[string]any{
-				"projectSession":                 session,
-				"localEndpointAccountId":         productionCloudBackupLocalAccountID,
+				"projectSession":                  session,
+				"localEndpointAccountId":          productionCloudBackupLocalAccountID,
 				"lastSelectedParentGenerationIds": []any{},
-				"expectedRevision":               nil,
-				"password":                       secret,
+				"expectedRevision":                nil,
+				"password":                        secret,
 			}},
 		},
 		{
@@ -1059,11 +1059,11 @@ func TestProductionCloudBackupConfirmBindingReaffirmsDerivedBinding(t *testing.T
 
 	confirmed := map[string]any{}
 	author.decode(t, productionCloudBackupConfirmName, []any{map[string]any{
-		"projectSession":                 session,
-		"localEndpointAccountId":         productionCloudBackupLocalAccountID,
-		"cloudBookId":                    productionDurableProjectID,
+		"projectSession":                  session,
+		"localEndpointAccountId":          productionCloudBackupLocalAccountID,
+		"cloudBookId":                     productionDurableProjectID,
 		"lastSelectedParentGenerationIds": []any{},
-		"expectedRevision":               nil,
+		"expectedRevision":                nil,
 	}}, &confirmed)
 	if success, _ := confirmed["success"].(bool); !success {
 		t.Fatalf("cloud-backup:confirm-binding refused the derived binding: %v", confirmed)

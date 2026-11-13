@@ -114,18 +114,18 @@ import (
 //
 // Three things, in this order, and none of them is validation:
 //
-//	1. an origin the policy admits   either the operator commits both GitHub
-//	                                 origins, or the lane gains a purpose-built
-//	                                 policy for them - not a second outbound
-//	                                 path invented in a handler.
-//	2. a GitHubDispatcher            FetchGitHub over that admitted client only,
-//	                                 reconstructing the two endpoints from
-//	                                 ParseGitHubURL's safe parts (remote.go:34-36
-//	                                 already does), refusing any 3xx itself,
-//	                                 reading at most MaxSkillBytes+1 and
-//	                                 honouring ctx.
-//	3. a RemoteAuthority             a lease on the committed generation that a
-//	                                 lifecycle rollover really waits for.
+//  1. an origin the policy admits   either the operator commits both GitHub
+//     origins, or the lane gains a purpose-built
+//     policy for them - not a second outbound
+//     path invented in a handler.
+//  2. a GitHubDispatcher            FetchGitHub over that admitted client only,
+//     reconstructing the two endpoints from
+//     ParseGitHubURL's safe parts (remote.go:34-36
+//     already does), refusing any 3xx itself,
+//     reading at most MaxSkillBytes+1 and
+//     honouring ctx.
+//  3. a RemoteAuthority             a lease on the committed generation that a
+//     lifecycle rollover really waits for.
 //
 // Until then the honest answer is the registry's 501, which is what both names
 // give today.

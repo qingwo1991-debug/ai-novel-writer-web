@@ -176,9 +176,9 @@ type productionSkillPickInspection struct {
 
 // productionSkillPickWire is the skills:pick-local answer.
 type productionSkillPickWire struct {
-	Success    bool                         `json:"success"`
-	Cancelled  bool                         `json:"cancelled"`
-	Error      string                       `json:"error"`
+	Success    bool                          `json:"success"`
+	Cancelled  bool                          `json:"cancelled"`
+	Error      string                        `json:"error"`
 	Inspection productionSkillPickInspection `json:"inspection"`
 }
 

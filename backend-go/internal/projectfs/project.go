@@ -15,10 +15,10 @@ import (
 // Library is opened only from trusted configuration, never request input.
 // The descriptor is private: callers cannot obtain write-capable os.Root methods.
 type Library struct {
-	mu sync.Mutex
-	root *os.Root
-	path string
-	info fs.FileInfo
+	mu     sync.Mutex
+	root   *os.Root
+	path   string
+	info   fs.FileInfo
 	closed bool
 }
 
@@ -26,18 +26,18 @@ type Library struct {
 // OpenProject grants filesystem access, NOT SQLite/data admission: the caller
 // must separately verify a private owned SnapshotDatabase result.
 type Project struct {
-	mu sync.Mutex
-	library *Library
-	root *os.Root
-	storage *os.Root
-	path string
-	name string
-	info fs.FileInfo
-	storageInfo fs.FileInfo
+	mu           sync.Mutex
+	library      *Library
+	root         *os.Root
+	storage      *os.Root
+	path         string
+	name         string
+	info         fs.FileInfo
+	storageInfo  fs.FileInfo
 	manifestInfo fs.FileInfo
 	manifestHash [32]byte
-	manifest Manifest
-	closed bool
+	manifest     Manifest
+	closed       bool
 }
 
 func canonicalAbsolute(path string) bool {
@@ -199,8 +199,8 @@ func (l *Library) OpenProject(path string) (*Project, error) {
 	return p, nil
 }
 
-func (p *Project) Path() string { return p.path }
-func (p *Project) ProjectID() string { return p.manifest.ProjectID }
+func (p *Project) Path() string       { return p.path }
+func (p *Project) ProjectID() string  { return p.manifest.ProjectID }
 func (p *Project) Manifest() Manifest { return p.manifest }
 
 func (p *Project) Close() error {

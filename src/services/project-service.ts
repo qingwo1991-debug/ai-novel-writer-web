@@ -85,41 +85,33 @@ export function initProjectService(): void {
     globalEventBus.on('WORKFLOW_COMPLETE', (payload) => runProjectEventTask(
       () => text('工作流完成后的项目刷新失败', 'Could not refresh project data after workflow completion'),
       async () => {
-      console.log('[ProjectService] WORKFLOW_COMPLETE 事件触发:', payload.type)
       if (!isProjectSessionCurrent(payload.projectSession)) return
 
       // config_generation 类型只需要轻量刷新（避免不必要的文件扫描）
       if (payload.type === 'config_generation') {
-        console.log('[ProjectService] config_generation 完成，跳过资源刷新')
         return
       }
 
       // 刷新文件树（所有工作流完成后都需要）
-      console.log('[ProjectService] 开始刷新文件树...')
       await useProjectStore.getState().refreshFileTree(
         payload.projectPath,
         undefined,
         payload.projectSession,
       )
       if (!isProjectSessionCurrent(payload.projectSession)) return
-      console.log('[ProjectService] 文件树刷新完成')
 
       // 根据工作流类型精准刷新
       if (payload.type === 'chapter_creation') {
         // 章节创作完成 → 刷新草稿 + 角色卡（定稿后处理会更新角色状态）
-        console.log('[ProjectService] 刷新草稿和角色卡...')
         await Promise.all([
           useDraftStore.getState().loadAllDrafts(payload.projectPath, payload.projectSession),
           useCharacterStore.getState().load(payload.projectPath, payload.projectSession),
         ])
         if (!isProjectSessionCurrent(payload.projectSession)) return
-        console.log('[ProjectService] 草稿和角色卡刷新完成')
       } else if (payload.type === 'architecture_generation') {
         // 架构生成完成 → 角色卡可能被提取
-        console.log('[ProjectService] 刷新角色卡...')
         await useCharacterStore.getState().load(payload.projectPath, payload.projectSession)
         if (!isProjectSessionCurrent(payload.projectSession)) return
-        console.log('[ProjectService] 角色卡刷新完成')
       }
       },
     ))
@@ -215,8 +207,6 @@ export function initProjectService(): void {
       },
     ))
   )
-
-  console.log('[ProjectService] 已初始化，事件监听已注册')
 }
 
 /**
@@ -265,7 +255,6 @@ export async function onProjectOpened(
     projectSession,
   })
 
-  console.log('[ProjectService] 项目数据加载完成:', projectSession.projectPath)
   return { warnings }
 }
 
@@ -283,20 +272,16 @@ export async function onProjectClosed(projectPath: string | null): Promise<void>
     useEditorStore.getState().clearTabs()
   }
 
-  disableProjectBindingsPreservingDrafts(projectPath)
-
-  console.log('[ProjectService] 项目已关闭，第二层状态仓库已重置')
+  disableProjectBindingsPreservingDrafts()
 }
 
 /**
  * 数据库身份异常时解除可写数据绑定，但保留用户尚未保存的标签页和后台草稿。
  * 项目身份被清空后，这些标签页不会进入编辑器；恢复项目后仍可由用户处理。
  */
-export function disableProjectBindingsPreservingDrafts(projectPath: string | null): void {
+export function disableProjectBindingsPreservingDrafts(): void {
   useCharacterStore.getState().reset()
   useDraftStore.getState().reset()
-
-  console.log('[ProjectService] 已停用项目数据绑定并保留未保存草稿:', projectPath)
 }
 
 /**
@@ -339,5 +324,4 @@ export function disposeProjectService(): void {
     dispose()
   }
   disposers = []
-  console.log('[ProjectService] 已销毁')
 }

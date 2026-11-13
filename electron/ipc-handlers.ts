@@ -65,6 +65,4 @@ export function registerIPCHandlers() {
   registerChapterLifecycleController()
   registerKBController()
   registerImportController()
-
-  console.log('[AI Novel IPC] 所有 Controller 已注册完成')
 }

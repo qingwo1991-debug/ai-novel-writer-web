@@ -987,7 +987,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		func() error { return server.BindSummary(open.durable) },
 		func() error { return server.BindPostHistoryReads(open.durable) },
 		func() error { return server.BindPlotTreeReads(open.durable) },
-		func() error { return server.Bind("prompt:load-global", newProductionPromptLoad(open.global, open.startup)) },
+		func() error {
+			return server.Bind("prompt:load-global", newProductionPromptLoad(open.global, open.startup))
+		},
 		func() error { return server.BindEditorReviewReads(newProductionReviewReads(open.durable)) },
 		func() error { return server.BindEditorReviewFullReads(newProductionReviewReads(open.durable)) },
 		func() error { return server.BindEditorReviewCycleAbsentRead(newProductionReviewReads(open.durable)) },
@@ -997,7 +999,9 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 		// existing manuscript in as finalized chapters. It runs the store's single
 		// BEGIN IMMEDIATE over its own reserved connection on a detached context, so a
 		// tab that navigates away mid-batch cannot roll back chapters already written.
-		func() error { return newProductionFinalizedDraftImports(open.durable, importPrepareInspection).Bind(server) },
+		func() error {
+			return newProductionFinalizedDraftImports(open.durable, importPrepareInspection).Bind(server)
+		},
 		func() error { return newProductionFSReads(open).Bind(server) },
 		// fs:grant-read-file / write-file / mkdir are the browser's answer to the
 		// desktop's native picker: a server-issued token over a path resolved inside

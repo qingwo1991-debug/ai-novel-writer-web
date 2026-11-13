@@ -659,7 +659,7 @@ func jsSpace(r rune) bool {
 // trimJS is String.prototype.trim for :178.
 func trimJS(value string) string { return strings.TrimFunc(value, jsSpace) }
 
-// stripLeadingFence is replace(/^```(?:json)?\s*\n?/i, '') (:178). The regex's \s*
+// stripLeadingFence is replace(/^```(?:json)?\s*\n?/i, ”) (:178). The regex's \s*
 // is greedy and nothing but an optional newline follows it, so it always consumes
 // the whole whitespace run - the same run TrimLeftFunc eats here.
 func stripLeadingFence(text string) string {
@@ -674,7 +674,7 @@ func stripLeadingFence(text string) string {
 	return strings.TrimLeftFunc(rest, jsSpace)
 }
 
-// stripTrailingFence is replace(/\n?```\s*$/, '') (:178). Without the m flag $ is
+// stripTrailingFence is replace(/\n?```\s*$/, ”) (:178). Without the m flag $ is
 // the end of the input, so the only fence that can match is the last one, and only
 // when nothing but whitespace follows it; the single newline before it goes with it.
 func stripTrailingFence(text string) string {

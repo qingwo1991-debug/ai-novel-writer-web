@@ -169,11 +169,11 @@ func productionLegacyImportSeed(t *testing.T, library, name string) string {
 	files := map[string]string{
 		".vela/project.json": `{"schemaVersion":1,"kind":"ai-novel-project","projectId":"` +
 			productionLegacyImportFixtureProjectID + `","createdAt":"2024-05-06T07:08:09.000Z"}`,
-		".vela/vela.db":          "SQLite format 3\x00" + strings.Repeat("旧版数据库正文", 8),
-		".vela/avatars/主角.png":   "\x89PNG\r\n\x1a\nlegacy avatar bytes",
-		"正文/第一章.md":             "# 第一章\n\n他推开门，风从走廊尽头灌进来，带着雨的气味。\n",
-		"设定/世界观.md":             "## 世界观\n\n潮汐历，一年三百二十日。\n",
-		".封面.png":               "封面字节",
+		".vela/vela.db":        "SQLite format 3\x00" + strings.Repeat("旧版数据库正文", 8),
+		".vela/avatars/主角.png": "\x89PNG\r\n\x1a\nlegacy avatar bytes",
+		"正文/第一章.md":            "# 第一章\n\n他推开门，风从走廊尽头灌进来，带着雨的气味。\n",
+		"设定/世界观.md":            "## 世界观\n\n潮汐历，一年三百二十日。\n",
+		".封面.png":              "封面字节",
 	}
 	for _, relative := range []string{".vela", ".vela/avatars", "正文", "设定", "空目录"} {
 		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(relative)), 0o700); err != nil {

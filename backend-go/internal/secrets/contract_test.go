@@ -37,11 +37,11 @@ func TestNodeGoSecretContract(t *testing.T) {
 		Encrypted string `json:"encrypted"`
 	}
 	var contract struct {
-		FormatVersion int `json:"formatVersion"`
-		PublicTestKeyHex string `json:"publicTestKeyHex"`
-		Cases []contractCase `json:"cases"`
+		FormatVersion    int            `json:"formatVersion"`
+		PublicTestKeyHex string         `json:"publicTestKeyHex"`
+		Cases            []contractCase `json:"cases"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(file, 1024 * 1024))
+	decoder := json.NewDecoder(io.LimitReader(file, 1024*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&contract); err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNodeGoSecretContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := os.OpenFile(path + ".go.json", os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(path+".go.json", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

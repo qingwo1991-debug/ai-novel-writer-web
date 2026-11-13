@@ -42,7 +42,9 @@ func DraftTargetUnitRange(targetUnits int64) (DraftUnitRange, error) {
 func ParseDraftTargetUnits(text string) (int64, bool) { return draftalg.ParseDraftTargetUnits(text) }
 
 // DraftTargetUnitsUsable is draftTargetUnitsUsable (draft-units.ts:48-50).
-func DraftTargetUnitsUsable(targetUnits int64) bool { return draftalg.DraftTargetUnitsUsable(targetUnits) }
+func DraftTargetUnitsUsable(targetUnits int64) bool {
+	return draftalg.DraftTargetUnitsUsable(targetUnits)
+}
 
 // CountDraftUnits is countDraftUnits (draft-units.ts:52-140).
 func CountDraftUnits(text string) int { return draftalg.CountDraftUnits(text) }

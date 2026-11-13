@@ -31,8 +31,8 @@ import (
 // PROJECT_NOT_OPEN the serving neighbours give, not the refusal.
 
 const (
-	productionReferenceRefusalPlotTree   = "db:plot-tree-save"
-	productionReferenceRefusalBlueprint  = "db:blueprint-update-notes"
+	productionReferenceRefusalPlotTree  = "db:plot-tree-save"
+	productionReferenceRefusalBlueprint = "db:blueprint-update-notes"
 )
 
 // productionReferenceRefusalArgs is the shared argument check the two binders' own

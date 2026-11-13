@@ -116,8 +116,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			check: expectCleanUpdate,
 		},
 		{
-			name:  "no updates at all",
-			body:  `{"updates":[]}`,
+			name: "no updates at all",
+			body: `{"updates":[]}`,
 			check: func(t *testing.T, response Response) {
 				// The reference returns [] rather than null (:181).
 				if response.Updates == nil || response.Unresolved == nil {
@@ -129,8 +129,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "evidence offsets computed from a unique text",
-			body:  updatesBody(`{"characterId":"character-a","currentState":{"location":"旧站"},` +
+			name: "evidence offsets computed from a unique text",
+			body: updatesBody(`{"characterId":"character-a","currentState":{"location":"旧站"},` +
 				`"evidence":{"text":"周研留在旧站"}}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 1 {
@@ -143,8 +143,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "a present empty field is kept",
-			body:  updatesBody(`{"characterId":"character-a","currentState":{"keyItems":""},` + validEvidence + `}`),
+			name: "a present empty field is kept",
+			body: updatesBody(`{"characterId":"character-a","currentState":{"keyItems":""},` + validEvidence + `}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 1 {
 					t.Fatalf("updates %d, want 1", len(response.Updates))
@@ -159,8 +159,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "updatedAtChapter of this chapter",
-			body:  updatesBody(`{"characterId":"character-a","currentState":{"location":"北塔","updatedAtChapter":1},` + validEvidence + `}`),
+			name: "updatedAtChapter of this chapter",
+			body: updatesBody(`{"characterId":"character-a","currentState":{"location":"北塔","updatedAtChapter":1},` + validEvidence + `}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 1 {
 					t.Fatalf("updates %d, want 1", len(response.Updates))
@@ -175,8 +175,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "updatedAtChapter compared as a number",
-			body:  updatesBody(`{"characterId":"character-a","currentState":{"location":"北塔","updatedAtChapter":1.0},` + validEvidence + `}`),
+			name: "updatedAtChapter compared as a number",
+			body: updatesBody(`{"characterId":"character-a","currentState":{"location":"北塔","updatedAtChapter":1.0},` + validEvidence + `}`),
 			check: func(t *testing.T, response Response) {
 				// === compares numbers, not literals: 1.0 is the chapter number.
 				if len(response.Updates) != 1 {
@@ -185,8 +185,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "a thousand updates are accepted",
-			body:  unresolvedBody(MaxUpdates),
+			name: "a thousand updates are accepted",
+			body: unresolvedBody(MaxUpdates),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 0 || len(response.Unresolved) != MaxUpdates {
 					t.Fatalf("updates %d unresolved %d, want 0/%d", len(response.Updates), len(response.Unresolved), MaxUpdates)
@@ -194,8 +194,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "one resolved and one unresolved update",
-			body:  updatesBody(cleanItem, `{"name":"周研","currentState":{"location":"旧站"},`+validEvidence+`}`),
+			name: "one resolved and one unresolved update",
+			body: updatesBody(cleanItem, `{"name":"周研","currentState":{"location":"旧站"},`+validEvidence+`}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 1 || len(response.Unresolved) != 1 {
 					t.Fatalf("updates %d unresolved %d, want 1/1", len(response.Updates), len(response.Unresolved))
@@ -211,8 +211,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "an unresolved name only occurrence",
-			body:  updatesBody(`{"name":"林岚","currentState":{"location":"北塔"},` + validEvidence + `}`),
+			name: "an unresolved name only occurrence",
+			body: updatesBody(`{"name":"林岚","currentState":{"location":"北塔"},` + validEvidence + `}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 0 || len(response.Unresolved) != 1 {
 					t.Fatalf("updates %d unresolved %d, want 0/1", len(response.Updates), len(response.Unresolved))
@@ -241,8 +241,8 @@ func TestParseResponseAccepted(t *testing.T) {
 			},
 		},
 		{
-			name:  "an unresolved unknown id",
-			body:  updatesBody(`{"characterId":"character-z","currentState":{"location":"北塔"},` + validEvidence + `}`),
+			name: "an unresolved unknown id",
+			body: updatesBody(`{"characterId":"character-z","currentState":{"location":"北塔"},` + validEvidence + `}`),
 			check: func(t *testing.T, response Response) {
 				if len(response.Updates) != 0 || len(response.Unresolved) != 1 {
 					t.Fatalf("updates %d unresolved %d, want 0/1", len(response.Updates), len(response.Unresolved))

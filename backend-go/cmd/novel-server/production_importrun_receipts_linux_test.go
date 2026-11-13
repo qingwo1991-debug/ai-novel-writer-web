@@ -92,11 +92,11 @@ func productionImportRunReceiptWire(seam productionImportRunReceiptSeam, project
 	switch seam.Operation {
 	case productionImportRunReceiptsPrepareOperation:
 		args[0] = map[string]any{
-			"runId":    productionImportRunResidualStyleRunID,
-			"stage":    "style",
-			"batchId":  "done",
+			"runId":     productionImportRunResidualStyleRunID,
+			"stage":     "style",
+			"batchId":   "done",
 			"effectKey": "writing-style",
-			"kind":     "project-writing-style",
+			"kind":      "project-writing-style",
 			"payload": map[string]any{
 				"writingStyle": "克制而具体",
 				"generationRunHandle": map[string]any{

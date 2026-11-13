@@ -14,21 +14,21 @@ import (
 )
 
 const (
-	KeyBytes = 32
-	NonceBytes = 12
-	TagBytes = 16
+	KeyBytes       = 32
+	NonceBytes     = 12
+	TagBytes       = 16
 	MaxSecretBytes = 64 * 1024
-	magic = "ANWSEC01"
-	aad = "AI-Novel-Writer/server-secret/v1"
-	headerBytes = len(magic) + NonceBytes + TagBytes
+	magic          = "ANWSEC01"
+	aad            = "AI-Novel-Writer/server-secret/v1"
+	headerBytes    = len(magic) + NonceBytes + TagBytes
 )
 
 var (
-	ErrKeyInvalid = errors.New("SERVER_SECRET_KEY_INVALID")
-	ErrInputInvalid = errors.New("SERVER_SECRET_INPUT_INVALID")
+	ErrKeyInvalid        = errors.New("SERVER_SECRET_KEY_INVALID")
+	ErrInputInvalid      = errors.New("SERVER_SECRET_INPUT_INVALID")
 	ErrCiphertextInvalid = errors.New("SERVER_SECRET_CIPHERTEXT_INVALID")
-	ErrDecryptFailed = errors.New("SERVER_SECRET_DECRYPT_FAILED")
-	ErrUnsupported = errors.New("SERVER_SECRET_PLATFORM_UNSUPPORTED")
+	ErrDecryptFailed     = errors.New("SERVER_SECRET_DECRYPT_FAILED")
+	ErrUnsupported       = errors.New("SERVER_SECRET_PLATFORM_UNSUPPORTED")
 )
 
 // Storage keeps an expanded copy of the supplied key. It is safe for concurrent
@@ -71,7 +71,7 @@ func (s *Storage) EncryptString(plainText string) ([]byte, error) {
 	}
 	sealed := s.aead.Seal(nil, nonce, []byte(plainText), []byte(aad))
 	ciphertextEnd := len(sealed) - TagBytes
-	result := make([]byte, 0, headerBytes + len(plainText))
+	result := make([]byte, 0, headerBytes+len(plainText))
 	result = append(result, magic...)
 	result = append(result, nonce...)
 	result = append(result, sealed[ciphertextEnd:]...)
@@ -82,7 +82,7 @@ func (s *Storage) EncryptString(plainText string) ([]byte, error) {
 // DecryptString authenticates before decoding UTF-8. Like Buffer.toString('utf8'),
 // malformed UTF-8 is decoded with U+FFFD using maximal ill-formed subparts.
 func (s *Storage) DecryptString(encrypted []byte) (string, error) {
-	if len(encrypted) < headerBytes || len(encrypted) > headerBytes + MaxSecretBytes || !bytes.Equal(encrypted[:len(magic)], []byte(magic)) {
+	if len(encrypted) < headerBytes || len(encrypted) > headerBytes+MaxSecretBytes || !bytes.Equal(encrypted[:len(magic)], []byte(magic)) {
 		return "", ErrCiphertextInvalid
 	}
 	if s == nil || s.aead == nil {
@@ -90,7 +90,7 @@ func (s *Storage) DecryptString(encrypted []byte) (string, error) {
 	}
 	nonceEnd := len(magic) + NonceBytes
 	tagEnd := nonceEnd + TagBytes
-	sealed := make([]byte, 0, len(encrypted) - nonceEnd)
+	sealed := make([]byte, 0, len(encrypted)-nonceEnd)
 	sealed = append(sealed, encrypted[tagEnd:]...)
 	sealed = append(sealed, encrypted[nonceEnd:tagEnd]...)
 	plainText, err := s.aead.Open(nil, encrypted[len(magic):nonceEnd], sealed, []byte(aad))

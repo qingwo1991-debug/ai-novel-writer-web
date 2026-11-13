@@ -30,9 +30,9 @@ import (
 // over a separate mode=ro connection.
 
 const (
-	productionAgentGenerationToolsMessage = "我先登记一个草稿工作流。"
-	productionAgentGenerationToolsNonce   = "agent-generation-tools-nonce"
-	productionAgentGenerationToolsStale   = "agent-generation-tools-stale-lease"
+	productionAgentGenerationToolsMessage  = "我先登记一个草稿工作流。"
+	productionAgentGenerationToolsNonce    = "agent-generation-tools-nonce"
+	productionAgentGenerationToolsStale    = "agent-generation-tools-stale-lease"
 	productionAgentGenerationToolsForeign  = "project-agent-generation-tools-foreign"
 	productionAgentGenerationToolsWorkflow = "start_workflow"
 	productionAgentGenerationToolsDomain   = "propose_novel_config"
@@ -42,9 +42,9 @@ const (
 // completed stop whose usage carries the parsed agent response, and it counts
 // calls so a replay that redispatched would fail.
 type productionAgentGenerationToolSeam struct {
-	mu       sync.Mutex
-	calls    int
-	text     string
+	mu        sync.Mutex
+	calls     int
+	text      string
 	toolCalls []map[string]any
 }
 
@@ -79,7 +79,7 @@ func (s *productionAgentGenerationToolSeam) dispatched() int {
 func productionAgentGenerationToolsRequest(message string) map[string]any {
 	tool := func(name string) map[string]any {
 		return map[string]any{"name": name, "description": "tool " + name,
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			"inputSchema":          map[string]any{"type": "object", "properties": map[string]any{}},
 			"requiresConfirmation": true, "isReadOnly": false, "source": "builtin"}
 	}
 	return map[string]any{

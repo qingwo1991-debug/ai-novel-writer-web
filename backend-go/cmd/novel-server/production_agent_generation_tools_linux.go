@@ -31,8 +31,8 @@ import (
 // carry as decisions; they are validations this file performs against the
 // frozen context and the live lease before any decision is taken.
 const (
-	productionAgentGenerationConfirmationRequired   = "GENERATION_AGENT_CONFIRMATION_REQUIRED"
-	productionAgentGenerationAuthorSelectionInvalid = "GENERATION_AGENT_AUTHOR_SELECTION_INVALID"
+	productionAgentGenerationConfirmationRequired    = "GENERATION_AGENT_CONFIRMATION_REQUIRED"
+	productionAgentGenerationAuthorSelectionInvalid  = "GENERATION_AGENT_AUTHOR_SELECTION_INVALID"
 	productionAgentGenerationAuthorSelectionConflict = "GENERATION_AGENT_AUTHOR_SELECTION_CONFLICT"
 	productionAgentGenerationDomainToolNotAuthorized = "GENERATION_AGENT_DOMAIN_TOOL_NOT_AUTHORIZED"
 	productionAgentGenerationDomainToolInvalid       = "GENERATION_AGENT_DOMAIN_TOOL_INVALID"
@@ -203,10 +203,10 @@ func productionAgentGenerationRoundMessages(context *agentgen.Context, rounds []
 // always answer the same hash, so a replay finds its prior attempt.
 func productionAgentGenerationRequestHash(run map[string]any, nonce, leaseID, fingerprint string, task generationowner.Task, plan generationowner.Plan) (string, error) {
 	text, err := syntheticCanonical(struct {
-		RunID   string              `json:"runId"`
-		Nonce   string              `json:"invocationNonce"`
-		LeaseID string              `json:"modelLeaseId"`
-		Binding string              `json:"sourceFingerprint"`
+		RunID   string               `json:"runId"`
+		Nonce   string               `json:"invocationNonce"`
+		LeaseID string               `json:"modelLeaseId"`
+		Binding string               `json:"sourceFingerprint"`
 		Task    generationowner.Task `json:"task"`
 		Plan    generationowner.Plan `json:"plan"`
 	}{syntheticString(run["runId"]), nonce, leaseID, fingerprint, task, plan})
@@ -275,19 +275,19 @@ func (a *productionAgentGenerationServe) dispatchRound(ctx context.Context, call
 		},
 	})
 	_, err = service.Execute(ctx, generation.Request{
-		RunID:                  syntheticString(run.Run["runId"]),
-		InvocationNonce:        nonce,
-		RequestHash:            hash,
-		ProviderRequest:        frozen,
-		ReservedTokens:         plan.Reserved,
-		RequestedOutputTokens:  plan.Output,
-		InputUpperBoundTokens:  plan.Input,
+		RunID:                     syntheticString(run.Run["runId"]),
+		InvocationNonce:           nonce,
+		RequestHash:               hash,
+		ProviderRequest:           frozen,
+		ReservedTokens:            plan.Reserved,
+		RequestedOutputTokens:     plan.Output,
+		InputUpperBoundTokens:     plan.Input,
 		ReasoningUpperBoundTokens: plan.Reasoning,
-		UsagePolicy:            policy,
-		Purpose:                "agent",
-		AgentToolNames:         toolNames,
-		ReplayTask:             json.RawMessage(taskRaw),
-		BudgetDecision:         plan.BudgetDecision,
+		UsagePolicy:               policy,
+		Purpose:                   "agent",
+		AgentToolNames:            toolNames,
+		ReplayTask:                json.RawMessage(taskRaw),
+		BudgetDecision:            plan.BudgetDecision,
 	})
 	return err
 }

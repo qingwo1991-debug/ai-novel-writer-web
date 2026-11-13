@@ -301,12 +301,12 @@ func productionGraphGenerationServed() []productionGraphGenerationLine {
 			Note: "re-proves the frozen context digest, input, origin epoch and task before answering",
 		},
 		{
-			Path:   "../../../src/shared/graph-generation.ts", Line: 42, Marker: "'graph-generation:read': { args: [{ handle: MainGenerationRunHandle }]; return: GraphGenerationRecovery }",
-			Note:   "the wire shape the browser sends and the type it decodes",
+			Path: "../../../src/shared/graph-generation.ts", Line: 42, Marker: "'graph-generation:read': { args: [{ handle: MainGenerationRunHandle }]; return: GraphGenerationRecovery }",
+			Note: "the wire shape the browser sends and the type it decodes",
 		},
 		{
-			Path:   "../../../electron/services/graph-generation.ts", Line: 25, Marker: "require(handle: MainGenerationRunHandle): DurableGenerationRun {",
-			Note:   "the handle fence this binder applies: four keys, the browser's project, the run's epoch",
+			Path: "../../../electron/services/graph-generation.ts", Line: 25, Marker: "require(handle: MainGenerationRunHandle): DurableGenerationRun {",
+			Note: "the handle fence this binder applies: four keys, the browser's project, the run's epoch",
 		},
 		{
 			Path: "synthetic_graph_linux.go", Line: 45, Marker: "effects: graph effects are recorded by confirmation, which is unbound.",

@@ -280,12 +280,12 @@ func (r *productionGenerationRecoveryServe) editors(ctx context.Context, caller 
 // (src/shared/generation-owner-contract.ts:254-262): five required arrays plus a
 // boolean, no bucket optional and no bucket nullable.
 type productionRecoveryListResult struct {
-	Planning []map[string]any                 `json:"planning"`
-	Editors  []map[string]any                 `json:"editors"`
-	Reviews  []map[string]any                 `json:"reviews"`
-	Batches  []store.GenerationBatchHistory   `json:"batches"`
-	Drafts   []map[string]any                 `json:"drafts"`
-	Partial  bool                             `json:"partial"`
+	Planning []map[string]any               `json:"planning"`
+	Editors  []map[string]any               `json:"editors"`
+	Reviews  []map[string]any               `json:"reviews"`
+	Batches  []store.GenerationBatchHistory `json:"batches"`
+	Drafts   []map[string]any               `json:"drafts"`
+	Partial  bool                           `json:"partial"`
 }
 
 // productionFindUnavailableContext builds the reference's writeState:'unavailable'
@@ -295,17 +295,17 @@ type productionRecoveryListResult struct {
 // needs neither.
 func productionFindUnavailableContext(need *store.DirectoryRecoveryNeed, leaseEpoch string) map[string]any {
 	return map[string]any{
-		"modelId":   need.Run.ModelID,
-		"handle":    map[string]any{"projectId": need.Run.ProjectID, "epoch": need.Run.Epoch, "rootActionId": need.Run.RootActionID, "runId": need.Run.RunID},
-		"operation": "chapter-blueprint-directory",
-		"authorInputs":               need.Run.AuthorInputs,
-		"selectedDraftIds":           []int64{},
-		"selectedFinalizedDraftIds":  []int64{},
+		"modelId":                         need.Run.ModelID,
+		"handle":                          map[string]any{"projectId": need.Run.ProjectID, "epoch": need.Run.Epoch, "rootActionId": need.Run.RootActionID, "runId": need.Run.RunID},
+		"operation":                       "chapter-blueprint-directory",
+		"authorInputs":                    need.Run.AuthorInputs,
+		"selectedDraftIds":                []int64{},
+		"selectedFinalizedDraftIds":       []int64{},
 		"selectedBlueprintChapterNumbers": need.Run.SelectedBlueprintChapterNumbers,
-		"composition":                nil,
-		"lastCompositionFinishReason": nil,
-		"attemptedPurposes":          []string{},
-		"draftSave":                  map[string]any{"kind": "absent"},
+		"composition":                     nil,
+		"lastCompositionFinishReason":     nil,
+		"attemptedPurposes":               []string{},
+		"draftSave":                       map[string]any{"kind": "absent"},
 		"blueprintRecovery": map[string]any{
 			"sourceHandle": map[string]any{"projectId": need.Run.ProjectID, "epoch": need.Run.Epoch, "rootActionId": need.Run.RootActionID, "runId": need.Run.RunID},
 			"leaseEpoch":   leaseEpoch,
@@ -343,17 +343,17 @@ func productionFindContinuedContext(need *store.DirectoryRecoveryNeed, leaseEpoc
 		writeState = "author-saved"
 	}
 	return map[string]any{
-		"modelId":   need.Run.ModelID,
-		"handle":    handle,
-		"operation": "chapter-blueprint-directory",
-		"authorInputs":               need.Run.AuthorInputs,
-		"selectedDraftIds":           []int64{},
-		"selectedFinalizedDraftIds":  []int64{},
+		"modelId":                         need.Run.ModelID,
+		"handle":                          handle,
+		"operation":                       "chapter-blueprint-directory",
+		"authorInputs":                    need.Run.AuthorInputs,
+		"selectedDraftIds":                []int64{},
+		"selectedFinalizedDraftIds":       []int64{},
 		"selectedBlueprintChapterNumbers": need.Run.SelectedBlueprintChapterNumbers,
-		"composition":                nil,
-		"lastCompositionFinishReason": nil,
-		"attemptedPurposes":          []string{},
-		"draftSave":                  map[string]any{"kind": "absent"},
+		"composition":                     nil,
+		"lastCompositionFinishReason":     nil,
+		"attemptedPurposes":               []string{},
+		"draftSave":                       map[string]any{"kind": "absent"},
 		"planningContinuation": map[string]any{
 			"sourceHandle":   handle,
 			"remainingRange": need.RemainingRange,

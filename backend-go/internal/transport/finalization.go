@@ -47,18 +47,18 @@ func (f FinalizationProviderFunc) BeginFinalization(ctx context.Context, caller 
 // finalization_outbox.go:179-190, :228-247, :294-305), so the proof cannot
 // substitute for that snapshot check either.
 type FinalizationProof struct {
-	ProjectID  string
-	LeaseID    string
+	ProjectID   string
+	LeaseID     string
 	ProjectPath string
 	// Action is the one store mutation this request may perform: commit,
 	// knowledge-link or publication-pending. publication-published is never
 	// authorized here because this lane owns no publisher receipt.
-	Action             string
-	DraftID            int64
-	FinalizationID     string
-	ContentHash        string
+	Action              string
+	DraftID             int64
+	FinalizationID      string
+	ContentHash         string
 	KnowledgeDocumentID string
-	LastError          string
+	LastError           string
 }
 
 // finalizationPublisherUnavailable is the one honest publication outcome this

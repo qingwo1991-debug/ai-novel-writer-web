@@ -105,7 +105,7 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
   return Object.assign(transport, {
     async begin(sessionInput: ProjectSessionContext, request: BeginGenerationRequest) {
       const session = freezeSession(sessionInput), frozen = structuredClone(request)
-      return bindView(await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:begin', frozen), session))
+      return bindView(await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:begin', frozen)), session)
     },
     async pause(handle: MainGenerationRunHandle) {
       const frozen = { ...handle }, session = sessionFor(frozen)
@@ -125,7 +125,7 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
     async restart(sessionInput: ProjectSessionContext, handle: MainGenerationRunHandle, request: BeginGenerationRequest) {
       const session = freezeSession(sessionInput), frozen = { ...handle }, intent = structuredClone(request)
       assertHandle(session, frozen, true)
-      return bindView(await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:restart', frozen, intent), session, true))
+      return bindView(await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:restart', frozen, intent)), session, true)
     },
     async discard(sessionInput: ProjectSessionContext, handle: MainGenerationRunHandle, artifactId: string) {
       const session = freezeSession(sessionInput), frozen = { ...handle }

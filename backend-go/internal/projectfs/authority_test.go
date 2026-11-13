@@ -19,10 +19,10 @@ import (
 // actual original location must independently reject even invalid JSON.
 func authorityFixtureMarkers(library, project, storage string) map[string]string {
 	return map[string]string{
-		"runtime freeze": filepath.Join(storage, "portable-runtime-freeze.json"),
-		"transfer authority": filepath.Join(storage, "portable-transfer-authority.json"),
+		"runtime freeze":      filepath.Join(storage, "portable-runtime-freeze.json"),
+		"transfer authority":  filepath.Join(storage, "portable-transfer-authority.json"),
 		"restore reservation": filepath.Join(project, ".portable-restore-reservation.json"),
-		"restore journal": filepath.Join(library, portableRestoreJournalName(project)),
+		"restore journal":     filepath.Join(library, portableRestoreJournalName(project)),
 	}
 }
 
@@ -299,13 +299,13 @@ func TestPortableAuthorityMarkersAgainstOriginalPureFunctionOracle(t *testing.T)
 		t.Fatal(err)
 	}
 	var contract struct {
-		FormatVersion int `json:"formatVersion"`
-		StorageDirectory string `json:"storageDirectory"`
-		RuntimeFreezeName string `json:"runtimeFreezeName"`
+		FormatVersion         int    `json:"formatVersion"`
+		StorageDirectory      string `json:"storageDirectory"`
+		RuntimeFreezeName     string `json:"runtimeFreezeName"`
 		TransferAuthorityName string `json:"transferAuthorityName"`
 		TransferAuthorityPath string `json:"transferAuthorityPath"`
-		ReservationName string `json:"reservationName"`
-		JournalCases []struct {
+		ReservationName       string `json:"reservationName"`
+		JournalCases          []struct {
 			ProjectPath string `json:"projectPath"`
 			JournalName string `json:"journalName"`
 		} `json:"journalCases"`

@@ -89,7 +89,7 @@ var jsDecimalNumberPattern = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.
 // jsNumber is ToNumber applied to a string (StringNumericLiteral). It is not
 // strconv.ParseFloat: the original also accepts hexadecimal, binary and octal
 // literals, reads an empty or blank string as 0, and reads the signed
-// "Infinity" literals, so that `Number('')` and `Number('0x10')` behave as they
+// "Infinity" literals, so that `Number(”)` and `Number('0x10')` behave as they
 // do in the reference.
 func jsNumber(text string) float64 {
 	trimmed := jsTrimText(text)

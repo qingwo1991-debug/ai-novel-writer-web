@@ -96,16 +96,16 @@ const (
 	// productionImportAuthorityStale is the store's own execution-lease code
 	// (internal/store/importrun.go:641-652), which the reference lets escape
 	// unchanged from assertExecutionAuthority.
-	productionImportAuthorityStale    = "IMPORT_RUN_EXECUTION_STALE"
-	productionImportEffectSealed      = "GENERATION_IMPORT_EFFECT_SEALED"
-	productionImportContextRequired   = "GENERATION_IMPORT_CONTEXT_REQUIRED"
-	productionImportSlotAmbiguous     = "GENERATION_IMPORT_SLOT_AMBIGUOUS"
-	productionImportModelChanged      = "GENERATION_IMPORT_MODEL_CHANGED"
-	productionImportManifestRequired  = "GENERATION_IMPORT_MANIFEST_REQUIRED"
-	productionImportContentChanged    = "GENERATION_IMPORT_CONTENT_CHANGED"
-	productionImportContextLimit      = "GENERATION_IMPORT_CONTEXT_LIMIT"
-	productionImportOrdinalInvalid    = "GENERATION_IMPORT_ORDINAL_INVALID"
-	productionImportOrdinalGap        = "GENERATION_IMPORT_ORDINAL_GAP"
+	productionImportAuthorityStale     = "IMPORT_RUN_EXECUTION_STALE"
+	productionImportEffectSealed       = "GENERATION_IMPORT_EFFECT_SEALED"
+	productionImportContextRequired    = "GENERATION_IMPORT_CONTEXT_REQUIRED"
+	productionImportSlotAmbiguous      = "GENERATION_IMPORT_SLOT_AMBIGUOUS"
+	productionImportModelChanged       = "GENERATION_IMPORT_MODEL_CHANGED"
+	productionImportManifestRequired   = "GENERATION_IMPORT_MANIFEST_REQUIRED"
+	productionImportContentChanged     = "GENERATION_IMPORT_CONTENT_CHANGED"
+	productionImportContextLimit       = "GENERATION_IMPORT_CONTEXT_LIMIT"
+	productionImportOrdinalInvalid     = "GENERATION_IMPORT_ORDINAL_INVALID"
+	productionImportOrdinalGap         = "GENERATION_IMPORT_ORDINAL_GAP"
 	productionImportPreviousIncomplete = "GENERATION_IMPORT_PREVIOUS_ATTEMPT_INCOMPLETE"
 	// productionImportRequestInvalid is this lane's own envelope refusal: the
 	// reference reads four fields off the request without validating its shape.

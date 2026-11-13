@@ -7,8 +7,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -750,9 +750,9 @@ func TestProductionDBMaintenanceImportGlobalFactsCommitIsOneTransaction(t *testi
 	var committed struct {
 		Success bool `json:"success"`
 		Receipt struct {
-			OperationID       string `json:"operationId"`
-			PayloadHash       string `json:"payloadHash"`
-			Idempotent        bool   `json:"idempotent"`
+			OperationID       string         `json:"operationId"`
+			PayloadHash       string         `json:"payloadHash"`
+			Idempotent        bool           `json:"idempotent"`
 			Core              map[string]any `json:"core"`
 			CharacterProposal struct {
 				ProposalBatchID string `json:"proposalBatchId"`

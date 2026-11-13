@@ -119,8 +119,8 @@ func seedProductionImportRunRows(t *testing.T, projectPath string) {
  VALUES ('%s', 'reference', '%s', 'import:%s', '%s', '%s', '[]', 'zh-CN', 'completed', 'completed', 0,
  2, 24, 2, 24, 12, 2, '%s', '2024-05-06 09:10:13', '2024-05-06 09:10:14', '2024-05-06 09:10:15')`,
 			productionImportRunCompletedID, productionImportRunCompletedID, productionImportRunCompletedID,
-			productionImportRunDigest(productionImportRunSourceSeed + "-completed"),
-			productionImportRunDigest(productionImportRunManifestSeed + "-completed"),
+			productionImportRunDigest(productionImportRunSourceSeed+"-completed"),
+			productionImportRunDigest(productionImportRunManifestSeed+"-completed"),
 			productionImportRunResumableID),
 		// One finished source and one still pending: the run snapshot reports both
 		// and the unfinished projection only the pending display object.

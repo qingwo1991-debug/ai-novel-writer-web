@@ -391,13 +391,13 @@ func productionFinalizedDraftImportManifest(t *testing.T, chapters ...map[string
 // productionFinalizedDraftImportPreviewWire is AuthorManuscriptImportPreview
 // (src/shared/author-manuscript-import.ts:20-33) as it crosses the wire.
 type productionFinalizedDraftImportPreviewWire struct {
-	Classification          string `json:"classification"`
-	AuthorityFingerprint    string `json:"authorityFingerprint"`
-	ManifestFingerprint     string `json:"manifestFingerprint"`
-	ChapterCount            int64  `json:"chapterCount"`
-	TargetStatus            string `json:"targetStatus"`
-	NextChapterNumber       *int64 `json:"nextChapterNumber"`
-	Chapters                []struct {
+	Classification       string `json:"classification"`
+	AuthorityFingerprint string `json:"authorityFingerprint"`
+	ManifestFingerprint  string `json:"manifestFingerprint"`
+	ChapterCount         int64  `json:"chapterCount"`
+	TargetStatus         string `json:"targetStatus"`
+	NextChapterNumber    *int64 `json:"nextChapterNumber"`
+	Chapters             []struct {
 		Number      int64  `json:"number"`
 		Title       string `json:"title"`
 		WordCount   int64  `json:"wordCount"`
@@ -545,7 +545,7 @@ func TestProductionFinalizedDraftImports(t *testing.T) {
 		if len(receipt.Drafts) != 3 {
 			t.Fatalf("the receipt names %d drafts, want 3", len(receipt.Drafts))
 		}
-		wantFinalization := "import-" + sha256Hex(productionFinalizedDraftImportOperationID+":1")[:32]
+		wantFinalization := "import-" + sha256Hex(productionFinalizedDraftImportOperationID + ":1")[:32]
 		first := receipt.Drafts[0]
 		if first.ChapterNumber != 1 || first.FinalizationID != wantFinalization ||
 			first.ContentHash != sha256Hex(productionFinalizedDraftImportBodyOne) ||
@@ -636,7 +636,7 @@ func TestProductionFinalizedDraftImports(t *testing.T) {
 	// written; a different payload under that id is the reference's conflict.
 	t.Run("the same operation replays idempotently", func(t *testing.T) {
 		f := newProductionFinalizedDraftImportFixture(t)
-		request := productionFinalizedDraftImportBatchRequest("  " + productionFinalizedDraftImportOperationID + "  ",
+		request := productionFinalizedDraftImportBatchRequest("  "+productionFinalizedDraftImportOperationID+"  ",
 			chapterOne, chapterTwo, chapterThree)
 		args := []any{request, f.projectPath, f.frozen}
 		var first productionFinalizedDraftImportBatchWire
@@ -811,12 +811,12 @@ func TestProductionFinalizedDraftImports(t *testing.T) {
 		f.refuse(batch, []any{empty, f.projectPath, f.frozen}, "FINALIZED_IMPORT_CHAPTERS_INVALID")
 		fractional := productionFinalizedDraftImportBatchRequest(productionFinalizedDraftImportOperationID,
 			map[string]any{"chapterNumber": 1.5, "title": productionFinalizedDraftImportTitleOne,
-				"content": productionFinalizedDraftImportBodyOne,
+				"content":   productionFinalizedDraftImportBodyOne,
 				"wordCount": float64(draftalg.CountDraftUnits(productionFinalizedDraftImportBodyOne))})
 		f.refuse(batch, []any{fractional, f.projectPath, f.frozen}, "FINALIZED_IMPORT_CHAPTERS_INVALID")
 		numberTitle := productionFinalizedDraftImportBatchRequest(productionFinalizedDraftImportOperationID,
 			map[string]any{"chapterNumber": float64(1), "title": float64(7),
-				"content": productionFinalizedDraftImportBodyOne,
+				"content":   productionFinalizedDraftImportBodyOne,
 				"wordCount": float64(draftalg.CountDraftUnits(productionFinalizedDraftImportBodyOne))})
 		f.refuse(batch, []any{numberTitle, f.projectPath, f.frozen}, "FINALIZED_IMPORT_CHAPTERS_INVALID")
 		stringCount := productionFinalizedDraftImportBatchRequest(productionFinalizedDraftImportOperationID,

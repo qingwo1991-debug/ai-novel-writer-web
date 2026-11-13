@@ -258,11 +258,11 @@ func irlUTF16Len(value string) int {
 // db:import-run-prepare-inspection binds from the inspection it just showed.
 func irlBeginRequest(runID, sourceID, displayName string) ImportRunBeginParsingRequest {
 	return ImportRunBeginParsingRequest{RunID: runID, Purpose: "reference",
-		SourceFingerprint: strings.Repeat("a", 64),
-		SourceIDs: []string{sourceID},
+		SourceFingerprint:  strings.Repeat("a", 64),
+		SourceIDs:          []string{sourceID},
 		SourceFingerprints: []string{strings.Repeat("b", 64)},
-		SourceDisplay: []ImportRunSourceDisplay{{DisplayName: displayName, MediaType: "text/plain", Size: 128}},
-		Locale: "zh-CN"}
+		SourceDisplay:      []ImportRunSourceDisplay{{DisplayName: displayName, MediaType: "text/plain", Size: 128}},
+		Locale:             "zh-CN"}
 }
 
 // irlRunSeed is one import_runs row to seed. Empty strings take the schema's own

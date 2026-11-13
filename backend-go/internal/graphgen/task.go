@@ -27,8 +27,8 @@ const (
 
 // Task purposes (plot-tree-generation-pure.ts:324, narrative-thread-generation-pure.ts:123, :148).
 const (
-	PurposePlotTreeSnapshot             = "plot-tree-snapshot"
-	PurposeNarrativeThreadPlanCandidate = "narrative-thread-plan-candidate"
+	PurposePlotTreeSnapshot              = "plot-tree-snapshot"
+	PurposeNarrativeThreadPlanCandidate  = "narrative-thread-plan-candidate"
 	PurposeNarrativeThreadEventCandidate = "narrative-thread-event-candidate"
 )
 
@@ -46,10 +46,10 @@ const PlotTreeInputMaxCharacters = 220_000
 // PLOT_TREE_GENERATION_BUDGET (plot-tree-generation-pure.ts:14-19) or
 // NARRATIVE_THREAD_CANDIDATE_BUDGET (narrative-thread-generation-pure.ts:38-43).
 type GenerationBudget struct {
-	MaxAttempts                       int `json:"maxAttempts"`
-	MaxRequestedOutputTokens          int `json:"maxRequestedOutputTokens"`
+	MaxAttempts                        int `json:"maxAttempts"`
+	MaxRequestedOutputTokens           int `json:"maxRequestedOutputTokens"`
 	MaxRequestedOutputTokensPerAttempt int `json:"maxRequestedOutputTokensPerAttempt"`
-	DeadlineMs                        int `json:"deadlineMs"`
+	DeadlineMs                         int `json:"deadlineMs"`
 }
 
 // PlotTreeGenerationBudget mirrors PLOT_TREE_GENERATION_BUDGET
@@ -141,11 +141,11 @@ type Blueprint struct {
 	// indistinguishable from an absent one here; the real row mapper
 	// (rowToData) never sets either field.
 	NewCharacterCandidates []BlueprintNewCharacterCandidate `json:"newCharacterCandidates,omitempty"`
-	RelationshipHints      any                               `json:"relationshipHints,omitempty"`
-	SuspenseHook           string                            `json:"suspenseHook"`
-	UserGuidance           string                            `json:"userGuidance"`
-	Notes                  string                            `json:"notes"`
-	NotesUpdatedAt         string                            `json:"notesUpdatedAt"`
+	RelationshipHints      any                              `json:"relationshipHints,omitempty"`
+	SuspenseHook           string                           `json:"suspenseHook"`
+	UserGuidance           string                           `json:"userGuidance"`
+	Notes                  string                           `json:"notes"`
+	NotesUpdatedAt         string                           `json:"notesUpdatedAt"`
 }
 
 // PlotTreeSynopsisSource mirrors PlotTreeSourceBundle['synopsis'] (src/shared/plot-tree.ts:73-75).
@@ -183,41 +183,41 @@ type PlotTreeNarrativeThreadEventSource struct {
 // PlotTreeNarrativeThreadSource mirrors PlotTreeNarrativeThreadSource
 // (src/shared/plot-tree.ts:51-66).
 type PlotTreeNarrativeThreadSource struct {
-	ID                 int                                     `json:"id"`
-	Title              string                                  `json:"title"`
-	Type               string                                  `json:"type"`
-	TargetStartChapter int                                     `json:"targetStartChapter"`
-	TargetEndChapter   int                                     `json:"targetEndChapter"`
-	AuthorIntent       string                                  `json:"authorIntent"`
-	Status             string                                  `json:"status"`
-	Events             []PlotTreeNarrativeThreadEventSource    `json:"events"`
+	ID                 int                                  `json:"id"`
+	Title              string                               `json:"title"`
+	Type               string                               `json:"type"`
+	TargetStartChapter int                                  `json:"targetStartChapter"`
+	TargetEndChapter   int                                  `json:"targetEndChapter"`
+	AuthorIntent       string                               `json:"authorIntent"`
+	Status             string                               `json:"status"`
+	Events             []PlotTreeNarrativeThreadEventSource `json:"events"`
 }
 
 // PlotTreeSourceBundle mirrors PlotTreeSourceBundle (src/shared/plot-tree.ts:68-91).
 type PlotTreeSourceBundle struct {
-	WritingLanguage   string                            `json:"writingLanguage"`
-	Synopsis          PlotTreeSynopsisSource            `json:"synopsis"`
-	Blueprints        []PlotTreeBlueprintSource         `json:"blueprints"`
-	FinalizedChapters []PlotTreeFinalizedChapterSource   `json:"finalizedChapters"`
-	NarrativeThreads  []PlotTreeNarrativeThreadSource   `json:"narrativeThreads"`
-	SourceRevision    string                            `json:"sourceRevision"`
-	Snapshot          *PlotTreeSnapshot                 `json:"snapshot"`
+	WritingLanguage   string                           `json:"writingLanguage"`
+	Synopsis          PlotTreeSynopsisSource           `json:"synopsis"`
+	Blueprints        []PlotTreeBlueprintSource        `json:"blueprints"`
+	FinalizedChapters []PlotTreeFinalizedChapterSource `json:"finalizedChapters"`
+	NarrativeThreads  []PlotTreeNarrativeThreadSource  `json:"narrativeThreads"`
+	SourceRevision    string                           `json:"sourceRevision"`
+	Snapshot          *PlotTreeSnapshot                `json:"snapshot"`
 	// `storedSnapshotInvalid?: true` (src/shared/plot-tree.ts:90).
 	StoredSnapshotInvalid bool `json:"storedSnapshotInvalid,omitempty"`
 }
 
 // plotTreeSourceLimits mirrors PLOT_TREE_SOURCE_LIMITS (plot-tree-generation-pure.ts:23-34).
 type plotTreeSourceLimits struct {
-	synopsisCharacters                   int
-	labelCharacters                      int
-	detailCharacters                     int
-	largeProjectThreshold                int
-	largeProjectSynopsisCharacters       int
-	largeProjectLabelCharacters          int
-	largeProjectDetailCharacters         int
-	largeProjectEventDetailCharacters    int
-	blueprints                           int
-	finalizedChapters                    int
+	synopsisCharacters                int
+	labelCharacters                   int
+	detailCharacters                  int
+	largeProjectThreshold             int
+	largeProjectSynopsisCharacters    int
+	largeProjectLabelCharacters       int
+	largeProjectDetailCharacters      int
+	largeProjectEventDetailCharacters int
+	blueprints                        int
+	finalizedChapters                 int
 }
 
 var plotTreeSourceLimit = plotTreeSourceLimits{
@@ -291,10 +291,10 @@ func boundedText(value string, maximum int) string {
 // plotTreeFacts is the JSON payload of the plot-tree user message. Field order
 // and tags mirror generationFacts (plot-tree-generation-pure.ts:280-310).
 type plotTreeFacts struct {
-	Synopsis          string                    `json:"synopsis"`
-	Blueprints        []plotTreeFactBlueprint   `json:"blueprints"`
-	FinalizedChapters []plotTreeFactChapter     `json:"finalizedChapters"`
-	NarrativeThreads  []plotTreeFactThread      `json:"narrativeThreads"`
+	Synopsis          string                  `json:"synopsis"`
+	Blueprints        []plotTreeFactBlueprint `json:"blueprints"`
+	FinalizedChapters []plotTreeFactChapter   `json:"finalizedChapters"`
+	NarrativeThreads  []plotTreeFactThread    `json:"narrativeThreads"`
 }
 
 type plotTreeFactBlueprint struct {
@@ -320,14 +320,14 @@ type plotTreeFactThreadEvent struct {
 }
 
 type plotTreeFactThread struct {
-	ID                 int                        `json:"id"`
-	Title              string                     `json:"title"`
-	Type               string                     `json:"type"`
-	TargetStartChapter int                        `json:"targetStartChapter"`
-	TargetEndChapter   int                        `json:"targetEndChapter"`
-	AuthorIntent       string                     `json:"authorIntent"`
-	Status             string                     `json:"status"`
-	Events             []plotTreeFactThreadEvent  `json:"events"`
+	ID                 int                       `json:"id"`
+	Title              string                    `json:"title"`
+	Type               string                    `json:"type"`
+	TargetStartChapter int                       `json:"targetStartChapter"`
+	TargetEndChapter   int                       `json:"targetEndChapter"`
+	AuthorIntent       string                    `json:"authorIntent"`
+	Status             string                    `json:"status"`
+	Events             []plotTreeFactThreadEvent `json:"events"`
 }
 
 // generationFacts mirrors generationFacts (plot-tree-generation-pure.ts:272-311).
@@ -538,9 +538,9 @@ type narrativeThreadEventPlanMessage struct {
 // narrativeThreadEventUserMessage mirrors the JSON.stringify call on
 // narrative-thread-generation-pure.ts:162-173.
 type narrativeThreadEventUserMessage struct {
-	ChapterNumber    int                            `json:"chapterNumber"`
+	ChapterNumber    int                             `json:"chapterNumber"`
 	Plan             narrativeThreadEventPlanMessage `json:"plan"`
-	FinalizedContent string                         `json:"finalizedContent"`
+	FinalizedContent string                          `json:"finalizedContent"`
 }
 
 // BuildNarrativeThreadEventTask mirrors buildNarrativeThreadEventTask

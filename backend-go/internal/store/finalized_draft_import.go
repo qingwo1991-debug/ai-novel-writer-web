@@ -388,17 +388,17 @@ func finalizedImportPayloadHash(request FinalizedDraftImportRequest, chapters []
 		request.ExpectedCommitManifestFingerprint == nil {
 		// :97
 		return finalizedImportJSONDigest(finalizedImportBarePayload{OperationID: request.OperationID,
-			Chapters:    payload})
+			Chapters: payload})
 	}
 	if request.ExpectedCommitManifestFingerprint == nil {
 		// :98-105
-		return finalizedImportJSONDigest(finalizedImportExpectedPayload{OperationID:                  request.OperationID,
+		return finalizedImportJSONDigest(finalizedImportExpectedPayload{OperationID: request.OperationID,
 			ExpectedAuthorityFingerprint: request.ExpectedAuthorityFingerprint,
 			ExpectedManifestFingerprint:  request.ExpectedManifestFingerprint,
 			Chapters:                     payload})
 	}
 	// :106-112
-	return finalizedImportJSONDigest(finalizedImportCommittedPayload{OperationID:                       request.OperationID,
+	return finalizedImportJSONDigest(finalizedImportCommittedPayload{OperationID: request.OperationID,
 		ExpectedAuthorityFingerprint:      request.ExpectedAuthorityFingerprint,
 		ExpectedManifestFingerprint:       request.ExpectedManifestFingerprint,
 		ExpectedCommitManifestFingerprint: request.ExpectedCommitManifestFingerprint,

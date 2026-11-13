@@ -59,6 +59,7 @@ export function useNewProjectForm(open: boolean, onClose: () => void) {
     return () => {
       mounted = false
       dialogOpen.current = false
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       ++locationRequest.current
     }
   }, [open, isWeb, selectFolder])

@@ -139,6 +139,7 @@ const productionReviewRevisionAuthorInputID = "review-revision-context"
 // refuses anything below 32 bytes (internal/reviewrevprep/store.go:82); the key is
 // process-random, so no other process can resolve the handles this one mints.
 const productionReviewRevisionServerKeyBytes = 32
+
 // productionReviewRevisionMaxActive and MaxPerCaller are the process-wide caps
 // above, one per live session preparing at once.
 const productionReviewRevisionMaxActive = 64

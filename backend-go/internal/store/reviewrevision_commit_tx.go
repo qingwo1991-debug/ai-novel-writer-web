@@ -148,19 +148,19 @@ type ReviewRevisionRecoveryRequest struct {
 // omitted when the reference omits them, while the two finish reasons are always
 // present and null when unknown.
 type ReviewRevisionRecovery struct {
-	Handle                      map[string]any        `json:"handle"`
-	Context                     json.RawMessage       `json:"context"`
-	ModelID                     string                `json:"modelId"`
-	SourceStatus                string                `json:"sourceStatus"`
-	InFlight                    bool                  `json:"inFlight"`
-	CanResume                   bool                  `json:"canResume"`
-	ContextID                   string                `json:"contextId,omitempty"`
+	Handle                      map[string]any         `json:"handle"`
+	Context                     json.RawMessage        `json:"context"`
+	ModelID                     string                 `json:"modelId"`
+	SourceStatus                string                 `json:"sourceStatus"`
+	InFlight                    bool                   `json:"inFlight"`
+	CanResume                   bool                   `json:"canResume"`
+	ContextID                   string                 `json:"contextId,omitempty"`
 	Saved                       *ReviewRevisionReceipt `json:"saved,omitempty"`
-	Composition                 map[string]any        `json:"composition,omitempty"`
-	LastCompositionFinishReason *string               `json:"lastCompositionFinishReason"`
-	LatestArtifact              map[string]any        `json:"latestArtifact,omitempty"`
-	LatestArtifactFinishReason  *string               `json:"latestArtifactFinishReason"`
-	AttemptedPurposes           []string              `json:"attemptedPurposes"`
+	Composition                 map[string]any         `json:"composition,omitempty"`
+	LastCompositionFinishReason *string                `json:"lastCompositionFinishReason"`
+	LatestArtifact              map[string]any         `json:"latestArtifact,omitempty"`
+	LatestArtifactFinishReason  *string                `json:"latestArtifactFinishReason"`
+	AttemptedPurposes           []string               `json:"attemptedPurposes"`
 }
 
 // The reference's two answers for sourceStatus (:276, :297).
@@ -367,7 +367,7 @@ func rvcTargetUnits(text string) int64 {
 }
 
 // rvcUserPrompt is `context.authorInputs.find(item => item.id === 'user-prompt')
-// ?.text ?? ''` (review-revision-generation.ts:256). The producer admits that id
+// ?.text ?? ”` (review-revision-generation.ts:256). The producer admits that id
 // for refine-draft only (review-revision-context.ts:46), so a context without one
 // stores the empty prompt the reference stores.
 func rvcUserPrompt(inputs []any) string {
@@ -1115,7 +1115,7 @@ func rvcIsNoopRevision(before, after string) bool {
 	return rvcVisibleRevision(before) == rvcVisibleRevision(after)
 }
 
-// rvcVisibleRevision is `value.replace(/[\p{White_Space}\p{Cf}]/gu, '')`.
+// rvcVisibleRevision is `value.replace(/[\p{White_Space}\p{Cf}]/gu, ”)`.
 func rvcVisibleRevision(value string) string {
 	var kept strings.Builder
 	kept.Grow(len(value))

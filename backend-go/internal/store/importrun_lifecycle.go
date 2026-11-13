@@ -268,7 +268,7 @@ func importRunSourceChapterKey(sourceID string, sourceChapterNumber int64) strin
 }
 
 // importRunParseDisplay is parseJson<ImportSourceDisplayMetadata>(raw,
-// {displayName:'',mediaType:'',size:0}): a row that does not decode is served as
+// {displayName:”,mediaType:”,size:0}): a row that does not decode is served as
 // the empty display the original falls back to.
 func importRunParseDisplay(raw string) ImportRunSourceDisplay {
 	display := ImportRunSourceDisplay{}
@@ -1303,8 +1303,8 @@ func (r *ImportRuns) FinalizeParsing(ctx context.Context, runID string) (map[str
 		allNumbers := make([]int64, 0, len(assigned))
 		for _, chapter := range assigned {
 			previewChapters = append(previewChapters, importRunPreviewChapter{number: chapter.number,
-				title: chapter.title,
-				wordCount: wordCounts[importRunSourceChapterKey(chapter.sourceID, chapter.sourceChapterNumber)],
+				title:       chapter.title,
+				wordCount:   wordCounts[importRunSourceChapterKey(chapter.sourceID, chapter.sourceChapterNumber)],
 				contentSize: chapter.contentSize})
 			allNumbers = append(allNumbers, chapter.number)
 		}

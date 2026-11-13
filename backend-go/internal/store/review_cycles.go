@@ -375,8 +375,8 @@ func rccFrozenContext(binding any) (rccFrozen, string, string, error) {
 func rccReprooveFrozen(ctx context.Context, conn *sql.Conn, request ReviewCommitRequest,
 	frozen rccFrozen, text, hash string) error {
 	values, err := rrctxRequest(map[string]any{
-		"operation":     frozen.Operation,
-		"draftId":       frozen.Source.ID,
+		"operation": frozen.Operation,
+		"draftId":   frozen.Source.ID,
 		"expectedDraft": map[string]any{
 			"chapterNumber": frozen.Source.ChapterNumber,
 			"version":       frozen.Source.Version,

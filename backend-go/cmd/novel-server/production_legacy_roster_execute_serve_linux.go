@@ -79,14 +79,14 @@ import (
 const (
 	// The reference's two stages and its three attempts per stage
 	// (main-generation-owner.ts:1143, :1145).
-	productionLegacyRosterInitialStage = "initial"
-	productionLegacyRosterRepairStage  = "repair"
+	productionLegacyRosterInitialStage  = "initial"
+	productionLegacyRosterRepairStage   = "repair"
 	productionLegacyRosterStageAttempts = 3
 	// productionLegacyRosterRepairPurpose is buildLegacyRosterJsonRepairTask's
 	// purpose (legacy-roster-generation-pure.ts:69) and its output contract
 	// (:71).
-	productionLegacyRosterRepairPurpose = "legacy-character-roster-json-repair"
-	productionLegacyRosterRepairOutput  = "structured-data"
+	productionLegacyRosterRepairPurpose        = "legacy-character-roster-json-repair"
+	productionLegacyRosterRepairOutput         = "structured-data"
 	productionLegacyRosterRepairReasoningStage = "planning"
 	// productionLegacyRosterSchemaVersion is CHARACTER_ROSTER_SCHEMA_VERSION
 	// (src/shared/character-roster.ts:10).
@@ -103,8 +103,8 @@ const (
 	// fingerprint the frozen sources no longer reproduce.
 	productionLegacyRosterSourceChanged = "GENERATION_SOURCE_CHANGED"
 	// The two finish reasons the loop distinguishes (:1163-1171).
-	productionLegacyRosterFinishLength = "length"
-	productionLegacyRosterFinishStop   = "stop"
+	productionLegacyRosterFinishLength    = "length"
+	productionLegacyRosterFinishStop      = "stop"
 	productionLegacyRosterStatusCompleted = "completed"
 )
 

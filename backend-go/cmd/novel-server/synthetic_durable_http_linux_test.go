@@ -1565,7 +1565,7 @@ func TestSyntheticDurableHTTPOpenSaveCloseReopenPersists(t *testing.T) {
 	mismatchedFinal := coreWrite("finalization:commit", []any{map[string]any{
 		"tabId": tab, "projectPath": projectPath,
 		"projectSession": map[string]any{"projectId": id, "leaseId": "forged-lease", "projectPath": projectPath},
-		"draftId": draftID, "chapterNumber": 1, "chapterTitle": finalTitle,
+		"draftId":        draftID, "chapterNumber": 1, "chapterTitle": finalTitle,
 		"content": finalBody, "expectedContent": changedBody, "contentRevision": 1,
 	}, freshSession})
 	if mismatchedFinal["success"] != false || mismatchedFinal["committed"] != false ||

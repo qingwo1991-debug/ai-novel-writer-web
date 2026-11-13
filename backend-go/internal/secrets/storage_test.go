@@ -34,7 +34,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(encrypted) != 36 + len(text) || string(encrypted[:8]) != "ANWSEC01" {
+		if len(encrypted) != 36+len(text) || string(encrypted[:8]) != "ANWSEC01" {
 			t.Fatal("incorrect envelope framing")
 		}
 		decrypted, err := s.DecryptString(encrypted)
@@ -50,7 +50,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 
 func TestEncryptInputAndZeroStorage(t *testing.T) {
 	s := testStorage(t)
-	for _, input := range []string{strings.Repeat("x", MaxSecretBytes + 1), strings.Repeat("密", MaxSecretBytes / 3 + 1), string([]byte{0xff})} {
+	for _, input := range []string{strings.Repeat("x", MaxSecretBytes+1), strings.Repeat("密", MaxSecretBytes/3+1), string([]byte{0xff})} {
 		if _, err := s.EncryptString(input); !errors.Is(err, ErrInputInvalid) {
 			t.Fatalf("input validation: %v", err)
 		}
@@ -83,7 +83,7 @@ func TestMalformedAndTampered(t *testing.T) {
 			t.Fatalf("truncation at %d: %v", n, err)
 		}
 	}
-	if _, err := s.DecryptString(append([]byte("ANWSEC01"), make([]byte, 28 + MaxSecretBytes + 1)...)); !errors.Is(err, ErrCiphertextInvalid) {
+	if _, err := s.DecryptString(append([]byte("ANWSEC01"), make([]byte, 28+MaxSecretBytes+1)...)); !errors.Is(err, ErrCiphertextInvalid) {
 		t.Fatalf("oversized envelope: %v", err)
 	}
 	for i := range encrypted {
@@ -144,7 +144,7 @@ func TestDecryptUTF8Replacement(t *testing.T) {
 	s := testStorage(t)
 	cases := []struct {
 		input []byte
-		want string
+		want  string
 	}{
 		{[]byte{0xe2, 0x82}, "\ufffd"},
 		{[]byte{0xf0, 0x9f, 0x92}, "\ufffd"},

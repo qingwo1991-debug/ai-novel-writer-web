@@ -159,7 +159,7 @@ describe('ProjectService REFRESH_RESOURCE project identity', () => {
       draftLedgers: { config: '{"version":1,"projects":[]}' },
     })
 
-    disableProjectBindingsPreservingDrafts(null)
+    disableProjectBindingsPreservingDrafts()
 
     expect(useEditorStore.getState()).toMatchObject({
       tabs: [expect.objectContaining({ id: 'dirty-tab', dirty: true })],

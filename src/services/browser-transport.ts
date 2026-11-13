@@ -280,10 +280,10 @@ export function createBrowserTransport(dependencies: BrowserTransportDependencie
   function connectEvents(): Promise<void> {
     return new Promise((resolve, reject) => {
       let initialOpen = false
-      let timer: ReturnType<typeof setTimeout> | undefined
+      const timer = setTimeout(() => fail(new BrowserTransportError('BROWSER_EVENTS_TIMEOUT', 'The browser event stream did not connect. Try again.')), dependencies.connectionTimeoutMs ?? 15_000)
       const fail = (error: BrowserTransportError) => {
         if (initialOpen) return
-        if (timer !== undefined) clearTimeout(timer)
+        clearTimeout(timer)
         stream?.close()
         if (source === stream) source = undefined
         rejectConnection = undefined
@@ -300,13 +300,12 @@ export function createBrowserTransport(dependencies: BrowserTransportDependencie
       source?.close()
       source = stream
       rejectConnection = fail
-      timer = setTimeout(() => fail(new BrowserTransportError('BROWSER_EVENTS_TIMEOUT', 'The browser event stream did not connect. Try again.')), dependencies.connectionTimeoutMs ?? 15_000)
       stream.onopen = () => {
         if (closed || source !== stream) return
         const reconnect = everConnected
         everConnected = true
         initialOpen = true
-        if (timer !== undefined) clearTimeout(timer)
+        clearTimeout(timer)
         rejectConnection = undefined
         resolve()
         emit('browser:connection', { state: 'connected', clientId })

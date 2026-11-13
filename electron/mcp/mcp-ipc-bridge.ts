@@ -83,6 +83,4 @@ export function registerMCPHandlers(): void {
   operations.handle('mcp:get-config-path', async () => {
     return mcpManager.getDefaultConfigPath()
   })
-
-  console.log('[MCP] IPC 处理器已注册')
 }

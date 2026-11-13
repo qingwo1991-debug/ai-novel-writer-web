@@ -18,8 +18,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // Registers the database/sql driver "sqlite3".
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/draftalg"
-	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectsession"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/transport"
@@ -855,8 +855,8 @@ func TestProductionReviewRevisionLaneRequestShapes(t *testing.T) {
 		}
 	}
 	valid := map[string]any{
-		"contextId":              "00000000-0000-4000-8000-000000000001",
-		"handle":                 handle(),
+		"contextId":               "00000000-0000-4000-8000-000000000001",
+		"handle":                  handle(),
 		"expectedCompositionHash": digest,
 	}
 	parsed, err := productionReviewRevisionCommitRevisionRequest(valid, contextValue)

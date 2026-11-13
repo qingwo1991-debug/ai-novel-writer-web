@@ -17,8 +17,8 @@ var ErrPortableAuthorityUnsupported = errors.New("PORTABLE_AUTHORITY_UNSUPPORTED
 // portable-transfer-authority.ts and project-restore-service.ts. Archive paths
 // are not installed paths: restore moves the history into canonical storage.
 const (
-	portableRuntimeFreezeName = "portable-runtime-freeze.json"
-	portableTransferAuthorityName = "portable-transfer-authority.json"
+	portableRuntimeFreezeName      = "portable-runtime-freeze.json"
+	portableTransferAuthorityName  = "portable-transfer-authority.json"
 	portableRestoreReservationName = ".portable-restore-reservation.json"
 )
 

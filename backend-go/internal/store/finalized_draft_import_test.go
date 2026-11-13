@@ -40,9 +40,9 @@ import (
 )
 
 const (
-	fdiChapterOneBody   = "山雨欲来，风满楼。"
-	fdiChapterTwoBody   = "夜色沉沉，江上无人。"
-	fdiChapterThreeBody = "归途已远，灯火将尽。"
+	fdiChapterOneBody    = "山雨欲来，风满楼。"
+	fdiChapterTwoBody    = "夜色沉沉，江上无人。"
+	fdiChapterThreeBody  = "归途已远，灯火将尽。"
 	fdiSeededChapterBody = "这是作者自己写的定稿。"
 )
 

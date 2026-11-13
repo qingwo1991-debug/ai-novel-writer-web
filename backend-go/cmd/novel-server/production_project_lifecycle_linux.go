@@ -49,7 +49,7 @@ import (
 // identity: a surviving `.ai-novel` is still admitted by project:open, so a
 // partial removal would leave a project that opens and cannot be deleted twice.
 //
-// DELETE REFUSES RATHER THAN DELETES UNDER A WRITER
+// # DELETE REFUSES RATHER THAN DELETES UNDER A WRITER
 //
 // SQLite keeps writing to an unlinked file, so a delete that ran beside a live
 // writer could answer "deleted" while an admitted handle still held the rows,
@@ -59,13 +59,13 @@ import (
 // project path, so the only live lease on this project - if any - is the
 // caller's own. Consequently:
 //
-//	- the caller's lease must be live and exactly the frozen context
-//	  (active.go:282-311), else PROJECT_SESSION_STALE;
-//	- the handle goes away through the runtime's own close
-//	  (authorruntime/durable_linux.go:249 -> projectsession.CloseProject,
-//	  active.go:315-370), which fences new work and waits for the in-flight work
-//	  to drain before the handle is dropped, so the removal never races a borrow;
-//	- only then is a file renamed or removed.
+//   - the caller's lease must be live and exactly the frozen context
+//     (active.go:282-311), else PROJECT_SESSION_STALE;
+//   - the handle goes away through the runtime's own close
+//     (authorruntime/durable_linux.go:249 -> projectsession.CloseProject,
+//     active.go:315-370), which fences new work and waits for the in-flight work
+//     to drain before the handle is dropped, so the removal never races a borrow;
+//   - only then is a file renamed or removed.
 //
 // No borrowAuthorDatabase on purpose: a delete performs no SQL, and borrowing
 // the admitted handle in order to unlink the file it has open is the exact

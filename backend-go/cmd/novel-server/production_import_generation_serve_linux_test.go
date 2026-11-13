@@ -317,15 +317,15 @@ func productionImportGenerationBusinessRefusal(t *testing.T, lane *productionImp
 func TestProductionImportGenerationServed(t *testing.T) {
 	lane := productionImportGenerationLaneOpen(t)
 	for _, stage := range []struct {
-		name       string
-		runID      string
-		kind       string
-		operation  string
-		output     string
-		chapters   int
-		first      string
-		last       string
-		nonce      string
+		name      string
+		runID     string
+		kind      string
+		operation string
+		output    string
+		chapters  int
+		first     string
+		last      string
+		nonce     string
 	}{
 		{"global", productionImportGenerationGlobalRunID, "global", productionImportGlobalFactsOperation,
 			"structured-data", 2, productionImportGenerationGlobalFirst, productionImportGenerationGlobalLast,

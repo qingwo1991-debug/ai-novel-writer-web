@@ -446,7 +446,7 @@ func (p *Gemini) Stream(ctx context.Context, model Model, messages []Message, op
 			usage = geminiUsage(raw)
 			if callbacks.OnUsageEvidence != nil {
 				callbacks.OnUsageEvidence(UsageEvidence{
-					Usage: map[string]any{"promptTokens": raw["promptTokenCount"], "completionTokens": raw["candidatesTokenCount"], "totalTokens": raw["totalTokenCount"]},
+					Usage:           map[string]any{"promptTokens": raw["promptTokenCount"], "completionTokens": raw["candidatesTokenCount"], "totalTokens": raw["totalTokenCount"]},
 					ReasoningTokens: raw["thoughtsTokenCount"], Accounting: "separately-billed", TotalIncludesReasoning: true, Protocol: "gemini",
 				})
 			}

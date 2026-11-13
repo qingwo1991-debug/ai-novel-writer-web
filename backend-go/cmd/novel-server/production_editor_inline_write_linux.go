@@ -151,7 +151,7 @@ const (
 	// productionEditorInlineLeaseMissing and productionEditorInlineSourceChanged are
 	// the dispatch gates this lane shares with generation:execute
 	// (synthetic_generation_linux.go:1313-1327).
-	productionEditorInlineLeaseMissing = "GENERATION_LEASE_MISSING"
+	productionEditorInlineLeaseMissing  = "GENERATION_LEASE_MISSING"
 	productionEditorInlineSourceChanged = "GENERATION_SOURCE_CHANGED"
 	// productionEditorInlineNonceMax is the reference's bound on uiActionNonce
 	// (main-generation-owner.ts:1422).

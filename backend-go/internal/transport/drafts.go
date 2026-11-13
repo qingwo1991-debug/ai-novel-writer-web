@@ -1,10 +1,10 @@
 package transport
 
 import (
-	"log"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"math"
 	"math/big"
 	"net/http"
@@ -46,7 +46,7 @@ func (s *Server) BindDrafts(provider DraftProvider) error {
 		return errors.New("DRAFT_PROVIDER_REQUIRED")
 	}
 	operations := []struct {
-		name         string
+		name      string
 		pathIndex int
 		arity     int
 	}{
@@ -54,10 +54,10 @@ func (s *Server) BindDrafts(provider DraftProvider) error {
 		{"db:draft-list-all", 0, 2},
 		{"db:draft-get-meta", 1, 3},
 		{"db:draft-get-full", 1, 3},
-        {"db:draft-get-latest",1,3},
-        {"db:draft-get-finalized",1,3},
-        {"db:draft-get-max-finalized-chapter",0,2},
-        {"db:draft-next-version",1,3},
+		{"db:draft-get-latest", 1, 3},
+		{"db:draft-get-finalized", 1, 3},
+		{"db:draft-get-max-finalized-chapter", 0, 2},
+		{"db:draft-next-version", 1, 3},
 		{"db:draft-update-content", 3, 6},
 	}
 	handlers := make(map[string]Operation, len(operations))
@@ -89,7 +89,7 @@ func (s *Server) BindDrafts(provider DraftProvider) error {
 			}
 			var id, wordCount int64
 			var content string
-			if name != "db:draft-list-all" && name!="db:draft-get-max-finalized-chapter" {
+			if name != "db:draft-list-all" && name != "db:draft-get-max-finalized-chapter" {
 				var ok bool
 				id, ok = draftSafeInteger(args[0], 1)
 				if !ok {
@@ -126,10 +126,14 @@ func (s *Server) BindDrafts(provider DraftProvider) error {
 				return repository.GetMeta(ctx, id)
 			case "db:draft-get-full":
 				return repository.GetFull(ctx, id)
-            case "db:draft-get-latest":return repository.GetLatestByChapter(ctx,id)
-            case "db:draft-get-finalized":return repository.GetFinalizedByChapter(ctx,id)
-            case "db:draft-get-max-finalized-chapter":return repository.GetMaxFinalizedChapter(ctx)
-            case "db:draft-next-version":return repository.GetNextVersion(ctx,id)
+			case "db:draft-get-latest":
+				return repository.GetLatestByChapter(ctx, id)
+			case "db:draft-get-finalized":
+				return repository.GetFinalizedByChapter(ctx, id)
+			case "db:draft-get-max-finalized-chapter":
+				return repository.GetMaxFinalizedChapter(ctx)
+			case "db:draft-next-version":
+				return repository.GetNextVersion(ctx, id)
 			default:
 				var baseline *string
 				if len(args) == arity {

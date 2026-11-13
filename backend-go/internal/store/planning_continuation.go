@@ -31,12 +31,12 @@ type PlanningContinuationReceipt struct {
 // DirectoryRecoveryRun is one chapter-blueprint-directory run reduced to what the
 // find-blueprint-recovery projection reads out of its stored binding.
 type DirectoryRecoveryRun struct {
-	RunID        string
-	RootActionID string
-	ProjectID    string
-	Epoch        string
-	ModelID      string
-	AuthorInputs []BatchAuthorInput
+	RunID                           string
+	RootActionID                    string
+	ProjectID                       string
+	Epoch                           string
+	ModelID                         string
+	AuthorInputs                    []BatchAuthorInput
 	SelectedBlueprintChapterNumbers []int64
 }
 
@@ -295,12 +295,12 @@ func listDirectoryRecoveryRuns(ctx context.Context, conn *sql.Conn, projectID st
 		}
 		manifest := glMap(binding["sourceManifest"])
 		run := DirectoryRecoveryRun{
-			RunID:        glText(row["run_id"]),
-			RootActionID: glText(row["root_action_id"]),
-			ProjectID:    glText(binding["projectId"]),
-			Epoch:        glText(binding["epoch"]),
-			ModelID:      directoryModelID(manifest),
-			AuthorInputs: bpAuthorInputs(manifest["authorInputs"]),
+			RunID:                           glText(row["run_id"]),
+			RootActionID:                    glText(row["root_action_id"]),
+			ProjectID:                       glText(binding["projectId"]),
+			Epoch:                           glText(binding["epoch"]),
+			ModelID:                         directoryModelID(manifest),
+			AuthorInputs:                    bpAuthorInputs(manifest["authorInputs"]),
 			SelectedBlueprintChapterNumbers: directorySelectedChapters(manifest),
 		}
 		runs = append(runs, run)

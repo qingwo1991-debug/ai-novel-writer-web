@@ -128,9 +128,9 @@ type productionLegacyRosterExecuteMessage struct {
 // productionLegacyRosterExecuteTask is the task shape both the frozen binding and
 // the attempt's replayTask carry.
 type productionLegacyRosterExecuteTask struct {
-	Purpose        string                                `json:"purpose"`
-	ReasoningStage string                                `json:"reasoningStage"`
-	Output         string                                `json:"output"`
+	Purpose        string                                 `json:"purpose"`
+	ReasoningStage string                                 `json:"reasoningStage"`
+	Output         string                                 `json:"output"`
 	Messages       []productionLegacyRosterExecuteMessage `json:"messages"`
 }
 

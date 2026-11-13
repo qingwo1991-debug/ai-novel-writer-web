@@ -51,12 +51,12 @@ var updateCharacterCardsAsset []byte
 
 // finalizationDocument is one asset's own shape.
 type finalizationDocument struct {
-	FormatVersion   int                          `json:"formatVersion"`
-	Kind            string                       `json:"kind"`
-	Key             string                       `json:"key"`
-	Templates       map[string]json.RawMessage   `json:"templates"`
-	SystemContract  map[string]string            `json:"systemContract"`
-	OutputContract  map[string]string            `json:"outputContract"`
+	FormatVersion  int                        `json:"formatVersion"`
+	Kind           string                     `json:"kind"`
+	Key            string                     `json:"key"`
+	Templates      map[string]json.RawMessage `json:"templates"`
+	SystemContract map[string]string          `json:"systemContract"`
+	OutputContract map[string]string          `json:"outputContract"`
 }
 
 // FinalizationTemplate returns the finalization prompt contract for one step

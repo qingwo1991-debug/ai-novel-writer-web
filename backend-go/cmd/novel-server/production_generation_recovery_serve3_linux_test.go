@@ -42,23 +42,23 @@ type productionRecoveryServe3RangeView struct {
 // productionRecoveryServe3PlanningView is PlanningContinuation
 // (generation-owner-contract.ts:200-207) as the browser reads it.
 type productionRecoveryServe3PlanningView struct {
-	SourceHandle   productionRecoveryHandleView      `json:"sourceHandle"`
+	SourceHandle   productionRecoveryHandleView       `json:"sourceHandle"`
 	RemainingRange *productionRecoveryServe3RangeView `json:"remainingRange"`
-	TargetUnits    int64                             `json:"targetUnits"`
-	State          string                            `json:"state"`
-	NextHandle     *productionRecoveryHandleView     `json:"nextHandle"`
+	TargetUnits    int64                              `json:"targetUnits"`
+	State          string                             `json:"state"`
+	NextHandle     *productionRecoveryHandleView      `json:"nextHandle"`
 }
 
 // productionRecoveryServe3SavedView is BlueprintAuthorEditReceipt
 // (generation-owner-contract.ts:176-184) as blueprintRecovery.saved carries it.
 type productionRecoveryServe3SavedView struct {
-	Kind           string                            `json:"kind"`
-	OperationID    string                            `json:"operationId"`
-	SourceHandle   productionRecoveryHandleView      `json:"sourceHandle"`
-	RequestedRange productionRecoveryServe3RangeView `json:"requestedRange"`
-	CommittedRange productionRecoveryServe3RangeView `json:"committedRange"`
+	Kind           string                             `json:"kind"`
+	OperationID    string                             `json:"operationId"`
+	SourceHandle   productionRecoveryHandleView       `json:"sourceHandle"`
+	RequestedRange productionRecoveryServe3RangeView  `json:"requestedRange"`
+	CommittedRange productionRecoveryServe3RangeView  `json:"committedRange"`
 	RemainingRange *productionRecoveryServe3RangeView `json:"remainingRange"`
-	PayloadHash    string                            `json:"payloadHash"`
+	PayloadHash    string                             `json:"payloadHash"`
 }
 
 // productionRecoveryServe3BlueprintView is the BlueprintRecovery union
@@ -76,13 +76,13 @@ type productionRecoveryServe3BlueprintView struct {
 // productionRecoveryServe3ContextView is the fields of GenerationRecoveryContext
 // (generation-owner-contract.ts:139-169) these tests assert.
 type productionRecoveryServe3ContextView struct {
-	ModelID                         string                              `json:"modelId"`
-	Handle                          productionRecoveryHandleView        `json:"handle"`
-	Operation                       string                              `json:"operation"`
-	AuthorInputs                    []productionRecoveryInputView       `json:"authorInputs"`
-	SelectedBlueprintChapterNumbers []int64                             `json:"selectedBlueprintChapterNumbers"`
-	DraftSave                       map[string]any                      `json:"draftSave"`
-	PlanningContinuation            *productionRecoveryServe3PlanningView `json:"planningContinuation"`
+	ModelID                         string                                 `json:"modelId"`
+	Handle                          productionRecoveryHandleView           `json:"handle"`
+	Operation                       string                                 `json:"operation"`
+	AuthorInputs                    []productionRecoveryInputView          `json:"authorInputs"`
+	SelectedBlueprintChapterNumbers []int64                                `json:"selectedBlueprintChapterNumbers"`
+	DraftSave                       map[string]any                         `json:"draftSave"`
+	PlanningContinuation            *productionRecoveryServe3PlanningView  `json:"planningContinuation"`
 	BlueprintRecovery               *productionRecoveryServe3BlueprintView `json:"blueprintRecovery"`
 }
 
@@ -154,7 +154,7 @@ func productionRecoveryServe3StampAuthorEdit(t *testing.T, database, sourceRoot,
 		remaining = map[string]any{"from": committedTo + 1, "to": requestedTo}
 	}
 	receipt := map[string]any{
-		"kind":      "blueprint-author-edit",
+		"kind":        "blueprint-author-edit",
 		"operationId": operationID,
 		"sourceHandle": map[string]any{
 			"projectId":    productionEditorProjectID,

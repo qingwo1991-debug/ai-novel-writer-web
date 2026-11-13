@@ -179,7 +179,7 @@ func validateVectorRequest(request VectorRequest) error {
 // that keeps its vectors outside the canonical domain snapshot. It validates the
 // same bounded snapshot, managed copies and request, but takes the registry from
 // the caller's already-verified store and the space table's version from that
-// store's own pin instead of requiring a ``chunks__space_<generation>`` table to
+// store's own pin instead of requiring a “chunks__space_<generation>“ table to
 // appear in snapshot.Tables: a real vector table of 4096-dimension rows cannot
 // fit the domain validator's hard cell budget, so it is not part of the
 // canonical document. The plan is still refused unless the registry's active
@@ -235,4 +235,3 @@ func PrepareVectorPlanOverSpaces(ctx context.Context, snapshot knowledgedomain.S
 	}
 	return plan, nil
 }
-

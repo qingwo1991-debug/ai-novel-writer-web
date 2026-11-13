@@ -822,8 +822,8 @@ func (b *productionCloudBackup) capture(ctx context.Context, project *projectfs.
 		SemanticCounts: map[string]uint64{productionCloudBackupDatabaseDisposition: 1},
 		// The authority this archive deliberately does not carry, said out loud in
 		// the manifest rather than implied by its absence.
-		OmittedItems:       []archiveformat.OmittedItem{{ID: "portable-transfer-authority", Reason: "exclude-machine-authority"}},
-		TransferReceiptIDs: []string{},
+		OmittedItems:         []archiveformat.OmittedItem{{ID: "portable-transfer-authority", Reason: "exclude-machine-authority"}},
+		TransferReceiptIDs:   []string{},
 		HistoryProjectionIDs: []string{},
 	}
 	if portable.OriginProjectID != bookID {
@@ -1380,12 +1380,12 @@ func productionCloudBackupBindingView(projectID, bookID string, parents []string
 		parents = []string{}
 	}
 	return map[string]any{
-		"localProjectId":                 projectID,
-		"cloudBookId":                    bookID,
-		"localEndpointAccountId":         productionCloudBackupLocalAccountID,
+		"localProjectId":                  projectID,
+		"cloudBookId":                     bookID,
+		"localEndpointAccountId":          productionCloudBackupLocalAccountID,
 		"lastSelectedParentGenerationIds": parents,
-		"mode":                           mode,
-		"revision":                       0,
+		"mode":                            mode,
+		"revision":                        0,
 	}
 }
 

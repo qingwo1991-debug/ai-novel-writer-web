@@ -70,11 +70,11 @@ type productionAvatarTestView struct {
 // productionAvatarTestAnswer is the whole envelope: the two success shapes and the
 // one failure shape.
 type productionAvatarTestAnswer struct {
-	Success   bool                      `json:"success"`
-	Cancelled bool                      `json:"cancelled"`
-	Avatar    productionAvatarTestView  `json:"avatar"`
-	Image     productionAvatarTestView  `json:"image"`
-	Avatars   []productionAvatarTestView  `json:"avatars"`
+	Success   bool                       `json:"success"`
+	Cancelled bool                       `json:"cancelled"`
+	Avatar    productionAvatarTestView   `json:"avatar"`
+	Image     productionAvatarTestView   `json:"image"`
+	Avatars   []productionAvatarTestView `json:"avatars"`
 	Error     productionAvatarTestError  `json:"error"`
 }
 

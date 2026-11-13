@@ -93,7 +93,7 @@ export function createLibraryVisibility(options: { libraryRoot: string; statePat
       try { fs.fsyncSync(directoryFd) } finally { fs.closeSync(directoryFd) }
     } finally {
       if (fd !== undefined) fs.closeSync(fd)
-      try { fs.unlinkSync(temporary) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      fs.rmSync(temporary, { force: true })
     }
   }
   readState()

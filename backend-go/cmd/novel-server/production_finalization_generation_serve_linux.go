@@ -53,18 +53,18 @@ const (
 	// (main-generation-owner.ts:1398).
 	productionFinalizationExecuteNonce = "finalization:0"
 	// Refusals, each the reference's own string.
-	productionFinalizationSlotInvalid = "GENERATION_FINALIZATION_SLOT_INVALID"
-	productionFinalizationRequestInvalid = "GENERATION_FINALIZATION_REQUEST_INVALID"
-	productionFinalizationIdentityMismatch = "GENERATION_RUN_IDENTITY_MISMATCH"
-	productionFinalizationContextInvalid = "GENERATION_FINALIZATION_CONTEXT_INVALID"
-	productionFinalizationTaskInvalid = "GENERATION_FINALIZATION_TASK_INVALID"
-	productionFinalizationArtifactInvalid = "GENERATION_FINALIZATION_ARTIFACT_INVALID"
-	productionFinalizationRunMissing = "GENERATION_RUN_MISSING"
-	productionFinalizationLeaseMissing = "GENERATION_LEASE_MISSING"
-	productionFinalizationSourceChanged = "GENERATION_SOURCE_CHANGED"
+	productionFinalizationSlotInvalid       = "GENERATION_FINALIZATION_SLOT_INVALID"
+	productionFinalizationRequestInvalid    = "GENERATION_FINALIZATION_REQUEST_INVALID"
+	productionFinalizationIdentityMismatch  = "GENERATION_RUN_IDENTITY_MISMATCH"
+	productionFinalizationContextInvalid    = "GENERATION_FINALIZATION_CONTEXT_INVALID"
+	productionFinalizationTaskInvalid       = "GENERATION_FINALIZATION_TASK_INVALID"
+	productionFinalizationArtifactInvalid   = "GENERATION_FINALIZATION_ARTIFACT_INVALID"
+	productionFinalizationRunMissing        = "GENERATION_RUN_MISSING"
+	productionFinalizationLeaseMissing      = "GENERATION_LEASE_MISSING"
+	productionFinalizationSourceChanged     = "GENERATION_SOURCE_CHANGED"
 	productionFinalizationAdmissionRequired = "GENERATION_FINALIZATION_ADMISSION_REQUIRED"
-	productionFinalizationEffectSealed = "GENERATION_FINALIZATION_EFFECT_SEALED"
-	productionFinalizationNotesChanged = "GENERATION_FINALIZATION_NOTES_CHANGED"
+	productionFinalizationEffectSealed      = "GENERATION_FINALIZATION_EFFECT_SEALED"
+	productionFinalizationNotesChanged      = "GENERATION_FINALIZATION_NOTES_CHANGED"
 )
 
 // productionFinalizationServe serves the three names over the one generation
@@ -127,12 +127,12 @@ func productionFinalizationServeChannel(call func(context.Context, transport.Cal
 
 // productionFinalizationSlot is one validated finalization slot with its key.
 type productionFinalizationSlot struct {
-	StepKey       string
-	DraftID       int64
-	ChapterNumber int64
+	StepKey        string
+	DraftID        int64
+	ChapterNumber  int64
 	FinalizationID string
-	ContentHash   string
-	Key           string
+	ContentHash    string
+	Key            string
 }
 
 // productionFinalizationParseSlot validates one slot exactly like
@@ -511,9 +511,9 @@ func productionFinalizationTaskText(slot productionFinalizationSlot, template pr
 		system = role + "\n\n" + template.SystemContract
 	}
 	variables := map[string]string{
-		"chapter_content":  identity.Content,
-		"chapter_number":   strconv.FormatInt(slot.ChapterNumber, 10),
-		"chapter_title":    chapterTitle,
+		"chapter_content":     identity.Content,
+		"chapter_number":      strconv.FormatInt(slot.ChapterNumber, 10),
+		"chapter_title":       chapterTitle,
 		"existing_cards_json": "[]",
 	}
 	user := productionEditorInlinePrune(productionEditorInlineFill(template.Template.Content, variables))
@@ -1080,10 +1080,10 @@ func productionFinalizationBaselineFromContext(contextText []byte) string {
 // reference's key order (finalization-generation.ts:104).
 func productionFinalizationNotesReceipt(chapterNotes string, facts []store.FinalizedContinuityFact, blueprintUpdated bool) map[string]any {
 	return map[string]any{
-		"success":         true,
-		"stepKey":         "chapter_notes",
-		"chapterNotes":    chapterNotes,
-		"factCount":       len(facts),
+		"success":          true,
+		"stepKey":          "chapter_notes",
+		"chapterNotes":     chapterNotes,
+		"factCount":        len(facts),
 		"blueprintUpdated": blueprintUpdated,
 	}
 }
@@ -1169,11 +1169,11 @@ func productionFinalizationStampEffect(ctx context.Context, db *sql.DB, attemptI
 		return err
 	}
 	effect := map[string]any{
-		"version":      1,
-		"artifact":     ref,
-		"contextHash":  contextHash,
-		"receipt":      receipt,
-		"receiptHash":  syntheticHash(receiptText),
+		"version":     1,
+		"artifact":    ref,
+		"contextHash": contextHash,
+		"receipt":     receipt,
+		"receiptHash": syntheticHash(receiptText),
 	}
 	var usage string
 	if err := db.QueryRowContext(ctx, `SELECT usage_receipt_json FROM generation_attempts WHERE attempt_id=?`, attemptID).Scan(&usage); err != nil {

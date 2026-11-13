@@ -45,7 +45,7 @@ func loadKey(path string, create bool) ([]byte, error) {
 	// Serialize this implementation's link/unlink publication window. This
 	// prevents readers rejecting a just-published key's transient second link.
 	// flock is on the pinned directory, not on a second configurable lock path.
-	dir, err := root.OpenFile(".", os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW, 0)
+	dir, err := root.OpenFile(".", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func keyParent(path string, create bool) (*os.Root, string, error) {
 }
 
 func safeDirectory(info fs.FileInfo, final bool) bool {
-	if info == nil || !info.IsDir() || info.Mode() & os.ModeSymlink != 0 {
+	if info == nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -129,15 +129,15 @@ func safeDirectory(info fs.FileInfo, final bool) bool {
 		return false
 	}
 	if final {
-		return stat.Uid == uint32(os.Getuid()) && info.Mode().Perm() & 0o022 == 0
+		return stat.Uid == uint32(os.Getuid()) && info.Mode().Perm()&0o022 == 0
 	}
 	// Root-owned sticky temporary directories may contain a private owned child;
 	// they may not themselves be the key's containing directory.
-	return info.Mode().Perm() & 0o022 == 0 || (stat.Uid == 0 && info.Mode() & os.ModeSticky != 0)
+	return info.Mode().Perm()&0o022 == 0 || (stat.Uid == 0 && info.Mode()&os.ModeSticky != 0)
 }
 
 func privateKey(info fs.FileInfo) bool {
-	if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Mode() & (os.ModeSetuid | os.ModeSetgid | os.ModeSticky) != 0 || info.Size() != KeyBytes {
+	if info == nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 || info.Size() != KeyBytes {
 		return false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -164,7 +164,7 @@ func readKeyAt(root *os.Root, dir *os.File, name string) ([]byte, error) {
 	// Root.OpenFile follows confined symlinks, including when O_NOFOLLOW is
 	// supplied. Openat on the pinned parent descriptor enforces Linux's actual
 	// final-component nofollow semantics. name is one admitted basename.
-	fd, err := syscall.Openat(int(dir.Fd()), name, os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK | syscall.O_CLOEXEC, 0)
+	fd, err := syscall.Openat(int(dir.Fd()), name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		// An observed existing destination must never become a create signal.
 		return nil, invalidKey("existing key could not be opened")
@@ -175,7 +175,7 @@ func readKeyAt(root *os.Root, dir *os.File, name string) ([]byte, error) {
 	if err != nil || !sameKey(before, opened) {
 		return nil, invalidKey("key changed while opening")
 	}
-	key, err := io.ReadAll(io.LimitReader(file, KeyBytes + 1))
+	key, err := io.ReadAll(io.LimitReader(file, KeyBytes+1))
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func readKeyAt(root *os.Root, dir *os.File, name string) ([]byte, error) {
 }
 
 func syncRoot(root *os.Root) error {
-	dir, err := root.OpenFile(".", os.O_RDONLY | syscall.O_DIRECTORY | syscall.O_NOFOLLOW, 0)
+	dir, err := root.OpenFile(".", os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func createKeyAt(root *os.Root, dir *os.File, name string) error {
 		return err
 	}
 	temporary := ".anw-key-" + hex.EncodeToString(suffix[:]) + ".tmp"
-	file, err := root.OpenFile(temporary, os.O_WRONLY | os.O_CREATE | os.O_EXCL | syscall.O_NOFOLLOW, 0o600)
+	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}

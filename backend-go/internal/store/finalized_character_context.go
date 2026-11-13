@@ -472,8 +472,8 @@ func finalizedCharacterReadFrozen(ctx context.Context, q rrQueryer, source Final
 			return nil, ErrSummaryCharacterSnapshotInvalid
 		}
 		seen[id] = true
-		name, nameOK := item["displayNameSnapshot"].(string)  // typeof ... === 'string'
-		aliases, aliasesOK := item["aliases"].([]any)         // !Array.isArray(item.aliases)
+		name, nameOK := item["displayNameSnapshot"].(string) // typeof ... === 'string'
+		aliases, aliasesOK := item["aliases"].([]any)        // !Array.isArray(item.aliases)
 		if !nameOK || !aliasesOK {
 			return nil, ErrSummaryCharacterSnapshotInvalid
 		}

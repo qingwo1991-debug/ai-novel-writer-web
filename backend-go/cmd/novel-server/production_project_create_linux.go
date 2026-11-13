@@ -196,17 +196,17 @@ const (
 // handle. activeProjectPath is the caller's own live lease, read and never
 // rotated.
 type productionProjectCreateResult struct {
-	Success           bool            `json:"success"`
-	ProjectID         string          `json:"projectId"`
-	ProjectPath       string          `json:"projectPath,omitempty"`
-	RequestToken      string          `json:"requestToken"`
-	ActiveProjectPath *string         `json:"activeProjectPath"`
-	DatabaseRestored  bool            `json:"databaseRestored"`
-	DBReady           bool            `json:"dbReady"`
-	Stale             bool            `json:"stale,omitempty"`
-	Error             string          `json:"error,omitempty"`
-	Warning           string          `json:"warning,omitempty"`
-	ErrorCode         string          `json:"errorCode,omitempty"`
+	Success           bool    `json:"success"`
+	ProjectID         string  `json:"projectId"`
+	ProjectPath       string  `json:"projectPath,omitempty"`
+	RequestToken      string  `json:"requestToken"`
+	ActiveProjectPath *string `json:"activeProjectPath"`
+	DatabaseRestored  bool    `json:"databaseRestored"`
+	DBReady           bool    `json:"dbReady"`
+	Stale             bool    `json:"stale,omitempty"`
+	Error             string  `json:"error,omitempty"`
+	Warning           string  `json:"warning,omitempty"`
+	ErrorCode         string  `json:"errorCode,omitempty"`
 }
 
 // productionProjectCreateTarget is the request after the wire shape has been read

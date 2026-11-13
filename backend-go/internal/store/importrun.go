@@ -51,8 +51,8 @@ const (
 	importRunMaxChapterBytes int64 = 16 * 1024 * 1024
 	// importRunKnowledgeBatchSize and importRunBlueprintBatchSize mirror
 	// IMPORT_RUN_KNOWLEDGE_BATCH_SIZE and IMPORT_RUN_BLUEPRINT_BATCH_SIZE.
-	importRunKnowledgeBatchSize  int64 = 10
-	importRunBlueprintBatchSize  int64 = 5
+	importRunKnowledgeBatchSize int64 = 10
+	importRunBlueprintBatchSize int64 = 5
 	// importRunStageCompleted is the terminal stage; complete() is the only way
 	// in, so it is never a next stage.
 	importRunStageCompleted = "completed"
@@ -383,8 +383,8 @@ func importRunKnowledgeReceipts(ctx context.Context, q importRunQueryer, runID s
 }
 
 type importRunBatchCheckpoint struct {
-	startChapter              int64
-	endChapter                int64
+	startChapter               int64
+	endChapter                 int64
 	contentFingerprintPrefixes []string
 }
 
@@ -573,31 +573,31 @@ func importRunSnapshot(ctx context.Context, q importRunQueryer, row importRunRow
 		return nil, err
 	}
 	snapshot := map[string]any{
-		"id":                     row.ID,
-		"purpose":                row.Purpose,
-		"rootRunId":              row.RootRunID,
-		"effectNamespace":        row.EffectNamespace,
-		"sourceDisplay":          display,
+		"id":                      row.ID,
+		"purpose":                 row.Purpose,
+		"rootRunId":               row.RootRunID,
+		"effectNamespace":         row.EffectNamespace,
+		"sourceDisplay":           display,
 		"unfinishedSourceDisplay": unfinished,
-		"locale":                 row.Locale,
-		"stage":                  row.Stage,
-		"status":                 row.Status,
-		"completedBatches":       batches,
-		"lastError":              row.LastError,
-		"resumable":              row.Resumable == 1,
-		"cancelRequested":        row.CancelRequested == 1,
-		"totalChapters":          row.TotalChapters,
-		"totalContentSize":       row.TotalContentSize,
-		"manifestChapterCount":   row.ManifestChapterCount,
-		"manifestContentSize":    row.ManifestContentSize,
-		"manifestWordCount":      row.ManifestWordCount,
-		"completedChapters":      progress.completedChapters,
-		"completedSources":       progress.completedSources,
-		"totalSources":           progress.totalSources,
-		"progressCompleted":      progress.progressCompleted,
-		"progressTotal":          progress.progressTotal,
-		"createdAt":              row.CreatedAt,
-		"updatedAt":              row.UpdatedAt,
+		"locale":                  row.Locale,
+		"stage":                   row.Stage,
+		"status":                  row.Status,
+		"completedBatches":        batches,
+		"lastError":               row.LastError,
+		"resumable":               row.Resumable == 1,
+		"cancelRequested":         row.CancelRequested == 1,
+		"totalChapters":           row.TotalChapters,
+		"totalContentSize":        row.TotalContentSize,
+		"manifestChapterCount":    row.ManifestChapterCount,
+		"manifestContentSize":     row.ManifestContentSize,
+		"manifestWordCount":       row.ManifestWordCount,
+		"completedChapters":       progress.completedChapters,
+		"completedSources":        progress.completedSources,
+		"totalSources":            progress.totalSources,
+		"progressCompleted":       progress.progressCompleted,
+		"progressTotal":           progress.progressTotal,
+		"createdAt":               row.CreatedAt,
+		"updatedAt":               row.UpdatedAt,
 	}
 	if row.Purpose == "author-manuscript" {
 		snapshot["manifestFingerprint"] = row.ManifestFingerprint
@@ -1448,4 +1448,3 @@ func (r *ImportRuns) Complete(ctx context.Context, runID string, execution Impor
 	}
 	return response, nil
 }
-

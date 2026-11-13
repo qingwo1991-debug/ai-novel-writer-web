@@ -97,14 +97,14 @@ var (
 
 	// The import-global-facts refusals, spelled as the reference spells them
 	// (import-global-facts-repository.ts:36-45, :105, :110, :175, :206).
-	ErrImportGlobalFactsOperationInvalid   = errors.New("IMPORT_GLOBAL_FACTS_OPERATION_INVALID")
-	ErrImportGlobalFactsRequestInvalid     = errors.New("IMPORT_GLOBAL_FACTS_REQUEST_INVALID")
-	ErrImportGlobalFactsCharactersInvalid  = errors.New("IMPORT_GLOBAL_FACTS_CHARACTERS_INVALID")
-	ErrImportGlobalFactsCoreMissing        = errors.New("IMPORT_GLOBAL_FACTS_PROJECT_CORE_MISSING")
-	ErrImportGlobalFactsOperationConflict  = errors.New("IMPORT_GLOBAL_FACTS_OPERATION_CONFLICT")
-	ErrImportGlobalFactsReceiptCorrupt     = errors.New("IMPORT_GLOBAL_FACTS_RECEIPT_CORRUPT")
-	ErrImportGlobalFactsSuperseded         = errors.New("IMPORT_GLOBAL_FACTS_SUPERSEDED")
-	ErrImportGlobalFactsReadBackFailed     = errors.New("IMPORT_GLOBAL_FACTS_READ_BACK_FAILED")
+	ErrImportGlobalFactsOperationInvalid  = errors.New("IMPORT_GLOBAL_FACTS_OPERATION_INVALID")
+	ErrImportGlobalFactsRequestInvalid    = errors.New("IMPORT_GLOBAL_FACTS_REQUEST_INVALID")
+	ErrImportGlobalFactsCharactersInvalid = errors.New("IMPORT_GLOBAL_FACTS_CHARACTERS_INVALID")
+	ErrImportGlobalFactsCoreMissing       = errors.New("IMPORT_GLOBAL_FACTS_PROJECT_CORE_MISSING")
+	ErrImportGlobalFactsOperationConflict = errors.New("IMPORT_GLOBAL_FACTS_OPERATION_CONFLICT")
+	ErrImportGlobalFactsReceiptCorrupt    = errors.New("IMPORT_GLOBAL_FACTS_RECEIPT_CORRUPT")
+	ErrImportGlobalFactsSuperseded        = errors.New("IMPORT_GLOBAL_FACTS_SUPERSEDED")
+	ErrImportGlobalFactsReadBackFailed    = errors.New("IMPORT_GLOBAL_FACTS_READ_BACK_FAILED")
 
 	// ErrImportGlobalFactsRosterArmRequired is this lane's own refusal for a
 	// receipt the pre-M02 roster arm wrote (`{...stored, roster: ...}`,

@@ -25,10 +25,10 @@ import (
 // test can assert the request shape, the dispatch count and the credential the
 // probe sent without reaching into the transport.
 type productionProbeRecorder struct {
-	mu      sync.Mutex
-	paths   []string
-	auths   []string
-	bodies  []string
+	mu     sync.Mutex
+	paths  []string
+	auths  []string
+	bodies []string
 }
 
 func (r *productionProbeRecorder) record(request *http.Request) {
@@ -638,7 +638,7 @@ func TestProductionLLMProbeRestoresAStoredCredentialOnlyForItsOwnEndpoint(t *tes
 		`{"choices":[{"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`)
 	fixture := newProductionProbeFixture(t, []string{provider.URL, "https://api.example.invalid"}, productionProbeModelsJSON(t, provider.URL+"/v1", productionTestModelSecret))
 	var restored productionProbeTestWire
-	fixture.client.decode(t, "llm:test-connection", []any{productionProbeSavedProfile(provider.URL+"/v1")}, &restored)
+	fixture.client.decode(t, "llm:test-connection", []any{productionProbeSavedProfile(provider.URL + "/v1")}, &restored)
 	if !restored.Success {
 		t.Fatalf("the saved credential was not restored for its own endpoint: %v", restored.Error)
 	}

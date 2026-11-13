@@ -231,7 +231,7 @@ func TestStageDatabaseRejectsEveryPreexistingDestinationSuffix(t *testing.T) {
 					t.Fatalf("preexisting destination accepted: %v", err)
 				}
 				after, err := destination.Lstat(name)
-				if err != nil || !os.SameFile(before, after) || before.Size()!=after.Size() || before.Mode()!=after.Mode() || !before.ModTime().Equal(after.ModTime()) || !sameChangeTime(before,after) {
+				if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) || !sameChangeTime(before, after) {
 					// sameVersion is a SOURCE regular/single-link validator, so it
 					// cannot assert preservation of deliberately unsafe directories
 					// or hardlinks. Compare identity/metadata without requiring nlink=1.

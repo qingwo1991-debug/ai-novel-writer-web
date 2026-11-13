@@ -13,39 +13,39 @@ import (
 )
 
 const (
-	StorageDirectory = ".ai-novel"
-	DatabaseName = "project.db"
-	ManifestName = "project.json"
-	manifestLimit int64 = 64 * 1024
-	journalLimit int64 = 256 * 1024
+	StorageDirectory       = ".ai-novel"
+	DatabaseName           = "project.db"
+	ManifestName           = "project.json"
+	manifestLimit    int64 = 64 * 1024
+	journalLimit     int64 = 256 * 1024
 	// MaxSnapshotBytes is a hard ceiling independent of caller-provided limits.
 	MaxSnapshotBytes int64 = 64 * 1024 * 1024
 )
 
 var (
-	ErrInvalidPath = errors.New("PROJECT_INVALID_PATH")
-	ErrUnsafeDirectory = errors.New("PROJECT_STORAGE_UNSAFE_DIRECTORY")
-	ErrUnsafeFile = errors.New("PROJECT_STORAGE_UNSAFE_FILE")
-	ErrManifestInvalid = errors.New("PROJECT_MANIFEST_INVALID")
-	ErrManifestChanged = errors.New("PROJECT_MANIFEST_CHANGED")
-	ErrMigrationRequired = errors.New("PROJECT_MIGRATION_REQUIRED")
-	ErrRecoveryRequired = errors.New("PROJECT_MIGRATION_RECOVERY_REQUIRED")
-	ErrChanged = errors.New("PROJECT_SOURCE_CHANGED")
-	ErrTooLarge = errors.New("PROJECT_FILE_TOO_LARGE")
-	ErrClosed = errors.New("PROJECT_HANDLE_CLOSED")
-	ErrUnsupported = errors.New("PROJECT_PLATFORM_UNSUPPORTED")
+	ErrInvalidPath              = errors.New("PROJECT_INVALID_PATH")
+	ErrUnsafeDirectory          = errors.New("PROJECT_STORAGE_UNSAFE_DIRECTORY")
+	ErrUnsafeFile               = errors.New("PROJECT_STORAGE_UNSAFE_FILE")
+	ErrManifestInvalid          = errors.New("PROJECT_MANIFEST_INVALID")
+	ErrManifestChanged          = errors.New("PROJECT_MANIFEST_CHANGED")
+	ErrMigrationRequired        = errors.New("PROJECT_MIGRATION_REQUIRED")
+	ErrRecoveryRequired         = errors.New("PROJECT_MIGRATION_RECOVERY_REQUIRED")
+	ErrChanged                  = errors.New("PROJECT_SOURCE_CHANGED")
+	ErrTooLarge                 = errors.New("PROJECT_FILE_TOO_LARGE")
+	ErrClosed                   = errors.New("PROJECT_HANDLE_CLOSED")
+	ErrUnsupported              = errors.New("PROJECT_PLATFORM_UNSUPPORTED")
 	ErrDatabaseSnapshotRequired = errors.New("PROJECT_DATABASE_SNAPSHOT_REQUIRED")
 )
 
 // Manifest is the exact six-key canonical project identity contract.
 // Returning it by value grants no mutation capability.
 type Manifest struct {
-	SchemaVersion int `json:"schemaVersion"`
-	Kind string `json:"kind"`
-	ProjectID string `json:"projectId"`
-	CreatedAt string `json:"createdAt"`
-	StorageFormat string `json:"storageFormat"`
-	StorageVersion int `json:"storageVersion"`
+	SchemaVersion  int    `json:"schemaVersion"`
+	Kind           string `json:"kind"`
+	ProjectID      string `json:"projectId"`
+	CreatedAt      string `json:"createdAt"`
+	StorageFormat  string `json:"storageFormat"`
+	StorageVersion int    `json:"storageVersion"`
 }
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)

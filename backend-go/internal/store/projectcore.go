@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	ErrProjectNotOpen                   = errors.New("PROJECT_NOT_OPEN")
+	ErrProjectNotOpen                    = errors.New("PROJECT_NOT_OPEN")
 	ErrProjectCoreCharactersArchReadOnly = errors.New("PROJECT_CORE_CHARACTERS_ARCH_READ_ONLY")
-	ErrGenerationOwnerRequired          = errors.New("GENERATION_OWNER_REQUIRED")
-	ErrProjectCoreInvalidBinding        = errors.New("PROJECT_CORE_INVALID_BINDING")
+	ErrGenerationOwnerRequired           = errors.New("GENERATION_OWNER_REQUIRED")
+	ErrProjectCoreInvalidBinding         = errors.New("PROJECT_CORE_INVALID_BINDING")
 )
 
 // ProjectCore borrows an already admitted project database. Construction performs

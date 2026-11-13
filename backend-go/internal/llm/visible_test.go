@@ -37,22 +37,22 @@ func TestOriginalTypeScriptVisibleContract(t *testing.T) {
 	}
 	defer file.Close()
 	type step struct {
-		Input []uint16 `json:"input"`
-		Emitted []uint16 `json:"emitted"`
-		Text []uint16 `json:"text"`
+		Input     []uint16   `json:"input"`
+		Emitted   []uint16   `json:"emitted"`
+		Text      []uint16   `json:"text"`
 		Reasoning [][]uint16 `json:"reasoning"`
 	}
 	type contractCase struct {
-		Name string `json:"name"`
-		Steps []step `json:"steps"`
+		Name   string   `json:"name"`
+		Steps  []step   `json:"steps"`
 		Finish []uint16 `json:"finish"`
-		Text []uint16 `json:"text"`
+		Text   []uint16 `json:"text"`
 	}
 	var contract struct {
-		FormatVersion int `json:"formatVersion"`
-		Encoding string `json:"encoding"`
-		SourceHasFinish bool `json:"sourceHasFinish"`
-		Cases []contractCase `json:"cases"`
+		FormatVersion   int            `json:"formatVersion"`
+		Encoding        string         `json:"encoding"`
+		SourceHasFinish bool           `json:"sourceHasFinish"`
+		Cases           []contractCase `json:"cases"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, 16*1024*1024))
 	decoder.DisallowUnknownFields()

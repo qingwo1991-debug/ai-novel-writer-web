@@ -437,6 +437,7 @@ func (g *GenerationLedger) budget(ctx context.Context, conn *sql.Conn, rootID st
 	}
 	return map[string]any{"root": root, "policy": policy, "activeElapsedMs": elapsed, "attempts": attempts, "blockedCode": row["blocked_code"]}, nil
 }
+
 // glFamilyManifestAllowed is the narrow widening of the closed manifest. Each
 // family key stays refused for every other operation, so a run can never smuggle
 // an agent session, graph context or finalization slot into an ordinary

@@ -617,8 +617,8 @@ func productionCharacterStateCandidateStoreText(t *testing.T, pending, receipts 
 func productionCharacterStateCandidateDecision(operationID, decision string, revision int64,
 	valueHash string) map[string]any {
 	return map[string]any{
-		"draftId":                float64(1),
-		"candidateKey":           productionCharacterStateCandidateKey(productionCharacterStateCandidateSource(),
+		"draftId": float64(1),
+		"candidateKey": productionCharacterStateCandidateKey(productionCharacterStateCandidateSource(),
 			productionCharacterStateCandidateField, productionCharacterStateCandidateValue),
 		"characterId":            productionFinalizedCharacterCharacterID,
 		"field":                  productionCharacterStateCandidateField,

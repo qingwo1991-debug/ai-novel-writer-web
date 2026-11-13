@@ -243,10 +243,10 @@ func TestLegacyVerifyDetectsEntryChanges(t *testing.T) {
 			}
 			switch kind {
 			case "rename-replacement", "symlink":
-				err = os.Rename(path, path + ".old")
+				err = os.Rename(path, path+".old")
 				if err == nil {
 					if kind == "symlink" {
-						err = os.Symlink(legacyLockName + ".old", path)
+						err = os.Symlink(legacyLockName+".old", path)
 					} else {
 						err = os.WriteFile(path, nil, 0o600)
 					}
@@ -257,7 +257,7 @@ func TestLegacyVerifyDetectsEntryChanges(t *testing.T) {
 					err = os.WriteFile(path, nil, 0o600)
 				}
 			case "hardlink":
-				err = os.Link(path, path + ".other")
+				err = os.Link(path, path+".other")
 			case "permissions":
 				err = os.Chmod(path, 0o640)
 			case "allowed-mode-change":
@@ -373,7 +373,7 @@ func TestLegacyVerifyDetectsEveryPinnedParentChange(t *testing.T) {
 			} else if component == "ancestor" {
 				original = ancestor
 			}
-			if err := os.Rename(original, original + ".moved"); err != nil {
+			if err := os.Rename(original, original+".moved"); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.MkdirAll(root, 0o700); err != nil {
@@ -494,7 +494,7 @@ func startLegacyFlock(t *testing.T, path string) *lockChild {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(cancel)
 	child := &lockChild{cmd: exec.CommandContext(ctx, "flock", "-n", path, executable, "-test.run=^TestLegacyFlockHolderHelper$")}
 	child.cmd.Env = append(os.Environ(), "ANW_LEGACY_FLOCK_HOLDER=1")
@@ -533,7 +533,7 @@ func legacyFlockContender(t *testing.T, path string, busy bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "flock", "-n", path, executable, "-test.run=^TestLegacyFlockHolderHelper$")
 	cmd.Env = append(os.Environ(), "ANW_LEGACY_FLOCK_HOLDER=1")

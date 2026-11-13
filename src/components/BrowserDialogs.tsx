@@ -24,11 +24,12 @@ export default function BrowserDialogs() {
   const current = queue[0]
   const [promptLayer, setPromptLayer] = useState<HTMLElement | null>(null)
   useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!current) { setPromptLayer(null); return }
     const layer = createInkOverlayMount()
     setPromptLayer(layer)
     return () => layer.remove()
-  }, [current?.id])
+  }, [current])
   useEffect(() => {
     if (ipc.runtimeKind !== 'web') return
     const transport = getBrowserTransport()
@@ -53,11 +54,12 @@ export default function BrowserDialogs() {
     return () => { off(); offExternal(); offDownloads() }
   }, [])
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFiles([]); setSelected(''); setName(current?.options.defaultName ?? ''); setError(''); setBusy(false)
     if (current?.options.properties?.includes('openDirectory')) {
       void browserRequest<{ projects: ProjectChoice[] }>('/api/library').then(value => setProjects(value.projects)).catch(() => setProjects([]))
     }
-  }, [current?.id])
+  }, [current])
   if (!current) return downloads.length ? <aside className="paper-ink" aria-label="下载文件" style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 100, padding: 16, borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--rule-strong)', maxWidth: 'min(420px, 90vw)' }}>
     <strong>导出文件已生成</strong>{downloads.map(download => <div key={download.url} style={{ display: 'flex', gap: 12, marginTop: 10 }}>
       <a href={download.url} download={download.name}>{download.name} · 点击下载</a>

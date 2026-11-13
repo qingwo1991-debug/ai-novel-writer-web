@@ -91,8 +91,8 @@ import (
 // (production_knowledge_import_linux.go:956-987).
 
 const (
-	productionKnowledgeImportDocumentName = "kb:import-document"
-	productionKnowledgeImportFolderName   = "kb:import-folder"
+	productionKnowledgeImportDocumentName  = "kb:import-document"
+	productionKnowledgeImportFolderName    = "kb:import-folder"
 	productionKnowledgeUploadReferenceName = "kb:import-reference-text"
 
 	// productionKnowledgeUploadFolderFiles is the reference's own file cap
