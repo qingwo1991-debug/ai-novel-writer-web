@@ -5,7 +5,11 @@ import type { BeginGenerationRequest } from '../../shared/generation-owner-contr
 import type { MainGenerationRunHandle, MainGenerationRunView, MainGenerationTransport } from './generation-runtime'
 import { PLOT_OUTLINE_PROTOCOL } from '../../shared/plot-outline-contract'
 
-const handleKey = (handle: MainGenerationRunHandle) => JSON.stringify([handle.projectId, handle.epoch, handle.rootActionId, handle.runId])
+const handleKey = (handle: MainGenerationRunHandle) => JSON.stringify([
+  // A failure result that escaped the DTO guard can be undefined here; render
+  // a stable sentinel instead of dereferencing it into a TypeError.
+  handle?.projectId ?? '', handle?.epoch ?? '', handle?.rootActionId ?? '', handle?.runId ?? '',
+])
 // The generation family answers a mutation refusal as a BUSINESS DTO
 // {success:false,error:"Error: CODE"} inside a 200 result, not as an HTTP error.
 // Returning it as if it succeeded lets callers dereference receipt.run and throw

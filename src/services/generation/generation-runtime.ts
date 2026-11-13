@@ -150,6 +150,7 @@ export function installMainGenerationTransport(transport: MainGenerationTranspor
   defaultMainTransport = transport
 }
 function sameHandle(left: MainGenerationRunHandle, right: MainGenerationRunHandle): boolean {
+  if (!left || !right) return false
   return ['projectId', 'epoch', 'rootActionId', 'runId'].every(key => {
     const field = key as keyof MainGenerationRunHandle
     return typeof left[field] === 'string' && Boolean(left[field].trim()) && left[field] === right[field]
