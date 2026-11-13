@@ -220,6 +220,14 @@ export function createBrowserTransport(dependencies: BrowserTransportDependencie
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
     })
     if (!isRecord(envelope) || !Object.hasOwn(envelope, 'result')) {
+      // A business refusal arrives as {error:{code,message}}; keep the stable
+      // code so callers (and the workflow's resume retry) can see the real
+      // refusal instead of a masked BROWSER_INVALID_RESPONSE.
+      if (isRecord(envelope) && isRecord(envelope.error)
+        && typeof envelope.error.code === 'string' && envelope.error.code.trim()) {
+        const message = typeof envelope.error.message === 'string' ? envelope.error.message : envelope.error.code
+        throw new BrowserTransportError(envelope.error.code, message)
+      }
       throw new BrowserTransportError('BROWSER_INVALID_RESPONSE', 'The browser backend returned an invalid operation result.')
     }
     return envelope.result
