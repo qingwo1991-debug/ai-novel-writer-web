@@ -116,6 +116,21 @@ export interface StructuredBatchExecutor<TInput, TOutput> {
   }): Promise<StructuredBatchResult<TOutput>>
 }
 
+/**
+ * 主进程预算预检拒绝时给出的分割点。Electron 侧带 planner 算出的 selectedQuantity；
+ * Go owner 的 PreflightError 只上送裸错误码，拿不到数量时退回对半拆分——每个子批仍会
+ * 重新过一遍预算预检，直到单项必然放得下，不会多花一次真实请求。
+ */
+function scopeSplitIndex(error: unknown, itemCount: number): number {
+  const match = error instanceof Error
+    ? /TASK_BUDGET_SCOPE_SPLIT_REQUIRED(?::(\d+))?(?:\b|$)/u.exec(error.message)
+    : null
+  if (!match) return 0
+  const selected = match[1] === undefined ? 0 : Number(match[1])
+  if (Number.isSafeInteger(selected) && selected > 0 && selected < itemCount) return selected
+  return itemCount > 1 ? Math.floor(itemCount / 2) : 0
+}
+
 export function createStructuredBatchExecutor<TInput, TOutput>(dependencies: {
   contract: StructuredBatchContract<TInput, TOutput>
   session: Pick<GenerationSession, 'complete'>
@@ -238,12 +253,11 @@ export function createStructuredBatchExecutor<TInput, TOutput>(dependencies: {
         } catch (error) {
           // Electron may prefix an IPC error message. Only the main planner's
           // bounded integer decision authorizes this pre-dispatch range split.
-          const match = error instanceof Error ? /TASK_BUDGET_SCOPE_SPLIT_REQUIRED:(\d+)(?:\b|$)/u.exec(error.message) : null
-          const selected = match ? Number(match[1]) : 0
-          if (Number.isSafeInteger(selected) && selected > 0 && selected < items.length) {
+          const splitAt = scopeSplitIndex(error, items.length)
+          if (splitAt > 0) {
             receipt.splitCount += 1
-            await executeBatch(items.slice(0, selected))
-            await executeBatch(items.slice(selected))
+            await executeBatch(items.slice(0, splitAt))
+            await executeBatch(items.slice(splitAt))
             return
           }
           throw error
@@ -337,13 +351,12 @@ export function createStructuredBatchExecutor<TInput, TOutput>(dependencies: {
                 { signal: input.signal },
               )
             } catch (error) {
-              const split = error instanceof Error ? /TASK_BUDGET_SCOPE_SPLIT_REQUIRED:(\d+)(?:\b|$)/u.exec(error.message) : null
-              const selected = split ? Number(split[1]) : 0
-              if (Number.isSafeInteger(selected) && selected > 0 && selected < items.length) {
+              const splitAt = scopeSplitIndex(error, items.length)
+              if (splitAt > 0) {
                 repairUsed = false
                 receipt.splitCount += 1
-                await executeBatch(items.slice(0, selected))
-                await executeBatch(items.slice(selected))
+                await executeBatch(items.slice(0, splitAt))
+                await executeBatch(items.slice(splitAt))
                 return
               }
               throw error

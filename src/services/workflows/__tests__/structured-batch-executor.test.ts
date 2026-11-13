@@ -77,6 +77,25 @@ it('rebuilds capacity splits before physical calls and preserves the validated p
   expect(prefixes.at(-1)).toEqual(Array.from({ length: 196 }, (_, index) => index + 1))
 })
 
+it('halves the scope when the budget refusal carries no selected quantity', async () => {
+  const physical: number[][] = []
+  let preflights = 0
+  const session: Pick<GenerationSession, 'complete'> = { async complete(task) {
+    const input = taskPayload(task)
+    if (input.items.length > 4) { preflights++; throw new Error('TASK_BUDGET_SCOPE_SPLIT_REQUIRED') }
+    physical.push([...input.items])
+    return { status: 'completed', finishReason: 'stop', content: JSON.stringify({ blueprints: input.items.map(chapterNumber => ({ chapterNumber, title: '完整章节' })) }),
+      receipt: attemptReceipt(physical.length, 7000, physical.length * 7000, 'stop') }
+  } }
+  const result = await createStructuredBatchExecutor({ contract: blueprintContract, session }).execute({
+    items: Array.from({ length: 10 }, (_, index) => index + 1), limits: { maxBatchItems: 10 },
+  })
+  expect(result.ok).toBe(true)
+  expect(physical.flat()).toEqual(Array.from({ length: 10 }, (_, index) => index + 1))
+  expect(result.receipt.splitCount).toBe(preflights)
+  expect(result.receipt.calls).toBe(4)
+})
+
 type AttemptRequest = {
   items: readonly number[]
   validatedPrefix: readonly Blueprint[]
