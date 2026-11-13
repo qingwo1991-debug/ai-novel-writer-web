@@ -12,8 +12,10 @@ const handleKey = (handle: MainGenerationRunHandle) => JSON.stringify([handle.pr
 // a bare TypeError instead of the stable code. Turn that into the symbolic error
 // the workflow's resume retry and the batch failure receipt both understand.
 function rejectBusinessFailure<T>(result: T): T {
+  // A failure DTO carries an error string. It may or may not also carry a
+  // success:false flag; either way it has no handle, so passing it to bindView
+  // would produce "Cannot read properties of undefined (reading 'projectId')".
   if (result && typeof result === 'object' && !Array.isArray(result)
-    && (result as Record<string, unknown>).success === false
     && typeof (result as Record<string, unknown>).error === 'string') {
     throw new Error((result as Record<string, unknown>).error as string)
   }
