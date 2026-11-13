@@ -29,8 +29,10 @@ function freezeSession(session: ProjectSessionContext | null): ProjectSessionCon
   return Object.freeze({ ...session })
 }
 function assertHandle(session: ProjectSessionContext, handle: MainGenerationRunHandle, historical = false): void {
-  if (![handle.projectId, handle.epoch, handle.rootActionId, handle.runId].every(value => typeof value === 'string' && Boolean(value.trim()))
-    || handle.projectId !== session.projectId || !historical && handle.epoch !== session.leaseId) throw new Error('GENERATION_PROJECT_SESSION_MISMATCH')
+  if (!handle || ![handle.projectId, handle.epoch, handle.rootActionId, handle.runId].every(value => typeof value === 'string' && Boolean(value.trim()))
+    || handle.projectId !== session.projectId || !historical && handle.epoch !== session.leaseId) {
+    throw new Error('GENERATION_PROJECT_SESSION_MISMATCH: handle=' + JSON.stringify(handle).slice(0, 200) + ' session.projectId=' + String(session.projectId))
+  }
 }
 /** Construction is inert: neither current session nor IPC is read until a call. */
 export function createMainGenerationTransport(captureSession = getActiveProjectSessionContext) {
