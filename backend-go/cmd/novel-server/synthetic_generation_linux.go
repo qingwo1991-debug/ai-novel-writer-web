@@ -1943,6 +1943,11 @@ func (s *syntheticGeneration) Resume(ctx context.Context, caller transport.Calle
 		syntheticMap(binding["sourceManifest"]) == nil {
 		return nil, errors.New("GENERATION_RUN_NOT_FOUND")
 	}
+	if binding["epoch"] == scope.Epoch {
+		// The run already carries the caller's lease; a repeated resume under
+		// the same lease is the reference's refused no-op, not a re-freeze.
+		return nil, errors.New("GENERATION_RESUME_UNAVAILABLE")
+	}
 	next := make(map[string]any, len(binding))
 	for key, item := range binding {
 		next[key] = item
