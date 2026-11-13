@@ -1388,8 +1388,15 @@ func syntheticRequireRun(ctx context.Context, ledger *store.GenerationLedger, sc
 	binding := syntheticMap(run["binding"])
 	manifest := syntheticMap(binding["sourceManifest"])
 	if run["rootActionId"] != handle.RootActionID || run["runId"] != handle.RunID ||
-		binding["projectId"] != scope.Project || binding["epoch"] != scope.Epoch || manifest == nil {
+		binding["projectId"] != scope.Project || manifest == nil {
 		return nil, nil, nil, errors.New("GENERATION_RUN_NOT_FOUND")
+	}
+	if binding["epoch"] != scope.Epoch {
+		// The run exists and the caller holds a valid lease for its project, but
+		// the lease rotated after this run was frozen. Report that distinctly so
+		// the workflow can resume it under the current lease instead of treating
+		// it as a missing run.
+		return nil, nil, nil, errors.New("GENERATION_EPOCH_STALE")
 	}
 	return run, binding, manifest, nil
 }

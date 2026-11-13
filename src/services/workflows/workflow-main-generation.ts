@@ -212,7 +212,7 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         // Both mean the run outlived the lease it was frozen under.
         const staleEpoch = errorCodeOf(error)
         if (staleEpoch === 'MAIN_RUN_NON_REPLAYABLE' || staleEpoch === 'GENERATION_EPOCH_STALE'
-          || staleEpoch === 'GENERATION_RUN_MISSING') {
+          || staleEpoch === 'GENERATION_RUN_NOT_FOUND' || staleEpoch === 'GENERATION_RUN_MISSING') {
           const frozen = context.mainGenerationRunHandle
           if (frozen) {
             try {
