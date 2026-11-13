@@ -98,7 +98,27 @@ func (a *admittedAuthor) Verify(ctx context.Context) error {
 	if a.closed || a.handle == nil {
 		return ErrDurableClosed
 	}
-	if err := a.permit.Verify(ctx, a.project); err != nil {
+	if err := a.permit.VerifyAdopt(ctx, a.project); err != nil {
+		return err
+	}
+	return a.handle.VerifyAdopt(ctx)
+}
+
+// VerifyLive is Verify for a borrow that reports the caller's current lease to
+// unrelated operations: the durable Current* reads and the file fence tie only
+// to the retained writer lock and the admitted handle, so the digest updates
+// this lane's own generation writes produced must not refuse the read. This is
+// the `a.*` receiver the strict paths never reached.
+func (a *admittedAuthor) VerifyLive(ctx context.Context) error {
+	if a == nil {
+		return ErrDurableInvalid
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed || a.handle == nil {
+		return ErrDurableClosed
+	}
+	if err := a.permit.VerifyAdopt(ctx, a.project); err != nil {
 		return err
 	}
 	return a.handle.VerifyAdopt(ctx)
