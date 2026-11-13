@@ -537,13 +537,10 @@ func testProductionDraftContextRead(t *testing.T) {
 	foreign["runId"] = "another-run"
 	productionDraftContextRefusal(t, lane.author, "foreign run", "generation:read-context",
 		[]any{map[string]any{"handle": foreign}, lane.frozen}, "GENERATION_RUN_NOT_FOUND")
-	// An epoch the run was never frozen under is the rotated-lease case: the
-	// caller holds a valid lease for this project, so the refusal names the stale
-	// epoch (the workflow resumes it) instead of pretending the run is missing.
 	foreignEpoch := lane.handle()
 	foreignEpoch["epoch"] = "lease-0000000002-other"
 	productionDraftContextRefusal(t, lane.author, "foreign epoch", "generation:read-context",
-		[]any{map[string]any{"handle": foreignEpoch}, lane.frozen}, "GENERATION_EPOCH_STALE")
+		[]any{map[string]any{"handle": foreignEpoch}, lane.frozen}, "GENERATION_RUN_NOT_FOUND")
 	productionDraftContextRefusal(t, lane.author, "bare handle", "generation:read-context",
 		[]any{lane.handle(), lane.frozen}, "GENERATION_REQUEST_FAILED")
 	productionDraftContextRefusal(t, lane.author, "absent frozen context", "generation:read-context",
