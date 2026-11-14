@@ -1667,6 +1667,19 @@ func syntheticOutcome(receipt map[string]any) map[string]any {
 	if result != nil {
 		finish = syntheticString(result["finishReason"])
 	}
+	// The ledger writes finishReason=null on every catch path (provider error,
+	// stream failure, cancel, timeout) while the failure code lives beside it
+	// in result.failureCode. The Electron owner maps exactly that shape to
+	// finishReason 'error' (main-generation-owner.ts outcomeOf); projecting an
+	// empty finish here made the renderer read a failed attempt as
+	// incomplete/unknown instead of the real failure.
+	if finish == "" {
+		if syntheticString(receipt["failureCode"]) != "" {
+			finish = "error"
+		} else {
+			finish = "unknown"
+		}
+	}
 	status := "incomplete"
 	if finish == "stop" {
 		status = "completed"
