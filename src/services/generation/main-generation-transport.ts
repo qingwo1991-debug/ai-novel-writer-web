@@ -75,7 +75,18 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
   const EXECUTE_RECEIPT_POLL_MS = 2000
   const EXECUTE_RECEIPT_DEADLINE_MS = 20 * 60 * 1000
   const EXECUTE_RECEIPT_NOT_FOUND_STREAK = 3
+  // The ledger answers a duplicate execute for an in-flight invocation with the
+  // attempt's reservation receipt (empty result, no finishReason) instead of
+  // waiting for settlement - same-instance callers join through the pending
+  // map, but every web request builds its own Service. Detect that premature
+  // receipt by its attempt status and collect the settled outcome through
+  // generation:execute-receipt instead of failing the batch as unknown.
+  const IN_FLIGHT_ATTEMPT_STATUSES = new Set(['reserved', 'dispatch-marked'])
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+  function inFlightAttemptStatus(receipt: MainGenerationExecuteReceipt): string | undefined {
+    const attempt = (receipt?.outcome?.receipt as { attempt?: { status?: unknown } } | undefined)?.attempt
+    return typeof attempt?.status === 'string' ? attempt.status : undefined
+  }
   function isTransportFailure(error: unknown): boolean {
     if (!(error instanceof BrowserTransportError)) return false
     if (error.code === 'BROWSER_NETWORK_ERROR') return true
@@ -132,7 +143,12 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
       for (;;) {
         try {
           const receipt = await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:execute', frozen))
-          return accept(receipt)
+          const accepted = accept(receipt)
+          const attemptStatus = inFlightAttemptStatus(accepted)
+          if (attemptStatus === undefined || !IN_FLIGHT_ATTEMPT_STATUSES.has(attemptStatus)) return accepted
+          const recovered = await pollReceipt()
+          if (recovered !== 'retry') return recovered
+          continue
         } catch (error) {
           if (!isTransportFailure(error) || Date.now() >= deadline) throw error
         }

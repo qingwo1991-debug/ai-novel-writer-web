@@ -175,3 +175,34 @@ it('execute收到代理502非JSON响应后同样进入receipt轮询', async () =
     expect(f.invoke.mock.calls.filter(([channel]) => channel === 'generation:execute')).toHaveLength(1)
   } finally { vi.useRealTimers() }
 })
+
+it('execute返回在飞attempt收据时转入execute-receipt轮询拿settled结果', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    const request = { handle, invocationNonce: '原点击', task: { purpose: '正文', output: 'visible-text' as const, messages: [] } }
+    let receiptCalls = 0
+    f.invoke.mockImplementation((async (channel: string) => {
+      if (channel === 'generation:execute') {
+        return {
+          outcome: { status: 'incomplete', finishReason: '', receipt: { attempt: { status: 'dispatch-marked' } } },
+          run: structuredClone(view),
+        }
+      }
+      if (channel === 'generation:execute-receipt') {
+        receiptCalls += 1
+        return receiptCalls === 1
+          ? { state: 'pending' }
+          : { state: 'settled', outcome: { status: 'completed', finishReason: 'stop' }, run: structuredClone(view) }
+      }
+      return structuredClone(view)
+    }) as never)
+    const promise = f.transport.execute(request)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(2100)
+    const receipt = await promise
+    expect(receipt.outcome.status).toBe('completed')
+    expect(receiptCalls).toBe(2)
+    expect(f.invoke.mock.calls.filter(([channel]) => channel === 'generation:execute')).toHaveLength(1)
+  } finally { vi.useRealTimers() }
+})
