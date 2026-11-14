@@ -263,7 +263,7 @@ func (s *syntheticGeneration) GraphExecute(ctx context.Context, caller transport
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, productionGraphExecuteNonce)
+	receipt, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, productionGraphExecuteNonce)
 	if err != nil {
 		return nil, err
 	}

@@ -332,7 +332,7 @@ func (e *productionLegacyRosterExecuteServe) dispatchAttempt(ctx context.Context
 	if err != nil {
 		return nil, nil, nil, false, err
 	}
-	receiptValue, err := service.Execute(ctx, frozen, handle.RunID, nonce)
+	receiptValue, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, nonce)
 	if err != nil {
 		return nil, nil, nil, false, err
 	}

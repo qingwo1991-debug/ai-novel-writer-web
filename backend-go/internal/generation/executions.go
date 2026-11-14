@@ -76,6 +76,29 @@ func (d *executionDirectory) abortProject(projectID string) {
 	d.abortMatching(func(_ *execution, id string) bool { return id == projectID })
 }
 
+// hasProject reports whether any non-unregistered execution was admitted for
+// the project. Project-close recovery uses it to prove no live dispatch can be
+// mistaken for an orphan before the ledger sweeps interrupted attempts.
+func (d *executionDirectory) hasProject(projectID string) bool {
+	if d == nil {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, id := range d.projectIDs {
+		if id == projectID {
+			return true
+		}
+	}
+	return false
+}
+
+// HasProjectExecutions reports live in-flight executions for the project
+// across every Service instance in this process.
+func HasProjectExecutions(projectID string) bool {
+	return processExecutions.hasProject(projectID)
+}
+
 // AbortProjectExecutions cancels every in-flight execution admitted for the
 // project, whichever Service instance owns it. Project close calls this
 // before the captured database goes away so a detached dispatch cannot keep

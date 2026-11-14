@@ -974,7 +974,7 @@ func (f *productionFinalizationServe) execute(ctx context.Context, caller transp
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, productionFinalizationExecuteNonce)
+	receipt, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, productionFinalizationExecuteNonce)
 	if err != nil {
 		return nil, err
 	}

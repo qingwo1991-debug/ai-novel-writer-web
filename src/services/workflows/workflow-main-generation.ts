@@ -99,8 +99,17 @@ export async function createWorkflowMainGenerationRuntime(request: WorkflowMainG
         context.generationModelId = importRecovery.modelId
         context.data.importGenerationContext = importRecovery.frozenContext
       } else if (resumeHandle) {
-        const stored = await transport.read(resumeHandle)
-        if (stored.inFlight) throw new Error('GENERATION_DISPATCH_IN_FLIGHT')
+        // Dispatch is detached from the request that started it, so a refresh or
+        // a second tab can meet a run whose attempt is still settling. Wait for
+        // the durable receipt instead of failing the step: the same invocation
+        // nonce then replays the settled outcome without a second dispatch.
+        let stored = await transport.read(resumeHandle)
+        const inFlightDeadline = Date.now() + 20 * 60 * 1000
+        while (stored.inFlight) {
+          if (context.cancelled || Date.now() >= inFlightDeadline) throw new Error('GENERATION_DISPATCH_IN_FLIGHT')
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          stored = await transport.read(resumeHandle)
+        }
         if (context.mainGenerationRootHandle && context.mainGenerationRootHandle.rootActionId !== resumeHandle.rootActionId)
           throw new Error('GENERATION_WORKFLOW_ROOT_CHANGED')
         if (!importStage) begunModelId = modelId = context.generationModelId?.trim()

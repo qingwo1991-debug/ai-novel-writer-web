@@ -56,6 +56,35 @@ type syntheticGeneration struct {
 	// at most once per durable revision keeps every delivered revision unique, and
 	// the durable text only grows, so the browser's append check holds too.
 	snapshotSeq sync.Map
+	// recoveryGates makes the interrupted-attempt sweep run exactly once per
+	// project per process. The gate value is a channel every later admit waits
+	// on, so a concurrent first execute cannot dispatch while the sweep is
+	// still marking orphaned attempts.
+	recoveryGates sync.Map
+}
+
+// admitRecoveryGate returns the per-project recovery gate, running the sweep
+// itself when this admit is the first for the project. It mirrors the
+// reference's service.recoverInterrupted at owner construction
+// (main-generation-owner.ts:302): attempts orphaned by a restart settle as
+// 'unknown' and their roots pause instead of pinning hasInFlight forever. The
+// sweep is skipped while any live dispatch exists for the project, and its
+// failure is best-effort — one exotic frozen root must not brick generation.
+func (s *syntheticGeneration) admitRecoveryGate(ctx context.Context, projectID string, ledger *store.GenerationLedger) {
+	gate, loaded := s.recoveryGates.LoadOrStore(projectID, make(chan struct{}))
+	done := gate.(chan struct{})
+	if loaded {
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		return
+	}
+	defer close(done)
+	if generation.HasProjectExecutions(projectID) || ledger == nil {
+		return
+	}
+	_, _ = syntheticCall(ctx, ledger, "recoverInterrupted")
 }
 
 // publishDurableRevision reports whether this attempt's snapshot at this durable
@@ -416,6 +445,7 @@ func (s *syntheticGeneration) admit(ctx context.Context, caller transport.Caller
 		writeCtx := ctx
 		ledger.WithWriteHook(func() { _ = refresh(writeCtx) })
 	}
+	s.admitRecoveryGate(ctx, contextValue.ProjectID, ledger)
 	scope := generationowner.Scope{
 		Caller:       caller.SessionID,
 		Session:      caller.SessionID,
@@ -1812,7 +1842,7 @@ func (s *syntheticGeneration) RetryDraftShortOutline(ctx context.Context, caller
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, syntheticRetryNoncePrefix+failedAttemptID)
+	receipt, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, syntheticRetryNoncePrefix+failedAttemptID)
 	if err != nil {
 		return nil, err
 	}

@@ -420,22 +420,7 @@ func (d *productionDraftContext) Read(ctx context.Context, caller transport.Call
 	if err != nil {
 		return nil, err
 	}
-	if err := productionDraftContextSupported(manifest, attempts); err != nil {
-		return nil, err
-	}
-	composition, err := productionDraftContextComposition(attempts)
-	if err != nil {
-		return nil, err
-	}
-	draftSave, err := productionDraftContextDraftSave(ctx, db, handle, manifest, attempts, composition)
-	if err != nil {
-		return nil, err
-	}
 	inFlight, err := syntheticCall(ctx, ledger, "hasInFlight", handle.RunID)
-	if err != nil {
-		return nil, err
-	}
-	finishReason, err := productionDraftContextFinishReason(ctx, db, attempts, composition)
 	if err != nil {
 		return nil, err
 	}
@@ -448,20 +433,44 @@ func (d *productionDraftContext) Read(ctx context.Context, caller transport.Call
 		"selectedDraftIds":                productionDraftContextNumbers(manifest["selectedDraftIds"]),
 		"selectedFinalizedDraftIds":       productionDraftContextNumbers(manifest["selectedFinalizedDraftIds"]),
 		"selectedBlueprintChapterNumbers": productionDraftContextNumbers(manifest["selectedBlueprintChapterNumbers"]),
-		"composition":                     composition,
-		"lastCompositionFinishReason":     finishReason,
 		"attemptedPurposes":               productionDraftContextPurposes(attempts),
-		"draftSave":                       draftSave,
 	}
 	if chapter, ok := productionDraftContextInt(manifest["chapterNumber"]); ok {
 		result["chapterNumber"] = chapter
 	}
-	if snapshot := syntheticMap(manifest["knowledgeSnapshot"]); snapshot != nil {
-		result["knowledgeSnapshot"] = snapshot
-	}
 	if batch := syntheticString(manifest["batchId"]); batch != "" {
 		result["batchId"] = batch
 	}
+	if snapshot := syntheticMap(manifest["knowledgeSnapshot"]); snapshot != nil {
+		result["knowledgeSnapshot"] = snapshot
+	}
+	// Only chapter-draft runs carry the draft-specific projections (verified
+	// composition, draftSave, selectedDrafts). Every other operation still gets
+	// the generic recovery fields the reference projects for any run — the
+	// architecture workflow reads read-context for modelId and plotOutline on
+	// non-draft runs too (architecture.command.ts:1630,
+	// workflow-main-generation.ts:107).
+	if syntheticString(manifest["operation"]) != productionDraftContextOperation {
+		return result, nil
+	}
+	if err := productionDraftContextSupported(manifest, attempts); err != nil {
+		return nil, err
+	}
+	composition, err := productionDraftContextComposition(attempts)
+	if err != nil {
+		return nil, err
+	}
+	draftSave, err := productionDraftContextDraftSave(ctx, db, handle, manifest, attempts, composition)
+	if err != nil {
+		return nil, err
+	}
+	finishReason, err := productionDraftContextFinishReason(ctx, db, attempts, composition)
+	if err != nil {
+		return nil, err
+	}
+	result["composition"] = composition
+	result["lastCompositionFinishReason"] = finishReason
+	result["draftSave"] = draftSave
 	selected, complete, err := productionDraftContextSelectedMatches(ctx, db, manifest, binding)
 	if err != nil {
 		return nil, err

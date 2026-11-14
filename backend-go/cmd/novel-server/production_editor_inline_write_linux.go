@@ -381,7 +381,7 @@ func (e *productionEditorInline) execute(ctx context.Context, caller transport.C
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, productionEditorInlineExecuteNonce)
+	receipt, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, productionEditorInlineExecuteNonce)
 	if err != nil {
 		return nil, err
 	}

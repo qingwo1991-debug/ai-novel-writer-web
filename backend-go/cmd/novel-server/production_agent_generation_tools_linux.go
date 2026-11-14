@@ -274,7 +274,7 @@ func (a *productionAgentGenerationServe) dispatchRound(ctx context.Context, call
 			a.owner.inner.publishSnapshot(caller, contextValue, run.Handle(), ledger, db, snapshot)
 		},
 	})
-	_, err = service.Execute(ctx, generation.Request{
+	_, err = service.Execute(context.WithoutCancel(ctx), generation.Request{
 		RunID:                     syntheticString(run.Run["runId"]),
 		InvocationNonce:           nonce,
 		RequestHash:               hash,
