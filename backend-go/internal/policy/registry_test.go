@@ -20,7 +20,7 @@ func TestExistingPublicInventory(t *testing.T) {
 	for _, scope := range registry.Operations {
 		counts[scope]++
 	}
-	if counts[Project] != 217 || counts[Global] != 42 || counts[Flexible] != 22 || len(registry.Excluded) != 13 {
+	if counts[Project] != 218 || counts[Global] != 42 || counts[Flexible] != 22 || len(registry.Excluded) != 13 {
 		t.Fatal(counts, len(registry.Excluded))
 	}
 	if _, ok := registry.Lookup("web:library-list"); ok {
