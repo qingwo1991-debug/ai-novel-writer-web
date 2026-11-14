@@ -227,6 +227,7 @@
     "generation:begin": "project",
     "generation:bind-material-decision": "project",
     "generation:execute": "project",
+    "generation:execute-receipt": "project",
     "generation:read": "project",
     "generation:list": "project",
     "generation:cancel": "project",
