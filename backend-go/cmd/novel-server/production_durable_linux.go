@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/authorruntime"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/generation"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectaccess"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectcatalog"
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/projectfs"
@@ -251,6 +252,12 @@ func (d *productionDurableOpen) CloseProject(ctx context.Context, caller transpo
 	defer d.mu.Unlock()
 	if d.closed || d.manager == nil {
 		return nil, errors.New("PRODUCTION_CLOSED")
+	}
+	// Abort this project's in-flight generation dispatches before the captured
+	// database goes away: each HTTP request builds its own service, so only the
+	// process-wide execution directory can reach the provider call.
+	if expectedContext, parseErr := projectsession.ParseContext(expected); parseErr == nil {
+		generation.AbortProjectExecutions(expectedContext.ProjectID)
 	}
 	return d.manager.CloseProject(ctx, caller, projectPath, expected)
 }

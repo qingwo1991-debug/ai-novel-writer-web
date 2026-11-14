@@ -79,9 +79,11 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
   function isTransportFailure(error: unknown): boolean {
     if (!(error instanceof BrowserTransportError)) return false
     if (error.code === 'BROWSER_NETWORK_ERROR') return true
-    // A 5xx means the server may still be settling the attempt; a 4xx is a
-    // refusal that polling cannot fix, so only retry server-side failures.
-    return error.code === 'BROWSER_REQUEST_FAILED' && (error.status ?? 0) >= 500
+    // A proxy/gateway that answers with a non-JSON 5xx (Cloudflare 502/504 HTML
+    // pages included) fails response.json() before the status is read, so it
+    // surfaces as BROWSER_INVALID_RESPONSE carrying the HTTP status.
+    if ((error.code === 'BROWSER_REQUEST_FAILED' || error.code === 'BROWSER_INVALID_RESPONSE') && (error.status ?? 0) >= 500) return true
+    return false
   }
   const transport: MainGenerationTransport = {
     async execute(request) {

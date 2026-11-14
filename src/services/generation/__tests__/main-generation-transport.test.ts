@@ -155,3 +155,23 @@ it('execute-receipt连续not-found后同nonce重发execute', async () => {
     expect(executeArgs.every(arg => arg.invocationNonce === '原点击')).toBe(true)
   } finally { vi.useRealTimers() }
 })
+
+it('execute收到代理502非JSON响应后同样进入receipt轮询', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    const request = { handle, invocationNonce: '原点击', task: { purpose: '正文', output: 'visible-text' as const, messages: [] } }
+    f.invoke.mockImplementation((async (channel: string) => {
+      if (channel === 'generation:execute') throw new BrowserTransportError('BROWSER_INVALID_RESPONSE', 'bad gateway page', 502)
+      if (channel === 'generation:execute-receipt') {
+        return { state: 'settled', outcome: { status: 'completed', finishReason: 'stop' }, run: structuredClone(view) }
+      }
+      return structuredClone(view)
+    }) as never)
+    const promise = f.transport.execute(request)
+    await vi.advanceTimersByTimeAsync(0)
+    const receipt = await promise
+    expect(receipt.outcome.status).toBe('completed')
+    expect(f.invoke.mock.calls.filter(([channel]) => channel === 'generation:execute')).toHaveLength(1)
+  } finally { vi.useRealTimers() }
+})

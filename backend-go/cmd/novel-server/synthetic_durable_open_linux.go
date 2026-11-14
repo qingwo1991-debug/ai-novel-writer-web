@@ -726,6 +726,12 @@ func (s *syntheticDurableOpen) CloseProject(ctx context.Context, caller transpor
 	if s.closed || s.manager == nil {
 		return nil, errors.New("SYNTHETIC_DURABLE_CLOSED")
 	}
+	// Abort this project's in-flight generation dispatches before the captured
+	// database goes away: each HTTP request builds its own service, so only the
+	// process-wide execution directory can reach the provider call.
+	if expectedContext, parseErr := projectsession.ParseContext(expected); parseErr == nil {
+		generation.AbortProjectExecutions(expectedContext.ProjectID)
+	}
 	return s.manager.CloseProject(ctx, caller, projectPath, expected)
 }
 

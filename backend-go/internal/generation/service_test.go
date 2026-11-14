@@ -502,3 +502,89 @@ func TestServiceAgentManifestAdmitsAndStampsTheParsedResponse(t *testing.T) {
 		t.Fatalf("the refused manifest dispatched %d times", dispatched)
 	}
 }
+
+func TestExecutionDirectoryAbortReachesForeignInstance(t *testing.T) {
+	dir := newExecutionDirectory()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	x := &execution{runID: "run", rootID: "root", attemptID: "attempt", cancel: cancel, ctx: ctx}
+	y := &execution{runID: "run2", rootID: "root2", attemptID: "attempt2", cancel: func() {}, ctx: ctx}
+	dir.register(x, "project-a")
+	dir.register(y, "project-b")
+	dir.abortRoot("root")
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("cross-instance abort did not cancel the provider context")
+	}
+	x.mu.Lock()
+	stopped := x.stopped
+	x.mu.Unlock()
+	if !stopped {
+		t.Fatal("aborted execution not marked stopped")
+	}
+	// root2 belongs to another root: its cancel must not have fired. y shares
+	// ctx here only as a stand-in; assert via a dedicated context instead.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	y.cancel, y.ctx = cancel2, ctx2
+	dir.abortProject("project-b")
+	select {
+	case <-ctx2.Done():
+	default:
+		t.Fatal("project abort did not reach the execution")
+	}
+	dir.unregister("attempt")
+	dir.unregister("attempt2")
+	if len(dir.byAttempt) != 0 {
+		t.Fatal("unregistered executions retained")
+	}
+}
+
+func TestServiceCancelReachesDispatchOwnedByAnotherInstance(t *testing.T) {
+	_, ledger, runID := serviceFixture(t)
+	runValue, err := ledger.Call(context.Background(), "get", []any{runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := stext(smap(runValue)["rootActionId"])
+	dir := newExecutionDirectory()
+	started := make(chan struct{})
+	dispatch := func(ctx context.Context, _ any, _ Callbacks) (DispatchResult, error) {
+		close(started)
+		<-ctx.Done()
+		return DispatchResult{}, ctx.Err()
+	}
+	owner := New(Dependencies{Ledger: ledger, Dispatch: dispatch, Active: dir})
+	canceler := New(Dependencies{Ledger: ledger, Dispatch: dispatch, Active: dir})
+	request := serviceRequest(runID)
+	request.ProjectID = "project"
+	type result struct {
+		receipt map[string]any
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		receipt, err := owner.Execute(context.Background(), request)
+		done <- result{receipt, err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("dispatch never started")
+	}
+	if _, err := canceler.Cancel(context.Background(), rootID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case out := <-done:
+		if out.err != nil {
+			t.Fatal(out.err)
+		}
+		if out.receipt["failureCode"] != "GENERATION_CANCELLED" {
+			t.Fatalf("cancelled dispatch receipt %v", out.receipt["failureCode"])
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("owner execute did not settle after foreign cancel")
+	}
+}

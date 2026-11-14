@@ -154,7 +154,7 @@ func (s *OrdinaryService) Execute(ctx context.Context, frozen *Frozen, runID, no
 		return nil, failure("GENERATION_SEMANTIC_TASK_INVALID")
 	}
 	return s.service.Execute(context.WithValue(ctx, ordinaryContextKey{}, frozen), generation.Request{
-		RunID: runID, InvocationNonce: nonce, RequestHash: hash,
+		RunID: runID, InvocationNonce: nonce, RequestHash: hash, ProjectID: frozen.scope.Project,
 		ProviderRequest: frozen,
 		ReservedTokens:  frozen.plan.Reserved, RequestedOutputTokens: frozen.plan.Output,
 		InputUpperBoundTokens: frozen.plan.Input, ReasoningUpperBoundTokens: frozen.plan.Reasoning,

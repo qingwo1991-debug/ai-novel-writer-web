@@ -42,6 +42,7 @@ type Request struct {
 	RunID                     string         `json:"runId"`
 	InvocationNonce           string         `json:"invocationNonce"`
 	RequestHash               string         `json:"requestHash"`
+	ProjectID                 string         `json:"-"`
 	ProviderRequest           any            `json:"providerRequest"`
 	ReservedTokens            int64          `json:"reservedTokens"`
 	RequestedOutputTokens     int64          `json:"requestedOutputTokens"`
@@ -83,6 +84,10 @@ type Dependencies struct {
 	ValidateRecovery func(context.Context, map[string]any, map[string]any) (bool, error)
 	Now              func() time.Time
 	FlushInterval    time.Duration
+	// Active is the shared in-flight execution directory. nil selects the
+	// process-wide registry so a cancel admitted on a different Service
+	// instance still reaches the provider call this one dispatched.
+	Active *executionDirectory
 }
 type invocation struct {
 	hash    string
@@ -121,6 +126,9 @@ func New(deps Dependencies) *Service {
 	}
 	if deps.FlushInterval <= 0 {
 		deps.FlushInterval = time.Second
+	}
+	if deps.Active == nil {
+		deps.Active = processExecutions
 	}
 	return &Service{deps: deps, pending: map[string]*invocation{}, active: map[string]*execution{}, failedRoots: map[string]bool{}, tails: map[string]UnsavedTail{}}
 }
@@ -394,6 +402,7 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 	s.mu.Lock()
 	s.active[x.attemptID] = x
 	s.mu.Unlock()
+	s.deps.Active.register(x, r.ProjectID)
 	_, err = s.cleanupCall("markDispatched", x.attemptID)
 	if err != nil {
 		x.mu.Lock()
@@ -405,6 +414,7 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 		s.mu.Lock()
 		delete(s.active, x.attemptID)
 		s.mu.Unlock()
+		s.deps.Active.unregister(x.attemptID)
 		s.gate.Unlock()
 		return s.failedReceipt(x), nil
 	}
@@ -423,7 +433,12 @@ func (s *Service) execute(ctx context.Context, r Request) (map[string]any, error
 	}
 	s.gate.Unlock()
 	defer cancel()
-	defer func() { s.mu.Lock(); delete(s.active, x.attemptID); s.mu.Unlock() }()
+	defer func() {
+		s.mu.Lock()
+		delete(s.active, x.attemptID)
+		s.mu.Unlock()
+		s.deps.Active.unregister(x.attemptID)
+	}()
 	type outcome struct {
 		result DispatchResult
 		err    error
@@ -873,6 +888,10 @@ func (s *Service) stop(ctx context.Context, rootID string, cancelRoot bool) (map
 		}
 		x.mu.Unlock()
 	}
+	// The dispatch may belong to a Service instance built by an earlier HTTP
+	// request (web lane): reach it through the shared directory so the provider
+	// call is actually aborted, not just the ledger row this instance can see.
+	s.deps.Active.abortRoot(rootID)
 	if err != nil {
 		s.failRoot(rootID)
 		return nil, err
