@@ -804,6 +804,16 @@ func productionHandlerWithContract(registry *policy.Registry, address, staticDir
 			_ = open.Close()
 			return nil, nil, bindErr
 		}
+		// generation:execute-receipt is the read-only poll that lets a browser
+		// whose execute POST was cut by a proxy still collect the settled
+		// outcome. It is bound beside execute under the same owner; being a
+		// read it surfaces HTTPError codes, not the mutating business DTO.
+		if bindErr := server.Bind("generation:execute-receipt", productionGenerationRead(1, func(ctx context.Context, caller transport.Caller, expected map[string]any, args []any) (any, error) {
+			return owner.ExecuteReceipt(ctx, caller, expected, args[0])
+		})); bindErr != nil {
+			_ = open.Close()
+			return nil, nil, bindErr
+		}
 		// generation:cancel, generation:pause and generation:resume settle or advance
 		// an admitted run through the ledger and dial nothing, so the same owner lends
 		// them under the same committed gates.

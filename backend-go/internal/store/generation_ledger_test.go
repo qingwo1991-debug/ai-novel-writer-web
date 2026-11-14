@@ -189,3 +189,23 @@ func TestGenerationLedgerJSONGuardsAndCorruptIdentity(t *testing.T) {
 	_, err = g.Call(context.Background(), "receipt", []any{attemptID})
 	generationLedgerWant(t, err, "ARTIFACT_INTEGRITY_FAILED")
 }
+func TestGenerationLedgerInvocationState(t *testing.T) {
+	_, g, _ := generationLedgerFixture(t)
+	run := generationLedgerOpen(t, g, "invocation-state")
+	// Absent invocation reports nil so the receipt op can answer NOT_FOUND.
+	if out := generationLedgerCall(t, g, "invocationState", run["runId"], "missing"); out != nil {
+		t.Fatalf("absent invocation %v", out)
+	}
+	receipt := generationLedgerCall(t, g, "reserve", run["runId"], "invoke", strings.Repeat("b", 64), 200, 100).(map[string]any)
+	attemptID := glMap(receipt["attempt"])["attemptId"]
+	state := generationLedgerCall(t, g, "invocationState", run["runId"], "invoke").(map[string]any)
+	if state["attemptId"] != attemptID || state["status"] == "settled" {
+		t.Fatalf("in-flight state %v", state)
+	}
+	generationLedgerCall(t, g, "markDispatched", attemptID)
+	generationLedgerCall(t, g, "settle", attemptID, map[string]any{"trusted": true, "actualTokens": 10}, "stop")
+	state = generationLedgerCall(t, g, "invocationState", run["runId"], "invoke").(map[string]any)
+	if state["attemptId"] != attemptID || state["status"] != "settled" {
+		t.Fatalf("settled state %v", state)
+	}
+}

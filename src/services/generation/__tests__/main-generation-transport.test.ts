@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createMainGenerationTransport } from '../main-generation-transport'
+import { BrowserTransportError } from '../../browser-transport'
 import type { MainGenerationRunHandle, MainGenerationRunView, MainGenerationSnapshot, MainGenerationReasoningEvent } from '../generation-runtime'
 import type { ProjectSessionContext } from '../../../shared/ipc-channels'
 import type { BeginGenerationRequest } from '../../../shared/generation-owner-contract'
@@ -100,4 +101,57 @@ it('resume freezes the explicit current session and rejects a replaced root', as
   current.leaseId = '后来会话'
   await expect(pending).rejects.toThrow('RESPONSE_IDENTITY_MISMATCH')
   expect(f.invoke).toHaveBeenCalledExactlyOnceWith('generation:resume', handle, { ...session, leaseId: '新会话' })
+})
+
+it('execute断连后轮询execute-receipt，同nonce收回settled收据', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    const request = { handle, invocationNonce: '原点击', task: { purpose: '正文', output: 'visible-text' as const, messages: [] } }
+    let receiptCalls = 0
+    f.invoke.mockImplementation((async (channel: string) => {
+      if (channel === 'generation:execute') throw new BrowserTransportError('BROWSER_NETWORK_ERROR', 'down')
+      if (channel === 'generation:execute-receipt') {
+        receiptCalls += 1
+        return receiptCalls === 1
+          ? { state: 'pending' }
+          : { state: 'settled', outcome: { status: 'completed', finishReason: 'stop' }, run: structuredClone(view) }
+      }
+      return structuredClone(view)
+    }) as never)
+    const promise = f.transport.execute(request)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.invoke).toHaveBeenCalledWith('generation:execute-receipt', { handle, invocationNonce: '原点击' }, session)
+    await vi.advanceTimersByTimeAsync(2100)
+    const receipt = await promise
+    expect(receipt.outcome.status).toBe('completed')
+    expect(f.invoke.mock.calls.filter(([channel]) => channel === 'generation:execute')).toHaveLength(1)
+    const receiptArgs = (f.invoke.mock.calls as unknown as [string, { invocationNonce: string }][]).filter(([channel]) => channel === 'generation:execute-receipt').map(([, arg]) => arg)
+    expect(receiptArgs.every(arg => arg.invocationNonce === '原点击')).toBe(true)
+  } finally { vi.useRealTimers() }
+})
+it('execute-receipt连续not-found后同nonce重发execute', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    const request = { handle, invocationNonce: '原点击', task: { purpose: '正文', output: 'visible-text' as const, messages: [] } }
+    let executeCalls = 0
+    f.invoke.mockImplementation((async (channel: string) => {
+      if (channel === 'generation:execute') {
+        executeCalls += 1
+        if (executeCalls === 1) throw new BrowserTransportError('BROWSER_NETWORK_ERROR', 'down')
+        return { outcome: { status: 'completed', finishReason: 'stop' }, run: structuredClone(view) }
+      }
+      if (channel === 'generation:execute-receipt') throw new Error('GENERATION_INVOCATION_NOT_FOUND')
+      return structuredClone(view)
+    }) as never)
+    const promise = f.transport.execute(request)
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(4500)
+    const receipt = await promise
+    expect(receipt.outcome.status).toBe('completed')
+    expect(executeCalls).toBe(2)
+    const executeArgs = (f.invoke.mock.calls as unknown as [string, { invocationNonce: string }][]).filter(([channel]) => channel === 'generation:execute').map(([, arg]) => arg)
+    expect(executeArgs.every(arg => arg.invocationNonce === '原点击')).toBe(true)
+  } finally { vi.useRealTimers() }
 })

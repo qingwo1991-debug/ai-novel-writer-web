@@ -1576,7 +1576,12 @@ func (s *syntheticGeneration) syntheticDispatchFrozenRun(ctx context.Context, ca
 	if err != nil {
 		return nil, err
 	}
-	receipt, err := service.Execute(ctx, frozen, handle.RunID, invocationNonce)
+	// The dispatch must outlive this HTTP request: a browser or tunnel that drops
+	// the connection mid-generation must not cancel the provider call, or the
+	// settled attempt would be lost with the request context. Values (session,
+	// tracing) are preserved; only cancellation is detached. User-initiated
+	// cancel still works through the ledger's own stop path.
+	receipt, err := service.Execute(context.WithoutCancel(ctx), frozen, handle.RunID, invocationNonce)
 	if err != nil {
 		return nil, err
 	}
@@ -1586,6 +1591,70 @@ func (s *syntheticGeneration) syntheticDispatchFrozenRun(ctx context.Context, ca
 		return nil, err
 	}
 	return map[string]any{"outcome": outcome, "run": view}, nil
+}
+
+// ExecuteReceipt answers generation:execute-receipt: the polling half of
+// generation:execute for transports whose long POST can be cut by a proxy or
+// tunnel. It re-admits the same frozen session and run proof, then reports the
+// durable state of one (runId, invocationNonce) attempt without touching the
+// task or dispatching anything:
+//
+//   - no attempt row            -> GENERATION_INVOCATION_NOT_FOUND, so the
+//     caller may safely resend generation:execute under the same nonce
+//   - attempt still in flight   -> {"state":"pending"}
+//   - attempt settled/terminal  -> the same {"outcome","run"} DTO execute returns
+//
+// Because dispatch now runs on a context detached from the request
+// (syntheticDispatchFrozenRun), an attempt that was admitted keeps settling in
+// the ledger even when the original execute POST died, which is exactly what
+// makes this read honest after a reconnect.
+func (s *syntheticGeneration) ExecuteReceipt(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	request := syntheticMap(arg)
+	if request == nil {
+		return nil, errors.New("GENERATION_EXECUTE_RECEIPT_INVALID")
+	}
+	handle, err := syntheticParseHandle(request["handle"])
+	if err != nil {
+		return nil, err
+	}
+	nonce := syntheticString(request["invocationNonce"])
+	if nonce == "" {
+		return nil, errors.New("GENERATION_EXECUTE_RECEIPT_INVALID")
+	}
+	_, scope, ledger, db, done, err := s.admitRead(ctx, caller, expected)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if _, _, _, err := syntheticRequireRun(ctx, ledger, scope, handle); err != nil {
+		return nil, err
+	}
+	stateValue, err := syntheticCall(ctx, ledger, "invocationState", handle.RunID, nonce)
+	if err != nil {
+		return nil, err
+	}
+	state := syntheticMap(stateValue)
+	if state == nil {
+		return nil, errors.New("GENERATION_INVOCATION_NOT_FOUND")
+	}
+	status := syntheticString(state["status"])
+	if status != "settled" && status != "unknown" && status != "cancelled-before-dispatch" {
+		return map[string]any{"state": "pending"}, nil
+	}
+	receiptValue, err := syntheticCall(ctx, ledger, "receipt", syntheticString(state["attemptId"]), nil)
+	if err != nil {
+		return nil, err
+	}
+	receipt := syntheticMap(receiptValue)
+	if receipt == nil {
+		return nil, errors.New("GENERATION_INVOCATION_NOT_FOUND")
+	}
+	outcome := syntheticOutcome(receipt)
+	view, err := s.viewOf(ctx, ledger, db, receipt["run"])
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"state": "settled", "outcome": outcome, "run": view}, nil
 }
 
 // syntheticOutcome projects the settle receipt into the browser

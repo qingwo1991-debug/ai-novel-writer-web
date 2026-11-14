@@ -232,6 +232,68 @@ func productionGenerationFailure(err error) map[string]any {
 	return map[string]any{"success": false, "error": "Error: " + code}
 }
 
+// productionGenerationRead is the read half of the family adapter
+// (internal/transport/generation.go:265-294 with mutating=false): same wire
+// arity and three-key fence, but failures surface as security.HTTPError so the
+// browser transport can read the symbolic code instead of a business DTO.
+func productionGenerationRead(arity int, call func(context.Context, transport.Caller, map[string]any, []any) (any, error)) transport.Operation {
+	return func(ctx context.Context, caller transport.Caller, args []any) (any, error) {
+		fail := func(err error) (any, error) {
+			var public *security.HTTPError
+			if errors.As(err, &public) && public != nil {
+				return nil, security.NewHTTPError(public.Status, public.Code)
+			}
+			return nil, security.NewHTTPError(http.StatusInternalServerError, productionGenerationSymbolicCode(err))
+		}
+		if len(args) != arity+1 {
+			return fail(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
+		}
+		raw, ok := args[arity].(map[string]any)
+		if !ok || len(raw) != 3 {
+			return fail(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
+		}
+		expected := make(map[string]any, 3)
+		for _, key := range []string{"projectId", "leaseId", "projectPath"} {
+			text, ok := raw[key].(string)
+			if !ok || text == "" || !utf8.ValidString(text) {
+				return fail(security.NewHTTPError(http.StatusBadRequest, "PROJECT_SESSION_REQUIRED"))
+			}
+			expected[key] = text
+		}
+		if ctx == nil {
+			return fail(security.NewHTTPError(http.StatusBadRequest, "INVALID_ARGUMENTS"))
+		}
+		value, err := call(ctx, caller, expected, args)
+		if err != nil {
+			return fail(err)
+		}
+		return value, nil
+	}
+}
+
+// productionGenerationSymbolicCode mirrors generationSymbolicCode
+// (internal/transport/generation.go:323-341): an all-caps symbolic code passes
+// through, anything else collapses to REQUEST_FAILED.
+func productionGenerationSymbolicCode(err error) string {
+	if err == nil {
+		return "REQUEST_FAILED"
+	}
+	code := err.Error()
+	var public *security.HTTPError
+	if errors.As(err, &public) {
+		code = public.Code
+	}
+	if len(code) < 2 {
+		return "REQUEST_FAILED"
+	}
+	for i, c := range code {
+		if !(c >= 'A' && c <= 'Z') && !(i > 0 && (c >= '0' && c <= '9' || c == '_')) {
+			return "REQUEST_FAILED"
+		}
+	}
+	return code
+}
+
 // productionFamilyRequestHandle is the `{ handle }` unwrap of
 // internal/transport/generation.go:371-373 with the same single-key rule.
 func productionFamilyRequestHandle(value any, invalidCode string) (any, error) {

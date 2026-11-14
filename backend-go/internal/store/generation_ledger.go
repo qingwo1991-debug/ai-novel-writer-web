@@ -280,7 +280,7 @@ func (g *GenerationLedger) Call(ctx context.Context, method string, args []any) 
 	}
 	args = normalized.([]any)
 	// Unknown workflows are errors, never successful no-ops.
-	read := method == "get" || method == "budget" || method == "attemptCount" || method == "hasInFlight" || method == "hasNonCancelledAttempt" || method == "findInvocation" || method == "receipt"
+	read := method == "get" || method == "budget" || method == "attemptCount" || method == "hasInFlight" || method == "hasNonCancelledAttempt" || method == "findInvocation" || method == "invocationState" || method == "receipt"
 	write := method == "open" || method == "reserve" || method == "markDispatched" || method == "snapshot" || method == "settle" || method == "block" || method == "pause" || method == "resume" || method == "replaceUnstartedBinding" || method == "recoverInterrupted" || method == "discardCandidate" || method == "recordEffect" || method == "recordAgentReceipt" || method == "activateRoot"
 	if !read && !write {
 		return nil, glError("GENERATION_OPERATION_UNSUPPORTED")
@@ -1005,6 +1005,16 @@ func (g *GenerationLedger) call(ctx context.Context, conn *sql.Conn, method stri
 			return nil, err
 		}
 		return out, err
+	case "invocationState":
+		row, err := glOne(ctx, conn, `SELECT attempt_id,attempt_json FROM generation_attempts WHERE run_id=? AND invocation_nonce=?`, "", text(0), text(1))
+		if err != nil || row == nil {
+			return nil, err
+		}
+		attempt, err := glStored(row["attempt_json"])
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"attemptId": glText(row["attempt_id"]), "status": glText(attempt["status"])}, nil
 	case "receipt":
 		return g.receipt(ctx, conn, text(0), glMap(arg(1)))
 	case "reserve":

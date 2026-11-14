@@ -100,6 +100,20 @@ func (g *productionGeneration) Execute(ctx context.Context, caller transport.Cal
 	return g.inner.Execute(ctx, caller, expected, arg)
 }
 
+// ExecuteReceipt answers generation:execute-receipt for the same frozen
+// session: a read-only poll of one (runId, invocationNonce) attempt's durable
+// state so a browser whose execute POST was cut by a proxy can still collect
+// the settled outcome. It shares generation:read's admission (the live lease
+// and run proof inside syntheticGeneration.ExecuteReceipt) and dials nothing,
+// so it needs neither the egress policy nor the executor - a lane that lost
+// its provider still owes the caller the receipt of work already dispatched.
+func (g *productionGeneration) ExecuteReceipt(ctx context.Context, caller transport.Caller, expected map[string]any, arg any) (any, error) {
+	if g == nil || g.open == nil || g.inner == nil {
+		return nil, errProductionGenerationUnavailable
+	}
+	return g.inner.ExecuteReceipt(ctx, caller, expected, arg)
+}
+
 // newProductionGeneration builds the run admission and the executor over the
 // already admitted author runtime and the committed global config this lane pinned
 // at startup. The model profiles it reads are the same private store llm reads

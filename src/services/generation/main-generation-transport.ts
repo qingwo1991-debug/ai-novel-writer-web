@@ -1,8 +1,10 @@
 import { ipc } from '../ipc-client'
+import { BrowserTransportError } from '../browser-transport'
+import { errorCodeOf } from '../../i18n/app-errors'
 import { getActiveProjectSessionContext } from '../../shared/project-session-context'
 import type { ProjectSessionContext } from '../../shared/ipc-channels'
 import type { BeginGenerationRequest } from '../../shared/generation-owner-contract'
-import type { MainGenerationRunHandle, MainGenerationRunView, MainGenerationTransport } from './generation-runtime'
+import type { MainGenerationExecuteReceipt, MainGenerationRunHandle, MainGenerationRunView, MainGenerationTransport } from './generation-runtime'
 import { PLOT_OUTLINE_PROTOCOL } from '../../shared/plot-outline-contract'
 
 const handleKey = (handle: MainGenerationRunHandle) => JSON.stringify([
@@ -64,14 +66,77 @@ export function createMainGenerationTransport(captureSession = getActiveProjectS
     sessions.set(handleKey(view.handle), session)
     return view
   }
+  // Long executes can outlive a proxy or tunnel hop between the browser and the
+  // backend. The server detaches dispatch from the request lifecycle and records
+  // every attempt in the durable ledger, so a dropped POST is recoverable:
+  // generation:execute-receipt polls that ledger for the same
+  // (runId, invocationNonce) and returns the settled { outcome, run } DTO, or
+  // reports the invocation absent so the same nonce can be resent safely.
+  const EXECUTE_RECEIPT_POLL_MS = 2000
+  const EXECUTE_RECEIPT_DEADLINE_MS = 20 * 60 * 1000
+  const EXECUTE_RECEIPT_NOT_FOUND_STREAK = 3
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+  function isTransportFailure(error: unknown): boolean {
+    if (!(error instanceof BrowserTransportError)) return false
+    if (error.code === 'BROWSER_NETWORK_ERROR') return true
+    // A 5xx means the server may still be settling the attempt; a 4xx is a
+    // refusal that polling cannot fix, so only retry server-side failures.
+    return error.code === 'BROWSER_REQUEST_FAILED' && (error.status ?? 0) >= 500
+  }
   const transport: MainGenerationTransport = {
     async execute(request) {
       const frozen = structuredClone(request)
       const session = sessionFor(frozen.handle)
-      const receipt = await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:execute', frozen))
-      if (handleKey(receipt.run.handle) !== handleKey(frozen.handle)) throw new Error('GENERATION_RESPONSE_IDENTITY_MISMATCH')
-      bindView(receipt.run, session)
-      return receipt
+      const deadline = Date.now() + EXECUTE_RECEIPT_DEADLINE_MS
+      const accept = <T extends { run: MainGenerationRunView }>(receipt: T): T => {
+        if (handleKey(receipt.run.handle) !== handleKey(frozen.handle)) throw new Error('GENERATION_RESPONSE_IDENTITY_MISMATCH')
+        bindView(receipt.run, session)
+        return receipt
+      }
+      const pollReceipt = async (): Promise<'retry' | MainGenerationExecuteReceipt> => {
+        let notFoundStreak = 0
+        for (;;) {
+          if (Date.now() >= deadline) throw new Error('GENERATION_EXECUTE_RECEIPT_TIMEOUT')
+          let result: Awaited<ReturnType<typeof invokeReceipt>>
+          try {
+            result = await invokeReceipt()
+          } catch (error) {
+            if (errorCodeOf(error) === 'GENERATION_INVOCATION_NOT_FOUND') {
+              // The execute may still be in its pre-dispatch admission window;
+              // only resend after several consecutive misses.
+              notFoundStreak += 1
+              if (notFoundStreak >= EXECUTE_RECEIPT_NOT_FOUND_STREAK) return 'retry'
+              await sleep(EXECUTE_RECEIPT_POLL_MS)
+              continue
+            }
+            if (isTransportFailure(error)) {
+              await sleep(EXECUTE_RECEIPT_POLL_MS)
+              continue
+            }
+            throw error
+          }
+          notFoundStreak = 0
+          if (result.state === 'pending') {
+            await sleep(EXECUTE_RECEIPT_POLL_MS)
+            continue
+          }
+          return accept(result)
+        }
+      }
+      const invokeReceipt = () => invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:execute-receipt', {
+        handle: frozen.handle,
+        invocationNonce: frozen.invocationNonce,
+      }))
+      for (;;) {
+        try {
+          const receipt = await invokeOperation(() => ipc.invokeWithProjectSession(session, 'generation:execute', frozen))
+          return accept(receipt)
+        } catch (error) {
+          if (!isTransportFailure(error) || Date.now() >= deadline) throw error
+        }
+        const recovered = await pollReceipt()
+        if (recovered !== 'retry') return recovered
+      }
     },
     async read(handle) {
       const frozen = Object.freeze({ ...handle }), session = sessionFor(frozen, true)

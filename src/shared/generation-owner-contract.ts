@@ -5,6 +5,13 @@ import type { GenerationKnowledgeSnapshot } from './generation-knowledge'
 import type { ImportGenerationSlot } from './import-generation'
 import type { ImportRunExecutionAuthority } from './import-run'
 
+/** generation:execute-receipt poll result: pending while the attempt is in
+ * flight, otherwise the same { outcome, run } DTO generation:execute returns
+ * (the server tags it state:"settled"). */
+export type MainGenerationExecuteReceiptPoll =
+  | (MainGenerationExecuteReceipt & { state?: 'settled' })
+  | { state: 'pending' }
+
 /** Raw text explicitly supplied for this author action, never inferred candidate text. */
 export interface GenerationAuthorInput { id: string; text: string }
 export type ArchitecturePlanningIntent = Readonly<{
@@ -320,6 +327,7 @@ export interface GenerationOwnerChannels {
   'generation:begin': { args: [BeginGenerationRequest]; return: MainGenerationRunView }
   'generation:bind-material-decision': { args: [{ handle: MainGenerationRunHandle; materialDecision: MaterialDecisionReceipt }]; return: MainGenerationRunView }
   'generation:execute': { args: [ExecuteGenerationRequest]; return: MainGenerationExecuteReceipt }
+  'generation:execute-receipt': { args: [{ handle: MainGenerationRunHandle; invocationNonce: string }]; return: MainGenerationExecuteReceiptPoll }
   'generation:read': { args: [MainGenerationRunHandle]; return: MainGenerationRunView }
   'generation:list': { args: []; return: MainGenerationRunSummary[] }
   'generation:cancel': { args: [MainGenerationRunHandle]; return: MainGenerationRunView }
