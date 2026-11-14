@@ -931,6 +931,24 @@ func syntheticManifest(selection syntheticSelection, scope generationowner.Scope
 	return manifest
 }
 
+// syntheticModelReceipt freezes the lease receipt into the source manifest the
+// way the reference does for every run (generation-source-binding.ts). The
+// character-proposal proof reads modelReceipt.modelRevision and the identity
+// commit refuses generated provenance without a 64-hex revision, so a manifest
+// without this key can generate but never be adopted
+// (CHARACTER_PROVENANCE_INVALID).
+func syntheticModelReceipt(receipt generationowner.Receipt) map[string]any {
+	return map[string]any{
+		"modelId":             receipt.ModelID,
+		"provider":            receipt.Provider,
+		"protocol":            receipt.Protocol,
+		"modelName":           receipt.ModelName,
+		"modelRevision":       receipt.ModelRevision,
+		"endpointFingerprint": receipt.EndpointFingerprint,
+		"capabilityEvidence":  receipt.CapabilityEvidence,
+	}
+}
+
 // syntheticFingerprint derives the nine reduced binding hashes from real
 // project state: binding refs (draft/blueprint/prompt capabilities), the
 // project-core canonical text, renderer skill stages and author inputs, the
@@ -1104,6 +1122,7 @@ func (s *syntheticGeneration) openRun(ctx context.Context, ledger *store.Generat
 		return nil, errors.New("GENERATION_BEGIN_INVALID")
 	}
 	manifest := syntheticManifest(selection, scope, receipt.LeaseID, binding.Fingerprint())
+	manifest["modelReceipt"] = syntheticModelReceipt(receipt)
 	for key, value := range extra {
 		manifest[key] = value
 	}
@@ -2181,12 +2200,14 @@ func (s *syntheticGeneration) begin(ctx context.Context, caller transport.Caller
 	if err != nil {
 		return nil, errors.New("GENERATION_BEGIN_INVALID")
 	}
+	manifest := syntheticManifest(selection, scope, receipt.LeaseID, binding.Fingerprint())
+	manifest["modelReceipt"] = syntheticModelReceipt(receipt)
 	request := map[string]any{
 		"projectId":         scope.Project,
 		"epoch":             scope.Epoch,
 		"fingerprint":       fingerprint,
 		"contextSnapshotId": syntheticHash(set.CoreText),
-		"sourceManifest":    syntheticManifest(selection, scope, receipt.LeaseID, binding.Fingerprint()),
+		"sourceManifest":    manifest,
 		"sourceRefs":        refs,
 		"operation":         selection.Operation,
 		"uiActionNonce":     selection.UIActionNonce,

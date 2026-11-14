@@ -415,15 +415,7 @@ func productionBatchWriteManifest(selection syntheticSelection, intent productio
 		},
 		"targetUnits": intent.TargetUnits,
 	}
-	manifest["modelReceipt"] = map[string]any{
-		"modelId":             receipt.ModelID,
-		"provider":            receipt.Provider,
-		"protocol":            receipt.Protocol,
-		"modelName":           receipt.ModelName,
-		"modelRevision":       receipt.ModelRevision,
-		"endpointFingerprint": receipt.EndpointFingerprint,
-		"capabilityEvidence":  receipt.CapabilityEvidence,
-	}
+	manifest["modelReceipt"] = syntheticModelReceipt(receipt)
 	return manifest
 }
 
