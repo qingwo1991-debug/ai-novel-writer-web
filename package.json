@@ -11,8 +11,8 @@
   },
   "main": "dist-electron/main.js",
   "scripts": {
-    "postinstall": "node node_modules/electron/install.js",
     "dev": "vite",
+    "dev:web": "vite --config vite.web.config.ts",
     "clean:build": "node scripts/clean-build-output.mjs",
     "typecheck": "tsc --noEmit",
     "check:i18n": "node scripts/check-i18n-coverage.mjs",
