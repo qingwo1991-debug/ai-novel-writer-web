@@ -79,3 +79,6 @@ __pycache__/
 *.py[cod]
 .env.*
 !.env.example
+
+# Local Go build artifacts
+/backend-go/novel-server
