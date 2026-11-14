@@ -2386,6 +2386,14 @@ func (s *syntheticGeneration) viewFor(ctx context.Context, ledger *store.Generat
 		if discarded {
 			continue
 		}
+		// The root budget spans every run under the rootActionId; the
+		// reference owner projects candidates/artifacts for the requested run
+		// only (main-generation-owner.ts viewOf filters receipt.run.runId).
+		// Foreign-run artifacts carry a different runId and the browser
+		// rejects them with INVALID_MAIN_SNAPSHOT.
+		if attemptRun := syntheticMap(receipt["run"]); attemptRun == nil || syntheticString(attemptRun["runId"]) != runID {
+			continue
+		}
 		entry, ok := s.snapshotOf(ctx, db, receipt, binding)
 		if !ok {
 			continue

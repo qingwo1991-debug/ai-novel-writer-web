@@ -174,6 +174,10 @@ export async function createMainOwnedGenerationRuntime(options: MainOwnedGenerat
     const captured = { ...snapshot }
     queue = queue.then(async () => {
       if (closed) return
+      // The web SSE channel is per-tab, not per-run: a snapshot stamped with a
+      // different runId belongs to another run sharing the tab and is transport
+      // noise, not a conflict. Same-run identity violations still fail closed.
+      if (typeof captured.runId === 'string' && Boolean(captured.runId.trim()) && captured.runId !== handle.runId) return
       if (!sameHandle(handle, captured) || !captured.artifactId?.trim() || !captured.attemptId?.trim()
         || !Number.isSafeInteger(captured.revision) || captured.revision < 0
         || !Number.isSafeInteger(captured.durableRevision) || captured.durableRevision < 0 || captured.durableRevision > captured.revision

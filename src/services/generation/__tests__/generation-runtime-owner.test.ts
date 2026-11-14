@@ -92,6 +92,26 @@ describe('main owned generation facade', () => {
       diagnostics: expect.objectContaining({ elapsedMs: 20, reasoningEvents: 1 }) }))
     await runtime.close()
   })
+  it('ignores well-formed snapshots stamped with a foreign run identity', async () => {
+    const f = fixture(), shown = vi.fn()
+    const runtime = await createGenerationRuntime({ runHandle: handle, onSnapshot: shown }, f.transport)
+    const foreign = { ...await snapshot('别的运行', 3), runId: '运行乙', rootActionId: '动作乙' }
+    f.emit(foreign)
+    const own = await snapshot('本运行', 1)
+    f.emit(own)
+    await runtime.read()
+    expect(shown).toHaveBeenCalledTimes(1)
+    expect(shown).toHaveBeenCalledWith(expect.objectContaining({ artifactId: own.artifactId, text: '本运行' }))
+    await runtime.close()
+  })
+  it('仍拒绝缺少运行身份的畸形快照', async () => {
+    const f = fixture()
+    const runtime = await createGenerationRuntime({ runHandle: handle }, f.transport)
+    const malformed = { ...await snapshot(), projectId: '' } as MainGenerationSnapshot
+    f.emit(malformed)
+    await expect(runtime.read()).rejects.toThrow('INVALID_MAIN_SNAPSHOT')
+    await runtime.close()
+  })
   it('仅转发主进程句柄和语义请求，不经旧模型store或新预算', async () => {
     const f = fixture(); const oldProvider = vi.spyOn(useLLMStore.getState(), 'generateStream')
     try {
