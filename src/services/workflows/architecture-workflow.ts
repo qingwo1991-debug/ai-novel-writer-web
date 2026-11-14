@@ -63,6 +63,8 @@ export interface ArchitectureWorkflowParams {
   resumeSynopsis?: boolean
   /** 从上次输出长度中断的候选续写世界观（工作流只包含 worldbuilding 一步）。 */
   resumeWorldBuilding?: boolean
+  /** 情节大纲单批完成后自动按同跨度续批至全书（默认开启；显式 agent 规划范围不受影响）。 */
+  autoContinueSynopsis?: boolean
   /** The exact run whose confirmed candidate the author selected in the UI. */
   expectedRecoveryHandle?: MainGenerationRunHandle
 }
@@ -196,6 +198,7 @@ export function createArchitectureWorkflow(
           restartHandle: params.restartFrom,
           ...(resumingSynopsis ? { resumeHandle: await recoveryHandle(context, 'synopsis') } : {}),
           synopsisRange,
+          autoContinueSynopsis: params.autoContinueSynopsis !== false,
         }).execute({ step, context, callbacks })
       },
     },

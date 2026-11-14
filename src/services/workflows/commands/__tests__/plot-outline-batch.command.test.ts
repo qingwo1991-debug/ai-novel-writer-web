@@ -279,6 +279,69 @@ function mainOwnedResponses(harness: IpcHarness, output: string | Error, plotOut
   }, getComposition: () => composition }
 }
 
+/** 自动续批：每次 begin/advance 开出新 runId（同 root），execute 按序返回各批输出，composition 按 runId 隔离。 */
+function autoContinueResponses(harness: IpcHarness, outputs: readonly string[]) {
+  const original = harness.invoke.getMockImplementation()! as (channel: string, ...args: unknown[]) => Promise<unknown>
+  const hash = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, '0')).join('')
+  const compositions = new Map<string, VisibleCompositionReceipt | null>()
+  const views = new Map<string, Record<string, unknown>>()
+  let runSeq = 0
+  let execIndex = 0
+  let lastOutput = ''
+  let currentRunId = ''
+  const viewFor = (runId: string) => ({
+    handle: { projectId: 'main', epoch: 'lease-main', rootActionId: '自动续批根', runId },
+    status: 'running', nonReplayable: false, artifacts: [],
+    budget: { maxAttempts: 32, maxRequestedOutputTokens: 2097152, maxRequestedOutputTokensPerAttempt: 32768, deadlineAt: 9999999999999 },
+  })
+  const begin = vi.fn(async () => {
+    runSeq += 1
+    currentRunId = `自动续批运行-${runSeq}`
+    const view = viewFor(currentRunId)
+    views.set(currentRunId, view)
+    compositions.set(currentRunId, null)
+    return view
+  })
+  const execute = vi.fn(async () => {
+    const output = outputs[execIndex++]
+    if (output === undefined) throw new Error('unexpected extra batch')
+    lastOutput = output
+    return {
+      run: views.get(currentRunId),
+      outcome: {
+        status: 'completed', content: output, finishReason: 'stop',
+        receipt: { finishReason: 'stop', visibleArtifact: { artifactId: `响应-${execIndex}`, attemptId: `尝试-${execIndex}`, revision: 1, textHash: await hash(output) } },
+      },
+    }
+  })
+  harness.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+    if (channel === 'generation:begin') return begin()
+    if (channel === 'generation:read') return views.get(currentRunId)
+    if (channel === 'generation:read-context') return {
+      modelId: 'model-1', handle: (views.get(currentRunId)?.handle as GenerationRecoveryContext['handle']), operation: 'generate-plot-outline',
+      authorInputs: [], selectedDraftIds: [], selectedFinalizedDraftIds: [], selectedBlueprintChapterNumbers: [],
+      composition: compositions.get(currentRunId) ?? null, lastCompositionFinishReason: null, attemptedPurposes: [], draftSave: { kind: 'absent' },
+    } satisfies GenerationRecoveryContext
+    if (channel === 'generation:read-visible-composition') return compositions.get((args[0] as { runId: string }).runId) ?? null
+    if (channel === 'generation:execute') return execute()
+    if (channel === 'generation:compose-visible') {
+      const runId = (args[0] as { runId: string }).runId
+      const prev = compositions.get(runId) ?? null
+      const text = composeVisibleContinuation(prev?.text ?? '', lastOutput)
+      const textHash = await hash(text)
+      expect(args[2]).toBe(textHash)
+      const receipt: VisibleCompositionReceipt = {
+        algorithm: 'visible-append-v1', text, textHash, artifactIds: args[1] as string[],
+        sources: [...(prev?.sources ?? []), { artifactId: `响应-${execIndex}`, revision: 1, textHash: await hash(lastOutput) }],
+      }
+      compositions.set(runId, receipt)
+      return receipt
+    }
+    return original(channel, ...args)
+  })
+  return { execute, begin, beginCount: () => runSeq }
+}
+
 function bodyOf(persisted: string): string {
   return persisted.replace(/^# 情节大纲\n\n/u, '').replace(/\n$/u, '')
 }
@@ -733,6 +796,56 @@ describe('GeneratePlotArchitectureCommand 批次状态机', () => {
 
     expect(generation.execute).not.toHaveBeenCalled()
     expect(harness.synopsisCommits).toHaveLength(0)
+  })
+
+  it('autoContinueSynopsis：单批完成后自动续批至全书，每批独立 run 且检查点逐批推进', async () => {
+    useLLMStore.setState({ models: [{ id: '合成模型', purposes: ['generation'] }] as never, defaultModelId: '合成模型' })
+    const smallConfig = { ...novelConfig, totalChapters: 12 }
+    const outputs = [
+      `第1–5章：开端\n${'林舟在铁砧镇追查线索，因果逐章推进。'.repeat(6)}\n\n${progressLine(1, 5, 12)}`,
+      `第6–10章：发展\n${'盟友背叛迫使主角改道，调查不断深入。'.repeat(6)}\n\n${progressLine(6, 10, 12)}`,
+      `第11–12章：终局\n${'传承代价兑现，主角完成最终抉择。'.repeat(6)}\n\n${progressLine(11, 12, 12)}`,
+    ]
+    const harness = harnessWith()
+    const generation = autoContinueResponses(harness, outputs)
+    const command = new GeneratePlotArchitectureCommand(
+      ['synopsis'],
+      { expectedProjectPath: projectAPath, novelConfig: smallConfig } as never,
+      undefined,
+      { synopsisRange: { from: 1, to: 5 }, autoContinueSynopsis: true },
+    )
+
+    const result = await command.execute({ step: {}, context, callbacks })
+
+    expect(generation.beginCount()).toBe(3)
+    expect(generation.execute).toHaveBeenCalledTimes(3)
+    expect(harness.synopsisCommits).toHaveLength(3)
+    expect(harness.partialWrites.at(-1)).toMatchObject({ synopsis_covered_to: 12, synopsis_incomplete: false })
+    expect(result).toContain('第1–5章：开端')
+    expect(result).toContain('第11–12章：终局')
+    expect(result).not.toContain('大纲批次进度')
+  })
+
+  it('autoContinueSynopsis 关闭时只完成所选单批', async () => {
+    useLLMStore.setState({ models: [{ id: '合成模型', purposes: ['generation'] }] as never, defaultModelId: '合成模型' })
+    const smallConfig = { ...novelConfig, totalChapters: 12 }
+    const harness = harnessWith()
+    const generation = autoContinueResponses(harness, [
+      `第1–5章：开端\n${'林舟在铁砧镇追查线索，因果逐章推进。'.repeat(6)}\n\n${progressLine(1, 5, 12)}`,
+    ])
+    const command = new GeneratePlotArchitectureCommand(
+      ['synopsis'],
+      { expectedProjectPath: projectAPath, novelConfig: smallConfig } as never,
+      undefined,
+      { synopsisRange: { from: 1, to: 5 } },
+    )
+
+    await command.execute({ step: {}, context, callbacks })
+
+    expect(generation.beginCount()).toBe(1)
+    expect(generation.execute).toHaveBeenCalledTimes(1)
+    expect(harness.synopsisCommits).toHaveLength(1)
+    expect(harness.partialWrites.at(-1)).toMatchObject({ synopsis_covered_to: 5, synopsis_incomplete: false })
   })
 
   it('分批必须连续：from ≤ coveredTo（非 1）→ 拒绝且不覆盖已确认前缀', async () => {

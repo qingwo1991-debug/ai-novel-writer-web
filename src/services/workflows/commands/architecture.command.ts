@@ -41,6 +41,7 @@ import type { NovelConfig, ProjectSessionContext } from '../../../shared/ipc-cha
 import type { ProjectCoreSynopsisExpected } from '../../../../electron/repositories/project-core-repository'
 import type { WritingLanguage } from '../../../shared/writing-language'
 import { createStructuredBatchExecutor, type StructuredBatchContract } from '../structured-batch-executor'
+import type { WorkflowMainGenerationSelection } from '../workflow-main-generation'
 import { localizeNovelConfigFacts } from '../../../shared/novel-config-localization'
 import {
   GENERATED_GLOBAL_GUIDANCE_MAX_CHARS,
@@ -1599,6 +1600,8 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
         restartHandle?: MainGenerationRunHandle
       /** 本次生成范围 [from..to]；缺省 = 第 1 章到全书（显式覆盖重写）。 */
       synopsisRange?: PlotOutlineChapterRange | null
+      /** 单批完成后自动按同跨度续批，直到覆盖全书（每批仍是独立预算的 run，检查点逐批落盘）。 */
+      autoContinueSynopsis?: boolean
     } = {},
   ) {
     super(generationDependencies)
@@ -1610,22 +1613,25 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
       '旧候选没有持久运行记录，仍可查看或复制；请明确重新开始生成。',
       'This legacy candidate has no persistent run record. It remains available to view or copy; explicitly restart generation.',
     ))
-    return this.executeWithGenerationRuntime('text', params, () => this.executeWithinGeneration(params), {
+    const onRunOpened = async (handle: MainGenerationRunHandle) => {
+      const session = requireWorkflowProjectSession(params.context)
+      const partial = (params.context.data.partial as PartialArchData) || await loadPartialData(this.snapshot.expectedProjectPath, session)
+      partial.synopsis_generation_handle = handle
+      await savePartialData(this.snapshot.expectedProjectPath, partial, session, 'Save generation run navigation')
+      params.context.data.partial = partial
+    }
+    const selection: WorkflowMainGenerationSelection = {
       authorInputs: stepAuthorInputs(params.context, 'synopsis', this.snapshot, this.options.synopsisRange, this.options.resumeSynopsis),
       operation: 'generate-plot-outline', promptKeys: ['synopsis'], skillStages: ['planning'], output: 'visible-text',
       ...(this.options.resumeSynopsis ? { resumeHandle: this.options.resumeHandle } : {}),
-        ...(this.options.restartHandle ? { restartHandle: this.options.restartHandle } : {}),
-      onRunOpened: async handle => {
-        const session = requireWorkflowProjectSession(params.context)
-        const partial = (params.context.data.partial as PartialArchData) || await loadPartialData(this.snapshot.expectedProjectPath, session)
-        partial.synopsis_generation_handle = handle
-        await savePartialData(this.snapshot.expectedProjectPath, partial, session, 'Save generation run navigation')
-        params.context.data.partial = partial
-      },
-    })
+      ...(this.options.restartHandle ? { restartHandle: this.options.restartHandle } : {}),
+      onRunOpened,
+    }
+    return this.executeWithGenerationRuntime('text', params, () => this.executeWithinGeneration(params, selection), selection)
   }
 
-  private async executeWithinGeneration({ context, callbacks }: CommandExecuteParams): Promise<string> {
+  private async executeWithinGeneration({ context, callbacks }: CommandExecuteParams,
+    selection: WorkflowMainGenerationSelection): Promise<string> {
     if (this.requireGenerationExecution().mainOwned && context.mainGenerationRunHandle) {
       const recovery = await ipc.invokeWithProjectSession(requireWorkflowProjectSession(context), 'generation:read-context', { handle: context.mainGenerationRunHandle })
       if (recovery.plotOutline) return this.executeChapterOutline({ context, callbacks }, recovery, recovery.plotOutline)
@@ -1638,6 +1644,14 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
     const { novelConfig: config } = this.snapshot
     const modelFacts = localizeNovelConfigFacts(config, writingLanguage)
 
+    // ===== 自动续批：首批沿用作者所选范围；此后每批是同一 root 下的新 run
+    // （独立预算与收据），批间由 partial_arch.json 检查点衔接，失败可断点续写 =====
+    const autoContinue = this.options.autoContinueSynopsis === true
+      && this.requireGenerationExecution().mainOwned
+      && !context.agentWorkflowRegistrationId
+    let effectiveRange = this.options.synopsisRange ?? null
+    let firstBatch = true
+    for (;;) {
     const core = await ipc.invokeWithProjectSession(projectSession, 'db:project-core-get', expectedProjectPath)
     const premise = core?.premise || ''
     const char_dyn = core?.charactersArch || ''
@@ -1715,7 +1729,7 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
     let confirmedPrefix = ''
     let effectiveStepGuidance = requestedStepGuidance
 
-    if (resumeRequested) {
+    if (resumeRequested && firstBatch) {
       // ---- 断点续写：无有效检查点必须 fail-closed，绝不退化为覆盖生成 ----
       if (!interrupted) {
         throw new Error(text(
@@ -1784,7 +1798,7 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
       }
       mode = 'resume'
     } else {
-      const requested = this.options.synopsisRange ?? null
+      const requested = effectiveRange
       if (requested && (
         !Number.isSafeInteger(requested.from) || !Number.isSafeInteger(requested.to)
         || requested.from < 1 || requested.to > totalChapters || requested.from > requested.to
@@ -2111,19 +2125,60 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
       )
     }
 
+    const willContinue = autoContinue && to < totalChapters
     callbacks.log(text(
       to >= totalChapters
         ? (mode === 'resume' ? '情节大纲续写完成，全书大纲已就绪' : '情节大纲已生成，全书大纲已就绪')
-        : (mode === 'resume'
-            ? `第 ${from}–${to} 章续写完成；全书还剩第 ${to + 1} 章起待生成`
-            : `第 ${from}–${to} 章已生成；全书还剩第 ${to + 1} 章起待生成`),
+        : willContinue
+          ? `第 ${from}–${to} 章批次已保存，自动继续生成后续章节`
+          : (mode === 'resume'
+              ? `第 ${from}–${to} 章续写完成；全书还剩第 ${to + 1} 章起待生成`
+              : `第 ${from}–${to} 章已生成；全书还剩第 ${to + 1} 章起待生成`),
       to >= totalChapters
         ? (mode === 'resume' ? 'Plot-outline continuation complete; the full outline is ready.' : 'Plot outline generated; the full outline is ready.')
-        : (mode === 'resume'
-            ? `Batch chapters ${from}-${to} continued; chapters ${to + 1}+ are still pending.`
-            : `Batch chapters ${from}-${to} generated; chapters ${to + 1}+ are still pending.`),
+        : willContinue
+          ? `Batch chapters ${from}-${to} saved; continuing with the remaining chapters automatically`
+          : (mode === 'resume'
+              ? `Batch chapters ${from}-${to} continued; chapters ${to + 1}+ are still pending.`
+              : `Batch chapters ${from}-${to} generated; chapters ${to + 1}+ are still pending.`),
     ))
-    return confirmedBody
+    if (!willContinue) return confirmedBody
+
+    // ===== 续批：同一 root 下冻结新范围开新 run，沿用首批跨度 =====
+    const nextFrom = to + 1
+    const nextTo = Math.min(nextFrom + (to - from + 1) - 1, totalChapters)
+    this.assertNotCancelled(context)
+    assertArchitectureProjectSessionCurrent(projectSession, context)
+    await this.advanceMainGenerationRun({
+      ...selection,
+      authorInputs: this.synopsisBatchAuthorInputs(context, { from: nextFrom, to: nextTo }),
+      resumeHandle: undefined,
+      restartHandle: undefined,
+    })
+    effectiveRange = { from: nextFrom, to: nextTo }
+    firstBatch = false
+    }
+  }
+
+  /**
+   * 自动续批的下一 run 作者输入：与首批同根，但冻结本批范围——
+   * frozenInputHash 随之不同，服务端按 openKey 开出独立 run 而不是幂等回放首批。
+   */
+  private synopsisBatchAuthorInputs(
+    context: WorkflowContext,
+    range: PlotOutlineChapterRange,
+  ): { id: string; text: string }[] {
+    const base = stepAuthorInputs(context, 'synopsis', this.snapshot, range, false)
+    const prior = this.snapshot.planningIntent
+    const intent: ArchitecturePlanningIntent = prior
+      ? { ...prior, synopsisRange: range }
+      : { version: 'architecture-action-v1', priorSteps: [], synopsisRange: range }
+    const encoded = JSON.stringify(intent)
+    const index = base.findIndex(input => input.id === 'architecture:planning-intent')
+    if (index >= 0) return base.map((input, i) => i === index ? { ...input, text: encoded } : input)
+    const next = [...base]
+    next.splice(1, 0, { id: 'architecture:planning-intent', text: encoded })
+    return next
   }
 
   private async executeChapterOutline({ context, callbacks }: Pick<CommandExecuteParams, 'context' | 'callbacks'>, recovery: GenerationRecoveryContext, initial: PlotOutlineProgress): Promise<string> {
