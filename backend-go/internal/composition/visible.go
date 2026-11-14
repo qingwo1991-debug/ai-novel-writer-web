@@ -559,6 +559,32 @@ func IsPlotOutlineOperation(operation string) bool {
 	return operation == plotOutlineManifestOperation
 }
 
+// PlotOutlinePolicy mirrors the gate of plotOutlinePolicy
+// (src/shared/plot-outline-contract.ts:99-113): a run composes under
+// chapter-parts-v1 only when its frozen manifest carries the full architecture
+// planning scope. The reference keys the protocol on that scope, not on the
+// operation name — a generate-plot-outline manifest without policy.planning
+// answers null there and composes as ordinary visible text. The reduced lane
+// never freezes policy.planning (the ordinary binder refuses it), so every run
+// it serves takes the ordinary path exactly like the reference would.
+func PlotOutlinePolicy(manifest map[string]any) bool {
+	if manifest == nil || manifest["operation"] != plotOutlineManifestOperation {
+		return false
+	}
+	policy, _ := manifest["policy"].(map[string]any)
+	planning, _ := policy["planning"].(map[string]any)
+	intent, _ := planning["intent"].(map[string]any)
+	outlineContent, _ := planning["outlineContent"].(map[string]any)
+	rangeValue, _ := intent["synopsisRange"].(map[string]any)
+	if planning["kind"] != "architecture" || planning["outlineProtocol"] != PlotOutlineProtocol ||
+		intent == nil || outlineContent == nil || rangeValue == nil {
+		return false
+	}
+	from, fromOK := rangeValue["from"].(float64)
+	to, toOK := rangeValue["to"].(float64)
+	return fromOK && toOK && from >= 1 && to >= from
+}
+
 // overlappingVisiblePrefixLength is overlappingVisiblePrefixLength
 // (src/shared/visible-continuation.ts:15-24): the longest run of characters,
 // ignoring all whitespace, that ends the existing tail and starts the addition,

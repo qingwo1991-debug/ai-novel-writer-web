@@ -329,7 +329,7 @@ func (c *productionComposition) compose(ctx context.Context, caller transport.Ca
 	request.Operation = syntheticString(manifest["operation"])
 	request.OutputContract = productionCompositionContract(manifest)
 	request.RootStatus = rows.rootStatus
-	request.PlotOutline = composition.IsPlotOutlineOperation(request.Operation)
+	request.PlotOutline = composition.PlotOutlinePolicy(manifest)
 	// requireRun(handle, true) refuses a compose whose frozen epoch is no longer
 	// the live lease (main-generation-owner.ts:164). A read has no such gate: a
 	// committed run outlives the lease it was frozen under, which is exactly why
