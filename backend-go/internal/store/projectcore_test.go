@@ -367,12 +367,19 @@ func TestProjectCoreSynopsisCASEmptyExactAndNoOp(t *testing.T) {
 func TestProjectCoreSynopsisCASOwnerAndMalformedFailClosed(t *testing.T) {
 	db, repository, _ := projectCoreFixture(t, false)
 	expected := projectCoreExpected(t, db)
-	for _, key := range []string{"generationRunHandle", "authorRecovery"} {
-		for _, value := range []any{nil, false, "", map[string]any{}} {
-			ok, err := repository.CommitSynopsis(context.Background(), map[string]any{"synopsis": "forbidden", "expected": expected, key: value})
-			if ok || !errors.Is(err, ErrGenerationOwnerRequired) {
-				t.Fatalf("owner key presence must reject: %s %#v %v", key, value, err)
-			}
+	for _, value := range []any{nil, false, "", map[string]any{}} {
+		ok, err := repository.CommitSynopsis(context.Background(), map[string]any{"synopsis": "forbidden", "expected": expected, "authorRecovery": value})
+		if ok || !errors.Is(err, ErrGenerationOwnerRequired) {
+			t.Fatalf("authorRecovery must reject: %#v %v", value, err)
+		}
+	}
+	// generationRunHandle is the reference's optional owner proof: null takes
+	// the plain CAS, anything else must fail the run proofs - never the old
+	// blanket GENERATION_OWNER_REQUIRED.
+	for _, value := range []any{false, "", map[string]any{}} {
+		ok, err := repository.CommitSynopsis(context.Background(), map[string]any{"synopsis": "forbidden", "expected": expected, "generationRunHandle": value})
+		if ok || errors.Is(err, ErrGenerationOwnerRequired) || err == nil {
+			t.Fatalf("generationRunHandle must fail owner proofs: %#v %v", value, err)
 		}
 	}
 	for _, request := range []map[string]any{

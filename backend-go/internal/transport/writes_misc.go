@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/security"
+	"github.com/qingwo1991-debug/ai-novel-writer-web/backend-go/internal/store"
 )
 
 // BindProjectCoreWrites binds the two mutating project core names that the
@@ -119,7 +120,10 @@ func (s *Server) BindProjectCoreWrites(provider ProjectCoreProvider) error {
 				// CommitSynopsis is one atomic compare-and-set over the target
 				// body and all eleven source fields; changed=false is the lost
 				// CAS and is reported as a refusal, never as success.
-				changed, err := repository.CommitSynopsis(ctx, data)
+				changed, err := repository.CommitSynopsis(ctx, data, store.ProjectCoreCommitScope{
+					ProjectID: projectCoreExpectedString(expected, "projectId"),
+					LiveEpoch: projectCoreExpectedString(expected, "leaseId"),
+				})
 				if err != nil {
 					return fail(err)
 				}

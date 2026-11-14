@@ -223,43 +223,50 @@ const projectCoreSynopsisCAS = `UPDATE project_core
  AND narrative_pov = ?
  AND global_guidance = ?`
 
+// ProjectCoreCommitScope is the live session identity a synopsis commit's owner
+// proofs compare against: the admitted project and the writer lease the frozen
+// session proves (deps.projectId and deps.epoch in the reference's
+// assertSourcesCurrent). It is only consulted when the request carries a
+// generationRunHandle; the plain CAS path ignores it.
+type ProjectCoreCommitScope struct {
+	ProjectID string
+	LiveEpoch string
+}
+
 // CommitSynopsis performs one atomic SQL compare-and-set over the target body
 // and all eleven source fields. It does not read/rebase a baseline, compare a
 // timestamp, normalize expected values, or substitute NULL-safe equality.
-// Generation ownership/recovery is not implemented in this repository yet:
-// reject those keys even when null rather than bypassing a required owner fence.
-func (r *ProjectCore) CommitSynopsis(ctx context.Context, request map[string]any) (bool, error) {
-	for _, key := range []string{"generationRunHandle", "authorRecovery"} {
-		if _, present := request[key]; present {
-			return false, ErrGenerationOwnerRequired
-		}
+//
+// The reference's db-controller wraps the commit in
+// withGenerationAgentChildEffect + assertGenerationSynopsisCommit whenever the
+// request carries generationRunHandle (db-controller.ts:224-230,
+// generation-controller.ts:47-50, main-generation-owner.ts:900-911). For the
+// runs this lane can begin - no agentWorkflowRegistrationId and no frozen
+// plotOutline policy - that collapses to the same proofs CommitGenerated
+// already performs: run identity, live epoch, uncancelled root. They run
+// inside one BEGIN IMMEDIATE with the CAS, so a refused proof writes nothing.
+// authorRecovery selects the plot-outline author-edit commit, which is a
+// different unported owner path and stays refused by name.
+func (r *ProjectCore) CommitSynopsis(ctx context.Context, request map[string]any, scopes ...ProjectCoreCommitScope) (bool, error) {
+	var scope ProjectCoreCommitScope
+	if len(scopes) > 0 {
+		scope = scopes[0]
+	}
+	if _, present := request["authorRecovery"]; present {
+		return false, ErrGenerationOwnerRequired
 	}
 	if r == nil || r.db == nil {
 		return false, ErrProjectNotOpen
 	}
-	expected, ok := request["expected"].(map[string]any)
-	if !ok {
-		return false, ErrProjectCoreInvalidBinding
+	if ctx == nil {
+		return false, ErrProjectNotOpen
 	}
-	value, present := request["synopsis"]
-	if !present {
-		return false, ErrProjectCoreInvalidBinding
+	if raw, present := request["generationRunHandle"]; present && raw != nil {
+		return r.commitSynopsisOwned(ctx, request, raw, scope)
 	}
-	binding, err := projectCoreBinding(value)
+	values, err := projectCoreSynopsisValues(request)
 	if err != nil {
 		return false, err
-	}
-	values := []any{binding}
-	for _, key := range []string{"synopsis", "premise", "charactersArch", "worldbuilding", "genre", "totalChapters", "wordsPerChapter", "writingLanguage", "plotStructure", "narrativePov", "globalGuidance"} {
-		value, present := expected[key]
-		if !present {
-			return false, ErrProjectCoreInvalidBinding
-		}
-		binding, err := projectCoreBinding(value)
-		if err != nil {
-			return false, err
-		}
-		values = append(values, binding)
 	}
 	result, err := r.db.ExecContext(ctx, projectCoreSynopsisCAS, values...)
 	if err != nil {
@@ -267,4 +274,91 @@ func (r *ProjectCore) CommitSynopsis(ctx context.Context, request map[string]any
 	}
 	changes, err := result.RowsAffected()
 	return changes == 1, err
+}
+
+// projectCoreSynopsisValues binds the CAS parameters: the new synopsis body
+// followed by the eleven frozen baselines, each through the same
+// projectCoreBinding normalization the plain update path uses.
+func projectCoreSynopsisValues(request map[string]any) ([]any, error) {
+	expected, ok := request["expected"].(map[string]any)
+	if !ok {
+		return nil, ErrProjectCoreInvalidBinding
+	}
+	value, present := request["synopsis"]
+	if !present {
+		return nil, ErrProjectCoreInvalidBinding
+	}
+	binding, err := projectCoreBinding(value)
+	if err != nil {
+		return nil, err
+	}
+	values := []any{binding}
+	for _, key := range []string{"synopsis", "premise", "charactersArch", "worldbuilding", "genre", "totalChapters", "wordsPerChapter", "writingLanguage", "plotStructure", "narrativePov", "globalGuidance"} {
+		value, present := expected[key]
+		if !present {
+			return nil, ErrProjectCoreInvalidBinding
+		}
+		binding, err := projectCoreBinding(value)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, binding)
+	}
+	return values, nil
+}
+
+// commitSynopsisOwned is the generationRunHandle arm: the same run identity,
+// epoch and root proofs CommitGenerated performs, then the identical CAS, all
+// inside one BEGIN IMMEDIATE so a refused proof leaves the row untouched.
+func (r *ProjectCore) commitSynopsisOwned(ctx context.Context, request map[string]any, raw any, scope ProjectCoreCommitScope) (bool, error) {
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return false, ErrProjectCoreGeneratedRunMissing
+	}
+	handle := BatchRunHandle{
+		ProjectID:    projectCoreString(object["projectId"]),
+		Epoch:        projectCoreString(object["epoch"]),
+		RootActionID: projectCoreString(object["rootActionId"]),
+		RunID:        projectCoreString(object["runId"]),
+	}
+	changed := false
+	err := NewDatabaseMaintenance(r.db).dbMaintenanceImmediate(ctx, func(conn *sql.Conn) error {
+		binding, err := projectCoreGeneratedRun(ctx, conn, ProjectCoreGeneratedRequest{
+			Handle:    handle,
+			ProjectID: scope.ProjectID,
+		})
+		if err != nil {
+			return err
+		}
+		if binding.SourceManifest.AgentWorkflowRegistrationID != "" {
+			return ErrProjectCoreGeneratedChildEffect
+		}
+		if handle.Epoch != scope.LiveEpoch {
+			return ErrProjectCoreGeneratedEpochStale
+		}
+		status, err := projectCoreGeneratedRootStatus(ctx, conn, handle.RootActionID)
+		if err != nil {
+			return err
+		}
+		if status == "cancelled" {
+			return ErrProjectCoreGeneratedCancelled
+		}
+		values, err := projectCoreSynopsisValues(request)
+		if err != nil {
+			return err
+		}
+		result, err := conn.ExecContext(ctx, projectCoreSynopsisCAS, values...)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		changed = err == nil && affected == 1
+		return err
+	})
+	return changed, err
+}
+
+func projectCoreString(value any) string {
+	text, _ := value.(string)
+	return text
 }

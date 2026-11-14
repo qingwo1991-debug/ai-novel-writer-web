@@ -95,7 +95,10 @@ func (s *Server) BindProjectCore(provider ProjectCoreProvider) error {
 				}
 				return map[string]any{"success": true}, nil
 			default:
-				changed, err := repository.CommitSynopsis(ctx, data)
+				changed, err := repository.CommitSynopsis(ctx, data, store.ProjectCoreCommitScope{
+					ProjectID: projectCoreExpectedString(expected, "projectId"),
+					LiveEpoch: projectCoreExpectedString(expected, "leaseId"),
+				})
 				if err != nil {
 					return fail(errors.New(projectCoreErrorCode(err)))
 				}
@@ -151,15 +154,25 @@ func projectCoreErrorCode(err error) string {
 		return "PROJECT_CORE_OPERATION_FAILED"
 	}
 	switch err.Error() {
-	case "PROJECT_CORE_CHARACTERS_ARCH_READ_ONLY", "GENERATION_OWNER_REQUIRED", "PROJECT_NOT_OPEN", "PROJECT_CORE_INVALID_BINDING", "PROJECT_CORE_PROVIDER_UNAVAILABLE":
+	case "PROJECT_CORE_CHARACTERS_ARCH_READ_ONLY", "GENERATION_OWNER_REQUIRED", "PROJECT_NOT_OPEN", "PROJECT_CORE_INVALID_BINDING", "PROJECT_CORE_PROVIDER_UNAVAILABLE",
+		"GENERATION_RUN_MISSING", "GENERATION_RUN_IDENTITY_MISMATCH", "GENERATION_EPOCH_STALE",
+		"GENERATION_ACTION_CANCELLED", "GENERATION_ROOT_MISSING", "GENERATION_AGENT_CHILD_EFFECT_UNPORTED",
+		"GENERATION_BINDING_INVALID":
 		return err.Error()
 	}
 	return "PROJECT_CORE_OPERATION_FAILED"
 }
+
+func projectCoreExpectedString(expected map[string]any, key string) string {
+	text, _ := expected[key].(string)
+	return text
+}
 func validateSynopsisRequest(data map[string]any) error {
-	if _, ok := data["generationRunHandle"]; ok {
-		return security.NewHTTPError(http.StatusConflict, "GENERATION_OWNER_REQUIRED")
-	}
+	// generationRunHandle is the reference's optional owner proof
+	// (db-controller.ts:225,230): the store verifies the run and writes
+	// nothing when the proof refuses. authorRecovery selects the
+	// plot-outline author-edit commit, an owner path this lane does not
+	// serve, so it stays refused here and in the store.
 	if _, ok := data["authorRecovery"]; ok {
 		return security.NewHTTPError(http.StatusConflict, "GENERATION_OWNER_REQUIRED")
 	}
