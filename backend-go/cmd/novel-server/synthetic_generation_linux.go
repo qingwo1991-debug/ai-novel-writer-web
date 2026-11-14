@@ -2638,13 +2638,17 @@ func (s *syntheticGeneration) publishSnapshot(caller transport.Caller, expected 
 		// revision with newer text is exactly the regression the browser rejects.
 		return
 	}
-	snapshot["text"] = event.VisibleText
-	snapshot["textHash"] = syntheticHash(event.VisibleText)
-	snapshot["revision"] = event.DurableRevision
-	snapshot["durableRevision"] = event.DurableRevision
+	// The snapshot must carry the DURABLE artifact text, exactly like the
+	// reference owner which re-reads the settled receipt on every notify
+	// (main-generation-owner.ts onSnapshot -> snapshotOf). Publishing
+	// event.VisibleText here paired the durable revision with ahead-of-flush
+	// text, so the next read/receipt at the same revision contradicted it and
+	// the browser rejected the run with MAIN_SNAPSHOT_REGRESSION.
 	if event.Diagnostics != nil {
 		snapshot["diagnostics"] = event.Diagnostics
 	}
-	snapshot["status"] = "running"
+	// snapshotOf already computed the honest status (running for an in-flight
+	// attempt, the terminal status once settled); the reference publishes that
+	// same projection, so do not pin every event to running.
 	_ = s.server.Publish(caller, "generation:snapshot", []any{snapshot})
 }
