@@ -723,6 +723,11 @@ func (g *GenerationLedger) receipt(ctx context.Context, conn *sql.Conn, attemptI
 	}
 	result := usage["result"]
 	out := map[string]any{"run": run, "attempt": attempt, "artifact": artifact, "budget": budget, "result": result}
+	// The renderer receipt labels each attempt with the semantic task purpose;
+	// the ledger stores it on the usage receipt, so surface it beside result.
+	if phTruthy(usage["purpose"]) {
+		out["purpose"] = usage["purpose"]
+	}
 	storedResult := glMap(result)
 	for _, key := range []string{"diagnostics", "failureCode"} {
 		if phTruthy(storedResult[key]) {

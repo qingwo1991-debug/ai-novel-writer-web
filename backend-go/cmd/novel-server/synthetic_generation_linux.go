@@ -1679,11 +1679,25 @@ func syntheticOutcome(receipt map[string]any) map[string]any {
 	// (generation-runtime.ts: INVALID_MAIN_OUTCOME) and the ledger receipt nests
 	// the settled value under result.finishReason, so surface it at the receipt's
 	// top level too. The rest of the raw ledger receipt stays as extra context.
-	projected := make(map[string]any, len(receipt)+1)
+	projected := make(map[string]any, len(receipt)+2)
 	for key, value := range receipt {
 		projected[key] = value
 	}
 	projected["finishReason"] = finish
+	// The Electron owner projects the durable candidate identity as
+	// visibleArtifact (main-generation-owner.ts outcomeOf); without it the
+	// renderer finds no accepted artifacts and fails closed with
+	// CHARACTER_PROPOSAL_GENERATION_ARTIFACT_REQUIRED. The artifact row is
+	// integrity-checked against this attempt in GenerationLedger.receipt, so
+	// its own attemptId is authoritative.
+	if artifact != nil {
+		projected["visibleArtifact"] = map[string]any{
+			"artifactId": syntheticString(artifact["artifactId"]),
+			"attemptId":  syntheticString(artifact["attemptId"]),
+			"revision":   artifact["revision"],
+			"textHash":   syntheticString(artifact["textHash"]),
+		}
+	}
 	outcome := map[string]any{
 		"status":       status,
 		"content":      content,
