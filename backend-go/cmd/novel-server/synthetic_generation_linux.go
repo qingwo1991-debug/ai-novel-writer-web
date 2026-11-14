@@ -123,6 +123,11 @@ func syntheticPromptSourceKey(key string) bool {
 // syntheticPlanning mirrors the ledger's planning gate so the reduced lane
 // refuses planning/blueprint authority exactly like the ordinary binder.
 func syntheticPlanning(operation string) bool {
+	// Same narrow carve-out as the ledger's glPlanning: generate-plot-outline
+	// freezes no planning scope and rides the ordinary lane.
+	if operation == "generate-plot-outline" {
+		return false
+	}
 	return strings.Contains(operation, "planning") || strings.Contains(operation, "blueprint") || strings.Contains(operation, "plot-outline")
 }
 

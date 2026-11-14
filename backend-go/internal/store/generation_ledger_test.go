@@ -209,3 +209,24 @@ func TestGenerationLedgerInvocationState(t *testing.T) {
 		t.Fatalf("settled state %v", state)
 	}
 }
+
+func TestGenerationLedgerPlotOutlineRidesOrdinaryLane(t *testing.T) {
+	_, g, _ := generationLedgerFixture(t)
+	request := generationLedgerRequest("outline")
+	request = strings.Replace(request, `"operation":"chapter-draft"`, `"operation":"generate-plot-outline"`, 1)
+	request = strings.Replace(request, `"sourceManifest":{"operation":"chapter-draft"`, `"sourceManifest":{"operation":"generate-plot-outline"`, 1)
+	out, err := g.CallJSON(context.Background(), "open", json.RawMessage("["+request+"]"))
+	if err != nil {
+		t.Fatalf("generate-plot-outline must open: %v", err)
+	}
+	run := out.(map[string]any)
+	if generationLedgerCall(t, g, "reserve", run["runId"], "invoke", strings.Repeat("b", 64), 200, 100) == nil {
+		t.Fatal("reserved receipt missing")
+	}
+	for _, refused := range []string{"generate-planning-material", "chapter-blueprint-directory", "generate-plot-outline-extra"} {
+		bad := strings.Replace(generationLedgerRequest("refused-"+refused), `"operation":"chapter-draft"`, `"operation":"`+refused+`"`, 1)
+		bad = strings.Replace(bad, `"sourceManifest":{"operation":"chapter-draft"`, `"sourceManifest":{"operation":"`+refused+`"`, 1)
+		_, err := g.CallJSON(context.Background(), "open", json.RawMessage("["+bad+"]"))
+		generationLedgerWant(t, err, "GENERATION_OPERATION_UNSUPPORTED")
+	}
+}

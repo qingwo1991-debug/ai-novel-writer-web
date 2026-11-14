@@ -544,6 +544,14 @@ func glEffectKeyAllowed(key, operation string) bool {
 }
 
 func glPlanning(operation string) bool {
+	// generate-plot-outline is the one planning-family name the reduced lane
+	// serves: the workflow drives its chapter batches, checkpoint and commit
+	// itself, and the run freezes no planning scope, effect keys or continuation
+	// receipts, so it rides the ordinary visible-text path. Every other
+	// planning/blueprint name keeps the refusal.
+	if operation == "generate-plot-outline" {
+		return false
+	}
 	return strings.Contains(operation, "planning") || strings.Contains(operation, "blueprint") || strings.Contains(operation, "plot-outline")
 }
 func glOrdinaryBinding(binding map[string]any) error {
