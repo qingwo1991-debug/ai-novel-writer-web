@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { FileInput, FolderOpen, Plus } from 'lucide-react'
-import { ipc } from '../../../services/ipc-client'
+import { selectProjectOpenTarget } from '../../project-open-picker'
 import { useLayoutStore } from '../../../stores/layout-store'
 import { useLocaleStore } from '../../../stores/locale-store'
 import { navigate } from '../../../stores/navigation/navigation-intents'
@@ -25,8 +25,8 @@ import { pluralEn } from '../../../shared/plural-en'
 type Text = (zh: string, en: string) => string
 
 async function openProjectFolder(): Promise<void> {
-  const folder = await ipc.invoke('dialog:select-folder', 'project-open')
-  if (folder) await useProjectStore.getState().openProject(folder)
+  const target = await selectProjectOpenTarget()
+  if (target) await useProjectStore.getState().openProject(target)
 }
 
 function heading(now: Date, text: Text): string {

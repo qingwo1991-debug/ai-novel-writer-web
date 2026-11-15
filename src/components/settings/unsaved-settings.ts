@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import { ipc } from '../../services/ipc-client'
+import { selectProjectOpenTarget } from '../project-open-picker'
 import { useLayoutStore } from '../../stores/layout-store'
 import { useLocaleStore } from '../../stores/locale-store'
 import { useProjectStore } from '../../stores/project-store'
@@ -67,10 +67,10 @@ export function leaveSettingsThen(action: () => void, stay?: () => void): void {
  * 选文件夹时取消，设置页与输入原样留着。
  */
 export function openProjectFolder(): void {
-  leaveSettings(() => void ipc.invoke('dialog:select-folder', 'project-open').then(folder => {
-    if (!folder) return
+  leaveSettings(() => void selectProjectOpenTarget().then(target => {
+    if (!target) return
     useLayoutStore.getState().closeSettings()
-    return useProjectStore.getState().openProject(folder)
+    return useProjectStore.getState().openProject(target)
   }))
 }
 
