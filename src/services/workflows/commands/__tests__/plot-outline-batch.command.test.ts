@@ -8,7 +8,7 @@ import {
   PLOT_OUTLINE_RESUME_ERROR_CODE,
   PlotOutlineResumeAvailableError,
 } from '../architecture.command'
-import { synopsisFactsFingerprint } from '../../../../shared/plot-outline-checkpoint'
+import { renderSynopsisDbText, synopsisFactsFingerprint } from '../../../../shared/plot-outline-checkpoint'
 import { createWorkflowRuntimeDependencies } from './workflow-generation-runtime.fixture'
 import { clearProjectCustomPrompts, getBuiltinPromptTemplate } from '../../../prompt-templates'
 import { composeVisibleContinuation } from '../../../../shared/visible-continuation'
@@ -864,6 +864,66 @@ describe('GeneratePlotArchitectureCommand 批次状态机', () => {
 
     await expect(command.execute({ step: {}, context, callbacks }))
       .rejects.toThrow('已包含在已确认大纲中')
+    expect(useLLMStore.getState().generateStream).not.toHaveBeenCalled()
+  })
+
+  it('检查点自愈：DB 大纲被清空但检查点哈希自洽时，先从检查点恢复正式大纲再走守卫', async () => {
+    const confirmedBody = '## 第一卷\n\n第1–10章已确认大纲内容（长度足够的已确认前缀）。'.repeat(3)
+    const dbOutline = renderSynopsisDbText(confirmedBody, 'zh-CN', 100, {
+      synopsis_incomplete: false,
+      synopsis_covered_to: 10,
+    })
+    useLLMStore.setState({
+      defaultModelId: 'model-1',
+      generateStream: responseStream(['never']),
+    })
+    const harness = harnessWith({
+      synopsis_result: confirmedBody,
+      synopsis_incomplete: false,
+      synopsis_covered_to: 10,
+      synopsis_range: { from: 6, to: 10 },
+      synopsis_facts_fingerprint: currentFingerprint({ from: 6, to: 10 }),
+      synopsis_db_hash: dbHashOf(dbOutline),
+      synopsis_body_hash: synopsisFactsFingerprint([confirmedBody]),
+      synopsis_step_guidance: '',
+    })
+    const command = makeCommand({ synopsisRange: { from: 1, to: 5 } })
+
+    await expect(command.execute({ step: {}, context, callbacks }))
+      .rejects.toThrow('将丢弃已确认的第 6–10 章大纲')
+    // 自愈先把检查点正文按原样回写 DB（无 generationRunHandle 的普通 CAS），
+    // 之后守卫才按"1–10 章确实已确认"如实拒绝 1–5 覆盖重写。
+    expect(harness.synopsisCommits).toHaveLength(1)
+    expect(harness.synopsisCommits[0]).toEqual(expect.objectContaining({ synopsis: dbOutline }))
+    expect(harness.synopsisCommits[0]).not.toHaveProperty('generationRunHandle')
+    expect(useLLMStore.getState().generateStream).not.toHaveBeenCalled()
+  })
+
+  it('检查点自愈 fail-closed：正文被篡改导致哈希不符时不回写，守卫照旧拒绝', async () => {
+    const confirmedBody = '## 第一卷\n\n第1–10章已确认大纲内容（长度足够的已确认前缀）。'.repeat(3)
+    const tamperedBody = `${confirmedBody}（被篡改）`
+    useLLMStore.setState({
+      defaultModelId: 'model-1',
+      generateStream: responseStream(['never']),
+    })
+    const harness = harnessWith({
+      synopsis_result: tamperedBody,
+      synopsis_incomplete: false,
+      synopsis_covered_to: 10,
+      synopsis_range: { from: 6, to: 10 },
+      synopsis_facts_fingerprint: currentFingerprint({ from: 6, to: 10 }),
+      synopsis_db_hash: dbHashOf(renderSynopsisDbText(confirmedBody, 'zh-CN', 100, {
+        synopsis_incomplete: false,
+        synopsis_covered_to: 10,
+      })),
+      synopsis_body_hash: synopsisFactsFingerprint([confirmedBody]),
+      synopsis_step_guidance: '',
+    })
+    const command = makeCommand({ synopsisRange: { from: 1, to: 5 } })
+
+    await expect(command.execute({ step: {}, context, callbacks }))
+      .rejects.toThrow('将丢弃已确认的第 6–10 章大纲')
+    expect(harness.synopsisCommits).toHaveLength(0)
     expect(useLLMStore.getState().generateStream).not.toHaveBeenCalled()
   })
 

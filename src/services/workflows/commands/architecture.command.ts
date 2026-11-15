@@ -1722,6 +1722,23 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
     const interrupted = partial.synopsis_incomplete === true
     const checkpointFingerprint = partial.synopsis_facts_fingerprint
 
+    // ===== 检查点自愈：已完成批次的检查点声称覆盖至 coveredTo，但 DB 大纲被清空时，
+    // 先按检查点正文重建并回写正式大纲（哈希自洽 + CAS），避免把可恢复内容当成
+    // "已确认"却在页面上查无正文，也避免续批镜像校验误报"正文被手动修改" =====
+    if (!interrupted && coveredTo > 0 && !sourceExpected.synopsis.trim()) {
+      const restored = await this.restoreSynopsisMirrorFromCheckpoint(
+        partial,
+        sourceExpected,
+        projectSession,
+        expectedProjectPath,
+        context,
+        callbacks,
+        writingLanguage,
+        totalChapters,
+      )
+      if (restored) sourceExpected.synopsis = restored
+    }
+
     let mode: 'resume' | 'fresh' | 'batch'
     let from: number
     let to: number
@@ -2338,6 +2355,62 @@ export class GeneratePlotArchitectureCommand extends BaseWorkflowCommand<string>
       text('恢复旧情节大纲检查点失败', 'Failed to restore the previous plot-outline checkpoint.'),
     )
     context.data.partial = restored
+  }
+
+  /**
+   * 检查点与 DB 镜像脱节自愈：partial_arch.json 记录已完成批次（covered_to>0、
+   * 未完成标记为否），但 project_core.synopsis 为空时，说明正式大纲在检查点写入后
+   * 被外部清空。此时若检查点内部哈希自洽（body_hash/db_hash 均可复算且与记录一致），
+   * 用检查点正文重建 DB 大纲文本并走普通 CAS 回写；任一校验不符则返回 null，
+   * 由后续镜像校验照旧 fail-closed，绝不盲写。
+   */
+  private async restoreSynopsisMirrorFromCheckpoint(
+    partial: PartialArchData,
+    sourceExpected: ProjectCoreSynopsisExpected,
+    projectSession: ProjectSessionContext,
+    expectedProjectPath: string,
+    context: WorkflowContext,
+    callbacks: StepCallbacks,
+    writingLanguage: WritingLanguage,
+    totalChapters: number,
+  ): Promise<string | null> {
+    const text = (zhCNText: string, enUSText: string) => workflowUiText(context, zhCNText, enUSText)
+    const checkpointBody = typeof partial.synopsis_result === 'string' ? partial.synopsis_result.trim() : ''
+    const range = partial.synopsis_range
+    const coveredTo = partial.synopsis_covered_to ?? 0
+    if (!checkpointBody
+      || partial.synopsis_incomplete === true
+      || !range
+      || !Number.isSafeInteger(range.from) || !Number.isSafeInteger(range.to)
+      || range.from < 1 || range.from > range.to || range.to > totalChapters
+      || coveredTo !== range.to
+      || !partial.synopsis_db_hash
+      || !partial.synopsis_body_hash) return null
+    const dbText = renderSynopsisDbText(checkpointBody, writingLanguage, totalChapters, {
+      synopsis_incomplete: false,
+      synopsis_covered_to: coveredTo,
+    })
+    // stripThinkingTags 必须是恒等变换，否则回写文本与检查点指纹口径不一致，放弃自愈。
+    if (stripThinkingTags(dbText) !== dbText
+      || synopsisFactsFingerprint([dbText]) !== partial.synopsis_db_hash
+      || synopsisFactsFingerprint([checkpointBody]) !== partial.synopsis_body_hash) return null
+    const result = await ipc.invokeWithProjectSession(
+      projectSession,
+      'db:project-core-synopsis-commit',
+      { synopsis: dbText, expected: sourceExpected },
+      expectedProjectPath,
+    )
+    if (!result.success) {
+      throw new Error(text(
+        '情节大纲检查点与数据库正文不一致，且无法安全恢复正式大纲。数据库正文未被覆盖。',
+        'The plot-outline checkpoint disagrees with the database outline, and the formal outline could not be restored safely. The database outline was not overwritten.',
+      ))
+    }
+    callbacks.log(text(
+      `已从生成检查点恢复正式情节大纲（已覆盖至第 ${coveredTo} 章）。`,
+      `The formal plot outline was restored from the generation checkpoint (covered through chapter ${coveredTo}).`,
+    ))
+    return dbText
   }
 
   private async commitSynopsisWithCheckpointRollback(
