@@ -364,7 +364,7 @@
 .pi-scrim { position: fixed; inset: 0; z-index: var(--z-scrim); background: var(--scrim); animation: pi-fade var(--dur) var(--ease); }
 .pi-dialog {
   position: fixed; z-index: var(--z-dialog); top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: 480px; max-width: calc(100vw - 48px); max-height: calc(100vh - 96px); display: flex; flex-direction: column; overflow: hidden;
+  width: 480px; max-width: calc(100vw - 48px); max-height: calc(100dvh - 96px); display: flex; flex-direction: column; overflow: hidden;
   border-radius: var(--radius-panel); background: var(--layer); box-shadow: var(--shadow-dialog); color: var(--ink);
   font: 400 var(--fs-13)/1.6 var(--font-ui); font-variant-numeric: tabular-nums; animation: pi-fade var(--dur) var(--ease);
 }

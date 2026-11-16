@@ -2,8 +2,9 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <!-- viewport-fit=cover：让 env(safe-area-inset-*) 在 iOS 上取到真实值（browser.css 与对话框底栏要用） -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- viewport-fit=cover：让 env(safe-area-inset-*) 在 iOS 上取到真实值（browser.css 与对话框底栏要用）；
+         interactive-widget=resizes-content：Android Chrome 软键盘弹出时布局视口同步收缩，输入区与底部按钮不被键盘盖住 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>书童 Pagekin</title>
   </head>
   <body style="margin: 0;">

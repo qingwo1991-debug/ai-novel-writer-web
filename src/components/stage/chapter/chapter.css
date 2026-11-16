@@ -771,6 +771,14 @@
   }
 }
 
+/* 手机宽度：编辑器的 40px 双边距在三百多像素的纸面上占掉近三成版心，收窄到与滚动区留白一致。
+   未命名容器查询取最近的容器祖先（正文页是 chapter，架构文档页是 stage-body），两边宽度相同。 */
+@container (max-width: 620px) {
+  .paper-ink .cm-editor .cm-content {
+    padding: 28px 20px 64px;
+  }
+}
+
 /* ================= 选区工具条（架构文档页的编辑器也用它，自带纸墨作用域） ================= */
 .paper-ink.cm-selbar {
   position: fixed;

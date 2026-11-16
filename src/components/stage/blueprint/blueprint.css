@@ -557,6 +557,10 @@
     padding: 20px 20px 16px;
   }
 
+  .stage-bp-heading {
+    min-width: min(260px, 100%);
+  }
+
   .stage-bp-body {
     flex-direction: column;
   }
