@@ -5,6 +5,11 @@
   display: flex;
 }
 
+/* 窄屏「目录」开关：只在 ≤760px 的 web 布局里显示（browser.css），桌面与 Electron 不渲染。 */
+.stage-nav-toggle {
+  display: none;
+}
+
 .stage-spine {
   width: 276px;
   flex: none;

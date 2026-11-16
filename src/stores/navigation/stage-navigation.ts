@@ -21,7 +21,7 @@ import { useStageStore } from './stage-store'
  * 搜索开着时还能到这里的只有自动跳转（打开作品后的落点、工作流开始时打开运行侧页），它们不该关掉作者正在输入的搜索。
  */
 function enterWork(): void {
-  useStageStore.setState({ focus: false })
+  useStageStore.setState({ focus: false, navOpen: false })
   if (useLayoutStore.getState().sidebarView === 'home') useLayoutStore.setState({ sidebarView: 'project' })
 }
 
@@ -145,7 +145,10 @@ async function openManuscript(): Promise<void> {
  */
 export function stageNavigate(intent: NavigationIntent): void {
   if (intent.kind === 'settings') {
-    const open = () => useLayoutStore.setState({ settingsOpen: true, settingsSection: intent.section })
+    const open = () => {
+      useLayoutStore.setState({ settingsOpen: true, settingsSection: intent.section })
+      useStageStore.setState({ navOpen: false })
+    }
     const { settingsOpen, settingsSection } = useLayoutStore.getState()
     // 设置页开着时换分区会卸掉当前分区的输入，与设置页里点侧栏换页一样先确认。
     if (settingsOpen && settingsSection !== intent.section) leaveSettings(open)

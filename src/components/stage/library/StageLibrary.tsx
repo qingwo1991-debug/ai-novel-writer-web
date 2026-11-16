@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { FileInput, FolderOpen, Plus } from 'lucide-react'
 import { selectProjectOpenTarget } from '../../project-open-picker'
 import { useLayoutStore } from '../../../stores/layout-store'
@@ -16,6 +16,7 @@ import { LibraryUpdateCard } from '../StageUpdate'
 import { useModelMissing } from '../use-model-missing'
 import { useStageView } from '../use-stage-work'
 import BookOverview from './BookOverview'
+import BookPreviewDialog from './BookPreviewDialog'
 import ShelfBook from './ShelfBook'
 import { shelfTime } from './shelf-format'
 import { barsFromOverview, barsFromStages, nextStep } from './shelf-progress'
@@ -23,6 +24,22 @@ import { useShelfOverview, type ShelfBook as Book } from './use-shelf-overview'
 import { pluralEn } from '../../../shared/plural-en'
 
 type Text = (zh: string, en: string) => string
+
+/*
+ * 书架两栏（主栏 + 概览侧栏）需要约 940px 内容宽才并排；放不下时概览会落到整页最底部，
+ * 手机上等于「点了书还要翻到尾巴才有继续写作」。窄屏改走底部抽屉：点书封直接弹概览。
+ */
+const SHELF_COMPACT_QUERY = '(max-width: 1000px)'
+const subscribeShelfCompact = (onChange: () => void) => {
+  if (typeof matchMedia !== 'function') return () => undefined
+  const query = matchMedia(SHELF_COMPACT_QUERY)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+const shelfCompactSnapshot = () => typeof matchMedia === 'function' && matchMedia(SHELF_COMPACT_QUERY).matches
+function useCompactShelf(): boolean {
+  return useSyncExternalStore(subscribeShelfCompact, shelfCompactSnapshot, () => false)
+}
 
 async function openProjectFolder(): Promise<void> {
   const target = await selectProjectOpenTarget()
@@ -104,6 +121,8 @@ export default function StageLibrary() {
   const shelf = useShelfOverview()
   const view = useStageView()
   const modelMissing = useModelMissing('drafting')
+  const compact = useCompactShelf()
+  const [previewOpen, setPreviewOpen] = useState(false)
   const now = useMemo(() => new Date(), [])
   const [removing, setRemoving] = useState<Book | null>(null)
   const [deleting, setDeleting] = useState<{ name: string; path: string } | null>(null)
@@ -118,6 +137,19 @@ export default function StageLibrary() {
   const config = currentProject?.novelConfig
   const manuscript = view.stages.find(status => status.stage === 'manuscript')
   const select = (book: Book) => {
+    if (compact) {
+      // 窄屏没有右侧概览栏：点书封弹底部抽屉；已在预览的书再点一次直接打开。
+      if (book.current) {
+        shelf.clearSelection()
+        setPreviewOpen(true)
+      } else if (book.id === shelf.selectedId) {
+        book.onPreview()
+      } else {
+        book.onPreview()
+        setPreviewOpen(true)
+      }
+      return
+    }
     if (book.current) shelf.clearSelection()
     else if (book.id !== shelf.selectedId) book.onPreview()
   }
@@ -219,11 +251,19 @@ export default function StageLibrary() {
       </section>
       {!waiting && (
         <aside className="stage-lib-aside" aria-label={text('作品概览', 'Book overview')}>
-          {overviewCard}
+          {!compact && overviewCard}
           {modelMissing && <ModelMissingNotice />}
           <LibraryUpdateCard />
         </aside>
       )}
+
+      <BookPreviewDialog
+        open={compact && previewOpen}
+        onOpenChange={setPreviewOpen}
+        title={selectedBook?.name ?? currentProject?.name ?? text('作品', 'Book')}
+      >
+        {overviewCard}
+      </BookPreviewDialog>
 
       <InkDialog
         open={removing !== null}

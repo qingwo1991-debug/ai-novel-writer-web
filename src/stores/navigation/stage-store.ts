@@ -27,6 +27,8 @@ interface StageState {
   sheet: StageSheet | null
   /** 沉浸写作：只留正文与章节动作条。 */
   focus: boolean
+  /** 窄屏「目录」浮层开着；任何 navigate 都会复位，离开作品内视图由外壳收起。 */
+  navOpen: boolean
   palette: StagePalette | null
   work: StageWork | null
   /** 有未保存修改、等作者确认是否放弃的待关闭标签。 */
@@ -45,6 +47,7 @@ interface StageState {
 export const useStageStore = create<StageState>()(() => ({
   sheet: null,
   focus: false,
+  navOpen: false,
   palette: null,
   work: null,
   closingTabId: null,

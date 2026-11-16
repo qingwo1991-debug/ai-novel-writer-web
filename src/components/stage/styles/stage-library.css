@@ -653,6 +653,17 @@
   }
 }
 
+/* ---------- 窄屏作品预览抽屉 ---------- */
+/* 概览卡直接当抽屉内容：去掉卡片投影，抽屉本身负责滚动（pi-dialog 默认 overflow:hidden）。 */
+.pi-dialog.stage-book-dialog {
+  overflow-y: auto;
+}
+
+.stage-book-dialog .stage-ov {
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* ---------- 手机宽度：书架单列，概览统计算两列 ---------- */
 /* 空书架页直接挂在 .stage-panel 下（没有 .stage-body 这个容器），所以按视口断点写。 */
 @media (max-width: 560px) {

@@ -601,7 +601,7 @@ describe('database controller project context guard', () => {
     )).resolves.toEqual({
       success: false,
       errorCode: 'PROJECT_CONTEXT_CHANGED',
-      error: 'The project was switched or reopened, and this action belonged to the earlier session, so it was rejected. Repeat it in the project that is open now.',
+      error: 'The project was switched or reopened, and this action belonged to the earlier session, so it was rejected. Repeat it in the project that is open now. If the current project can no longer be used, reopen it.',
     })
     expect(mocks.importRunFinalizeParsing).not.toHaveBeenCalled()
   })

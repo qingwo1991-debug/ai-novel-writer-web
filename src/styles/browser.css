@@ -114,72 +114,79 @@
     flex: none;
   }
 
-  /* Keep every flow, resource, chapter and settings action available. On small
-     screens the sidebar becomes a scrollable navigation ribbon, not hidden UI. */
+  /* 窄屏把流程脊收成一条「目录」栏：默认不占地方，点开盖住整个内容区，选完自动收起。
+     浮层从开关栏下沿开始（开关高 46px），开关本身留在浮层之上可再点收起。 */
   :root[data-runtime='web'] .stage-frame {
+    position: relative;
     flex-direction: column;
     min-width: 0;
   }
 
-  :root[data-runtime='web'] .stage-spine {
-    width: 100%;
-    max-height: 30vh;
-    max-height: min(30dvh, 240px);
-    flex: 0 0 auto;
-    padding: 4px 10px 8px;
-    border-bottom: 1px solid var(--rule);
-  }
-
-  :root[data-runtime='web'] .stage-spine-label {
-    padding-block: 4px;
-  }
-
-  :root[data-runtime='web'] .stage-spine-label--resources {
-    margin-top: 4px;
-  }
-
-  :root[data-runtime='web'] :is(.stage-stages, .stage-resources, .stage-chapters) {
+  :root[data-runtime='web'] .stage-nav-toggle {
+    display: flex;
     flex: none;
-    flex-direction: row;
-    min-height: min-content;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-padding-inline: 4px;
-    overscroll-behavior-inline: contain;
-    padding-block: 3px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 46px;
+    padding: 0 14px;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    background: var(--frame);
+    color: var(--ink-2);
+    font: 500 13px/1 var(--font-ui);
+    text-align: left;
+    cursor: pointer;
   }
 
-  :root[data-runtime='web'] .stage-stages > li {
-    flex: 0 0 160px;
+  :root[data-runtime='web'] .stage-nav-toggle-label {
+    flex: none;
   }
 
-  :root[data-runtime='web'] .stage-resources > li {
-    flex: 0 0 132px;
+  :root[data-runtime='web'] .stage-nav-toggle-current {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 400;
+    color: var(--ink-3);
   }
 
-  :root[data-runtime='web'] .stage-chapters {
-    margin: 4px 0 0;
-    padding-left: 0;
-    border-left: 0;
+  :root[data-runtime='web'] .stage-nav-toggle-caret {
+    flex: none;
+    color: var(--ink-3);
+    transition: transform var(--dur) var(--ease);
   }
 
-  :root[data-runtime='web'] .stage-chapters > li {
-    flex: 0 0 200px;
+  :root[data-runtime='web'] .stage-nav-toggle-caret[data-open] {
+    transform: rotate(180deg);
   }
 
-  :root[data-runtime='web'] .stage-row-meta {
-    grid-column: 2 / 4;
-    white-space: normal;
+  :root[data-runtime='web'] .stage-spine {
+    display: none;
   }
 
-  :root[data-runtime='web'] .stage-spine-foot {
-    margin-top: 2px;
-    padding-top: 0;
+  :root[data-runtime='web'] .stage-frame[data-nav-open] .stage-spine {
+    position: absolute;
+    inset: 46px 0 0 0;
+    z-index: calc(var(--z-sheet) + 1);
+    display: flex;
+    width: 100%;
+    max-height: none;
+    padding: 10px 12px 14px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--frame);
   }
 
-  :root[data-runtime='web'] .stage-spine-foot .stage-row {
-    width: auto;
-    min-width: 132px;
+  /* 浮层里章节列表随整页滚动，不再单独开一条滚动条 */
+  :root[data-runtime='web'] .stage-frame[data-nav-open] .stage-chapters {
+    flex: none;
+    margin: 6px 0 0 21px;
+    padding-left: 12px;
+    border-left: 1px solid var(--track);
+    overflow-y: visible;
   }
 
   :root[data-runtime='web'] .stage-panel {

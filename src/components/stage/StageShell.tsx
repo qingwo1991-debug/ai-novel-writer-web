@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, List } from 'lucide-react'
 import { useProjectStore } from '../../stores/project-store'
 import { useLayoutStore } from '../../stores/layout-store'
 import { useLocaleStore } from '../../stores/locale-store'
@@ -22,6 +23,7 @@ import StageWorkspace from './StageWorkspace'
 import { CHAPTER_PHASE_TEXT, CHAPTER_RUNNING_TEXT, RESOURCE_NAMES, STAGE_NAMES, stageTabName } from './stage-text'
 import { refreshStageWork, useLandingPage, useStageView, useStageWorkRefresh, type StageView } from './use-stage-work'
 import { useStageShortcuts } from './use-stage-shortcuts'
+import { isModalOpen } from './shortcut-keys'
 
 type Text = (zh: string, en: string) => string
 
@@ -48,6 +50,7 @@ export default function StageShell({ theme }: { theme: Theme }) {
   const library = !hasProject || home
   const focus = useStageStore(s => s.focus) && !library
   const palette = useStageStore(s => s.palette)
+  const navOpen = useStageStore(s => s.navOpen)
   const activeName = useEditorStore(s => {
     const tab = s.tabs.find(candidate => candidate.id === s.activeTabId)
     return tab ? stageTabName(tab, text) : undefined
@@ -64,6 +67,16 @@ export default function StageShell({ theme }: { theme: Theme }) {
     if (library && useStageStore.getState().focus) useStageStore.setState({ focus: false })
   }, [library])
 
+  // 目录浮层开着时 Esc 收起；对话框与命令面板的 Esc 归它们自己。
+  useEffect(() => {
+    if (!navOpen) return
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented && !isModalOpen()) useStageStore.setState({ navOpen: false })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [navOpen])
+
   useEffect(() => {
     const handle = requestIdleCallback(preloadStagePages, { timeout: 2000 })
     return () => cancelIdleCallback(handle)
@@ -77,6 +90,11 @@ export default function StageShell({ theme }: { theme: Theme }) {
     if (wasLibrary.current !== library && useLayoutStore.getState().settingsOpen) useLayoutStore.getState().closeSettings()
     wasLibrary.current = library
   }, [library])
+
+  // 离开作品内视图（书房、沉浸、设置页）时收起目录浮层；作品内导航由 stageNavigate 统一复位。
+  useEffect(() => {
+    if (library || focus || settingsOpen) useStageStore.setState({ navOpen: false })
+  }, [library, focus, settingsOpen])
 
   const toggleFocus = useCallback(() => useStageStore.setState(state => ({ focus: !state.focus, palette: null })), [])
 
@@ -140,6 +158,7 @@ export default function StageShell({ theme }: { theme: Theme }) {
   const focusChapter = view.location?.kind === 'stage' ? view.location.chapter : undefined
   const focusRow = view.chapters.find(row => row.number === focusChapter)
   const focusTitle = focusRow ? { chapter: focusRow.number, title: focusRow.title || chapterLabel(focusRow.number, text) } : { title: activeName ?? '' }
+  const navVisible = navOpen && !library && !focus && !settingsOpen
 
   return (
     <div
@@ -158,7 +177,21 @@ export default function StageShell({ theme }: { theme: Theme }) {
         workMenu={workMenu}
         onToggleFocus={toggleFocus}
       />
-      <div className="stage-frame">
+      <div className="stage-frame" data-nav-open={navVisible || undefined}>
+        {!library && !focus && (
+          <button
+            type="button"
+            className="stage-nav-toggle"
+            aria-expanded={navVisible}
+            aria-label={text('作品目录', 'Book contents')}
+            onClick={() => useStageStore.setState(state => ({ navOpen: !state.navOpen }))}
+          >
+            <List size={16} aria-hidden="true" />
+            <span className="stage-nav-toggle-label">{text('目录', 'Contents')}</span>
+            {crumbs.length > 0 && <span className="stage-nav-toggle-current">{crumbs[crumbs.length - 1]}</span>}
+            <ChevronDown className="stage-nav-toggle-caret" data-open={navVisible || undefined} size={15} aria-hidden="true" />
+          </button>
+        )}
         {!library && !focus && (
           <StageSpine
             stages={view.stages}
